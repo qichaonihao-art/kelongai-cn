@@ -1,0 +1,65 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-primary: var(--color-indigo-600);
+  --color-primary-foreground: var(--color-white);
+  
+  --color-secondary: var(--color-slate-100);
+  --color-secondary-foreground: var(--color-slate-900);
+  
+  --color-muted: var(--color-slate-100);
+  --color-muted-foreground: var(--color-slate-500);
+  
+  --color-accent: var(--color-slate-100);
+  --color-accent-foreground: var(--color-slate-900);
+  
+  --color-destructive: var(--color-red-500);
+  --color-destructive-foreground: var(--color-white);
+  
+  --color-background: #cbd5e1; /* slate-300 */
+  --color-foreground: var(--color-slate-900);
+  
+  --color-border: var(--color-slate-300);
+  --color-input: var(--color-slate-300);
+  --color-ring: var(--color-indigo-500);
+
+  --shadow-glass: 0 25px 60px -12px rgba(0, 0, 0, 0.18), 0 12px 24px -10px rgba(0, 0, 0, 0.12);
+  --shadow-glass-hover: 0 40px 80px -12px rgba(0, 0, 0, 0.25), 0 20px 40px -10px rgba(0, 0, 0, 0.15);
+}
+
+@layer utilities {
+  .glass-card {
+    @apply bg-white/70 backdrop-blur-2xl border border-white/80 transition-all duration-500;
+    box-shadow: var(--shadow-glass), inset 0 1px 1px 0 rgba(255, 255, 255, 0.6);
+  }
+  .glass-morphism {
+    @apply bg-white/30 backdrop-blur-3xl border border-white/50 shadow-glass;
+  }
+  .glass-inner {
+    @apply bg-white/20 backdrop-blur-xl border border-white/30 shadow-inner;
+  }
+  .animate-shimmer {
+    background-size: 200% auto;
+    animation: shimmer 6s linear infinite;
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans min-h-screen;
+    background-image: 
+      radial-gradient(at 0% 0%, rgba(0, 0, 0, 0.03) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, rgba(0, 0, 0, 0.03) 0px, transparent 50%);
+  }
+}
