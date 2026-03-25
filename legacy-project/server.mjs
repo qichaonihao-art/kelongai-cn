@@ -1,9 +1,11 @@
 import { createServer } from 'node:http';
+import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { WebSocket } from 'ws';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -22,7 +24,8 @@ const AUTH_COOKIE_NAME = 'auth_token';
 const authSessions = new Map();
 const SHOULD_USE_REACT_FRONTEND = FRONTEND_MODE === 'react';
 const MAX_MULTIMODAL_UPLOAD_BYTES = 170 * 1024 * 1024;
-const MAX_BASE64_VIDEO_FALLBACK_BYTES = 20 * 1024 * 1024;
+const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 45 * 1024 * 1024;
+const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
 const ACTIVE_FRONTEND_DIR = SHOULD_USE_REACT_FRONTEND ? REACT_FRONTEND_DIR : LEGACY_FRONTEND_DIR;
@@ -34,6 +37,7 @@ const RESOLVED_FRONTEND_DIR = HAS_ACTIVE_FRONTEND_DIR
   : (HAS_FALLBACK_FRONTEND_DIR ? FALLBACK_FRONTEND_DIR : ACTIVE_FRONTEND_DIR);
 const RESOLVED_FRONTEND_MODE = RESOLVED_FRONTEND_DIR === REACT_FRONTEND_DIR ? 'react' : 'legacy';
 const IS_REACT_FRONTEND_ACTIVE = RESOLVED_FRONTEND_MODE === 'react';
+const execFileAsync = promisify(execFile);
 
 const SERVER_CONFIG = {
   zhipuApiKey: process.env.ZHIPU_API_KEY || '',
@@ -141,6 +145,129 @@ async function ensureUploadTempDir() {
   await mkdir(UPLOAD_TEMP_DIR, { recursive: true });
 }
 
+async function ensureVideoCompressionTools() {
+  try {
+    await execFileAsync('ffmpeg', ['-version']);
+    await execFileAsync('ffprobe', ['-version']);
+  } catch (error) {
+    if (error && (error.code === 'ENOENT' || /not found/i.test(String(error.message || '')))) {
+      throw new Error('服务器未安装 ffmpeg，无法自动压缩大视频');
+    }
+    throw error;
+  }
+}
+
+function scheduleMediaCleanup(filePath) {
+  setTimeout(async () => {
+    try {
+      await unlink(filePath);
+    } catch {}
+  }, MEDIA_TTL_MS + 1000).unref?.();
+}
+
+async function getVideoDurationSeconds(filePath) {
+  try {
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      filePath
+    ]);
+    const duration = Number.parseFloat(String(stdout || '').trim());
+    if (!Number.isFinite(duration) || duration <= 0) {
+      throw new Error('invalid duration');
+    }
+    return duration;
+  } catch (error) {
+    if (error instanceof Error && error.message === '服务器未安装 ffmpeg，无法自动压缩大视频') {
+      throw error;
+    }
+    throw new Error('无法读取视频时长，无法自动压缩大视频');
+  }
+}
+
+function computeVideoBitrateKbps(durationSeconds, audioBitrateKbps, targetBytes, ratio = 1) {
+  const safeDuration = Math.max(durationSeconds, 1);
+  const targetBits = targetBytes * 8;
+  const audioBitsPerSecond = audioBitrateKbps * 1000;
+  const muxingReserveBitsPerSecond = 160 * 1000;
+  const computed = Math.floor(((targetBits / safeDuration) - audioBitsPerSecond - muxingReserveBitsPerSecond) / 1000);
+  return Math.max(220, Math.floor(computed * ratio));
+}
+
+async function transcodeVideoToMp4({ inputPath, outputPath, videoBitrateKbps, audioBitrateKbps }) {
+  await execFileAsync('ffmpeg', [
+    '-y',
+    '-i', inputPath,
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-b:v', `${videoBitrateKbps}k`,
+    '-maxrate', `${Math.max(videoBitrateKbps, Math.floor(videoBitrateKbps * 1.15))}k`,
+    '-bufsize', `${Math.max(videoBitrateKbps * 2, 512)}k`,
+    '-c:a', 'aac',
+    '-b:a', `${audioBitrateKbps}k`,
+    '-movflags', '+faststart',
+    outputPath
+  ]);
+}
+
+async function maybeCompressLargeVideo({ filePath, originalSize, durationSeconds, mediaId }) {
+  if (originalSize <= MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+    return {
+      filePath,
+      compressed: false,
+      finalSize: originalSize
+    };
+  }
+
+  await ensureVideoCompressionTools();
+
+  const firstPassPath = path.join(UPLOAD_TEMP_DIR, `${mediaId}_compressed.mp4`);
+  const secondPassPath = path.join(UPLOAD_TEMP_DIR, `${mediaId}_compressed_retry.mp4`);
+  let finalPath = firstPassPath;
+  let finalSize = originalSize;
+
+  const firstPassVideoBitrate = computeVideoBitrateKbps(durationSeconds, 96, MAX_VIDEO_ORIGINAL_UPLOAD_BYTES);
+  await transcodeVideoToMp4({
+    inputPath: filePath,
+    outputPath: firstPassPath,
+    videoBitrateKbps: firstPassVideoBitrate,
+    audioBitrateKbps: 96
+  });
+
+  finalSize = (await stat(firstPassPath)).size;
+
+  if (finalSize > MAX_COMPRESSED_VIDEO_BYTES) {
+    const secondPassVideoBitrate = computeVideoBitrateKbps(durationSeconds, 64, MAX_VIDEO_ORIGINAL_UPLOAD_BYTES, 0.8);
+    await transcodeVideoToMp4({
+      inputPath: filePath,
+      outputPath: secondPassPath,
+      videoBitrateKbps: secondPassVideoBitrate,
+      audioBitrateKbps: 64
+    });
+    finalPath = secondPassPath;
+    finalSize = (await stat(secondPassPath)).size;
+
+    try {
+      await unlink(firstPassPath);
+    } catch {}
+  }
+
+  if (finalSize > MAX_COMPRESSED_VIDEO_BYTES) {
+    throw new Error('自动压缩后视频仍然过大，请缩短视频时长或降低分辨率后重试');
+  }
+
+  try {
+    await unlink(filePath);
+  } catch {}
+
+  return {
+    filePath: finalPath,
+    compressed: true,
+    finalSize
+  };
+}
+
 async function createPublicMediaUrl({ file, req }) {
   await ensureUploadTempDir();
 
@@ -154,22 +281,41 @@ async function createPublicMediaUrl({ file, req }) {
 
   const mediaId = randomBytes(12).toString('hex');
   const safeFileName = sanitizeFileName(file.name || 'upload.bin');
-  const storedFileName = `${mediaId}_${safeFileName}`;
-  const filePath = path.join(UPLOAD_TEMP_DIR, storedFileName);
+  const initialStoredFileName = `${mediaId}_${safeFileName}`;
+  const initialFilePath = path.join(UPLOAD_TEMP_DIR, initialStoredFileName);
   const buffer = Buffer.from(await file.arrayBuffer());
-  await writeFile(filePath, buffer);
+  await writeFile(initialFilePath, buffer);
 
-  setTimeout(async () => {
-    try {
-      await unlink(filePath);
-    } catch {}
-  }, MEDIA_TTL_MS + 1000).unref?.();
+  const originalSize = buffer.length;
+  let finalFilePath = initialFilePath;
+  let finalStoredFileName = initialStoredFileName;
+  let finalSize = originalSize;
+  let compressionTriggered = false;
+
+  if (String(file.type || '').startsWith('video/') && originalSize > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+    const durationSeconds = await getVideoDurationSeconds(initialFilePath);
+    const compressed = await maybeCompressLargeVideo({
+      filePath: initialFilePath,
+      originalSize,
+      durationSeconds,
+      mediaId
+    });
+    finalFilePath = compressed.filePath;
+    finalStoredFileName = path.basename(finalFilePath);
+    finalSize = compressed.finalSize;
+    compressionTriggered = compressed.compressed;
+  }
+
+  scheduleMediaCleanup(finalFilePath);
 
   return {
     ok: true,
-    filePath,
-    storedFileName,
-    url: `${publicBaseUrl}/uploads/${storedFileName}`
+    filePath: finalFilePath,
+    storedFileName: finalStoredFileName,
+    url: `${publicBaseUrl}/uploads/${finalStoredFileName}`,
+    originalSize,
+    compressionTriggered,
+    finalSize
   };
 }
 
@@ -1910,7 +2056,7 @@ async function handleDoubaoMultimodal(req, res) {
     if (hasUploadedFile) {
       stage = 'normalize_uploaded_media';
       const resolvedMediaKind = mediaKind === 'image' ? 'image' : 'video';
-      if (resolvedMediaKind === 'video' && file.size > MAX_BASE64_VIDEO_FALLBACK_BYTES) {
+      if (resolvedMediaKind === 'video' && file.size > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
         stage = 'create_public_media_url';
         const publicMedia = await createPublicMediaUrl({ file, req });
         if (!publicMedia.ok) {
@@ -1927,7 +2073,9 @@ async function handleDoubaoMultimodal(req, res) {
         console.log('[doubao multimodal] using public video url', {
           stage,
           fileName: file.name || '',
-          fileSize: file.size,
+          originalFileSize: publicMedia.originalSize,
+          compressionTriggered: publicMedia.compressionTriggered,
+          compressedFileSize: publicMedia.finalSize,
           publicVideoUrl: publicMedia.url
         });
 
