@@ -3,6 +3,13 @@ export interface CreativeHistoryItem {
   content: string;
 }
 
+export interface SelectedCreativeMedia {
+  kind: 'image' | 'video';
+  file: File;
+  previewUrl: string;
+  fileName: string;
+}
+
 interface CreativeConfigStatus {
   reachable: boolean;
   arkApiKey: boolean;
@@ -267,13 +274,12 @@ async function consumeStreamResponse(
   return normalizeDisplayText(finalTextCandidate || (!sawDelta ? answer : '') || answer).trim();
 }
 
-export function readImageAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('图片读取失败，请换一张再试。'));
-    reader.readAsDataURL(file);
-  });
+export function createMediaPreviewUrl(file: File) {
+  try {
+    return URL.createObjectURL(file);
+  } catch {
+    throw new Error(file.type.startsWith('video/') ? '视频预览生成失败，请换一个文件再试。' : '图片预览生成失败，请换一张再试。');
+  }
 }
 
 export async function getCreativeConfigStatus(): Promise<CreativeConfigStatus> {
@@ -301,30 +307,53 @@ export async function getCreativeConfigStatus(): Promise<CreativeConfigStatus> {
 
 export async function sendCreativeMessage(options: {
   question: string;
-  image?: string;
+  media?: SelectedCreativeMedia | null;
   history: CreativeHistoryItem[];
   onDelta?: (text: string) => void;
 }) {
+  const headers: Record<string, string> = {
+    Accept: 'text/event-stream, application/json',
+  };
+
+  let body: BodyInit;
+  if (options.media) {
+    const formData = new FormData();
+    formData.append('question', options.question);
+    formData.append('history', JSON.stringify(options.history));
+    formData.append('stream', 'true');
+    formData.append('media_kind', options.media.kind);
+    formData.append('file', options.media.file, options.media.fileName);
+    body = formData;
+  } else {
+    headers['Content-Type'] = 'application/json';
+    body = JSON.stringify({
+      question: options.question,
+      history: options.history,
+      stream: true,
+    });
+  }
+
   const response = await fetch('/api/doubao/multimodal', {
     method: 'POST',
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream, application/json',
-    },
-    body: JSON.stringify({
-      question: options.question,
-      image: options.image || '',
-      history: options.history,
-      stream: true,
-    }),
+    headers,
+    body,
   });
 
   if (!response.ok) {
-    let message = '豆包回答失败';
+    let message = `豆包回答失败（HTTP ${response.status}）`;
     try {
       const json = await response.json();
-      if (json?.error) message = String(json.error);
+      if (json?.error) {
+        message = String(json.error);
+        if (json?.debug?.stage) {
+          message += `，阶段：${String(json.debug.stage)}`;
+        }
+      } else if (json?.upstream) {
+        message = typeof json.upstream === 'string'
+          ? json.upstream
+          : JSON.stringify(json.upstream);
+      }
     } catch {
       try {
         const text = await response.text();

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import {
   Send,
   Image as ImageIcon,
+  Film,
   Sparkles,
   ArrowLeft,
   Loader2,
@@ -11,21 +12,23 @@ import {
 import { Button } from "@/src/components/ui/button";
 import { cn } from "@/src/lib/utils";
 import {
+  createMediaPreviewUrl,
   getCreativeConfigStatus,
-  readImageAsDataUrl,
   sendCreativeMessage,
   type CreativeHistoryItem,
+  type SelectedCreativeMedia,
 } from "@/src/lib/creative";
 import { motion, AnimatePresence } from "motion/react";
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
-  type: 'text' | 'image';
+  type: 'text' | 'image' | 'video';
   content: string;
   timestamp: Date;
   pending?: boolean;
-  imageUrl?: string;
+  mediaUrl?: string;
+  mediaKind?: 'image' | 'video';
   fileName?: string;
 }
 
@@ -33,6 +36,20 @@ interface CreativeCreationPageProps {
   onBack: () => void;
   onLogout: () => void;
 }
+
+const MAX_VIDEO_SIZE_BYTES = 150 * 1024 * 1024;
+const QUICK_PROMPTS = {
+  image: [
+    '请描述这张图片的核心内容，并提炼 3 个可延展的创意方向。',
+    '请根据这张图片生成一段适合社交媒体发布的文案。',
+    '请从构图、情绪和色彩三个角度分析这张图片。'
+  ],
+  video: [
+    '请帮我总结这个视频的主要内容，并提炼 3 个重点。',
+    '请按时间顺序拆解这个视频的镜头和画面变化。',
+    '请从这个视频里提取适合短视频平台的标题和文案。'
+  ]
+} as const;
 
 function createMessageId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -53,13 +70,10 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   const [requestError, setRequestError] = useState("");
   const [configReachable, setConfigReachable] = useState(true);
   const [arkApiConfigured, setArkApiConfigured] = useState(true);
-  const [selectedImage, setSelectedImage] = useState<{
-    dataUrl: string;
-    fileName: string;
-    messageId: string;
-  } | null>(null);
+  const [selectedMedia, setSelectedMedia] = useState<SelectedCreativeMedia | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -99,7 +113,24 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
       }));
   }
 
-  async function handleImageChange(file: File | null) {
+  function validateMediaFile(file: File) {
+    if (!file.type.startsWith('video/')) return;
+
+    if (file.size > MAX_VIDEO_SIZE_BYTES) {
+      throw new Error('视频请控制在 150MB 以内，方便稳定上传和分析。');
+    }
+  }
+
+  function applyQuickPrompt(prompt: string) {
+    setInput(prompt);
+    setRequestError("");
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
+    });
+  }
+
+  async function handleMediaChange(file: File | null) {
     setRequestError("");
 
     if (!file) {
@@ -107,44 +138,31 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     }
 
     try {
-      const dataUrl = await readImageAsDataUrl(file);
+      validateMediaFile(file);
+      const isVideo = file.type.startsWith('video/');
+      const kind: 'image' | 'video' = isVideo ? 'video' : 'image';
+      const previewUrl = createMediaPreviewUrl(file);
       const nextFileName = file.name;
 
-      if (selectedImage) {
-        updateMessage(selectedImage.messageId, (message) => ({
-          ...message,
-          imageUrl: dataUrl,
+      if (selectedMedia) {
+        URL.revokeObjectURL(selectedMedia.previewUrl);
+        setSelectedMedia({
+          kind,
+          file,
+          previewUrl,
           fileName: nextFileName,
-          timestamp: new Date(),
-        }));
-        setSelectedImage({
-          dataUrl,
-          fileName: nextFileName,
-          messageId: selectedImage.messageId,
         });
         return;
       }
 
-      const messageId = createMessageId('creative_image');
-      setMessages((previous) => [
-        ...previous,
-        {
-          id: messageId,
-          role: 'user',
-          type: 'image',
-          content: '',
-          imageUrl: dataUrl,
-          fileName: nextFileName,
-          timestamp: new Date(),
-        }
-      ]);
-      setSelectedImage({
-        dataUrl,
+      setSelectedMedia({
+        kind,
+        file,
+        previewUrl,
         fileName: nextFileName,
-        messageId,
       });
     } catch (error) {
-      setRequestError(error instanceof Error ? error.message : '图片读取失败，请换一张再试。');
+      setRequestError(error instanceof Error ? error.message : '媒体文件读取失败，请换一个文件再试。');
     } finally {
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -152,11 +170,11 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     }
   }
 
-  function clearSelectedImage() {
-    if (selectedImage) {
-      setMessages((previous) => previous.filter((message) => message.id !== selectedImage.messageId));
+  function clearSelectedMedia() {
+    if (selectedMedia) {
+      URL.revokeObjectURL(selectedMedia.previewUrl);
     }
-    setSelectedImage(null);
+    setSelectedMedia(null);
     setRequestError("");
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -167,6 +185,17 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     if (!input.trim() || isLoading) return;
 
     const question = input.trim();
+    const mediaToSend = selectedMedia;
+    const mediaMessage = mediaToSend ? {
+      id: createMessageId(`creative_${mediaToSend.kind}`),
+      role: 'user' as const,
+      type: mediaToSend.kind,
+      content: '',
+      mediaUrl: mediaToSend.previewUrl,
+      mediaKind: mediaToSend.kind,
+      fileName: mediaToSend.fileName,
+      timestamp: new Date(),
+    } : null;
     const userMessage: Message = {
       id: createMessageId('creative_user'),
       role: 'user',
@@ -179,6 +208,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
 
     setMessages((previous) => [
       ...previous,
+      ...(mediaMessage ? [mediaMessage] : []),
       userMessage,
       {
         id: assistantMessageId,
@@ -190,13 +220,14 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
       }
     ]);
     setInput("");
+    setSelectedMedia(null);
     setIsLoading(true);
     setRequestError("");
 
     try {
       const answer = await sendCreativeMessage({
         question,
-        image: selectedImage?.dataUrl || '',
+        media: mediaToSend,
         history,
         onDelta: (text) => {
           updateMessage(assistantMessageId, (message) => ({
@@ -212,7 +243,6 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
         content: answer,
         pending: false,
       }));
-      setSelectedImage(null);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '豆包回答失败';
       updateMessage(assistantMessageId, (message) => ({
@@ -231,9 +261,9 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/*"
         className="hidden"
-        onChange={(event) => handleImageChange(event.target.files?.[0] || null)}
+        onChange={(event) => handleMediaChange(event.target.files?.[0] || null)}
       />
 
       <header className="h-14 border-b border-slate-200 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 shrink-0 sticky top-0 z-30">
@@ -302,13 +332,22 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                     ? "bg-slate-900 text-white rounded-tr-none border-slate-800"
                     : "bg-white text-slate-700 rounded-tl-none border-slate-200"
                 )}>
-                  {msg.type === 'image' && msg.imageUrl ? (
+                  {(msg.type === 'image' || msg.type === 'video') && msg.mediaUrl ? (
                     <div className="space-y-3">
-                      <img
-                        src={msg.imageUrl}
-                        alt={msg.fileName || '用户上传图片'}
-                        className="max-w-[280px] rounded-2xl border border-white/20 object-cover"
-                      />
+                      {msg.type === 'image' ? (
+                        <img
+                          src={msg.mediaUrl}
+                          alt={msg.fileName || '用户上传图片'}
+                          className="max-w-[280px] rounded-2xl border border-white/20 object-cover"
+                        />
+                      ) : (
+                        <video
+                          src={msg.mediaUrl}
+                          controls
+                          preload="metadata"
+                          className="max-w-[320px] rounded-2xl border border-white/20 bg-slate-950"
+                        />
+                      )}
                       <div className={cn(
                         "text-xs",
                         msg.role === 'user' ? "text-slate-300" : "text-slate-400"
@@ -331,7 +370,44 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
       <div className="p-3 md:p-4 border-t border-slate-200 shrink-0 bg-white/50 backdrop-blur-xl">
         <div className="max-w-6xl mx-auto w-full relative">
           <div className="relative bg-white rounded-2xl border border-slate-200 shadow-sm focus-within:border-indigo-500/50 focus-within:ring-4 focus-within:ring-indigo-500/5 transition-all duration-300">
+            {selectedMedia && (
+              <div className="px-4 pt-4">
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2 text-indigo-600">
+                      {selectedMedia.kind === 'video' ? <Film className="size-4 shrink-0" /> : <ImageIcon className="size-4 shrink-0" />}
+                      <span className="truncate text-sm font-medium">{selectedMedia.fileName}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={clearSelectedMedia}
+                      className="text-indigo-400 transition-colors hover:text-indigo-600"
+                      aria-label={selectedMedia.kind === 'video' ? '移除视频' : '移除图片'}
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </div>
+                  <div className="mt-3">
+                    {selectedMedia.kind === 'image' ? (
+                      <img
+                        src={selectedMedia.previewUrl}
+                        alt={selectedMedia.fileName}
+                        className="max-h-48 rounded-2xl border border-white/70 object-cover"
+                      />
+                    ) : (
+                      <video
+                        src={selectedMedia.previewUrl}
+                        controls
+                        preload="metadata"
+                        className="max-h-56 rounded-2xl border border-white/70 bg-slate-950"
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             <textarea
+              ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -349,14 +425,15 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 size="icon"
                 className={cn(
                   "size-10 rounded-full",
-                  selectedImage
+                  selectedMedia
                     ? "text-indigo-600 bg-indigo-50 hover:bg-indigo-100"
                     : "text-slate-400 hover:text-slate-600"
                 )}
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isLoading}
+                title="上传图片或视频"
               >
-                <ImageIcon className="size-5" />
+                {selectedMedia?.kind === 'video' ? <Film className="size-5" /> : <ImageIcon className="size-5" />}
               </Button>
               <Button
                 size="icon"
@@ -369,21 +446,10 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
             </div>
           </div>
 
-          {(selectedImage || requestError || !configReachable || !arkApiConfigured) && (
+          {(selectedMedia || requestError || !configReachable || !arkApiConfigured) && (
             <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-[10px] tracking-wider font-medium">
-              {selectedImage && (
-                <div className="flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-indigo-600">
-                  <ImageIcon className="size-3" />
-                  <span className="max-w-[220px] truncate">{selectedImage.fileName}</span>
-                  <button
-                    type="button"
-                    onClick={clearSelectedImage}
-                    className="text-indigo-400 hover:text-indigo-600"
-                    aria-label="移除图片"
-                  >
-                    <X className="size-3" />
-                  </button>
-                </div>
+              {selectedMedia?.kind === 'video' && (
+                <span className="text-slate-500">当前前端上限 150MB，建议优先使用常见视频格式。</span>
               )}
               {!configReachable && (
                 <span className="text-red-500">无法读取服务端配置，请确认后端已启动。</span>
@@ -394,6 +460,22 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
               {requestError && (
                 <span className="text-red-500">{requestError}</span>
               )}
+            </div>
+          )}
+
+          {selectedMedia && (
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+              {QUICK_PROMPTS[selectedMedia.kind].map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => applyQuickPrompt(prompt)}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-medium text-slate-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+                  disabled={isLoading}
+                >
+                  {prompt}
+                </button>
+              ))}
             </div>
           )}
 

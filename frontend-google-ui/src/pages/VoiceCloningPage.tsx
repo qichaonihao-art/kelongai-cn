@@ -23,6 +23,7 @@ import {
   type ClonedVoice,
   type GeneratedAudio,
   type VoiceConfigStatus,
+  type VoicePlatform,
   createVoiceClone,
   generateSpeech,
   getVoiceConfigStatus,
@@ -34,6 +35,7 @@ interface VoiceCloningPageProps {
 }
 
 const MAX_AUDIO_SIZE = 10 * 1024 * 1024;
+const VOICES_STORAGE_KEY = 'kelongai.savedVoices';
 
 const EMPTY_CONFIG_STATUS: VoiceConfigStatus = {
   reachable: false,
@@ -44,6 +46,37 @@ const EMPTY_CONFIG_STATUS: VoiceConfigStatus = {
   volcSpeakerId: false,
   mockMode: false,
 };
+
+function loadSavedVoices(): ClonedVoice[] {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const savedVoices = window.localStorage.getItem(VOICES_STORAGE_KEY);
+    if (!savedVoices) {
+      return [];
+    }
+
+    const parsedVoices = JSON.parse(savedVoices) as ClonedVoice[];
+    return Array.isArray(parsedVoices) ? parsedVoices : [];
+  } catch {
+    window.localStorage.removeItem(VOICES_STORAGE_KEY);
+    return [];
+  }
+}
+
+function getPlatformLabel(provider: VoicePlatform): '智谱' | '阿里云' | '火山引擎' {
+  if (provider === 'zhipu') {
+    return '智谱';
+  }
+
+  if (provider === 'aliyun') {
+    return '阿里云';
+  }
+
+  return '火山引擎';
+}
 
 export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -69,7 +102,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [zhipuApiKey, setZhipuApiKey] = useState("");
   const [aliyunApiKey, setAliyunApiKey] = useState("");
   const [volcSpeakerId, setVolcSpeakerId] = useState("");
-  const [voices, setVoices] = useState<ClonedVoice[]>([]);
+  const [voices, setVoices] = useState<ClonedVoice[]>(loadSavedVoices);
   const [activeVoiceId, setActiveVoiceId] = useState<string | null>(null);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
 
@@ -77,6 +110,36 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     () => voices.find((voice) => voice.id === activeVoiceId) || null,
     [activeVoiceId, voices],
   );
+  const isVoiceReady = !!selectedVoice && cloneStatus === 'done';
+
+  useEffect(() => {
+    window.localStorage.setItem(VOICES_STORAGE_KEY, JSON.stringify(voices));
+  }, [voices]);
+
+  useEffect(() => {
+    if (voices.length === 0 || activeVoiceId === null) {
+      return;
+    }
+
+    if (voices.some((voice) => voice.id === activeVoiceId)) {
+      return;
+    }
+
+    setActiveVoiceId(null);
+  }, [activeVoiceId, voices]);
+
+  useEffect(() => {
+    if (!selectedVoice) {
+      setCloneStatus('idle');
+      return;
+    }
+
+    setVoiceName(selectedVoice.name);
+    setSelectedPlatform(getPlatformLabel(selectedVoice.provider));
+    setCloneStatus('done');
+    setCloneError("");
+    setGenerateError("");
+  }, [selectedVoice]);
 
   useEffect(() => {
     let cancelled = false;
@@ -400,7 +463,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
           <div className="size-10 rounded-xl bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
             <ArrowLeft className="size-5" />
           </div>
-          <h1 className="text-sm font-black text-slate-900 tracking-tight">新建工作台</h1>
+          <h1 className="text-sm font-black text-slate-900 tracking-tight">退回主界面</h1>
         </div>
         <Button
           variant="outline"
@@ -602,7 +665,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="flex items-center gap-2 text-xs text-emerald-600 font-bold bg-emerald-50/60 backdrop-blur-sm p-3 rounded-xl border border-emerald-100/50"
+                className="flex items-center gap-2 text-xs text-indigo-600 font-bold bg-indigo-50/80 backdrop-blur-sm p-3 rounded-xl border border-indigo-100"
               >
                 <CheckCircle2 className="size-4" />
                 声音克隆成功，当前音色为 {selectedVoice.name}。
@@ -620,21 +683,27 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
             <div className="space-y-4">
               <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">输入文本</Label>
               <textarea
-                className="w-full h-40 rounded-[2rem] border border-slate-300 bg-white/50 p-6 text-base focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all resize-none"
-                placeholder="请输入您想转换成语音的文本内容..."
+                className={cn(
+                  "w-full h-40 rounded-[2rem] border p-6 text-base outline-none transition-all resize-none",
+                  isVoiceReady
+                    ? "border-slate-300 bg-white/50 focus:ring-4 focus:ring-indigo-500/10"
+                    : "border-slate-200 bg-slate-100/80 text-slate-400 cursor-not-allowed"
+                )}
+                placeholder={isVoiceReady ? "请输入您想转换成语音的文本内容..." : "请先完成音色准备，再输入文案内容"}
                 value={inputText}
                 onChange={(event) => setInputText(event.target.value)}
+                disabled={!isVoiceReady}
               />
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-3 text-sm text-slate-500">
-              {selectedVoice
+              {isVoiceReady
                 ? `当前使用音色：${selectedVoice.name} (${selectedVoice.providerLabel})`
-                : "当前还没有可用音色，请先完成上方的声音克隆。"}
+                : "当前还没有准备好的音色，请先完成声音克隆或从我的音色中启用一个音色。"}
             </div>
             <div className="flex flex-col gap-4">
               <Button
                 className="w-full h-14 rounded-2xl text-lg font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xl shadow-indigo-600/20 transition-all active:scale-[0.98]"
-                disabled={!selectedVoice || generateStatus === 'generating' || !inputText.trim()}
+                disabled={!isVoiceReady || generateStatus === 'generating' || !inputText.trim()}
                 onClick={handleGenerateAudio}
               >
                 {generateStatus === 'generating' ? (
@@ -762,8 +831,8 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                     >
                       <div className="flex items-center justify-between mb-2 gap-4">
                         <div>
-                          <div className="font-medium text-slate-900">{voice.name}</div>
-                          <div className="text-[10px] text-slate-400 mt-1">{voice.providerLabel} · {voice.createdAt}</div>
+                          <div className="font-medium text-slate-900">{voice.providerLabel}</div>
+                          <div className="text-[10px] text-slate-400 mt-1">{voice.name} · {voice.createdAt}</div>
                         </div>
                         {activeVoiceId === voice.id && (
                           <span className="text-[10px] font-bold text-indigo-600">当前使用</span>
@@ -773,16 +842,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 px-2 text-xs"
+                          className="h-9 rounded-xl px-4 text-xs font-bold text-slate-700 bg-white border border-slate-200 shadow-[6px_6px_14px_rgba(15,23,42,0.08),-4px_-4px_10px_rgba(255,255,255,0.95)] hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 active:shadow-[inset_3px_3px_8px_rgba(15,23,42,0.10),inset_-3px_-3px_8px_rgba(255,255,255,0.95)] transition-all"
                           onClick={() => {
                             setActiveVoiceId(voice.id);
-                            setSelectedPlatform(
-                              voice.provider === 'zhipu'
-                                ? '智谱'
-                                : voice.provider === 'aliyun'
-                                  ? '阿里云'
-                                  : '火山引擎'
-                            );
                             setIsMyVoicesOpen(false);
                           }}
                         >

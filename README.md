@@ -111,6 +111,11 @@ cp legacy-project/.env.example legacy-project/.env
 
 - `ARK_API_KEY`
   - 豆包多模态真实调用必填
+- `PUBLIC_BASE_URL`
+  - 大视频分析推荐必填
+  - 需要填你的公网可访问后端地址，例如 `https://your-domain.com`
+  - 本地 `127.0.0.1` 只适合小文件直传，较大视频需要公网 URL 才能让方舟抓取
+  - 后端会把大视频临时落盘，并通过 `/uploads/<文件名>` 暴露给方舟抓取
 
 ### 声音克隆
 
