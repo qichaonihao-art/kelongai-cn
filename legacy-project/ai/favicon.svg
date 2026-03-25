@@ -1,0 +1,35 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="32" y1="24" x2="224" y2="232" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#193A36"/>
+      <stop offset="1" stop-color="#2F786E"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="128" y1="36" x2="128" y2="106" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#CFFB8B"/>
+      <stop offset="1" stop-color="#48A85C"/>
+    </linearGradient>
+    <linearGradient id="carrot" x1="96" y1="74" x2="160" y2="206" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFB347"/>
+      <stop offset="1" stop-color="#FF6A00"/>
+    </linearGradient>
+    <filter id="shadow" x="24" y="20" width="208" height="216" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#0A1D1A" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect x="20" y="20" width="216" height="216" rx="56" fill="url(#bg)"/>
+  <circle cx="128" cy="128" r="82" fill="#FFFFFF" fill-opacity="0.06"/>
+  <g filter="url(#shadow)">
+    <path d="M111 93C103 75 93 62 79 52C74 48 66 49 63 56C60 62 62 71 68 74C80 81 89 91 96 104L111 93Z" fill="url(#leaf)"/>
+    <path d="M145 93C153 75 163 62 177 52C182 48 190 49 193 56C196 62 194 71 188 74C176 81 167 91 160 104L145 93Z" fill="url(#leaf)"/>
+    <path d="M128 82C121 68 121 52 128 40C135 52 135 68 128 82Z" fill="url(#leaf)"/>
+    <path d="M129 86C154 86 174 105 173 130C172 166 152 195 129 213C126 215 122 215 119 213C96 195 76 166 75 130C74 105 94 86 119 86H129Z" fill="url(#carrot)"/>
+    <path d="M113 119C113 116 115 114 118 114H138C141 114 143 116 143 119C143 122 141 124 138 124H118C115 124 113 122 113 119Z" fill="#B84C00" fill-opacity="0.35"/>
+    <path d="M106 147C106 144 108 142 111 142H135C138 142 140 144 140 147C140 150 138 152 135 152H111C108 152 106 150 106 147Z" fill="#B84C00" fill-opacity="0.28"/>
+    <path d="M96 102C102 96 111 93 120 93H125V205C123 205 121 204 119 203C96 185 76 158 75 130C74 118 82 108 96 102Z" fill="#FFD18A" fill-opacity="0.18"/>
+  </g>
+  <circle cx="187" cy="69" r="10" fill="#FFF3A3"/>
+  <path d="M187 52V59" stroke="#FFF3A3" stroke-width="5" stroke-linecap="round"/>
+  <path d="M187 79V86" stroke="#FFF3A3" stroke-width="5" stroke-linecap="round"/>
+  <path d="M170 69H177" stroke="#FFF3A3" stroke-width="5" stroke-linecap="round"/>
+  <path d="M197 69H204" stroke="#FFF3A3" stroke-width="5" stroke-linecap="round"/>
+</svg>

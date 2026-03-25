@@ -1,0 +1,19 @@
+{
+  "name": "liangsousou-voice-tool",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=.env server.mjs",
+    "start:react": "FRONTEND_MODE=react node --env-file=.env server.mjs",
+    "start:legacy": "FRONTEND_MODE=legacy node --env-file=.env server.mjs",
+    "dev:frontend": "npm --prefix ../frontend-google-ui run dev",
+    "build:frontend": "npm --prefix ../frontend-google-ui run build",
+    "lint:frontend": "npm --prefix ../frontend-google-ui run lint",
+    "build": "npm run build:frontend",
+    "preview:react": "npm run build && npm run start:react"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
