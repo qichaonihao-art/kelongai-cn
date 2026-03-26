@@ -872,6 +872,19 @@ function writeSseEvent(res, eventName, payload) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+function startSseResponse(res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+  res.write(': connected\n\n');
+}
+
 function parseDoubaoSseBlock(rawBlock) {
   const lines = String(rawBlock || '').split(/\r?\n/);
   let eventName = '';
@@ -911,18 +924,10 @@ function parseDoubaoSseBlock(rawBlock) {
   };
 }
 
-async function proxySseStreamToClient(upstreamRes, req, res) {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no'
-  });
-  if (typeof res.flushHeaders === 'function') {
-    res.flushHeaders();
+async function proxySseStreamToClient(upstreamRes, req, res, options = {}) {
+  if (!options.skipInitialHeaders) {
+    startSseResponse(res);
   }
-  res.write(': connected\n\n');
-
   if (!upstreamRes.body) {
     writeSseEvent(res, 'error', { error: '上游未返回可读取的流' });
     res.end();
@@ -1986,6 +1991,8 @@ async function handleVolcVoiceClone(req, res) {
 async function handleDoubaoMultimodal(req, res) {
   const upstreamUrl = 'https://ark.cn-beijing.volces.com/api/v3/responses';
   let stage = 'init';
+  let shouldStream = false;
+  let waitingHeartbeat = null;
 
   try {
     stage = 'read_body';
@@ -1993,7 +2000,7 @@ async function handleDoubaoMultimodal(req, res) {
       ? await readMultipartFormBody(req)
       : await readRequestBody(req);
     const { model, image, imageMimeType, video, videoMimeType, question, history, mediaKind, file } = body;
-    const shouldStream = wantsDoubaoStream(body, req);
+    shouldStream = wantsDoubaoStream(body, req);
     const resolvedApiKey = readValue(SERVER_CONFIG.arkApiKey);
     const resolvedQuestion = readValue(question);
     const resolvedModel = readValue(model) || DEFAULT_DOUBAO_MULTIMODAL_MODEL;
@@ -2119,30 +2126,50 @@ async function handleDoubaoMultimodal(req, res) {
       text: promptText
     });
 
-    stage = 'request_upstream';
-    const upstreamRes = await fetch(upstreamUrl, {
+    const requestPayload = {
+      model: resolvedModel,
+      stream: shouldStream,
+      input: [
+        {
+          role: 'user',
+          content
+        }
+      ]
+    };
+    const requestInit = {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${resolvedApiKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        model: resolvedModel,
-        stream: shouldStream,
-        input: [
-          {
-            role: 'user',
-            content
-          }
-        ]
-      })
-    });
+      body: JSON.stringify(requestPayload)
+    };
+
+    if (shouldStream) {
+      stage = 'open_stream_to_client';
+      startSseResponse(res);
+      writeSseEvent(res, 'status', { stage: 'connecting_upstream' });
+      waitingHeartbeat = setInterval(() => {
+        try {
+          res.write(': waiting_upstream\n\n');
+        } catch {}
+      }, 15000);
+    }
+
+    stage = 'request_upstream';
+    const upstreamRes = await fetch(upstreamUrl, requestInit);
+
+    if (waitingHeartbeat) {
+      clearInterval(waitingHeartbeat);
+      waitingHeartbeat = null;
+    }
 
     const upstreamContentType = String(upstreamRes.headers.get('content-type') || '').toLowerCase();
 
     if (shouldStream && upstreamRes.ok && upstreamContentType.includes('text/event-stream')) {
       stage = 'proxy_stream';
-      await proxySseStreamToClient(upstreamRes, req, res);
+      writeSseEvent(res, 'status', { stage: 'streaming_response' });
+      await proxySseStreamToClient(upstreamRes, req, res, { skipInitialHeaders: true });
       return;
     }
 
@@ -2166,10 +2193,25 @@ async function handleDoubaoMultimodal(req, res) {
         bodyKeys: body && typeof body === 'object' ? Object.keys(body) : [],
         upstreamBody: responseText
       });
+      if (shouldStream) {
+        writeSseEvent(res, 'error', {
+          error: json?.error?.message || json?.message || json?.code || `方舟 Responses API 请求失败，上游状态码 ${upstreamRes.status}`
+        });
+        res.end();
+        return;
+      }
       sendJson(res, upstreamRes.status, {
         error: json?.error?.message || json?.message || json?.code || `方舟 Responses API 请求失败，上游状态码 ${upstreamRes.status}`,
         upstream: json || responseText
       });
+      return;
+    }
+
+    if (shouldStream) {
+      writeSseEvent(res, 'answer.done', {
+        answer: extractResponsesText(json)
+      });
+      res.end();
       return;
     }
 
@@ -2180,6 +2222,9 @@ async function handleDoubaoMultimodal(req, res) {
       response: json
     });
   } catch (error) {
+    if (typeof waitingHeartbeat !== 'undefined' && waitingHeartbeat) {
+      clearInterval(waitingHeartbeat);
+    }
     console.error('[doubao multimodal] request failed', {
       stage,
       message: error?.message || '',
@@ -2193,6 +2238,14 @@ async function handleDoubaoMultimodal(req, res) {
       error.message === '请求体不是合法 JSON' ||
       error.message === '请求体过大' ||
       error.message === '上传文件过大';
+
+    if (shouldStream) {
+      writeSseEvent(res, 'error', {
+        error: isBodyParseOrSizeError ? error.message : (error.message || `豆包多模态理解失败（阶段: ${stage}）`)
+      });
+      res.end();
+      return;
+    }
 
     sendJson(res, isBodyParseOrSizeError ? 400 : 500, {
       error: isBodyParseOrSizeError ? error.message : (error.message || `豆包多模态理解失败（阶段: ${stage}）`),
