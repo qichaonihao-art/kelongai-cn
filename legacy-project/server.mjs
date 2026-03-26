@@ -26,6 +26,7 @@ const SHOULD_USE_REACT_FRONTEND = FRONTEND_MODE === 'react';
 const MAX_MULTIMODAL_UPLOAD_BYTES = 170 * 1024 * 1024;
 const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 45 * 1024 * 1024;
 const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
+const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-lite-260215';
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
 const ACTIVE_FRONTEND_DIR = SHOULD_USE_REACT_FRONTEND ? REACT_FRONTEND_DIR : LEGACY_FRONTEND_DIR;
@@ -1995,7 +1996,7 @@ async function handleDoubaoMultimodal(req, res) {
     const shouldStream = wantsDoubaoStream(body, req);
     const resolvedApiKey = readValue(SERVER_CONFIG.arkApiKey);
     const resolvedQuestion = readValue(question);
-    const resolvedModel = readValue(model) || 'doubao-seed-2-0-pro-260215';
+    const resolvedModel = readValue(model) || DEFAULT_DOUBAO_MULTIMODAL_MODEL;
 
     if (!resolvedApiKey) {
       sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
@@ -2014,12 +2015,7 @@ async function handleDoubaoMultimodal(req, res) {
     }
 
     const promptText = buildDoubaoPromptWithHistory(resolvedQuestion, history);
-    const content = [
-      {
-        type: 'input_text',
-        text: promptText
-      }
-    ];
+    const content = [];
 
     if (readValue(image)) {
       stage = 'normalize_image';
@@ -2056,7 +2052,13 @@ async function handleDoubaoMultimodal(req, res) {
     if (hasUploadedFile) {
       stage = 'normalize_uploaded_media';
       const resolvedMediaKind = mediaKind === 'image' ? 'image' : 'video';
-      if (resolvedMediaKind === 'video' && file.size > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+      const canExposePublicVideoUrl = resolvedMediaKind === 'video' && !!resolvePublicBaseUrl(req);
+      const shouldPreferPublicVideoUrl =
+        resolvedMediaKind === 'video' &&
+        canExposePublicVideoUrl &&
+        file.size > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES;
+
+      if (shouldPreferPublicVideoUrl) {
         stage = 'create_public_media_url';
         const publicMedia = await createPublicMediaUrl({ file, req });
         if (!publicMedia.ok) {
@@ -2098,7 +2100,24 @@ async function handleDoubaoMultimodal(req, res) {
               }
         );
       }
+
+      if (resolvedMediaKind === 'video' && file.size > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES && !canExposePublicVideoUrl) {
+        sendJson(res, 400, {
+          error: '当前环境没有可供方舟访问的公网地址。请配置 PUBLIC_BASE_URL 为你的线上域名或可公网访问的隧道地址，再重试大视频分析。',
+          debug: {
+            stage: 'missing_public_base_url_for_large_video',
+            fileSize: file.size,
+            maxInlineVideoSize: MAX_VIDEO_ORIGINAL_UPLOAD_BYTES
+          }
+        });
+        return;
+      }
     }
+
+    content.push({
+      type: 'input_text',
+      text: promptText
+    });
 
     stage = 'request_upstream';
     const upstreamRes = await fetch(upstreamUrl, {

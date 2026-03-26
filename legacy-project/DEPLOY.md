@@ -161,15 +161,29 @@ server {
     listen 80;
     server_name your-domain.com;
 
+    client_max_body_size 200m;
+
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        send_timeout 600s;
     }
 }
 ```
+
+说明：
+
+- 创意创作的视频分析建议保留较长超时，否则很容易在 Nginx 层先收到 `504 Gateway Timeout`
+- `proxy_buffering off` 对 SSE 流式返回尤其重要，否则浏览器可能一直收不到增量数据
+- `client_max_body_size` 需要大于你允许上传的视频大小
 
 ## 六、回滚方式
 
