@@ -1993,6 +1993,8 @@ async function handleDoubaoMultimodal(req, res) {
   let stage = 'init';
   let shouldStream = false;
   let waitingHeartbeat = null;
+  const requestId = randomBytes(6).toString('hex');
+  const requestStartedAt = Date.now();
 
   try {
     stage = 'read_body';
@@ -2004,6 +2006,21 @@ async function handleDoubaoMultimodal(req, res) {
     const resolvedApiKey = readValue(SERVER_CONFIG.arkApiKey);
     const resolvedQuestion = readValue(question);
     const resolvedModel = readValue(model) || DEFAULT_DOUBAO_MULTIMODAL_MODEL;
+    const hasUploadedFile = file instanceof File && file.size > 0;
+
+    console.log('[doubao multimodal] request start', {
+      requestId,
+      stage,
+      stream: shouldStream,
+      model: resolvedModel,
+      hasImageField: !!readValue(image),
+      hasVideoField: !!readValue(video),
+      hasUploadedFile,
+      mediaKind: mediaKind || '',
+      fileName: file?.name || '',
+      fileType: file?.type || '',
+      fileSize: file?.size || 0
+    });
 
     if (!resolvedApiKey) {
       sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
@@ -2015,7 +2032,6 @@ async function handleDoubaoMultimodal(req, res) {
       return;
     }
 
-    const hasUploadedFile = file instanceof File && file.size > 0;
     if ((readValue(image) && readValue(video)) || (hasUploadedFile && (readValue(image) || readValue(video)))) {
       sendJson(res, 400, { error: '当前一次请求仅支持携带一张图片或一个视频，请二选一上传。' });
       return;
@@ -2065,6 +2081,18 @@ async function handleDoubaoMultimodal(req, res) {
         canExposePublicVideoUrl &&
         file.size > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES;
 
+      console.log('[doubao multimodal] media route selected', {
+        requestId,
+        stage,
+        mediaKind: resolvedMediaKind,
+        fileName: file.name || '',
+        fileType: file.type || '',
+        fileSize: file.size || 0,
+        canExposePublicVideoUrl,
+        shouldPreferPublicVideoUrl,
+        inlineVideoLimit: MAX_VIDEO_ORIGINAL_UPLOAD_BYTES
+      });
+
       if (shouldPreferPublicVideoUrl) {
         stage = 'create_public_media_url';
         const publicMedia = await createPublicMediaUrl({ file, req });
@@ -2080,6 +2108,7 @@ async function handleDoubaoMultimodal(req, res) {
         }
 
         console.log('[doubao multimodal] using public video url', {
+          requestId,
           stage,
           fileName: file.name || '',
           originalFileSize: publicMedia.originalSize,
@@ -2148,6 +2177,11 @@ async function handleDoubaoMultimodal(req, res) {
     if (shouldStream) {
       stage = 'open_stream_to_client';
       startSseResponse(res);
+      console.log('[doubao multimodal] sse opened', {
+        requestId,
+        stage,
+        elapsedMs: Date.now() - requestStartedAt
+      });
       writeSseEvent(res, 'status', { stage: 'connecting_upstream' });
       waitingHeartbeat = setInterval(() => {
         try {
@@ -2165,9 +2199,21 @@ async function handleDoubaoMultimodal(req, res) {
     }
 
     const upstreamContentType = String(upstreamRes.headers.get('content-type') || '').toLowerCase();
+    console.log('[doubao multimodal] upstream response received', {
+      requestId,
+      stage,
+      upstreamStatus: upstreamRes.status,
+      upstreamContentType,
+      elapsedMs: Date.now() - requestStartedAt
+    });
 
     if (shouldStream && upstreamRes.ok && upstreamContentType.includes('text/event-stream')) {
       stage = 'proxy_stream';
+      console.log('[doubao multimodal] proxying upstream sse', {
+        requestId,
+        stage,
+        elapsedMs: Date.now() - requestStartedAt
+      });
       writeSseEvent(res, 'status', { stage: 'streaming_response' });
       await proxySseStreamToClient(upstreamRes, req, res, { skipInitialHeaders: true });
       return;
@@ -2182,6 +2228,7 @@ async function handleDoubaoMultimodal(req, res) {
 
     if (!upstreamRes.ok) {
       console.error('[doubao multimodal] upstream non-200 response', {
+        requestId,
         stage,
         status: upstreamRes.status,
         contentType: upstreamContentType,
@@ -2208,6 +2255,13 @@ async function handleDoubaoMultimodal(req, res) {
     }
 
     if (shouldStream) {
+      console.log('[doubao multimodal] request complete', {
+        requestId,
+        stage,
+        streamed: false,
+        answerLength: extractResponsesText(json).length,
+        elapsedMs: Date.now() - requestStartedAt
+      });
       writeSseEvent(res, 'answer.done', {
         answer: extractResponsesText(json)
       });
@@ -2215,6 +2269,13 @@ async function handleDoubaoMultimodal(req, res) {
       return;
     }
 
+    console.log('[doubao multimodal] request complete', {
+      requestId,
+      stage,
+      streamed: false,
+      answerLength: extractResponsesText(json).length,
+      elapsedMs: Date.now() - requestStartedAt
+    });
     sendJson(res, 200, {
       ok: true,
       model: resolvedModel,
@@ -2226,13 +2287,15 @@ async function handleDoubaoMultimodal(req, res) {
       clearInterval(waitingHeartbeat);
     }
     console.error('[doubao multimodal] request failed', {
+      requestId,
       stage,
       message: error?.message || '',
       stack: error?.stack || '',
       contentType: req.headers['content-type'] || '',
       contentLength: req.headers['content-length'] || '',
       method: req.method || '',
-      url: req.url || ''
+      url: req.url || '',
+      elapsedMs: Date.now() - requestStartedAt
     });
     const isBodyParseOrSizeError =
       error.message === '请求体不是合法 JSON' ||
