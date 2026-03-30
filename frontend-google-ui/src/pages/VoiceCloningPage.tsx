@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   ChevronDown,
   ChevronUp,
@@ -81,6 +81,8 @@ function getPlatformLabel(provider: VoicePlatform): '智谱' | '阿里云' | '�
 export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const activeAudioIdRef = useRef<string | null>(null);
+  const progressAnimationFrameRef = useRef<number | null>(null);
   const generatedAudiosRef = useRef<GeneratedAudio[]>([]);
   const [isApiConfigOpen, setIsApiConfigOpen] = useState(false);
   const [isMyVoicesOpen, setIsMyVoicesOpen] = useState(false);
@@ -105,10 +107,19 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [voices, setVoices] = useState<ClonedVoice[]>(loadSavedVoices);
   const [activeVoiceId, setActiveVoiceId] = useState<string | null>(null);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [playbackProgress, setPlaybackProgress] = useState<Record<string, number>>({});
 
   const selectedVoice = useMemo(
     () => voices.find((voice) => voice.id === activeVoiceId) || null,
     [activeVoiceId, voices],
+  );
+  const voicesByProvider = useMemo(
+    () => ({
+      aliyun: voices.filter((voice) => voice.provider === 'aliyun'),
+      volcengine: voices.filter((voice) => voice.provider === 'volcengine'),
+      zhipu: voices.filter((voice) => voice.provider === 'zhipu'),
+    }),
+    [voices],
   );
   const isVoiceReady = !!selectedVoice && cloneStatus === 'done';
 
@@ -177,6 +188,10 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
 
   useEffect(() => {
     return () => {
+      if (progressAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(progressAnimationFrameRef.current);
+      }
+
       if (activeAudioRef.current) {
         activeAudioRef.current.pause();
         activeAudioRef.current = null;
@@ -374,39 +389,163 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     }
   }
 
+  function syncPlaybackProgress(audioId: string, player: HTMLAudioElement) {
+    const nextProgress =
+      Number.isFinite(player.duration) && player.duration > 0
+        ? Math.min(100, (player.currentTime / player.duration) * 100)
+        : 0;
+
+    setPlaybackProgress((previous) => {
+      if (previous[audioId] === nextProgress) {
+        return previous;
+      }
+
+      return { ...previous, [audioId]: nextProgress };
+    });
+  }
+
+  function stopProgressLoop() {
+    if (progressAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(progressAnimationFrameRef.current);
+      progressAnimationFrameRef.current = null;
+    }
+  }
+
+  function startProgressLoop(audioId: string, player: HTMLAudioElement) {
+    stopProgressLoop();
+
+    const step = () => {
+      if (activeAudioRef.current !== player || activeAudioIdRef.current !== audioId || player.paused) {
+        progressAnimationFrameRef.current = null;
+        return;
+      }
+
+      syncPlaybackProgress(audioId, player);
+      progressAnimationFrameRef.current = window.requestAnimationFrame(step);
+    };
+
+    syncPlaybackProgress(audioId, player);
+    progressAnimationFrameRef.current = window.requestAnimationFrame(step);
+  }
+
+  function attachAudioPlayerEvents(player: HTMLAudioElement, audioId: string) {
+    player.onplay = () => {
+      setPlayingAudioId(audioId);
+      startProgressLoop(audioId, player);
+    };
+
+    player.onloadedmetadata = () => {
+      syncPlaybackProgress(audioId, player);
+    };
+
+    player.onpause = () => {
+      stopProgressLoop();
+      syncPlaybackProgress(audioId, player);
+      setPlayingAudioId((current) => (current === audioId ? null : current));
+    };
+
+    player.onended = () => {
+      stopProgressLoop();
+      setPlaybackProgress((previous) => ({ ...previous, [audioId]: 0 }));
+      setPlayingAudioId(null);
+      activeAudioRef.current = null;
+      activeAudioIdRef.current = null;
+    };
+
+    player.onerror = () => {
+      stopProgressLoop();
+      setPlaybackProgress((previous) => ({ ...previous, [audioId]: 0 }));
+      setPlayingAudioId(null);
+      activeAudioRef.current = null;
+      activeAudioIdRef.current = null;
+    };
+  }
+
+  function getOrCreateAudioPlayer(audio: GeneratedAudio) {
+    const currentPlayer =
+      activeAudioRef.current && activeAudioIdRef.current === audio.id
+        ? activeAudioRef.current
+        : null;
+
+    if (currentPlayer) {
+      return currentPlayer;
+    }
+
+    const player = new Audio(audio.audioUrl);
+    attachAudioPlayerEvents(player, audio.id);
+    activeAudioRef.current = player;
+    activeAudioIdRef.current = audio.id;
+    return player;
+  }
+
   async function handlePlayAudio(audio: GeneratedAudio) {
     if (playingAudioId === audio.id && activeAudioRef.current) {
       activeAudioRef.current.pause();
-      activeAudioRef.current = null;
       setPlayingAudioId(null);
       return;
     }
 
-    if (activeAudioRef.current) {
+    if (activeAudioRef.current && activeAudioIdRef.current !== audio.id) {
       activeAudioRef.current.pause();
       activeAudioRef.current = null;
+      activeAudioIdRef.current = null;
     }
 
-    const player = new Audio(audio.audioUrl);
-    activeAudioRef.current = player;
-    setPlayingAudioId(audio.id);
-
-    player.onended = () => {
-      setPlayingAudioId(null);
-      activeAudioRef.current = null;
-    };
-
-    player.onerror = () => {
-      setPlayingAudioId(null);
-      activeAudioRef.current = null;
-    };
+    const player = getOrCreateAudioPlayer(audio);
 
     try {
       await player.play();
     } catch {
       setPlayingAudioId(null);
       activeAudioRef.current = null;
+      activeAudioIdRef.current = null;
       setGenerateError("音频播放失败，请重新生成或下载后播放。");
+    }
+  }
+
+  async function handleSeekAudio(audio: GeneratedAudio, event: MouseEvent<HTMLButtonElement>) {
+    const bar = event.currentTarget;
+    const rect = bar.getBoundingClientRect();
+    const ratio = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0;
+    const clampedRatio = Math.min(1, Math.max(0, ratio));
+    const previousPlayer =
+      activeAudioRef.current && activeAudioIdRef.current !== audio.id
+        ? activeAudioRef.current
+        : null;
+
+    if (previousPlayer) {
+      previousPlayer.pause();
+      activeAudioRef.current = null;
+      activeAudioIdRef.current = null;
+    }
+
+    const player = getOrCreateAudioPlayer(audio);
+
+    if (Number.isFinite(player.duration) && player.duration > 0) {
+      player.currentTime = player.duration * clampedRatio;
+      syncPlaybackProgress(audio.id, player);
+    } else {
+      const previousOnLoadedMetadata = player.onloadedmetadata;
+      player.onloadedmetadata = () => {
+        previousOnLoadedMetadata?.call(player, new Event('loadedmetadata'));
+        const nextTime =
+          Number.isFinite(player.duration) && player.duration > 0
+            ? player.duration * clampedRatio
+            : 0;
+
+        player.currentTime = nextTime;
+        syncPlaybackProgress(audio.id, player);
+        player.onloadedmetadata = previousOnLoadedMetadata;
+      };
+    }
+
+    try {
+      await player.play();
+    } catch {
+      setPlayingAudioId(null);
+      activeAudioRef.current = null;
+      activeAudioIdRef.current = null;
+      setGenerateError("音频跳转失败，请重新播放后再试。");
     }
   }
 
@@ -428,9 +567,20 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       return previous.filter((item) => item.id !== audioId);
     });
 
+    setPlaybackProgress((previous) => {
+      if (!(audioId in previous)) {
+        return previous;
+      }
+
+      const next = { ...previous };
+      delete next[audioId];
+      return next;
+    });
+
     if (playingAudioId === audioId && activeAudioRef.current) {
       activeAudioRef.current.pause();
       activeAudioRef.current = null;
+      activeAudioIdRef.current = null;
       setPlayingAudioId(null);
     }
   }
@@ -743,13 +893,21 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                       <div className="flex items-center justify-end text-[10px] font-bold text-slate-400 uppercase tracking-wider gap-4">
                         <span className="font-mono">{audio.timestamp} | {audio.duration}</span>
                       </div>
-                      <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden relative">
+                      <button
+                        type="button"
+                        className="group relative block h-5 w-full cursor-pointer"
+                        onClick={(event) => void handleSeekAudio(audio, event)}
+                        aria-label={`跳转 ${audio.voiceName || '音频'} 的播放进度`}
+                      >
+                        <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-slate-200 overflow-hidden">
                         <motion.div
-                          initial={{ width: 0 }}
-                          animate={{ width: playingAudioId === audio.id ? '100%' : '40%' }}
+                          initial={false}
+                          animate={{ width: `${playbackProgress[audio.id] ?? 0}%` }}
+                          transition={{ ease: "linear", duration: 0.12 }}
                           className="absolute inset-y-0 left-0 bg-indigo-600"
                         />
-                      </div>
+                        </div>
+                      </button>
                     </div>
                     <div className="flex gap-2">
                       <Button
@@ -819,47 +977,118 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                     还没有创建好的音色。先上传一段样本音频并完成克隆吧。
                   </div>
                 ) : (
-                  voices.map((voice) => (
-                    <div
-                      key={voice.id}
+                  ([
+                    {
+                      key: 'aliyun',
+                      title: '阿里云',
+                      voices: voicesByProvider.aliyun,
+                      sectionClassName: 'border-sky-200 bg-sky-50/85 shadow-[0_14px_30px_rgba(14,165,233,0.10)]',
+                      headerClassName: 'border-sky-200/80 bg-white/85',
+                      accentClassName: 'bg-sky-500',
+                      titleClassName: 'text-sky-900',
+                      countClassName: 'text-sky-600',
+                      emptyClassName: 'border-sky-100 bg-white/80 text-sky-500/80',
+                    },
+                    {
+                      key: 'volcengine',
+                      title: '火山引擎',
+                      voices: voicesByProvider.volcengine,
+                      sectionClassName: 'border-amber-200 bg-amber-50/85 shadow-[0_14px_30px_rgba(245,158,11,0.10)]',
+                      headerClassName: 'border-amber-200/80 bg-white/85',
+                      accentClassName: 'bg-amber-500',
+                      titleClassName: 'text-amber-900',
+                      countClassName: 'text-amber-600',
+                      emptyClassName: 'border-amber-100 bg-white/80 text-amber-600/80',
+                    },
+                    {
+                      key: 'zhipu',
+                      title: '智谱',
+                      voices: voicesByProvider.zhipu,
+                      sectionClassName: 'border-emerald-200 bg-emerald-50/85 shadow-[0_14px_30px_rgba(16,185,129,0.10)]',
+                      headerClassName: 'border-emerald-200/80 bg-white/85',
+                      accentClassName: 'bg-emerald-500',
+                      titleClassName: 'text-emerald-900',
+                      countClassName: 'text-emerald-600',
+                      emptyClassName: 'border-emerald-100 bg-white/80 text-emerald-600/80',
+                    },
+                  ] as const).map((section) => (
+                    <section
+                      key={section.key}
                       className={cn(
-                        "p-4 rounded-xl border transition-all group",
-                        activeVoiceId === voice.id
-                          ? "border-indigo-200 bg-indigo-50/20"
-                          : "border-slate-200 hover:border-indigo-200 hover:bg-indigo-50/10"
+                        "rounded-[1.5rem] border-2 p-4 space-y-3",
+                        section.sectionClassName,
                       )}
                     >
-                      <div className="flex items-center justify-between mb-2 gap-4">
-                        <div>
-                          <div className="font-medium text-slate-900">{voice.providerLabel}</div>
-                          <div className="text-[10px] text-slate-400 mt-1">{voice.name} · {voice.createdAt}</div>
-                        </div>
-                        {activeVoiceId === voice.id && (
-                          <span className="text-[10px] font-bold text-indigo-600">当前使用</span>
+                      <div
+                        className={cn(
+                          "flex items-center justify-between rounded-xl border px-3 py-2.5",
+                          section.headerClassName,
                         )}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className={cn("h-5 w-1.5 rounded-full", section.accentClassName)} />
+                          <h3 className={cn("text-sm font-black tracking-tight", section.titleClassName)}>
+                            {section.title}
+                          </h3>
+                        </div>
+                        <span className={cn("text-[10px] font-bold uppercase tracking-wider", section.countClassName)}>
+                          {section.voices.length} 个音色
+                        </span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-9 rounded-xl px-4 text-xs font-bold text-slate-700 bg-white border border-slate-200 shadow-[6px_6px_14px_rgba(15,23,42,0.08),-4px_-4px_10px_rgba(255,255,255,0.95)] hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 active:shadow-[inset_3px_3px_8px_rgba(15,23,42,0.10),inset_-3px_-3px_8px_rgba(255,255,255,0.95)] transition-all"
-                          onClick={() => {
-                            setActiveVoiceId(voice.id);
-                            setIsMyVoicesOpen(false);
-                          }}
-                        >
-                          使用此音色
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 px-2 text-xs text-red-500"
-                          onClick={() => handleDeleteVoice(voice.id)}
-                        >
-                          删除
-                        </Button>
-                      </div>
-                    </div>
+
+                      {section.voices.length === 0 ? (
+                        <div className={cn("rounded-xl border border-dashed px-4 py-5 text-center text-xs", section.emptyClassName)}>
+                          暂无 {section.title} 音色
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {section.voices.map((voice) => (
+                            <div
+                              key={voice.id}
+                              className={cn(
+                                "flex items-center justify-between gap-3 rounded-xl border px-3 py-2 transition-all group bg-white/85",
+                                activeVoiceId === voice.id
+                                  ? "border-indigo-200 bg-indigo-50/20"
+                                  : "border-slate-200 hover:border-indigo-200 hover:bg-indigo-50/10"
+                              )}
+                            >
+                              <div className="min-w-0 flex-1 flex items-center gap-3">
+                                {activeVoiceId === voice.id && (
+                                  <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-600">
+                                    当前使用
+                                  </span>
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-sm font-medium text-slate-900">{voice.name}</div>
+                                  <div className="truncate text-[10px] text-slate-400">{voice.createdAt}</div>
+                                </div>
+                              </div>
+                              <div className="shrink-0 flex items-center gap-1.5">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 rounded-lg px-3 text-[11px] font-bold text-slate-700 bg-white border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 transition-all"
+                                  onClick={() => {
+                                    setActiveVoiceId(voice.id);
+                                    setIsMyVoicesOpen(false);
+                                  }}
+                                >
+                                  使用此音色
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 rounded-lg px-2 text-[11px] text-red-500"
+                                  onClick={() => handleDeleteVoice(voice.id)}
+                                >
+                                  删除
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
                   ))
                 )}
               </div>
