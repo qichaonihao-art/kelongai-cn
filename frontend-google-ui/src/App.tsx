@@ -8,9 +8,10 @@ import LoginPage from './pages/LoginPage';
 import HomePage from './pages/HomePage';
 import VoiceCloningPage from './pages/VoiceCloningPage';
 import CreativeCreationPage from './pages/CreativeCreationPage';
+import DouyinDownloaderPage from './pages/DouyinDownloaderPage';
 import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
 
-type Page = 'login' | 'home' | 'voice' | 'creative';
+type Page = 'login' | 'home' | 'voice' | 'creative' | 'douyin';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
@@ -47,7 +48,7 @@ export default function App() {
     return result;
   };
 
-  const handleNavigate = (page: 'voice' | 'creative') => {
+  const handleNavigate = (page: 'voice' | 'creative' | 'douyin') => {
     setCurrentPage(page);
   };
 
@@ -78,6 +79,12 @@ export default function App() {
         <CreativeCreationPage 
           onBack={handleBackToHome} 
           onLogout={handleLogout} 
+        />
+      )}
+      {currentPage === 'douyin' && (
+        <DouyinDownloaderPage
+          onBack={handleBackToHome}
+          onLogout={handleLogout}
         />
       )}
     </div>

@@ -46,8 +46,12 @@ const SERVER_CONFIG = {
   arkApiKey: process.env.ARK_API_KEY || '',
   volcAppKey: process.env.VOLCENGINE_APP_KEY || '',
   volcAccessKey: process.env.VOLCENGINE_ACCESS_KEY || '',
-  volcSpeakerId: process.env.VOLCENGINE_SPEAKER_ID || ''
+  volcSpeakerId: process.env.VOLCENGINE_SPEAKER_ID || '',
+  tikhubApiToken: process.env.TIKHUB_API_TOKEN || ''
 };
+
+const DOUYIN_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
+const TIKHUB_API_BASE_URL = 'https://api.tikhub.io';
 
 function readBooleanEnv(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -503,6 +507,7 @@ function handleConfigStatus(req, res) {
       volcAppKey: !!readValue(SERVER_CONFIG.volcAppKey),
       volcAccessKey: !!readValue(SERVER_CONFIG.volcAccessKey),
       volcSpeakerId: !!readValue(SERVER_CONFIG.volcSpeakerId),
+      tikhubApiToken: !!readValue(SERVER_CONFIG.tikhubApiToken),
       voiceCloneMockMode: VOICE_CLONE_MOCK_MODE,
       publicBaseUrl: !!publicBaseUrl
     },
@@ -534,6 +539,178 @@ function parseJsonString(value, fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+function createRequestId(prefix) {
+  return `${prefix}_${Date.now().toString(36)}_${randomBytes(4).toString('hex')}`;
+}
+
+function normalizeDouyinInput(value) {
+  return String(value || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .trim();
+}
+
+function extractUrlsFromText(value) {
+  const matches = normalizeDouyinInput(value).match(/https?:\/\/[^\s<>"'`，。；！!？?）)\]}]+/gi);
+  return matches ? matches.map((item) => item.trim()) : [];
+}
+
+function getUrlScore(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return -1;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const pathname = parsed.pathname.toLowerCase();
+  let score = 0;
+
+  if (hostname.includes('douyin.com')) score += 50;
+  if (hostname === 'v.douyin.com') score += 80;
+  if (pathname.includes('/video/')) score += 120;
+  if (pathname.includes('/note/')) score += 40;
+  if (/[?&](aweme_id|modal_id|item_id|group_id)=/.test(parsed.search)) score += 90;
+
+  return score;
+}
+
+function pickPreferredDouyinUrl(input) {
+  const urls = extractUrlsFromText(input);
+  if (!urls.length) {
+    return { url: '', sourceType: 'short_share_text' };
+  }
+
+  const sorted = urls
+    .map((url) => ({ url, score: getUrlScore(url) }))
+    .sort((left, right) => right.score - left.score);
+
+  if ((sorted[0]?.score ?? -1) <= 0) {
+    return { url: '', sourceType: 'short_share_text' };
+  }
+
+  const candidate = sorted[0]?.url || urls[0];
+  const trimmed = normalizeDouyinInput(input);
+
+  return {
+    url: candidate,
+    sourceType: trimmed === candidate && /douyin\.com\/video\//i.test(candidate) ? 'web_url' : 'short_share_text'
+  };
+}
+
+function extractDouyinAwemeId(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    const pathname = parsed.pathname;
+    const pathMatch = pathname.match(/\/(?:video|note)\/(\d+)/i);
+    if (pathMatch?.[1]) return pathMatch[1];
+
+    for (const key of ['aweme_id', 'modal_id', 'item_id', 'group_id']) {
+      const value = parsed.searchParams.get(key);
+      if (value && /^\d+$/.test(value)) {
+        return value;
+      }
+    }
+  } catch {}
+
+  return '';
+}
+
+async function resolveRedirectedUrl(rawUrl, maxRedirects = 5) {
+  let currentUrl = rawUrl;
+
+  for (let step = 0; step < maxRedirects; step += 1) {
+    const response = await fetch(currentUrl, {
+      method: 'GET',
+      redirect: 'manual',
+      headers: {
+        'user-agent': DOUYIN_USER_AGENT,
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8'
+      }
+    });
+
+    if (response.status < 300 || response.status >= 400) {
+      return currentUrl;
+    }
+
+    const location = response.headers.get('location');
+    if (!location) {
+      return currentUrl;
+    }
+
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+
+  return currentUrl;
+}
+
+async function callTikHubHighQualityPlayUrl({ shareUrl, awemeId, requestId }) {
+  const token = readValue(SERVER_CONFIG.tikhubApiToken);
+  if (!token) {
+    throw new Error('服务端未配置 TIKHUB_API_TOKEN');
+  }
+
+  const searchParams = new URLSearchParams();
+  if (shareUrl) searchParams.set('share_url', shareUrl);
+  if (awemeId) searchParams.set('aweme_id', awemeId);
+
+  const upstreamUrl = `${TIKHUB_API_BASE_URL}/api/v1/douyin/web/fetch_video_high_quality_play_url?${searchParams.toString()}`;
+  const upstreamRes = await fetch(upstreamUrl, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/json',
+      'User-Agent': DOUYIN_USER_AGENT
+    }
+  });
+
+  const responseText = await upstreamRes.text();
+  let json = null;
+
+  try {
+    json = responseText ? JSON.parse(responseText) : null;
+  } catch {}
+
+  if (!upstreamRes.ok) {
+    console.error('[douyin resolve] TikHub upstream failed', {
+      requestId,
+      status: upstreamRes.status,
+      shareUrl,
+      awemeId,
+      upstreamBody: responseText
+    });
+    throw new Error(json?.message || json?.error?.message || `TikHub 请求失败，上游状态码 ${upstreamRes.status}`);
+  }
+
+  const payload = json?.data && typeof json.data === 'object' ? json.data : json;
+  const downloadUrl = readValue(payload?.original_video_url);
+  const videoId = readValue(payload?.video_id, payload?.aweme_id, awemeId);
+
+  if (!downloadUrl) {
+    console.error('[douyin resolve] TikHub response missing original_video_url', {
+      requestId,
+      shareUrl,
+      awemeId,
+      upstreamBody: responseText
+    });
+    throw new Error('TikHub 返回成功，但缺少 original_video_url');
+  }
+
+  return {
+    videoId,
+    downloadUrl,
+    videoData: payload?.video_data && typeof payload.video_data === 'object' ? payload.video_data : payload || null
+  };
+}
+
+async function resolveDouyinViaWorkDataExtension() {
+  // Reserved for future fallback support:
+  // TikHub "根据分享链接获取单个作品数据" can be wired here if MVP fallback needs more resilience.
+  return null;
 }
 
 function isMultipartFormRequest(req) {
@@ -2319,6 +2496,110 @@ async function handleDoubaoMultimodal(req, res) {
   }
 }
 
+async function handleDouyinResolveDownload(req, res) {
+  const requestId = createRequestId('douyin');
+  const startedAt = Date.now();
+  let shareUrl = '';
+  let normalizedUrl = '';
+  let awemeId = '';
+
+  try {
+    const body = await readRequestBody(req);
+    const input = normalizeDouyinInput(body?.input);
+    if (!input) {
+      sendJson(res, 400, { error: '请先提供抖音链接或分享文本' });
+      return;
+    }
+
+    const extracted = pickPreferredDouyinUrl(input);
+    shareUrl = extracted.url;
+    if (!shareUrl) {
+      sendJson(res, 400, { error: '未从输入内容中提取到可用链接' });
+      return;
+    }
+
+    console.log('[douyin resolve] request received', {
+      requestId,
+      sourceType: extracted.sourceType,
+      shareUrl,
+      inputLength: input.length
+    });
+
+    try {
+      const result = await callTikHubHighQualityPlayUrl({ shareUrl, requestId });
+      console.log('[douyin resolve] share_url resolved', {
+        requestId,
+        shareUrl,
+        videoId: result.videoId,
+        elapsedMs: Date.now() - startedAt
+      });
+      sendJson(res, 200, {
+        ok: true,
+        videoId: result.videoId,
+        downloadUrl: result.downloadUrl,
+        videoData: result.videoData,
+        normalizedUrl: shareUrl,
+        sourceType: extracted.sourceType
+      });
+      return;
+    } catch (shareUrlError) {
+      console.warn('[douyin resolve] share_url attempt failed, trying fallback', {
+        requestId,
+        shareUrl,
+        message: shareUrlError?.message || ''
+      });
+    }
+
+    normalizedUrl = await resolveRedirectedUrl(shareUrl);
+    awemeId = extractDouyinAwemeId(normalizedUrl || shareUrl);
+
+    console.log('[douyin resolve] fallback prepared', {
+      requestId,
+      shareUrl,
+      normalizedUrl,
+      awemeId
+    });
+
+    if (!awemeId) {
+      await resolveDouyinViaWorkDataExtension();
+      throw new Error('短链接已展开，但仍未能提取出 aweme_id');
+    }
+
+    const fallbackResult = await callTikHubHighQualityPlayUrl({ awemeId, requestId });
+
+    console.log('[douyin resolve] aweme_id fallback resolved', {
+      requestId,
+      awemeId,
+      videoId: fallbackResult.videoId,
+      elapsedMs: Date.now() - startedAt
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      videoId: fallbackResult.videoId || awemeId,
+      downloadUrl: fallbackResult.downloadUrl,
+      videoData: fallbackResult.videoData,
+      normalizedUrl: normalizedUrl || shareUrl,
+      sourceType: extracted.sourceType
+    });
+  } catch (error) {
+    const isBadRequest = error?.message === '请先提供抖音链接或分享文本' || error?.message === '未从输入内容中提取到可用链接';
+
+    console.error('[douyin resolve] request failed', {
+      requestId,
+      shareUrl,
+      normalizedUrl,
+      awemeId,
+      message: error?.message || '',
+      stack: error?.stack || '',
+      elapsedMs: Date.now() - startedAt
+    });
+    sendJson(res, isBadRequest ? 400 : 500, {
+      error: error?.message || '抖音视频解析失败'
+    });
+  }
+}
+
 async function serveStatic(req, res, pathname) {
   let targetPath = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.normalize(path.join(RESOLVED_FRONTEND_DIR, targetPath));
@@ -2424,6 +2705,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/doubao/multimodal') {
     await handleDoubaoMultimodal(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/douyin/resolve-download') {
+    await handleDouyinResolveDownload(req, res);
     return;
   }
 

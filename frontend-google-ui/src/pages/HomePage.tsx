@@ -1,9 +1,9 @@
-import { Sparkles, Mic2, Wand2, LogOut } from "lucide-react";
+import { Sparkles, Mic2, Wand2, LogOut, Download } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import { motion } from "motion/react";
 
 interface HomePageProps {
-  onNavigate: (page: 'voice' | 'creative') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin') => void;
   onLogout: () => void;
 }
 
@@ -55,7 +55,7 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
         </motion.p>
       </motion.div>
 
-      <div className="grid md:grid-cols-2 gap-12 w-full max-w-6xl">
+      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-12 w-full max-w-7xl">
         <motion.div
           whileHover={{ y: -12, scale: 1.02 }}
           className="group relative glass-card p-12 rounded-[3.5rem] border-white/80 hover:shadow-glass-hover hover:border-indigo-300 transition-all cursor-pointer flex flex-col items-center justify-center text-center"
@@ -78,6 +78,18 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
           </div>
           <h3 className="text-3xl font-black text-slate-900 tracking-tight">创意创作</h3>
           <p className="mt-4 text-slate-500 font-medium">释放您的想象力，AI 助您高效创作</p>
+        </motion.div>
+
+        <motion.div
+          whileHover={{ y: -12, scale: 1.02 }}
+          className="group relative glass-card p-12 rounded-[3.5rem] border-white/80 hover:shadow-glass-hover hover:border-sky-300 transition-all cursor-pointer flex flex-col items-center justify-center text-center"
+          onClick={() => onNavigate('douyin')}
+        >
+          <div className="size-28 rounded-[2.5rem] bg-sky-50/70 backdrop-blur-md text-sky-600 flex items-center justify-center mb-10 group-hover:bg-sky-600 group-hover:text-white transition-all duration-700 shadow-sm group-hover:shadow-sky-200 group-hover:scale-110">
+            <Download className="size-14" />
+          </div>
+          <h3 className="text-3xl font-black text-slate-900 tracking-tight">抖音视频解析下载</h3>
+          <p className="mt-4 text-slate-500 font-medium">粘贴网页链接或分享文本，快速获取最高画质下载地址</p>
         </motion.div>
       </div>
     </div>

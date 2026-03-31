@@ -22,6 +22,8 @@
   - 火山引擎
 - 创意创作
   - 豆包多模态 `POST /api/doubao/multimodal`
+- 抖音视频解析下载
+  - `POST /api/douyin/resolve-download`
 
 ### 仍保留兜底能力
 
@@ -117,6 +119,12 @@ cp legacy-project/.env.example legacy-project/.env
   - 本地 `127.0.0.1` 只适合小文件直传，较大视频需要公网 URL 才能让方舟抓取
   - 后端会把大视频临时落盘，并通过 `/uploads/<文件名>` 暴露给方舟抓取
 
+### 抖音视频解析下载
+
+- `TIKHUB_API_TOKEN`
+  - TikHub 最高画质抖音视频解析必填
+  - 只允许配置在后端环境变量中，前端不会接触这个密钥
+
 ### 声音克隆
 
 - `ALIYUN_API_KEY`
@@ -155,6 +163,13 @@ cp legacy-project/.env.example legacy-project/.env
 3. 确认 AI 返回真实内容而不是固定模板
 4. 点击图片按钮上传一张图
 5. 再发消息，确认图片和文本一起参与本轮豆包对话
+
+### 验证抖音视频解析下载
+
+1. 登录后进入“抖音视频解析下载”
+2. 粘贴一个抖音网页直链，点击“开始解析”
+3. 确认返回 `videoId`、`normalizedUrl` 和下载按钮
+4. 再粘贴一段抖音 App 分享文案，确认短链接也能被解析
 
 ## 本地预发布验证
 

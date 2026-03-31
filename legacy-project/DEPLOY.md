@@ -104,6 +104,7 @@ http://127.0.0.1:3000
 - `VOLCENGINE_ACCESS_KEY`
 - `VOLCENGINE_SPEAKER_ID`
 - `VOICE_CLONE_MOCK_MODE=false`
+- `TIKHUB_API_TOKEN`
 
 ### 声音克隆平台说明
 
@@ -115,6 +116,11 @@ http://127.0.0.1:3000
 ### 创意创作说明
 
 - 豆包多模态依赖 `ARK_API_KEY`
+
+### 抖音视频解析下载说明
+
+- TikHub 依赖 `TIKHUB_API_TOKEN`
+- 所有 TikHub 调用都由 `server.mjs` 服务端发起，前端只调用本地 `/api/douyin/resolve-download`
 
 ## 四、服务器部署
 
