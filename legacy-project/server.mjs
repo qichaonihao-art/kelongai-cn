@@ -606,10 +606,10 @@ function extractDouyinAwemeId(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
     const pathname = parsed.pathname;
-    const pathMatch = pathname.match(/\/(?:video|note)\/(\d+)/i);
+    const pathMatch = pathname.match(/\/(?:video|note|share\/video)\/(\d+)/i);
     if (pathMatch?.[1]) return pathMatch[1];
 
-    for (const key of ['aweme_id', 'modal_id', 'item_id', 'group_id']) {
+    for (const key of ['aweme_id', 'modal_id', 'item_id', 'group_id', 'itemId']) {
       const value = parsed.searchParams.get(key);
       if (value && /^\d+$/.test(value)) {
         return value;
@@ -620,32 +620,85 @@ function extractDouyinAwemeId(rawUrl) {
   return '';
 }
 
-async function resolveRedirectedUrl(rawUrl, maxRedirects = 5) {
-  let currentUrl = rawUrl;
+function extractDouyinUrlFromHtml(html, baseUrl = '') {
+  const raw = String(html || '');
+  if (!raw) return '';
 
-  for (let step = 0; step < maxRedirects; step += 1) {
-    const response = await fetch(currentUrl, {
-      method: 'GET',
-      redirect: 'manual',
-      headers: {
-        'user-agent': DOUYIN_USER_AGENT,
-        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8'
-      }
-    });
+  const patterns = [
+    /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i,
+    /<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+name=["']og:url["'][^>]+content=["']([^"']+)["']/i,
+    /(?:window\.)?location(?:\.href|\.replace)?\s*(?:=|\()\s*["']([^"']+)["']/i,
+    /https?:\/\/www\.douyin\.com\/(?:video|note)\/\d+[^\s"'<>]*/i,
+    /https?:\/\/(?:www\.)?iesdouyin\.com\/share\/video\/\d+[^\s"'<>]*/i
+  ];
 
-    if (response.status < 300 || response.status >= 400) {
-      return currentUrl;
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    const value = match?.[1] || match?.[0] || '';
+    if (!value) continue;
+
+    try {
+      return new URL(value, baseUrl || undefined).toString();
+    } catch {
+      continue;
     }
-
-    const location = response.headers.get('location');
-    if (!location) {
-      return currentUrl;
-    }
-
-    currentUrl = new URL(location, currentUrl).toString();
   }
 
-  return currentUrl;
+  return '';
+}
+
+function extractDouyinAwemeIdFromHtml(html) {
+  const raw = String(html || '');
+  if (!raw) return '';
+
+  const patterns = [
+    /"aweme_id"\s*:\s*"(\d+)"/i,
+    /"awemeId"\s*:\s*"(\d+)"/i,
+    /"itemId"\s*:\s*"(\d+)"/i,
+    /"item_id"\s*:\s*"(\d+)"/i,
+    /"group_id"\s*:\s*"(\d+)"/i,
+    /"modal_id"\s*:\s*"(\d+)"/i,
+    /(?:itemId|group_id|modal_id|aweme_id|awemeId)\s*[:=]\s*["']?(\d+)/i,
+    /\/(?:video|note)\/(\d+)/i,
+    /\/share\/video\/(\d+)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  return '';
+}
+
+async function resolveRedirectedUrl(rawUrl) {
+  const response = await fetch(rawUrl, {
+    method: 'GET',
+    redirect: 'follow',
+    headers: {
+      'user-agent': DOUYIN_USER_AGENT,
+      'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8'
+    }
+  });
+
+  const finalUrl = response.url || rawUrl;
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  const html = contentType.includes('text/html') ? await response.text() : '';
+  const htmlUrl = extractDouyinUrlFromHtml(html, finalUrl);
+  const normalizedUrl = htmlUrl || finalUrl;
+  const awemeId =
+    extractDouyinAwemeId(normalizedUrl) ||
+    extractDouyinAwemeId(finalUrl) ||
+    extractDouyinAwemeIdFromHtml(html) ||
+    extractDouyinAwemeId(htmlUrl);
+
+  return {
+    normalizedUrl,
+    finalUrl,
+    awemeId,
+    contentType
+  };
 }
 
 async function callTikHubHighQualityPlayUrl({ shareUrl, awemeId, requestId }) {
@@ -2499,9 +2552,13 @@ async function handleDoubaoMultimodal(req, res) {
 async function handleDouyinResolveDownload(req, res) {
   const requestId = createRequestId('douyin');
   const startedAt = Date.now();
-  let shareUrl = '';
+  let originalUrl = '';
+  let finalUrl = '';
   let normalizedUrl = '';
   let awemeId = '';
+  let directShareUrlSuccess = false;
+  let expandedShareUrlSuccess = false;
+  let finalResolvePath = 'failed';
 
   try {
     const body = await readRequestBody(req);
@@ -2512,8 +2569,8 @@ async function handleDouyinResolveDownload(req, res) {
     }
 
     const extracted = pickPreferredDouyinUrl(input);
-    shareUrl = extracted.url;
-    if (!shareUrl) {
+    originalUrl = extracted.url;
+    if (!originalUrl) {
       sendJson(res, 400, { error: '未从输入内容中提取到可用链接' });
       return;
     }
@@ -2521,15 +2578,23 @@ async function handleDouyinResolveDownload(req, res) {
     console.log('[douyin resolve] request received', {
       requestId,
       sourceType: extracted.sourceType,
-      shareUrl,
+      originalUrl,
       inputLength: input.length
     });
 
     try {
-      const result = await callTikHubHighQualityPlayUrl({ shareUrl, requestId });
-      console.log('[douyin resolve] share_url resolved', {
+      const result = await callTikHubHighQualityPlayUrl({ shareUrl: originalUrl, requestId });
+      directShareUrlSuccess = true;
+      finalResolvePath = 'raw_share_url';
+
+      console.log('[douyin resolve] resolved by raw share_url', {
         requestId,
-        shareUrl,
+        originalUrl,
+        finalUrl,
+        directShareUrlSuccess,
+        expandedShareUrlSuccess,
+        extractedAwemeId: awemeId,
+        finalResolvePath,
         videoId: result.videoId,
         elapsedMs: Date.now() - startedAt
       });
@@ -2538,38 +2603,90 @@ async function handleDouyinResolveDownload(req, res) {
         videoId: result.videoId,
         downloadUrl: result.downloadUrl,
         videoData: result.videoData,
-        normalizedUrl: shareUrl,
+        normalizedUrl: originalUrl,
         sourceType: extracted.sourceType
       });
       return;
     } catch (shareUrlError) {
-      console.warn('[douyin resolve] share_url attempt failed, trying fallback', {
+      console.warn('[douyin resolve] raw share_url failed, trying expansion', {
         requestId,
-        shareUrl,
+        originalUrl,
         message: shareUrlError?.message || ''
       });
     }
 
-    normalizedUrl = await resolveRedirectedUrl(shareUrl);
-    awemeId = extractDouyinAwemeId(normalizedUrl || shareUrl);
+    const redirectInfo = await resolveRedirectedUrl(originalUrl);
+    finalUrl = redirectInfo.finalUrl || originalUrl;
+    normalizedUrl = redirectInfo.normalizedUrl || finalUrl || originalUrl;
+    awemeId = redirectInfo.awemeId || extractDouyinAwemeId(normalizedUrl || finalUrl || originalUrl);
 
-    console.log('[douyin resolve] fallback prepared', {
+    console.log('[douyin resolve] expanded share_url prepared', {
       requestId,
-      shareUrl,
+      originalUrl,
+      finalUrl,
       normalizedUrl,
-      awemeId
+      directShareUrlSuccess,
+      expandedShareUrlSuccess,
+      extractedAwemeId: awemeId,
+      finalResolvePath,
+      contentType: redirectInfo.contentType
     });
+
+    try {
+      const expandedResult = await callTikHubHighQualityPlayUrl({ shareUrl: normalizedUrl, requestId });
+      expandedShareUrlSuccess = true;
+      finalResolvePath = 'expanded_share_url';
+
+      console.log('[douyin resolve] resolved by expanded share_url', {
+        requestId,
+        originalUrl,
+        finalUrl,
+        directShareUrlSuccess,
+        expandedShareUrlSuccess,
+        extractedAwemeId: awemeId,
+        finalResolvePath,
+        videoId: expandedResult.videoId,
+        elapsedMs: Date.now() - startedAt
+      });
+
+      sendJson(res, 200, {
+        ok: true,
+        videoId: expandedResult.videoId,
+        downloadUrl: expandedResult.downloadUrl,
+        videoData: expandedResult.videoData,
+        normalizedUrl,
+        sourceType: extracted.sourceType
+      });
+      return;
+    } catch (expandedShareUrlError) {
+      console.warn('[douyin resolve] expanded share_url failed, trying aweme_id', {
+        requestId,
+        originalUrl,
+        finalUrl,
+        normalizedUrl,
+        directShareUrlSuccess,
+        expandedShareUrlSuccess,
+        extractedAwemeId: awemeId,
+        message: expandedShareUrlError?.message || ''
+      });
+    }
 
     if (!awemeId) {
       await resolveDouyinViaWorkDataExtension();
-      throw new Error('短链接已展开，但仍未能提取出 aweme_id');
+      throw new Error('短链接已展开，且 expanded share_url 解析失败，同时未能提取出 aweme_id');
     }
 
     const fallbackResult = await callTikHubHighQualityPlayUrl({ awemeId, requestId });
+    finalResolvePath = 'aweme_id';
 
     console.log('[douyin resolve] aweme_id fallback resolved', {
       requestId,
-      awemeId,
+      originalUrl,
+      finalUrl,
+      directShareUrlSuccess,
+      expandedShareUrlSuccess,
+      extractedAwemeId: awemeId,
+      finalResolvePath,
       videoId: fallbackResult.videoId,
       elapsedMs: Date.now() - startedAt
     });
@@ -2579,17 +2696,22 @@ async function handleDouyinResolveDownload(req, res) {
       videoId: fallbackResult.videoId || awemeId,
       downloadUrl: fallbackResult.downloadUrl,
       videoData: fallbackResult.videoData,
-      normalizedUrl: normalizedUrl || shareUrl,
+      normalizedUrl: normalizedUrl || finalUrl || originalUrl,
       sourceType: extracted.sourceType
     });
   } catch (error) {
     const isBadRequest = error?.message === '请先提供抖音链接或分享文本' || error?.message === '未从输入内容中提取到可用链接';
+    finalResolvePath = 'failed';
 
     console.error('[douyin resolve] request failed', {
       requestId,
-      shareUrl,
+      originalUrl,
+      finalUrl,
       normalizedUrl,
-      awemeId,
+      directShareUrlSuccess,
+      expandedShareUrlSuccess,
+      extractedAwemeId: awemeId,
+      finalResolvePath,
       message: error?.message || '',
       stack: error?.stack || '',
       elapsedMs: Date.now() - startedAt
