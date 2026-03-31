@@ -52,6 +52,7 @@ const SERVER_CONFIG = {
 
 const DOUYIN_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 const TIKHUB_API_BASE_URL = 'https://api.tikhub.io';
+const DOUYIN_RETRY_DELAYS_MS = [250, 700];
 
 function readBooleanEnv(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -701,10 +702,184 @@ async function resolveRedirectedUrl(rawUrl) {
   };
 }
 
+function summarizeUpstreamBody(value) {
+  if (!value) return '';
+  const raw = typeof value === 'string' ? value : JSON.stringify(value);
+  return raw.replace(/\s+/g, ' ').trim().slice(0, 400);
+}
+
+function extractTikHubErrorMeta(payload, fallbackText = '') {
+  if (!payload || typeof payload !== 'object') {
+    return {
+      code: '',
+      message: '',
+      detail: '',
+      summary: summarizeUpstreamBody(fallbackText)
+    };
+  }
+
+  const record = payload;
+  const nestedError = record.error && typeof record.error === 'object' ? record.error : null;
+
+  const code = readValue(
+    record.code,
+    nestedError?.code
+  );
+  const message = readValue(
+    record.message,
+    record.msg,
+    nestedError?.message,
+    nestedError?.msg
+  );
+  const detail = readValue(
+    record.detail,
+    nestedError?.detail
+  );
+
+  return {
+    code,
+    message,
+    detail,
+    summary: summarizeUpstreamBody(payload)
+  };
+}
+
+function createDouyinResolveError({
+  stage,
+  message,
+  statusCode = 500,
+  upstreamStatus = 0,
+  upstreamBodySummary = '',
+  upstreamCode = '',
+  detail = ''
+}) {
+  const error = new Error(message);
+  error.stage = stage;
+  error.statusCode = statusCode;
+  error.upstreamStatus = upstreamStatus;
+  error.upstreamBodySummary = upstreamBodySummary;
+  error.upstreamCode = upstreamCode;
+  error.detail = detail;
+  return error;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function shouldRetryDouyinResolveError(error) {
+  const stage = String(error?.stage || '');
+  const upstreamStatus = Number(error?.upstreamStatus || 0);
+  const statusCode = Number(error?.statusCode || 0);
+
+  if (stage === 'tikhub_400_invalid_share_url' || stage === 'tikhub_400_invalid_aweme_id' || stage === 'tikhub_402_payment_required') {
+    return false;
+  }
+
+  if (upstreamStatus === 400 || upstreamStatus === 402) {
+    return false;
+  }
+
+  if (upstreamStatus === 429 || upstreamStatus >= 500) {
+    return true;
+  }
+
+  if (statusCode >= 500) {
+    return true;
+  }
+
+  if (stage === 'unknown_upstream_error' || stage === 'short_link_expand_failed') {
+    return true;
+  }
+
+  return false;
+}
+
+async function retryDouyinOperation({ label, requestId, operation, shouldRetry = shouldRetryDouyinResolveError }) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= DOUYIN_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await operation(attempt + 1);
+    } catch (error) {
+      lastError = error;
+      const canRetry = attempt < DOUYIN_RETRY_DELAYS_MS.length && shouldRetry(error);
+
+      console.warn('[douyin resolve] retryable operation failed', {
+        requestId,
+        label,
+        attempt: attempt + 1,
+        canRetry,
+        stage: error?.stage || '',
+        statusCode: error?.statusCode || 0,
+        upstreamStatus: error?.upstreamStatus || 0,
+        message: error?.message || '',
+        upstreamBodySummary: error?.upstreamBodySummary || ''
+      });
+
+      if (!canRetry) {
+        throw error;
+      }
+
+      await sleep(DOUYIN_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
+  throw lastError;
+}
+
+function mapTikHubFailure({ upstreamStatus, shareUrl, awemeId, bodyMeta }) {
+  const mode = awemeId ? 'aweme_id' : 'share_url';
+  const value = awemeId || shareUrl;
+  const detailText = readValue(bodyMeta.message, bodyMeta.detail, bodyMeta.code);
+
+  if (upstreamStatus === 402) {
+    return {
+      stage: 'tikhub_402_payment_required',
+      statusCode: 402,
+      message: '当前接口余额不足或需要付费权限，请检查 TikHub 账户状态。',
+      detail: detailText || `TikHub ${mode} 请求需要付费权限`
+    };
+  }
+
+  if (upstreamStatus === 400 && shareUrl) {
+    return {
+      stage: 'tikhub_400_invalid_share_url',
+      statusCode: 400,
+      message: 'TikHub 未能解析该 share_url，请确认分享内容对应的是有效抖音作品链接。',
+      detail: detailText || `无效 share_url: ${value}`
+    };
+  }
+
+  if (upstreamStatus === 400 && awemeId) {
+    return {
+      stage: 'tikhub_400_invalid_aweme_id',
+      statusCode: 400,
+      message: '已提取到作品 id，但 TikHub 仍返回失败，请确认该作品 id 是否有效。',
+      detail: detailText || `无效 aweme_id: ${value}`
+    };
+  }
+
+  return {
+    stage: 'unknown_upstream_error',
+    statusCode: upstreamStatus >= 400 && upstreamStatus < 500 ? 400 : 502,
+    message: awemeId
+      ? '已提取到作品 id，但 TikHub 仍返回失败。'
+      : 'TikHub 未能解析该 share_url。',
+    detail: detailText || `TikHub 上游错误，状态码 ${upstreamStatus || 0}`
+  };
+}
+
 async function callTikHubHighQualityPlayUrl({ shareUrl, awemeId, requestId }) {
   const token = readValue(SERVER_CONFIG.tikhubApiToken);
   if (!token) {
-    throw new Error('服务端未配置 TIKHUB_API_TOKEN');
+    throw createDouyinResolveError({
+      stage: 'unknown_upstream_error',
+      statusCode: 500,
+      message: '服务端未配置 TIKHUB_API_TOKEN'
+    });
   }
 
   const searchParams = new URLSearchParams();
@@ -729,14 +904,33 @@ async function callTikHubHighQualityPlayUrl({ shareUrl, awemeId, requestId }) {
   } catch {}
 
   if (!upstreamRes.ok) {
-    console.error('[douyin resolve] TikHub upstream failed', {
-      requestId,
-      status: upstreamRes.status,
+    const bodyMeta = extractTikHubErrorMeta(json, responseText);
+    const mapped = mapTikHubFailure({
+      upstreamStatus: upstreamRes.status,
       shareUrl,
       awemeId,
-      upstreamBody: responseText
+      bodyMeta
     });
-    throw new Error(json?.message || json?.error?.message || `TikHub 请求失败，上游状态码 ${upstreamRes.status}`);
+
+    console.error('[douyin resolve] TikHub upstream failed', {
+      requestId,
+      upstreamStatus: upstreamRes.status,
+      shareUrl,
+      awemeId,
+      upstreamCode: bodyMeta.code,
+      upstreamMessage: bodyMeta.message,
+      upstreamDetail: bodyMeta.detail,
+      upstreamBodySummary: bodyMeta.summary
+    });
+    throw createDouyinResolveError({
+      stage: mapped.stage,
+      statusCode: mapped.statusCode,
+      upstreamStatus: upstreamRes.status,
+      upstreamBodySummary: bodyMeta.summary,
+      upstreamCode: bodyMeta.code,
+      detail: mapped.detail,
+      message: mapped.message
+    });
   }
 
   const payload = json?.data && typeof json.data === 'object' ? json.data : json;
@@ -748,9 +942,15 @@ async function callTikHubHighQualityPlayUrl({ shareUrl, awemeId, requestId }) {
       requestId,
       shareUrl,
       awemeId,
-      upstreamBody: responseText
+      upstreamBodySummary: summarizeUpstreamBody(responseText)
     });
-    throw new Error('TikHub 返回成功，但缺少 original_video_url');
+    throw createDouyinResolveError({
+      stage: 'unknown_upstream_error',
+      statusCode: 502,
+      upstreamStatus: upstreamRes.status,
+      upstreamBodySummary: summarizeUpstreamBody(responseText),
+      message: 'TikHub 返回成功，但缺少 original_video_url'
+    });
   }
 
   return {
@@ -2552,6 +2752,7 @@ async function handleDoubaoMultimodal(req, res) {
 async function handleDouyinResolveDownload(req, res) {
   const requestId = createRequestId('douyin');
   const startedAt = Date.now();
+  let originalInput = '';
   let originalUrl = '';
   let finalUrl = '';
   let normalizedUrl = '';
@@ -2559,42 +2760,77 @@ async function handleDouyinResolveDownload(req, res) {
   let directShareUrlSuccess = false;
   let expandedShareUrlSuccess = false;
   let finalResolvePath = 'failed';
+  let upstreamStatus = 0;
+  let upstreamBodySummary = '';
+
+  function logDouyinResolve(level, message, extra = {}) {
+    const payload = {
+      requestId,
+      originalInput,
+      originalUrl,
+      normalizedUrl,
+      finalUrl,
+      directShareUrlSuccess,
+      expandedShareUrlSuccess,
+      extractedAwemeId: awemeId,
+      finalResolvePath,
+      upstreamStatus,
+      upstreamBodySummary,
+      ...extra
+    };
+
+    if (level === 'error') {
+      console.error(message, payload);
+      return;
+    }
+    if (level === 'warn') {
+      console.warn(message, payload);
+      return;
+    }
+    console.log(message, payload);
+  }
 
   try {
     const body = await readRequestBody(req);
     const input = normalizeDouyinInput(body?.input);
+    originalInput = input;
     if (!input) {
-      sendJson(res, 400, { error: '请先提供抖音链接或分享文本' });
-      return;
+      const error = createDouyinResolveError({
+        stage: 'no_valid_url_found',
+        statusCode: 400,
+        message: '请先粘贴抖音链接或整段分享文本。'
+      });
+      throw error;
     }
+
+    logDouyinResolve('log', '[douyin resolve] request received', {
+      inputLength: input.length
+    });
 
     const extracted = pickPreferredDouyinUrl(input);
     originalUrl = extracted.url;
     if (!originalUrl) {
-      sendJson(res, 400, { error: '未从输入内容中提取到可用链接' });
-      return;
+      throw createDouyinResolveError({
+        stage: 'no_valid_url_found',
+        statusCode: 400,
+        message: '该分享内容未能识别出有效抖音作品链接。'
+      });
     }
 
-    console.log('[douyin resolve] request received', {
-      requestId,
-      sourceType: extracted.sourceType,
-      originalUrl,
-      inputLength: input.length
+    logDouyinResolve('log', '[douyin resolve] parsed original url', {
+      sourceType: extracted.sourceType
     });
 
     try {
-      const result = await callTikHubHighQualityPlayUrl({ shareUrl: originalUrl, requestId });
+      const result = await retryDouyinOperation({
+        label: 'raw_share_url',
+        requestId,
+        operation: () => callTikHubHighQualityPlayUrl({ shareUrl: originalUrl, requestId })
+      });
       directShareUrlSuccess = true;
       finalResolvePath = 'raw_share_url';
 
-      console.log('[douyin resolve] resolved by raw share_url', {
-        requestId,
-        originalUrl,
-        finalUrl,
-        directShareUrlSuccess,
-        expandedShareUrlSuccess,
-        extractedAwemeId: awemeId,
-        finalResolvePath,
+      logDouyinResolve('log', '[douyin resolve] resolved by raw share_url', {
         videoId: result.videoId,
         elapsedMs: Date.now() - startedAt
       });
@@ -2607,117 +2843,146 @@ async function handleDouyinResolveDownload(req, res) {
         sourceType: extracted.sourceType
       });
       return;
-    } catch (shareUrlError) {
-      console.warn('[douyin resolve] raw share_url failed, trying expansion', {
-        requestId,
-        originalUrl,
-        message: shareUrlError?.message || ''
+    } catch (error) {
+      upstreamStatus = error?.upstreamStatus || upstreamStatus;
+      upstreamBodySummary = error?.upstreamBodySummary || upstreamBodySummary;
+      logDouyinResolve('warn', '[douyin resolve] raw share_url failed', {
+        stage: 'raw_share_url_failed',
+        reason: error?.stage || 'unknown_upstream_error',
+        detail: error?.detail || error?.message || ''
       });
     }
 
-    const redirectInfo = await resolveRedirectedUrl(originalUrl);
+    let redirectInfo;
+    try {
+      redirectInfo = await retryDouyinOperation({
+        label: 'short_link_expand',
+        requestId,
+        operation: () => resolveRedirectedUrl(originalUrl),
+        shouldRetry: (error) => !error?.stage || error?.stage === 'short_link_expand_failed'
+      });
+    } catch (error) {
+      throw createDouyinResolveError({
+        stage: 'short_link_expand_failed',
+        statusCode: 400,
+        message: '短链接展开失败，请稍后重试或改用网页完整链接。',
+        detail: error?.message || ''
+      });
+    }
+
     finalUrl = redirectInfo.finalUrl || originalUrl;
     normalizedUrl = redirectInfo.normalizedUrl || finalUrl || originalUrl;
     awemeId = redirectInfo.awemeId || extractDouyinAwemeId(normalizedUrl || finalUrl || originalUrl);
 
-    console.log('[douyin resolve] expanded share_url prepared', {
-      requestId,
-      originalUrl,
-      finalUrl,
-      normalizedUrl,
-      directShareUrlSuccess,
-      expandedShareUrlSuccess,
-      extractedAwemeId: awemeId,
-      finalResolvePath,
+    logDouyinResolve('log', '[douyin resolve] expanded share_url prepared', {
       contentType: redirectInfo.contentType
     });
 
     try {
-      const expandedResult = await callTikHubHighQualityPlayUrl({ shareUrl: normalizedUrl, requestId });
+      const result = await retryDouyinOperation({
+        label: 'expanded_share_url',
+        requestId,
+        operation: () => callTikHubHighQualityPlayUrl({ shareUrl: normalizedUrl, requestId })
+      });
       expandedShareUrlSuccess = true;
       finalResolvePath = 'expanded_share_url';
 
-      console.log('[douyin resolve] resolved by expanded share_url', {
-        requestId,
-        originalUrl,
-        finalUrl,
-        directShareUrlSuccess,
-        expandedShareUrlSuccess,
-        extractedAwemeId: awemeId,
-        finalResolvePath,
-        videoId: expandedResult.videoId,
+      logDouyinResolve('log', '[douyin resolve] resolved by expanded share_url', {
+        videoId: result.videoId,
         elapsedMs: Date.now() - startedAt
       });
-
       sendJson(res, 200, {
         ok: true,
-        videoId: expandedResult.videoId,
-        downloadUrl: expandedResult.downloadUrl,
-        videoData: expandedResult.videoData,
+        videoId: result.videoId,
+        downloadUrl: result.downloadUrl,
+        videoData: result.videoData,
         normalizedUrl,
         sourceType: extracted.sourceType
       });
       return;
-    } catch (expandedShareUrlError) {
-      console.warn('[douyin resolve] expanded share_url failed, trying aweme_id', {
-        requestId,
-        originalUrl,
-        finalUrl,
-        normalizedUrl,
-        directShareUrlSuccess,
-        expandedShareUrlSuccess,
-        extractedAwemeId: awemeId,
-        message: expandedShareUrlError?.message || ''
+    } catch (error) {
+      upstreamStatus = error?.upstreamStatus || upstreamStatus;
+      upstreamBodySummary = error?.upstreamBodySummary || upstreamBodySummary;
+      logDouyinResolve('warn', '[douyin resolve] expanded share_url failed', {
+        stage: 'expanded_share_url_failed',
+        reason: error?.stage || 'unknown_upstream_error',
+        detail: error?.detail || error?.message || ''
       });
     }
 
     if (!awemeId) {
       await resolveDouyinViaWorkDataExtension();
-      throw new Error('短链接已展开，且 expanded share_url 解析失败，同时未能提取出 aweme_id');
+      throw createDouyinResolveError({
+        stage: 'aweme_id_extract_failed',
+        statusCode: 400,
+        message: '短链接已展开，但目标不是标准作品页，暂时无法提取作品 id。',
+        detail: 'expanded share_url 解析失败，且未能提取 aweme_id'
+      });
     }
 
-    const fallbackResult = await callTikHubHighQualityPlayUrl({ awemeId, requestId });
-    finalResolvePath = 'aweme_id';
+    try {
+      const result = await retryDouyinOperation({
+        label: 'aweme_id',
+        requestId,
+        operation: () => callTikHubHighQualityPlayUrl({ awemeId, requestId })
+      });
+      finalResolvePath = 'aweme_id';
 
-    console.log('[douyin resolve] aweme_id fallback resolved', {
-      requestId,
-      originalUrl,
-      finalUrl,
-      directShareUrlSuccess,
-      expandedShareUrlSuccess,
-      extractedAwemeId: awemeId,
-      finalResolvePath,
-      videoId: fallbackResult.videoId,
-      elapsedMs: Date.now() - startedAt
-    });
+      logDouyinResolve('log', '[douyin resolve] resolved by aweme_id', {
+        videoId: result.videoId,
+        elapsedMs: Date.now() - startedAt
+      });
 
-    sendJson(res, 200, {
-      ok: true,
-      videoId: fallbackResult.videoId || awemeId,
-      downloadUrl: fallbackResult.downloadUrl,
-      videoData: fallbackResult.videoData,
-      normalizedUrl: normalizedUrl || finalUrl || originalUrl,
-      sourceType: extracted.sourceType
-    });
+      sendJson(res, 200, {
+        ok: true,
+        videoId: result.videoId || awemeId,
+        downloadUrl: result.downloadUrl,
+        videoData: result.videoData,
+        normalizedUrl: normalizedUrl || finalUrl || originalUrl,
+        sourceType: extracted.sourceType
+      });
+      return;
+    } catch (error) {
+      upstreamStatus = error?.upstreamStatus || upstreamStatus;
+      upstreamBodySummary = error?.upstreamBodySummary || upstreamBodySummary;
+      throw createDouyinResolveError({
+        stage:
+          error?.stage === 'tikhub_402_payment_required'
+            ? 'tikhub_402_payment_required'
+            : (error?.stage === 'tikhub_400_invalid_aweme_id' ? 'tikhub_400_invalid_aweme_id' : 'aweme_id_request_failed'),
+        statusCode: error?.statusCode || 400,
+        upstreamStatus: error?.upstreamStatus || 0,
+        upstreamBodySummary: error?.upstreamBodySummary || '',
+        upstreamCode: error?.upstreamCode || '',
+        detail: error?.detail || error?.message || '',
+        message: error?.stage === 'tikhub_402_payment_required'
+          ? '当前接口余额不足或需要付费权限，请检查 TikHub 账户状态。'
+          : (error?.stage === 'tikhub_400_invalid_aweme_id'
+            ? '已提取到作品 id，但 TikHub 仍返回失败。'
+            : '已提取到作品 id，但 TikHub 仍返回失败。')
+      });
+    }
   } catch (error) {
-    const isBadRequest = error?.message === '请先提供抖音链接或分享文本' || error?.message === '未从输入内容中提取到可用链接';
     finalResolvePath = 'failed';
+    upstreamStatus = error?.upstreamStatus || upstreamStatus;
+    upstreamBodySummary = error?.upstreamBodySummary || upstreamBodySummary;
 
-    console.error('[douyin resolve] request failed', {
-      requestId,
-      originalUrl,
-      finalUrl,
-      normalizedUrl,
-      directShareUrlSuccess,
-      expandedShareUrlSuccess,
-      extractedAwemeId: awemeId,
-      finalResolvePath,
+    logDouyinResolve('error', '[douyin resolve] request failed', {
+      stage: error?.stage || 'unknown_upstream_error',
+      detail: error?.detail || '',
+      upstreamCode: error?.upstreamCode || '',
       message: error?.message || '',
       stack: error?.stack || '',
       elapsedMs: Date.now() - startedAt
     });
-    sendJson(res, isBadRequest ? 400 : 500, {
-      error: error?.message || '抖音视频解析失败'
+
+    sendJson(res, error?.statusCode || 500, {
+      ok: false,
+      error: error?.message || '抖音视频解析失败',
+      stage: error?.stage || 'unknown_upstream_error',
+      detail: error?.detail || '',
+      upstreamStatus,
+      upstreamBodySummary
     });
   }
 }

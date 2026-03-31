@@ -27,7 +27,9 @@ export async function resolveDouyinDownload(input: string): Promise<DouyinResolv
 
   const json = await parseJsonSafely(response);
   if (!response.ok) {
-    throw new Error(json?.error || '抖音视频解析失败');
+    const errorMessage = typeof json?.error === 'string' ? json.error : '抖音视频解析失败';
+    const detailMessage = typeof json?.detail === 'string' ? json.detail : '';
+    throw new Error(detailMessage && detailMessage !== errorMessage ? `${errorMessage} ${detailMessage}` : errorMessage);
   }
 
   return {
