@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeft, Download, Loader2, LogOut, Link2, CheckCircle2, Sparkles } from "lucide-react";
+import { ArrowLeft, Download, Loader2, LogOut, Link2, CheckCircle2, Sparkles, Copy } from "lucide-react";
 import { motion } from "motion/react";
 import { Button } from "@/src/components/ui/button";
 import { Label } from "@/src/components/ui/label";
@@ -20,6 +20,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
   const [result, setResult] = useState<DouyinResolveResult | null>(null);
   const [highQualityResult, setHighQualityResult] = useState<DouyinResolveResult | null>(null);
   const [highQualityError, setHighQualityError] = useState("");
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'done' | 'error'>('idle');
 
   async function handleSubmit() {
     const nextInput = input.trim();
@@ -34,6 +35,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
     setResult(null);
     setHighQualityResult(null);
     setHighQualityError('');
+    setCopyStatus('idle');
 
     try {
       const response = await resolveDouyinDownload(nextInput);
@@ -64,6 +66,24 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
       setHighQualityError(submitError instanceof Error ? submitError.message : '最高画质链接获取失败，请稍后重试。');
     } finally {
       setIsHighQualityLoading(false);
+    }
+  }
+
+  async function handleCopyCaption() {
+    const caption = result?.caption?.trim() || '';
+    if (!caption) {
+      setCopyStatus('error');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(caption);
+      setCopyStatus('done');
+      window.setTimeout(() => {
+        setCopyStatus('idle');
+      }, 1600);
+    } catch {
+      setCopyStatus('error');
     }
   }
 
@@ -150,6 +170,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
                 setResult(null);
                 setHighQualityResult(null);
                 setHighQualityError('');
+                setCopyStatus('idle');
               }}
               disabled={isLoading}
               className="rounded-2xl px-8 border-slate-300"
@@ -199,6 +220,32 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
                       <div>
                         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Video ID</div>
                         <div className="mt-1 break-all font-mono text-sm text-slate-700">{result.videoId}</div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">视频文案</div>
+                            {result.authorName && (
+                              <div className="mt-1 text-xs text-slate-400">作者：{result.authorName}</div>
+                            )}
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleCopyCaption}
+                            className="rounded-full px-4 border-slate-300 bg-white/50"
+                          >
+                            <Copy className="mr-2 size-3.5" />
+                            {copyStatus === 'done' ? '已复制' : '复制文案'}
+                          </Button>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-3 text-sm leading-6 text-slate-600 whitespace-pre-wrap break-words">
+                          {result.caption?.trim() || '未提取到文案'}
+                        </div>
+                        {copyStatus === 'error' && (
+                          <div className="text-xs text-red-500">当前没有可复制的文案。</div>
+                        )}
                       </div>
 
                       {result.normalizedUrl && (

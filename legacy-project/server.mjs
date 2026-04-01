@@ -814,6 +814,37 @@ function extractDouyinVideoIdFromPayload(payload, fallbackAwemeId = '') {
   );
 }
 
+function extractDouyinCaptionFromPayload(payload) {
+  return readValue(
+    payload?.desc,
+    payload?.title,
+    payload?.aweme_detail?.desc,
+    payload?.aweme_detail?.title,
+    payload?.video_data?.desc,
+    payload?.video_data?.title,
+    payload?.item_info?.item_basic?.title,
+    payload?.item_info?.item_struct?.desc,
+    payload?.item_info?.item_struct?.title,
+    payload?.share_info?.share_desc,
+    payload?.share_info?.share_title,
+    payload?.seo_info?.seo_title
+  );
+}
+
+function extractDouyinAuthorNameFromPayload(payload) {
+  return readValue(
+    payload?.author?.nickname,
+    payload?.author?.unique_id,
+    payload?.aweme_detail?.author?.nickname,
+    payload?.aweme_detail?.author?.unique_id,
+    payload?.video_data?.author?.nickname,
+    payload?.video_data?.author?.unique_id,
+    payload?.item_info?.author?.nickname,
+    payload?.item_info?.author?.unique_id,
+    payload?.item_info?.item_basic?.author_name
+  );
+}
+
 function extractTikHubErrorMeta(payload, fallbackText = '') {
   if (!payload || typeof payload !== 'object') {
     return {
@@ -1062,6 +1093,8 @@ async function callTikHubHighQualityPlayUrl({ shareUrl, awemeId, requestId }) {
   return {
     videoId,
     downloadUrl,
+    caption: extractDouyinCaptionFromPayload(payload),
+    authorName: extractDouyinAuthorNameFromPayload(payload),
     videoData: payload?.video_data && typeof payload.video_data === 'object' ? payload.video_data : payload || null
   };
 }
@@ -1155,6 +1188,8 @@ async function callTikHubDouyinVideoDetail({ path, shareUrl, awemeId, requestId 
   return {
     videoId,
     downloadUrl,
+    caption: extractDouyinCaptionFromPayload(payload),
+    authorName: extractDouyinAuthorNameFromPayload(payload),
     videoData: payload || null
   };
 }

@@ -3,6 +3,8 @@ export interface DouyinResolveResult {
   mode: 'stable' | 'high_quality';
   videoId: string;
   downloadUrl: string;
+  caption?: string;
+  authorName?: string;
   videoData?: Record<string, unknown> | null;
   normalizedUrl?: string;
   sourceType: 'web_url' | 'short_share_text';
@@ -38,6 +40,8 @@ async function requestDouyinDownload(input: string, mode: 'stable' | 'high_quali
     mode: json?.mode === 'high_quality' ? 'high_quality' : 'stable',
     videoId: String(json?.videoId || ''),
     downloadUrl: String(json?.downloadUrl || ''),
+    caption: typeof json?.caption === 'string' ? json.caption : '',
+    authorName: typeof json?.authorName === 'string' ? json.authorName : '',
     videoData: json?.videoData && typeof json.videoData === 'object' ? json.videoData as Record<string, unknown> : null,
     normalizedUrl: typeof json?.normalizedUrl === 'string' ? json.normalizedUrl : '',
     sourceType: json?.sourceType === 'web_url' ? 'web_url' : 'short_share_text',
