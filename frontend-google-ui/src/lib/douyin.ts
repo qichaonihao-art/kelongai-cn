@@ -1,5 +1,6 @@
 export interface DouyinResolveResult {
   ok: boolean;
+  mode: 'stable' | 'high_quality';
   videoId: string;
   downloadUrl: string;
   videoData?: Record<string, unknown> | null;
@@ -15,14 +16,14 @@ async function parseJsonSafely(response: Response) {
   }
 }
 
-export async function resolveDouyinDownload(input: string): Promise<DouyinResolveResult> {
+async function requestDouyinDownload(input: string, mode: 'stable' | 'high_quality'): Promise<DouyinResolveResult> {
   const response = await fetch('/api/douyin/resolve-download', {
     method: 'POST',
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ input }),
+    body: JSON.stringify({ input, mode }),
   });
 
   const json = await parseJsonSafely(response);
@@ -34,10 +35,19 @@ export async function resolveDouyinDownload(input: string): Promise<DouyinResolv
 
   return {
     ok: true,
+    mode: json?.mode === 'high_quality' ? 'high_quality' : 'stable',
     videoId: String(json?.videoId || ''),
     downloadUrl: String(json?.downloadUrl || ''),
     videoData: json?.videoData && typeof json.videoData === 'object' ? json.videoData as Record<string, unknown> : null,
     normalizedUrl: typeof json?.normalizedUrl === 'string' ? json.normalizedUrl : '',
     sourceType: json?.sourceType === 'web_url' ? 'web_url' : 'short_share_text',
   };
+}
+
+export async function resolveDouyinDownload(input: string): Promise<DouyinResolveResult> {
+  return requestDouyinDownload(input, 'stable');
+}
+
+export async function resolveDouyinHighQualityDownload(input: string): Promise<DouyinResolveResult> {
+  return requestDouyinDownload(input, 'high_quality');
 }

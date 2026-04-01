@@ -89,7 +89,7 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
             <Download className="size-14" />
           </div>
           <h3 className="text-3xl font-black text-slate-900 tracking-tight">抖音视频解析下载</h3>
-          <p className="mt-4 text-slate-500 font-medium">粘贴网页链接或分享文本，快速获取最高画质下载地址</p>
+          <p className="mt-4 text-slate-500 font-medium">粘贴网页链接或分享文本，优先稳定解析并获取视频下载地址</p>
         </motion.div>
       </div>
     </div>

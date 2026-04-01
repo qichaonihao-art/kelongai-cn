@@ -122,7 +122,7 @@ cp legacy-project/.env.example legacy-project/.env
 ### 抖音视频解析下载
 
 - `TIKHUB_API_TOKEN`
-  - TikHub 最高画质抖音视频解析必填
+  - TikHub 抖音视频解析下载必填
   - 只允许配置在后端环境变量中，前端不会接触这个密钥
 
 ### 声音克隆
@@ -167,7 +167,7 @@ cp legacy-project/.env.example legacy-project/.env
 ### 验证抖音视频解析下载
 
 1. 登录后进入“抖音视频解析下载”
-2. 粘贴一个抖音网页直链，点击“开始解析”
+2. 粘贴一个抖音网页直链，点击“解析并下载视频”
 3. 确认返回 `videoId`、`normalizedUrl` 和下载按钮
 4. 再粘贴一段抖音 App 分享文案，确认短链接也能被解析
 

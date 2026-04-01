@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ArrowLeft, Download, Loader2, LogOut, Link2, BadgeInfo } from "lucide-react";
 import { motion } from "motion/react";
 import { Button } from "@/src/components/ui/button";
-import { resolveDouyinDownload, type DouyinResolveResult } from "@/src/lib/douyin";
+import { resolveDouyinDownload, resolveDouyinHighQualityDownload, type DouyinResolveResult } from "@/src/lib/douyin";
 
 interface DouyinDownloaderPageProps {
   onBack: () => void;
@@ -14,8 +14,11 @@ const SAMPLE_SHARE_TEXT = `7.82 复制打开抖音，看看【示例】的视频
 export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isHighQualityLoading, setIsHighQualityLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<DouyinResolveResult | null>(null);
+  const [highQualityResult, setHighQualityResult] = useState<DouyinResolveResult | null>(null);
+  const [highQualityError, setHighQualityError] = useState("");
 
   async function handleSubmit() {
     const nextInput = input.trim();
@@ -28,6 +31,8 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
     setIsLoading(true);
     setError('');
     setResult(null);
+    setHighQualityResult(null);
+    setHighQualityError('');
 
     try {
       const response = await resolveDouyinDownload(nextInput);
@@ -37,6 +42,27 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
       setError(submitError instanceof Error ? submitError.message : '抖音视频解析失败，请稍后重试。');
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function handleHighQualityResolve() {
+    const nextInput = input.trim();
+    if (!nextInput) {
+      setHighQualityError('请先粘贴抖音链接或整段分享文本。');
+      return;
+    }
+
+    setIsHighQualityLoading(true);
+    setHighQualityError('');
+
+    try {
+      const response = await resolveDouyinHighQualityDownload(nextInput);
+      setHighQualityResult(response);
+    } catch (submitError) {
+      setHighQualityResult(null);
+      setHighQualityError(submitError instanceof Error ? submitError.message : '最高画质链接获取失败，请稍后重试。');
+    } finally {
+      setIsHighQualityLoading(false);
     }
   }
 
@@ -76,7 +102,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
               </div>
               <h1 className="text-4xl font-black tracking-tight text-slate-900 md:text-5xl">抖音视频解析下载</h1>
               <p className="mt-4 text-base font-medium leading-7 text-slate-500">
-                支持网页直链、App 分享短链接，以及带中文描述的整段分享文本。系统会优先直接解析，失败时再自动跟随短链并提取作品 ID 兜底。
+                支持网页直链、App 分享短链接，以及带中文描述的整段分享文本。系统会优先走更稳定的分享链路解析，失败时再自动跟随短链并提取作品 ID 兜底。
               </p>
             </div>
 
@@ -117,16 +143,18 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
                       解析中...
                     </>
                   ) : (
-                    '开始解析'
+                    '解析并下载视频'
                   )}
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    setInput('');
-                    setError('');
-                    setResult(null);
-                  }}
+                      onClick={() => {
+                        setInput('');
+                        setError('');
+                        setResult(null);
+                        setHighQualityResult(null);
+                        setHighQualityError('');
+                      }}
                   disabled={isLoading}
                   className="h-11 rounded-2xl border-white/60 bg-white/60 px-5 text-slate-600"
                 >
@@ -141,7 +169,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
               {!result && !error && (
                 <div className="flex min-h-56 flex-col justify-center rounded-[1.5rem] border border-dashed border-slate-200 bg-white/70 px-5 text-sm leading-7 text-slate-500">
                   <p>解析成功后，这里会显示视频 ID、归一化链接和下载入口。</p>
-                  <p className="mt-2">后端会通过 TikHub 服务端密钥获取最高画质地址，前端不会接触 API Token。</p>
+                  <p className="mt-2">默认优先返回更稳定的标准无水印下载链路，如需更高画质可再单独尝试高级功能。</p>
                 </div>
               )}
 
@@ -154,7 +182,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
               {result && (
                 <div className="space-y-4">
                   <div className="rounded-[1.5rem] border border-emerald-100 bg-emerald-50/80 px-5 py-4 text-sm leading-7 text-emerald-700">
-                    解析成功，已经拿到最高画质下载链接。
+                    解析成功，已经拿到更稳定的标准下载链接。
                   </div>
 
                   <div className="rounded-[1.5rem] bg-white/80 px-5 py-4 text-sm text-slate-700">
@@ -189,9 +217,47 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
                   <Button asChild className="h-11 w-full rounded-2xl bg-sky-600 text-sm font-bold text-white shadow-lg shadow-sky-200 hover:bg-sky-500">
                     <a href={result.downloadUrl} target="_blank" rel="noreferrer">
                       <Download className="mr-2 size-4" />
-                      下载最高画质视频
+                      下载视频
                     </a>
                   </Button>
+
+                  <div className="rounded-[1.5rem] border border-white/70 bg-white/75 px-5 py-4 text-sm text-slate-600">
+                    <div className="font-semibold text-slate-700">高级选项</div>
+                    <p className="mt-2 leading-6">如果你愿意为了画质额外尝试一次，可以再请求最高画质链路；这一步不影响默认稳定下载。</p>
+
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={handleHighQualityResolve}
+                        disabled={isHighQualityLoading}
+                        className="h-11 rounded-2xl border-white/60 bg-white/70 px-5 text-slate-700"
+                      >
+                        {isHighQualityLoading ? (
+                          <>
+                            <Loader2 className="mr-2 size-4 animate-spin" />
+                            获取最高画质中...
+                          </>
+                        ) : (
+                          '尝试获取最高画质'
+                        )}
+                      </Button>
+
+                      {highQualityResult && (
+                        <Button asChild variant="outline" className="h-11 rounded-2xl border-sky-200 bg-sky-50 px-5 text-sky-700 hover:bg-sky-100">
+                          <a href={highQualityResult.downloadUrl} target="_blank" rel="noreferrer">
+                            <Download className="mr-2 size-4" />
+                            下载最高画质视频
+                          </a>
+                        </Button>
+                      )}
+                    </div>
+
+                    {highQualityError && (
+                      <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 leading-6 text-amber-700">
+                        最高画质为高级备选功能，本次获取失败：{highQualityError}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
