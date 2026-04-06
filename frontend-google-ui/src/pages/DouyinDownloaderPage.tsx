@@ -1,9 +1,25 @@
 import { useState } from "react";
-import { ArrowLeft, Download, Loader2, LogOut, Link2, CheckCircle2, Sparkles, Copy } from "lucide-react";
+import {
+  ArrowLeft,
+  Download,
+  Loader2,
+  LogOut,
+  Link2,
+  CheckCircle2,
+  Copy,
+  AudioLines,
+  FileText,
+  AlertCircle,
+} from "lucide-react";
 import { motion } from "motion/react";
 import { Button } from "@/src/components/ui/button";
 import { Label } from "@/src/components/ui/label";
-import { resolveDouyinDownload, resolveDouyinHighQualityDownload, type DouyinResolveResult } from "@/src/lib/douyin";
+import {
+  extractDouyinTranscript,
+  resolveDouyinDownload,
+  type DouyinResolveResult,
+  type DouyinTranscriptResult,
+} from "@/src/lib/douyin";
 
 interface DouyinDownloaderPageProps {
   onBack: () => void;
@@ -14,78 +30,103 @@ const SAMPLE_SHARE_TEXT = `7.82 复制打开抖音，看看【示例】的视频
 
 export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [isHighQualityLoading, setIsHighQualityLoading] = useState(false);
+  const [isResolving, setIsResolving] = useState(false);
+  const [isTranscriptLoading, setIsTranscriptLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<DouyinResolveResult | null>(null);
-  const [highQualityResult, setHighQualityResult] = useState<DouyinResolveResult | null>(null);
-  const [highQualityError, setHighQualityError] = useState("");
+  const [transcriptResult, setTranscriptResult] = useState<DouyinTranscriptResult | null>(null);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'done' | 'error'>('idle');
 
-  async function handleSubmit() {
+  async function handleResolve() {
     const nextInput = input.trim();
     if (!nextInput) {
       setError('请先粘贴抖音链接或整段分享文本。');
       setResult(null);
+      setTranscriptResult(null);
       return;
     }
 
-    setIsLoading(true);
+    setIsResolving(true);
     setError('');
     setResult(null);
-    setHighQualityResult(null);
-    setHighQualityError('');
+    setTranscriptResult(null);
     setCopyStatus('idle');
 
     try {
       const response = await resolveDouyinDownload(nextInput);
       setResult(response);
     } catch (submitError) {
-      setResult(null);
       setError(submitError instanceof Error ? submitError.message : '抖音视频解析失败，请稍后重试。');
     } finally {
-      setIsLoading(false);
+      setIsResolving(false);
     }
   }
 
-  async function handleHighQualityResolve() {
+  async function handleExtractTranscript() {
     const nextInput = input.trim();
     if (!nextInput) {
-      setHighQualityError('请先粘贴抖音链接或整段分享文本。');
+      setError('请先粘贴抖音链接或整段分享文本。');
       return;
     }
 
-    setIsHighQualityLoading(true);
-    setHighQualityError('');
+    setIsTranscriptLoading(true);
+    setTranscriptResult(null);
+    setCopyStatus('idle');
 
     try {
-      const response = await resolveDouyinHighQualityDownload(nextInput);
-      setHighQualityResult(response);
+      const response = await extractDouyinTranscript(nextInput);
+      setTranscriptResult(response);
+
+      if (!result) {
+        setResult({
+          ok: true,
+          mode: 'stable',
+          videoId: response.videoId,
+          title: response.title,
+          downloadUrl: response.downloadUrl,
+          authorName: response.authorName,
+          normalizedUrl: response.normalizedUrl,
+          sourceType: response.sourceType,
+          caption: '',
+          fallbackCaption: response.fallbackCaption,
+          fallbackCaptionSource: response.fallbackCaptionSource,
+          videoData: null,
+          resolveStrategy: response.resolveStrategy,
+        });
+      }
     } catch (submitError) {
-      setHighQualityResult(null);
-      setHighQualityError(submitError instanceof Error ? submitError.message : '最高画质链接获取失败，请稍后重试。');
+      setTranscriptResult(null);
+      setError(submitError instanceof Error ? submitError.message : '视频文案提取失败，请稍后重试。');
     } finally {
-      setIsHighQualityLoading(false);
+      setIsTranscriptLoading(false);
     }
   }
 
-  async function handleCopyCaption() {
-    const caption = result?.caption?.trim() || '';
-    if (!caption) {
+  async function handleCopyTranscript() {
+    const transcript = transcriptResult?.transcript?.trim() || '';
+    if (!transcript) {
       setCopyStatus('error');
       return;
     }
 
     try {
-      await navigator.clipboard.writeText(caption);
+      await navigator.clipboard.writeText(transcript);
       setCopyStatus('done');
-      window.setTimeout(() => {
-        setCopyStatus('idle');
-      }, 1600);
+      window.setTimeout(() => setCopyStatus('idle'), 1600);
     } catch {
       setCopyStatus('error');
     }
   }
+
+  function resetAll() {
+    setInput('');
+    setError('');
+    setResult(null);
+    setTranscriptResult(null);
+    setCopyStatus('idle');
+  }
+
+  const fallbackCaption = transcriptResult?.fallbackCaption || result?.fallbackCaption || '';
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -122,7 +163,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
           </div>
           <h2 className="text-4xl font-black tracking-tight text-slate-900">抖音视频解析下载</h2>
           <p className="max-w-2xl text-sm leading-6 text-slate-500">
-            粘贴作品链接或分享文本，解析后直接下载视频。
+            粘贴抖音分享内容，先解析可下载视频，再按需提取视频音频里的口播文案。
           </p>
         </motion.section>
 
@@ -145,10 +186,10 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
           <div className="flex flex-col gap-4 sm:flex-row">
             <Button
               className="w-full h-14 rounded-2xl text-lg font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-xl shadow-slate-900/20 transition-all active:scale-[0.98]"
-              disabled={isLoading}
-              onClick={handleSubmit}
+              disabled={isResolving}
+              onClick={handleResolve}
             >
-              {isLoading ? (
+              {isResolving ? (
                 <span className="flex items-center gap-3">
                   <Loader2 className="size-6 animate-spin" />
                   解析中...
@@ -156,7 +197,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
               ) : (
                 <span className="flex items-center gap-3">
                   <Download className="size-6" />
-                  解析并下载视频
+                  解析视频
                 </span>
               )}
             </Button>
@@ -164,15 +205,8 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
             <Button
               variant="outline"
               size="lg"
-              onClick={() => {
-                setInput('');
-                setError('');
-                setResult(null);
-                setHighQualityResult(null);
-                setHighQualityError('');
-                setCopyStatus('idle');
-              }}
-              disabled={isLoading}
+              onClick={resetAll}
+              disabled={isResolving || isTranscriptLoading}
               className="rounded-2xl px-8 border-slate-300"
             >
               清空
@@ -187,65 +221,62 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
         </section>
 
         <section className="glass-card p-10 rounded-[2.5rem] border-white/80 shadow-glass space-y-6">
-          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em]">2. 解析结果</h2>
+          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em]">2. 结果区</h2>
 
-          {!result && !error && (
+          {!result && !transcriptResult && !error && (
             <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-3 text-sm text-slate-500">
-              解析成功后会显示下载入口和作品信息。
+              先解析视频，再下载或提取视频文案。
             </div>
           )}
 
-          {result && (
-            <>
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="flex items-center gap-2 text-xs text-indigo-600 font-bold bg-indigo-50/80 backdrop-blur-sm p-3 rounded-xl border border-indigo-100"
-              >
-                <CheckCircle2 className="size-4" />
-                解析成功，可直接下载。
-              </motion.div>
+          <div className="space-y-6">
+            <div className="w-full bg-white/40 backdrop-blur-md p-6 rounded-[2rem] border border-white/60 space-y-5">
+              <div className="flex items-center gap-3">
+                <div className="inline-flex size-11 items-center justify-center rounded-2xl bg-slate-900 text-white">
+                  <Download className="size-5" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em]">视频结果</div>
+                  <div className="text-lg font-black text-slate-900">解析视频并下载</div>
+                </div>
+              </div>
 
-              <div className="space-y-4">
-                <div className="w-full bg-white/40 backdrop-blur-md p-6 rounded-[2rem] border border-white/60 space-y-4">
+              {result ? (
+                <>
+                  <div className="flex items-center gap-2 text-xs text-emerald-600 font-bold bg-emerald-50/90 p-3 rounded-xl border border-emerald-100">
+                    <CheckCircle2 className="size-4" />
+                    视频解析成功，可直接下载。
+                  </div>
+
                   <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-start">
                     <div className="space-y-4">
                       <div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">来源类型</div>
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">视频标题</div>
                         <div className="mt-1 text-sm font-medium text-slate-700">
-                          {result.sourceType === 'web_url' ? '网页直链' : '分享文本 / 短链接'}
+                          {result.title?.trim() || result.caption?.trim() || '未提取到标题'}
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">来源类型</div>
+                          <div className="mt-1 text-sm font-medium text-slate-700">
+                            {result.sourceType === 'web_url' ? '网页直链' : '分享文本 / 短链接'}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">作者</div>
+                          <div className="mt-1 text-sm font-medium text-slate-700">
+                            {result.authorName?.trim() || '未提取到作者'}
+                          </div>
                         </div>
                       </div>
 
                       <div>
                         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Video ID</div>
-                        <div className="mt-1 break-all font-mono text-sm text-slate-700">{result.videoId}</div>
-                      </div>
-
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">视频文案</div>
-                            {result.authorName && (
-                              <div className="mt-1 text-xs text-slate-400">作者：{result.authorName}</div>
-                            )}
-                          </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={handleCopyCaption}
-                            className="rounded-full px-4 border-slate-300 bg-white/50"
-                          >
-                            <Copy className="mr-2 size-3.5" />
-                            {copyStatus === 'done' ? '已复制' : '复制文案'}
-                          </Button>
+                        <div className="mt-1 break-all font-mono text-sm text-slate-700">
+                          {result.videoId || '未提取到'}
                         </div>
-                        <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-3 text-sm leading-6 text-slate-600 whitespace-pre-wrap break-words">
-                          {result.caption?.trim() || '未提取到文案'}
-                        </div>
-                        {copyStatus === 'error' && (
-                          <div className="text-xs text-red-500">当前没有可复制的文案。</div>
-                        )}
                       </div>
 
                       {result.normalizedUrl && (
@@ -266,57 +297,120 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
                       )}
                     </div>
 
-                    <Button asChild className="h-14 rounded-2xl px-8 text-lg font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xl shadow-indigo-600/20 transition-all active:scale-[0.98]">
-                      <a href={result.downloadUrl} target="_blank" rel="noreferrer">
-                        <Download className="mr-3 size-5" />
-                        下载视频
-                      </a>
-                    </Button>
+                    <div className="flex flex-col gap-3">
+                      <Button asChild className="h-14 rounded-2xl px-8 text-lg font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xl shadow-indigo-600/20 transition-all active:scale-[0.98]">
+                        <a href={result.downloadUrl} target="_blank" rel="noreferrer">
+                          <Download className="mr-3 size-5" />
+                          下载视频
+                        </a>
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        onClick={handleExtractTranscript}
+                        disabled={isTranscriptLoading}
+                        className="h-14 rounded-2xl px-8 border-slate-300 bg-white/60 text-base font-bold"
+                      >
+                        {isTranscriptLoading ? (
+                          <>
+                            <Loader2 className="mr-3 size-5 animate-spin" />
+                            提取中...
+                          </>
+                        ) : (
+                          <>
+                            <AudioLines className="mr-3 size-5" />
+                            提取视频文案
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
+                </>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-4 text-sm text-slate-500">
+                  解析成功后，这里会显示标题、作者和下载按钮。
+                </div>
+              )}
+            </div>
+
+            <div className="w-full bg-white/40 backdrop-blur-md p-6 rounded-[2rem] border border-white/60 space-y-5">
+              <div className="flex items-center gap-3">
+                <div className="inline-flex size-11 items-center justify-center rounded-2xl bg-slate-900 text-white">
+                  <FileText className="size-5" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em]">文案结果</div>
+                  <div className="text-lg font-black text-slate-900">视频音频口播转写</div>
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-4 text-sm text-slate-500 space-y-4">
-                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                  <Sparkles className="size-4" />
-                  高级选项
+              {isTranscriptLoading && (
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/80 px-4 py-4 text-sm text-indigo-700">
+                  <div className="flex items-center gap-3 font-semibold">
+                    <Loader2 className="size-4 animate-spin" />
+                    正在下载视频、提取音频并调用 ASR 转写，这一步通常会比解析视频更久。
+                  </div>
                 </div>
+              )}
 
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <Button
-                    variant="outline"
-                    onClick={handleHighQualityResolve}
-                    disabled={isHighQualityLoading}
-                    className="rounded-2xl border-slate-300 bg-white/50"
-                  >
-                    {isHighQualityLoading ? (
-                      <>
-                        <Loader2 className="mr-2 size-4 animate-spin" />
-                        获取中...
-                      </>
-                    ) : (
-                      '尝试获取最高画质'
-                    )}
-                  </Button>
+              {transcriptResult?.transcriptOk ? (
+                <>
+                  <div className="flex items-center gap-2 text-xs text-emerald-600 font-bold bg-emerald-50/90 p-3 rounded-xl border border-emerald-100">
+                    <CheckCircle2 className="size-4" />
+                    文案提取成功，可直接复制。
+                  </div>
 
-                  {highQualityResult && (
-                    <Button asChild variant="outline" className="rounded-2xl border-slate-300 bg-white/50">
-                      <a href={highQualityResult.downloadUrl} target="_blank" rel="noreferrer">
-                        <Download className="mr-2 size-4" />
-                        下载最高画质视频
-                      </a>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm text-slate-500">
+                      {transcriptResult.transcriptSegments && transcriptResult.transcriptSegments > 1
+                        ? `已按 ${transcriptResult.transcriptSegments} 段完成转写`
+                        : '已完成整段音频转写'}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCopyTranscript}
+                      className="rounded-full px-4 border-slate-300 bg-white/50"
+                    >
+                      <Copy className="mr-2 size-3.5" />
+                      {copyStatus === 'done' ? '已复制' : '复制文案'}
                     </Button>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-4 text-sm leading-6 text-slate-700 whitespace-pre-wrap break-words">
+                    {transcriptResult.transcript}
+                  </div>
+                </>
+              ) : transcriptResult && !transcriptResult.transcriptOk ? (
+                <>
+                  <div className="rounded-2xl border border-amber-100 bg-amber-50/90 px-4 py-4 text-sm text-amber-700">
+                    <div className="flex items-center gap-3 font-semibold">
+                      <AlertCircle className="size-4" />
+                      下载链路可用，但文案提取失败。
+                    </div>
+                    <div className="mt-2 leading-6">{transcriptResult.transcriptError || '请稍后重试。'}</div>
+                  </div>
+
+                  {fallbackCaption && (
+                    <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-4 text-sm text-slate-600 space-y-2">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        弱兜底文案
+                      </div>
+                      <div className="leading-6 whitespace-pre-wrap break-words">{fallbackCaption}</div>
+                    </div>
                   )}
+                </>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-4 text-sm text-slate-500">
+                  解析视频后，可继续提取视频音频里的口播文案。
                 </div>
+              )}
 
-                {highQualityError && (
-                  <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-500">
-                    {highQualityError}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+              {copyStatus === 'error' && (
+                <div className="text-xs text-red-500">当前没有可复制的文案。</div>
+              )}
+            </div>
+          </div>
         </section>
       </main>
     </div>

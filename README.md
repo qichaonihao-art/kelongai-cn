@@ -24,6 +24,7 @@
   - 豆包多模态 `POST /api/doubao/multimodal`
 - 抖音视频解析下载
   - `POST /api/douyin/resolve-download`
+  - `POST /api/douyin/extract-transcript`
 
 ### 仍保留兜底能力
 
@@ -121,9 +122,14 @@ cp legacy-project/.env.example legacy-project/.env
 
 ### 抖音视频解析下载
 
-- `TIKHUB_API_TOKEN`
-  - TikHub 抖音视频解析下载必填
+- `SILICONFLOW_API_KEY`
+  - 抖音视频口播文案转写必填
   - 只允许配置在后端环境变量中，前端不会接触这个密钥
+- `SILICONFLOW_ASR_MODEL`
+  - 可选，默认 `FunAudioLLM/SenseVoiceSmall`
+- `TIKHUB_API_TOKEN`
+  - 现在仅作为解析失败时的弱兜底，不再是主链路必填
+  - 如果你只需要“解析视频 + 下载 + ASR 转写”，理论上可以先不配
 
 ### 声音克隆
 
@@ -167,9 +173,10 @@ cp legacy-project/.env.example legacy-project/.env
 ### 验证抖音视频解析下载
 
 1. 登录后进入“抖音视频解析下载”
-2. 粘贴一个抖音网页直链，点击“解析并下载视频”
-3. 确认返回 `videoId`、`normalizedUrl` 和下载按钮
-4. 再粘贴一段抖音 App 分享文案，确认短链接也能被解析
+2. 粘贴一个抖音网页直链，点击“解析视频”
+3. 确认返回 `videoId`、`normalizedUrl`、作者和下载按钮
+4. 点击“提取视频文案”，确认页面进入加载态并返回转写文本
+5. 再粘贴一段抖音 App 分享文案，确认短链接也能被解析
 
 ## 本地预发布验证
 

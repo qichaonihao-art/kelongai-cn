@@ -119,8 +119,10 @@ http://127.0.0.1:3000
 
 ### 抖音视频解析下载说明
 
-- TikHub 依赖 `TIKHUB_API_TOKEN`
-- 所有 TikHub 调用都由 `server.mjs` 服务端发起，前端只调用本地 `/api/douyin/resolve-download`
+- 口播文案转写依赖 `SILICONFLOW_API_KEY`
+- 可选配置 `SILICONFLOW_ASR_MODEL`，默认 `FunAudioLLM/SenseVoiceSmall`
+- 如需保留旧解析兜底，可选配置 `TIKHUB_API_TOKEN`
+- 前端调用本地 `/api/douyin/resolve-download` 和 `/api/douyin/extract-transcript`
 
 ## 四、服务器部署
 
@@ -129,6 +131,7 @@ http://127.0.0.1:3000
 - Node.js 18+，建议 Node.js 20+
 - Nginx
 - PM2
+- `ffmpeg` 与 `ffprobe`
 
 ### 2. 安装依赖
 
