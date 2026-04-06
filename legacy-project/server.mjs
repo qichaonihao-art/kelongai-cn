@@ -54,10 +54,11 @@ const SERVER_CONFIG = {
 const DOUYIN_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 const TIKHUB_API_BASE_URL = 'https://api.tikhub.io';
 const DOUYIN_RETRY_DELAYS_MS = [250, 700];
-const SILICONFLOW_API_BASE_URL = 'https://api.siliconflow.com/v1';
+const SILICONFLOW_API_BASE_URL = String(process.env.SILICONFLOW_API_BASE_URL || 'https://api.siliconflow.cn/v1').trim().replace(/\/+$/g, '');
 const SILICONFLOW_ASR_MODEL = String(process.env.SILICONFLOW_ASR_MODEL || 'FunAudioLLM/SenseVoiceSmall').trim();
 const DOUYIN_DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
-const DOUYIN_ASR_TIMEOUT_MS = 5 * 60 * 1000;
+const DOUYIN_ASR_TIMEOUT_MS = Math.max(2 * 60 * 1000, Number(process.env.DOUYIN_ASR_TIMEOUT_MS || 12 * 60 * 1000));
+const DOUYIN_ASR_CONNECT_TIMEOUT_SECONDS = Math.max(10, Math.floor(DOUYIN_ASR_TIMEOUT_MS / 1000 / 6));
 const MAX_DOUYIN_VIDEO_DOWNLOAD_BYTES = 220 * 1024 * 1024;
 const DOUYIN_ASR_SEGMENT_SECONDS = 9 * 60;
 const DOUYIN_ASR_MAX_SEGMENT_DURATION_SECONDS = 55 * 60;
@@ -1071,16 +1072,26 @@ function extractDouyinDirectMetadataFromHtml(html, fallbackUrl = '') {
 }
 
 async function fetchDouyinHtmlPage(url) {
-  const response = await fetch(url, {
-    method: 'GET',
-    redirect: 'follow',
-    headers: {
-      'user-agent': DOUYIN_USER_AGENT,
-      'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-    },
-    signal: AbortSignal.timeout(DOUYIN_DOWNLOAD_TIMEOUT_MS)
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: {
+        'user-agent': DOUYIN_USER_AGENT,
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      },
+      signal: AbortSignal.timeout(DOUYIN_DOWNLOAD_TIMEOUT_MS)
+    });
+  } catch (error) {
+    throw createDouyinResolveError({
+      stage: 'douyin_video_parse_failed',
+      statusCode: 502,
+      message: '抖音视频解析失败',
+      detail: `页面抓取网络异常：${error?.message || 'fetch failed'}`
+    });
+  }
 
   if (!response.ok) {
     throw createDouyinResolveError({
@@ -1173,15 +1184,26 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId }) {
   await ensureUploadTempDir();
   const videoExtension = getFallbackExtensionFromUrl(downloadUrl);
   const videoPath = path.join(UPLOAD_TEMP_DIR, `${requestId}_douyin${videoExtension}`);
-  const response = await fetch(downloadUrl, {
-    method: 'GET',
-    redirect: 'follow',
-    headers: {
-      'user-agent': DOUYIN_USER_AGENT,
-      referer: 'https://www.douyin.com/'
-    },
-    signal: AbortSignal.timeout(DOUYIN_DOWNLOAD_TIMEOUT_MS)
-  });
+  let response;
+  try {
+    response = await fetch(downloadUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: {
+        'user-agent': DOUYIN_USER_AGENT,
+        referer: 'https://www.douyin.com/',
+        accept: '*/*'
+      },
+      signal: AbortSignal.timeout(DOUYIN_DOWNLOAD_TIMEOUT_MS)
+    });
+  } catch (error) {
+    throw createDouyinResolveError({
+      stage: 'douyin_video_download_failed',
+      statusCode: 502,
+      message: '视频下载失败',
+      detail: `视频文件下载网络异常：${error?.message || 'fetch failed'}`
+    });
+  }
 
   if (!response.ok) {
     throw createDouyinResolveError({
@@ -1261,8 +1283,13 @@ async function splitAudioForDouyinAsr({ audioPath, requestId }) {
   return segments.length ? segments : [audioPath];
 }
 
+function getMimeTypeFromFilePath(filePath) {
+  const ext = path.extname(String(filePath || '')).toLowerCase();
+  return MIME_TYPES[ext] || 'application/octet-stream';
+}
+
 async function transcribeAudioWithSiliconFlow({ audioPath, requestId, segmentIndex = 0 }) {
-  const apiKey = readValue(SERVER_CONFIG.siliconFlowApiKey);
+  const apiKey = readValue(process.env.SILICONFLOW_API_KEY, SERVER_CONFIG.siliconFlowApiKey);
   if (!apiKey) {
     throw createDouyinResolveError({
       stage: 'siliconflow_api_key_missing',
@@ -1272,41 +1299,108 @@ async function transcribeAudioWithSiliconFlow({ audioPath, requestId, segmentInd
     });
   }
 
-  const audioBuffer = await readFile(audioPath);
-  const form = new FormData();
-  form.set('model', SILICONFLOW_ASR_MODEL);
-  form.set('file', new Blob([audioBuffer], { type: 'audio/mpeg' }), path.basename(audioPath));
+  const audioInfo = await stat(audioPath);
+  const mimeType = getMimeTypeFromFilePath(audioPath);
+  const requestUrl = `${SILICONFLOW_API_BASE_URL}/audio/transcriptions`;
+  const curlArgs = [
+    '--silent',
+    '--show-error',
+    '--request', 'POST',
+    '--url', requestUrl,
+    '--header', `Authorization: Bearer ${apiKey}`,
+    '--form', `file=@${audioPath};type=${mimeType}`,
+    '--form', `model=${SILICONFLOW_ASR_MODEL}`,
+    '--connect-timeout', String(DOUYIN_ASR_CONNECT_TIMEOUT_SECONDS),
+    '--max-time', String(Math.ceil(DOUYIN_ASR_TIMEOUT_MS / 1000)),
+    '--write-out', '\n__CURL_HTTP_STATUS__:%{http_code}'
+  ];
 
-  const response = await fetch(`${SILICONFLOW_API_BASE_URL}/audio/transcriptions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: form,
-    signal: AbortSignal.timeout(DOUYIN_ASR_TIMEOUT_MS)
+  console.log('[douyin transcript] siliconflow asr request start', {
+    requestId,
+    segmentIndex,
+    url: requestUrl,
+    model: SILICONFLOW_ASR_MODEL,
+    filePath: audioPath,
+    fileSize: audioInfo.size,
+    mimeType,
+    requestType: 'multipart/form-data',
+    authConfigured: true
   });
 
-  const responseText = await response.text();
+  let stdout = '';
+  let stderr = '';
+  try {
+    const result = await execFileAsync('curl', curlArgs, {
+      maxBuffer: 2 * 1024 * 1024
+    });
+    stdout = String(result.stdout || '');
+    stderr = String(result.stderr || '');
+  } catch (error) {
+    const stdoutText = String(error?.stdout || '');
+    const stderrText = String(error?.stderr || '');
+    const curlCode = Number(error?.code || 0);
+
+    console.error('[douyin transcript] siliconflow asr transport failed', {
+      requestId,
+      segmentIndex,
+      url: requestUrl,
+      model: SILICONFLOW_ASR_MODEL,
+      filePath: audioPath,
+      fileSize: audioInfo.size,
+      mimeType,
+      curlCode,
+      stdout: summarizeUpstreamBody(stdoutText),
+      stderr: summarizeUpstreamBody(stderrText),
+      message: error?.message || ''
+    });
+
+    throw createDouyinResolveError({
+      stage: 'douyin_asr_request_failed',
+      statusCode: curlCode === 28 ? 504 : 502,
+      message: 'ASR 请求失败',
+      detail: curlCode === 28
+        ? 'SiliconFlow ASR 请求超时，请稍后重试。'
+        : `SiliconFlow 网络请求失败：${stderrText || error?.message || 'curl failed'}`
+    });
+  }
+
+  const statusMarker = '\n__CURL_HTTP_STATUS__:';
+  const markerIndex = stdout.lastIndexOf(statusMarker);
+  const responseText = markerIndex >= 0 ? stdout.slice(0, markerIndex) : stdout;
+  const httpStatus = markerIndex >= 0 ? Number.parseInt(stdout.slice(markerIndex + statusMarker.length).trim(), 10) : 0;
   let json = null;
 
   try {
     json = responseText ? JSON.parse(responseText) : null;
   } catch {}
 
-  if (!response.ok) {
+  console.log('[douyin transcript] siliconflow asr response received', {
+    requestId,
+    segmentIndex,
+    status: httpStatus,
+    body: summarizeUpstreamBody(responseText),
+    stderr: summarizeUpstreamBody(stderr)
+  });
+
+  if (!httpStatus || httpStatus < 200 || httpStatus >= 300) {
     console.error('[douyin transcript] siliconflow asr failed', {
       requestId,
       segmentIndex,
-      status: response.status,
+      url: requestUrl,
+      model: SILICONFLOW_ASR_MODEL,
+      filePath: audioPath,
+      fileSize: audioInfo.size,
+      mimeType,
+      status: httpStatus,
       body: summarizeUpstreamBody(responseText)
     });
     throw createDouyinResolveError({
       stage: 'douyin_asr_request_failed',
-      statusCode: response.status >= 400 && response.status < 500 ? 400 : 502,
-      upstreamStatus: response.status,
+      statusCode: httpStatus >= 400 && httpStatus < 500 ? 400 : 502,
+      upstreamStatus: httpStatus,
       upstreamBodySummary: summarizeUpstreamBody(responseText),
       message: 'ASR 请求失败',
-      detail: `SiliconFlow 返回状态码 ${response.status}`
+      detail: `SiliconFlow 返回状态码 ${httpStatus || 0}`
     });
   }
 

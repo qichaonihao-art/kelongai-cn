@@ -70,28 +70,36 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
     }
 
     setIsTranscriptLoading(true);
+    setError('');
     setTranscriptResult(null);
     setCopyStatus('idle');
 
     try {
       const response = await extractDouyinTranscript(nextInput);
-      setTranscriptResult(response);
+      const normalizedTranscriptResult: DouyinTranscriptResult = response.transcriptOk
+        ? response
+        : {
+            ...response,
+            transcriptError: response.transcriptError?.trim() || '视频文案提取失败，请稍后重试。',
+          };
+
+      setTranscriptResult(normalizedTranscriptResult);
 
       if (!result) {
         setResult({
           ok: true,
           mode: 'stable',
-          videoId: response.videoId,
-          title: response.title,
-          downloadUrl: response.downloadUrl,
-          authorName: response.authorName,
-          normalizedUrl: response.normalizedUrl,
-          sourceType: response.sourceType,
+          videoId: normalizedTranscriptResult.videoId,
+          title: normalizedTranscriptResult.title,
+          downloadUrl: normalizedTranscriptResult.downloadUrl,
+          authorName: normalizedTranscriptResult.authorName,
+          normalizedUrl: normalizedTranscriptResult.normalizedUrl,
+          sourceType: normalizedTranscriptResult.sourceType,
           caption: '',
-          fallbackCaption: response.fallbackCaption,
-          fallbackCaptionSource: response.fallbackCaptionSource,
+          fallbackCaption: normalizedTranscriptResult.fallbackCaption,
+          fallbackCaptionSource: normalizedTranscriptResult.fallbackCaptionSource,
           videoData: null,
-          resolveStrategy: response.resolveStrategy,
+          resolveStrategy: normalizedTranscriptResult.resolveStrategy,
         });
       }
     } catch (submitError) {

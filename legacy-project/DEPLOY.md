@@ -120,6 +120,7 @@ http://127.0.0.1:3000
 ### 抖音视频解析下载说明
 
 - 口播文案转写依赖 `SILICONFLOW_API_KEY`
+- 中国大陆环境建议同时配置 `SILICONFLOW_API_BASE_URL=https://api.siliconflow.cn/v1`
 - 可选配置 `SILICONFLOW_ASR_MODEL`，默认 `FunAudioLLM/SenseVoiceSmall`
 - 如需保留旧解析兜底，可选配置 `TIKHUB_API_TOKEN`
 - 前端调用本地 `/api/douyin/resolve-download` 和 `/api/douyin/extract-transcript`

@@ -125,6 +125,9 @@ cp legacy-project/.env.example legacy-project/.env
 - `SILICONFLOW_API_KEY`
   - 抖音视频口播文案转写必填
   - 只允许配置在后端环境变量中，前端不会接触这个密钥
+- `SILICONFLOW_API_BASE_URL`
+  - 可选，默认 `https://api.siliconflow.cn/v1`
+  - 中国大陆环境建议保持默认 `.cn`
 - `SILICONFLOW_ASR_MODEL`
   - 可选，默认 `FunAudioLLM/SenseVoiceSmall`
 - `TIKHUB_API_TOKEN`
