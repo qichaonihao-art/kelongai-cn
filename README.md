@@ -133,6 +133,9 @@ cp legacy-project/.env.example legacy-project/.env
 - `TIKHUB_API_TOKEN`
   - 现在仅作为解析失败时的弱兜底，不再是主链路必填
   - 如果你只需要“解析视频 + 下载 + ASR 转写”，理论上可以先不配
+- `DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS`
+  - 可选，默认 `600000`
+  - 用于控制服务端下载抖音视频文件到临时目录的超时
 
 ### 声音克隆
 

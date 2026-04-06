@@ -57,6 +57,9 @@ const DOUYIN_RETRY_DELAYS_MS = [250, 700];
 const SILICONFLOW_API_BASE_URL = String(process.env.SILICONFLOW_API_BASE_URL || 'https://api.siliconflow.cn/v1').trim().replace(/\/+$/g, '');
 const SILICONFLOW_ASR_MODEL = String(process.env.SILICONFLOW_ASR_MODEL || 'FunAudioLLM/SenseVoiceSmall').trim();
 const DOUYIN_DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
+const DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS = Math.max(2 * 60 * 1000, Number(process.env.DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS || 10 * 60 * 1000));
+const DOUYIN_VIDEO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = Math.max(10, Math.floor(DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS / 1000 / 6));
+const DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS = [0, 1500];
 const DOUYIN_ASR_TIMEOUT_MS = Math.max(2 * 60 * 1000, Number(process.env.DOUYIN_ASR_TIMEOUT_MS || 12 * 60 * 1000));
 const DOUYIN_ASR_CONNECT_TIMEOUT_SECONDS = Math.max(10, Math.floor(DOUYIN_ASR_TIMEOUT_MS / 1000 / 6));
 const MAX_DOUYIN_VIDEO_DOWNLOAD_BYTES = 220 * 1024 * 1024;
@@ -1180,67 +1183,168 @@ function getFallbackExtensionFromUrl(rawUrl, fallback = '.mp4') {
   }
 }
 
+function getHostnameFromUrl(rawUrl) {
+  try {
+    return new URL(rawUrl).hostname || '';
+  } catch {
+    return '';
+  }
+}
+
+function shouldRetryDouyinVideoDownloadError(error) {
+  const stage = String(error?.stage || '');
+  const curlCode = Number(error?.curlCode || 0);
+
+  if (stage === 'douyin_video_download_timeout') {
+    return true;
+  }
+
+  if (stage === 'douyin_video_download_network_error') {
+    return true;
+  }
+
+  return [5, 6, 7, 18, 28, 52, 55, 56].includes(curlCode);
+}
+
 async function downloadDouyinVideoToTemp({ downloadUrl, requestId }) {
   await ensureUploadTempDir();
   const videoExtension = getFallbackExtensionFromUrl(downloadUrl);
   const videoPath = path.join(UPLOAD_TEMP_DIR, `${requestId}_douyin${videoExtension}`);
-  let response;
-  try {
-    response = await fetch(downloadUrl, {
-      method: 'GET',
-      redirect: 'follow',
-      headers: {
-        'user-agent': DOUYIN_USER_AGENT,
-        referer: 'https://www.douyin.com/',
-        accept: '*/*'
-      },
-      signal: AbortSignal.timeout(DOUYIN_DOWNLOAD_TIMEOUT_MS)
+  const downloadHost = getHostnameFromUrl(downloadUrl);
+
+  let lastError = null;
+
+  for (let attempt = 0; attempt < DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS.length; attempt += 1) {
+    if (attempt > 0) {
+      await sleep(DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS[attempt]);
+    }
+
+    const attemptStartedAt = Date.now();
+    const curlArgs = [
+      '--location',
+      '--silent',
+      '--show-error',
+      '--output', videoPath,
+      '--request', 'GET',
+      '--url', downloadUrl,
+      '--user-agent', DOUYIN_USER_AGENT,
+      '--header', 'Referer: https://www.douyin.com/',
+      '--header', 'Accept: */*',
+      '--connect-timeout', String(DOUYIN_VIDEO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS),
+      '--max-time', String(Math.ceil(DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS / 1000)),
+      '--write-out', '\n__CURL_HTTP_STATUS__:%{http_code}\n__CURL_SIZE_DOWNLOAD__:%{size_download}\n__CURL_EFFECTIVE_URL__:%{url_effective}'
+    ];
+
+    console.log('[douyin transcript] video_download_started', {
+      requestId,
+      attempt: attempt + 1,
+      host: downloadHost,
+      timeoutMs: DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS,
+      targetPath: videoPath,
+      downloadUrl
     });
-  } catch (error) {
-    throw createDouyinResolveError({
-      stage: 'douyin_video_download_failed',
-      statusCode: 502,
-      message: '视频下载失败',
-      detail: `视频文件下载网络异常：${error?.message || 'fetch failed'}`
-    });
+
+    try {
+      const { stdout, stderr } = await execFileAsync('curl', curlArgs, {
+        maxBuffer: 1024 * 1024
+      });
+
+      const stdoutText = String(stdout || '');
+      const stderrText = String(stderr || '');
+      const httpStatusMatch = stdoutText.match(/__CURL_HTTP_STATUS__:(\d+)/);
+      const sizeDownloadMatch = stdoutText.match(/__CURL_SIZE_DOWNLOAD__:(\d+(?:\.\d+)?)/);
+      const effectiveUrlMatch = stdoutText.match(/__CURL_EFFECTIVE_URL__:(.+)$/m);
+      const httpStatus = Number.parseInt(httpStatusMatch?.[1] || '0', 10);
+      const reportedSize = Number.parseFloat(sizeDownloadMatch?.[1] || '0');
+      const effectiveUrl = String(effectiveUrlMatch?.[1] || '').trim();
+
+      if (!httpStatus || httpStatus >= 400) {
+        await unlink(videoPath).catch(() => {});
+        throw createDouyinResolveError({
+          stage: 'douyin_video_download_failed',
+          statusCode: httpStatus >= 400 && httpStatus < 500 ? 400 : 502,
+          upstreamStatus: httpStatus,
+          upstreamBodySummary: summarizeUpstreamBody(stdoutText),
+          message: '视频下载失败',
+          detail: `视频文件请求失败，状态码 ${httpStatus || 0}`
+        });
+      }
+
+      const fileInfo = await stat(videoPath);
+      if (fileInfo.size > MAX_DOUYIN_VIDEO_DOWNLOAD_BYTES) {
+        await unlink(videoPath).catch(() => {});
+        throw createDouyinResolveError({
+          stage: 'douyin_video_download_too_large',
+          statusCode: 413,
+          message: '视频下载失败',
+          detail: '视频文件过大，当前服务端限制为 220MB。'
+        });
+      }
+
+      console.log('[douyin transcript] video_download_finished', {
+        requestId,
+        attempt: attempt + 1,
+        host: downloadHost,
+        timeoutMs: DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS,
+        targetPath: videoPath,
+        effectiveUrl,
+        finalFileSize: fileInfo.size,
+        reportedDownloadSize: Number.isFinite(reportedSize) ? reportedSize : 0,
+        elapsedMs: Date.now() - attemptStartedAt,
+        stderr: summarizeUpstreamBody(stderrText)
+      });
+
+      return {
+        videoPath,
+        fileSize: fileInfo.size
+      };
+    } catch (error) {
+      await unlink(videoPath).catch(() => {});
+
+      if (error?.stage) {
+        lastError = error;
+      } else {
+        const curlCode = Number(error?.code || 0);
+        const stderrText = String(error?.stderr || '');
+        const isTimeout = curlCode === 28 || /timed out|timeout/i.test(stderrText || error?.message || '');
+        lastError = createDouyinResolveError({
+          stage: isTimeout ? 'douyin_video_download_timeout' : 'douyin_video_download_network_error',
+          statusCode: isTimeout ? 504 : 502,
+          message: '视频下载失败',
+          detail: isTimeout
+            ? '视频文件下载超时，请稍后重试。'
+            : `视频文件下载网络异常：${stderrText || error?.message || 'curl failed'}`,
+        });
+        lastError.curlCode = curlCode;
+      }
+
+      const canRetry = attempt < DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS.length - 1 && shouldRetryDouyinVideoDownloadError(lastError);
+
+      console.error('[douyin transcript] video download attempt failed', {
+        requestId,
+        attempt: attempt + 1,
+        canRetry,
+        host: downloadHost,
+        timeoutMs: DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS,
+        targetPath: videoPath,
+        elapsedMs: Date.now() - attemptStartedAt,
+        stage: lastError?.stage || '',
+        curlCode: lastError?.curlCode || 0,
+        message: lastError?.message || '',
+        detail: lastError?.detail || ''
+      });
+
+      if (!canRetry) {
+        throw lastError;
+      }
+    }
   }
 
-  if (!response.ok) {
-    throw createDouyinResolveError({
-      stage: 'douyin_video_download_failed',
-      statusCode: response.status >= 400 && response.status < 500 ? 400 : 502,
-      upstreamStatus: response.status,
-      message: '视频下载失败',
-      detail: `视频文件请求失败，状态码 ${response.status}`
-    });
-  }
-
-  const contentLength = Number(response.headers.get('content-length') || 0);
-  if (Number.isFinite(contentLength) && contentLength > MAX_DOUYIN_VIDEO_DOWNLOAD_BYTES) {
-    throw createDouyinResolveError({
-      stage: 'douyin_video_download_too_large',
-      statusCode: 413,
-      message: '视频下载失败',
-      detail: '视频文件过大，当前服务端限制为 220MB。'
-    });
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  if (buffer.length > MAX_DOUYIN_VIDEO_DOWNLOAD_BYTES) {
-    throw createDouyinResolveError({
-      stage: 'douyin_video_download_too_large',
-      statusCode: 413,
-      message: '视频下载失败',
-      detail: '视频文件过大，当前服务端限制为 220MB。'
-    });
-  }
-
-  await writeFile(videoPath, buffer);
-  return {
-    videoPath,
-    fileSize: buffer.length
-  };
+  throw lastError || createDouyinResolveError({
+    stage: 'douyin_video_download_failed',
+    statusCode: 502,
+    message: '视频下载失败'
+  });
 }
 
 async function extractAudioFromDouyinVideo({ inputPath, requestId }) {
@@ -3935,13 +4039,13 @@ async function handleDouyinExtractTranscript(req, res) {
     } catch (error) {
       const stage = String(error?.stage || '');
       const transcriptError =
-        stage === 'douyin_video_download_failed' || stage === 'douyin_video_download_too_large'
+        stage === 'douyin_video_download_failed' || stage === 'douyin_video_download_too_large' || stage === 'douyin_video_download_timeout' || stage === 'douyin_video_download_network_error'
           ? (error?.detail || error?.message || '视频下载失败')
           : stage === 'douyin_asr_request_failed' || stage === 'douyin_asr_empty_result' || stage === 'siliconflow_api_key_missing'
             ? (error?.detail || error?.message || 'ASR 请求失败')
             : (error?.message || '文案提取失败');
 
-      if (stage === 'douyin_video_download_failed' || stage === 'douyin_video_download_too_large') {
+      if (stage === 'douyin_video_download_failed' || stage === 'douyin_video_download_too_large' || stage === 'douyin_video_download_timeout' || stage === 'douyin_video_download_network_error') {
         console.error('[douyin transcript] video download failed', {
           requestId,
           stage,
