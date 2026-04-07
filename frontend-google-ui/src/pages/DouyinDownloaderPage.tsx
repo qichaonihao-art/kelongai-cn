@@ -187,15 +187,19 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
         <motion.section
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
-          className="glass-card p-10 rounded-[2.5rem] border-white/80 shadow-glass space-y-3"
+          className="glass-card rounded-[2.5rem] border-white/80 p-8 shadow-glass"
         >
-          <div className="inline-flex size-12 items-center justify-center rounded-2xl bg-slate-900 text-white">
-            <Download className="size-5" />
+          <div className="flex items-start gap-4">
+            <div className="inline-flex size-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white">
+              <Download className="size-5" />
+            </div>
+            <div className="pt-0.5">
+              <h2 className="text-3xl font-black tracking-tight text-slate-900">抖音视频解析下载</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                粘贴抖音分享内容，先解析可下载视频，再按需提取视频音频里的口播文案。
+              </p>
+            </div>
           </div>
-          <h2 className="text-4xl font-black tracking-tight text-slate-900">抖音视频解析下载</h2>
-          <p className="max-w-2xl text-sm leading-6 text-slate-500">
-            粘贴抖音分享内容，先解析可下载视频，再按需提取视频音频里的口播文案。
-          </p>
         </motion.section>
 
         <section className="glass-card p-10 rounded-[2.5rem] border-white/80 shadow-glass space-y-6">
