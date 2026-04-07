@@ -100,6 +100,14 @@ const MAX_DOUYIN_VIDEO_DOWNLOAD_BYTES = 220 * 1024 * 1024;
 const DOUYIN_ASR_SEGMENT_SECONDS = 9 * 60;
 const DOUYIN_ASR_MAX_SEGMENT_DURATION_SECONDS = 55 * 60;
 const douyinDownloadHostStats = new Map();
+const DOUYIN_DOWNLOAD_HOST_BASE_SCORES = new Map([
+  ['v5-hl-zenl-ov.zjcdn.com', 140],
+  ['api-play-hl.amemv.com', 125],
+  ['api-hl.amemv.com', 115],
+  ['v9-chc.douyinvod.com', 105],
+  ['v6-chc.douyinvod.com', 95],
+  ['v5-dy-o-abtest.zjcdn.com', -120]
+]);
 
 function readBooleanEnv(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -1047,7 +1055,8 @@ function scoreDouyinDownloadCandidate(candidate) {
   const url = String(candidate?.url || '');
   const source = String(candidate?.source || '');
   const host = String(candidate?.host || '');
-  let score = 0;
+  const hostStats = getDouyinDownloadHostStatsSnapshot(host);
+  let score = getDouyinDownloadHostBaseScore(host);
 
   if (/play_addr_h264/i.test(source)) score += 60;
   if (/bit_rate/i.test(source)) score += 55;
@@ -1060,15 +1069,79 @@ function scoreDouyinDownloadCandidate(candidate) {
   if (/byte|douyinvod|toutiao|iesdouyin|cdn/i.test(host)) score += 20;
   if (/tikhub/i.test(host)) score -= 30;
 
+  score += hostStats.success * 18;
+  score -= hostStats.timeout * 40;
+  score -= hostStats.failure * 8;
+  score -= hostStats.http5xx * 14;
+  score -= hostStats.http4xx * 20;
+  score -= hostStats.empty * 30;
+  score -= hostStats.invalid * 30;
+  score -= hostStats.network * 12;
+
+  const observedAttempts = Math.max(1, hostStats.attempts);
+  const successRate = hostStats.success / observedAttempts;
+  const timeoutRate = hostStats.timeout / observedAttempts;
+  score += Math.round(successRate * 60);
+  score -= Math.round(timeoutRate * 80);
+
   return score;
 }
 
-function pickBestDouyinDownloadCandidate(candidates) {
-  const ranked = [...candidates]
-    .filter((candidate) => candidate?.url)
-    .sort((left, right) => scoreDouyinDownloadCandidate(right) - scoreDouyinDownloadCandidate(left));
+function rankDouyinDownloadCandidates(candidates, options = {}) {
+  const {
+    attemptedHosts = new Set(),
+    avoidHosts = new Set()
+  } = options;
 
-  return ranked[0] || null;
+  return [...candidates]
+    .filter((candidate) => candidate?.url)
+    .map((candidate) => {
+      const host = String(candidate?.host || '');
+      let score = scoreDouyinDownloadCandidate(candidate);
+
+      if (avoidHosts.has(host)) score -= 220;
+      if (attemptedHosts.has(host)) score -= 160;
+
+      return {
+        ...candidate,
+        score,
+        hostStats: getDouyinDownloadHostStatsSnapshot(host)
+      };
+    })
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return String(left.host || '').localeCompare(String(right.host || ''));
+    });
+}
+
+function pickBestDouyinDownloadCandidate(candidates, options = {}) {
+  return rankDouyinDownloadCandidates(candidates, options)[0] || null;
+}
+
+function normalizeDouyinDownloadCandidates(downloadUrlCandidates = [], fallbackUrl = '') {
+  const merged = [];
+  const seen = new Set();
+
+  const addCandidate = (candidate, fallbackSource = 'resolved.downloadUrl') => {
+    const url = stripDouyinWatermark(String(candidate?.url || candidate || ''));
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    merged.push({
+      url,
+      source: String(candidate?.source || fallbackSource),
+      host: getHostnameFromUrl(url)
+    });
+  };
+
+  for (const candidate of downloadUrlCandidates) {
+    addCandidate(candidate, 'resolved.downloadUrlCandidate');
+  }
+
+  if (fallbackUrl) {
+    addCandidate({ url: fallbackUrl, source: 'resolved.downloadUrl' });
+  }
+
+  return merged;
 }
 
 function extractStableDownloadUrl(payload) {
@@ -1295,13 +1368,15 @@ function extractDouyinDirectMetadataFromHtml(html, fallbackUrl = '') {
   const candidates = embedded ? collectDouyinMetadataCandidates(embedded) : [];
 
   for (const candidate of candidates) {
-    const downloadUrl = stripDouyinWatermark(extractStableDownloadUrl(candidate));
+    const downloadUrlCandidates = collectDownloadUrlCandidates(candidate);
+    const downloadUrl = pickBestDouyinDownloadCandidate(downloadUrlCandidates)?.url || '';
     if (!downloadUrl) continue;
 
     return {
       resolveStrategy: 'direct_html',
       videoId: extractDouyinVideoIdFromPayload(candidate, extractDouyinAwemeId(fallbackUrl)),
       downloadUrl,
+      downloadUrlCandidates,
       title: readValue(
         candidate?.share_info?.share_title,
         candidate?.seo_info?.seo_title,
@@ -1325,6 +1400,11 @@ function extractDouyinDirectMetadataFromHtml(html, fallbackUrl = '') {
       resolveStrategy: 'direct_html_regex',
       videoId: extractDouyinAwemeId(fallbackUrl),
       downloadUrl,
+      downloadUrlCandidates: [{
+        url: downloadUrl,
+        source: 'direct_html_regex',
+        host: getHostnameFromUrl(downloadUrl)
+      }],
       title: readValue(
         extractHtmlMetaContent(raw, 'property', 'og:title'),
         extractHtmlMetaContent(raw, 'name', 'description')
@@ -1426,6 +1506,7 @@ async function resolveDouyinVideoByHtml({ rawUrl, normalizedUrl, awemeId, reques
       return {
         videoId: parsed.videoId || awemeId || extractDouyinAwemeId(page.finalUrl),
         downloadUrl: parsed.downloadUrl,
+        downloadUrlCandidates: parsed.downloadUrlCandidates || [],
         title: parsed.title,
         caption: parsed.caption,
         authorName: parsed.authorName,
@@ -1518,6 +1599,20 @@ function getDouyinDownloadHostStatsSnapshot(host) {
   };
 }
 
+function getDouyinDownloadHostBaseScore(host) {
+  const normalizedHost = String(host || '').trim().toLowerCase();
+  if (DOUYIN_DOWNLOAD_HOST_BASE_SCORES.has(normalizedHost)) {
+    return DOUYIN_DOWNLOAD_HOST_BASE_SCORES.get(normalizedHost) || 0;
+  }
+
+  let score = 0;
+  if (/douyinvod\.com$/i.test(normalizedHost)) score += 70;
+  if (/amemv\.com$/i.test(normalizedHost)) score += 65;
+  if (/zjcdn\.com$/i.test(normalizedHost)) score += 35;
+  if (/abtest/i.test(normalizedHost)) score -= 90;
+  return score;
+}
+
 function shouldRetryDouyinVideoDownloadError(error) {
   const stage = String(error?.stage || '');
   const curlCode = Number(error?.curlCode || 0);
@@ -1541,13 +1636,19 @@ function shouldRetryDouyinVideoDownloadError(error) {
   return [5, 6, 7, 18, 28, 52, 55, 56].includes(curlCode);
 }
 
-async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlineAt = 0 }) {
+async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = [], requestId, parentDeadlineAt = 0 }) {
   await ensureUploadTempDir();
-  const videoExtension = getFallbackExtensionFromUrl(downloadUrl);
+  const normalizedCandidates = normalizeDouyinDownloadCandidates(downloadUrlCandidates, downloadUrl);
+  const fallbackCandidate = normalizedCandidates[0] || {
+    url: downloadUrl,
+    source: 'resolved.downloadUrl',
+    host: getHostnameFromUrl(downloadUrl)
+  };
+  const videoExtension = getFallbackExtensionFromUrl(fallbackCandidate.url);
   const videoPath = path.join(UPLOAD_TEMP_DIR, `${requestId}_douyin${videoExtension}`);
-  const downloadHost = getHostnameFromUrl(downloadUrl);
-  updateDouyinDownloadHostStats(downloadHost, 'selected');
-
+  const attemptedHosts = new Set();
+  let firstSelectedHost = '';
+  let previousAttemptHost = '';
   let lastError = null;
 
   for (let attempt = 0; attempt < DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS.length; attempt += 1) {
@@ -1556,6 +1657,29 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
     }
 
     const attemptStartedAt = Date.now();
+    const shouldSwitchHost =
+      attempt > 0 &&
+      (
+        lastError?.stage === 'douyin_video_download_timeout' ||
+        lastError?.stage === 'douyin_video_download_network_error' ||
+        lastError?.stage === 'douyin_video_download_http_5xx' ||
+        lastError?.stage === 'douyin_video_download_empty_file' ||
+        lastError?.stage === 'douyin_video_download_invalid_file'
+      );
+    const rankedCandidates = rankDouyinDownloadCandidates(normalizedCandidates, {
+      attemptedHosts: shouldSwitchHost ? attemptedHosts : new Set()
+    });
+    const alternateHostCandidates = rankedCandidates.filter((candidate) => candidate.host && !attemptedHosts.has(candidate.host));
+    const currentCandidate = alternateHostCandidates[0] || rankedCandidates[0] || fallbackCandidate;
+    const currentDownloadUrl = currentCandidate.url;
+    const downloadHost = currentCandidate.host || getHostnameFromUrl(currentDownloadUrl);
+    const currentCandidateRank = rankedCandidates.findIndex((candidate) => candidate.url === currentDownloadUrl) + 1;
+    const retrySwitchedHost = attempt > 0 && previousAttemptHost && downloadHost !== previousAttemptHost ? downloadHost : '';
+    if (!firstSelectedHost) {
+      firstSelectedHost = downloadHost;
+    }
+    attemptedHosts.add(downloadHost);
+    updateDouyinDownloadHostStats(downloadHost, 'selected');
     const { timeoutMs } = getStageTimeoutContext({
       parentDeadlineAt,
       stageStartedAt: attemptStartedAt,
@@ -1573,7 +1697,7 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
       '--show-error',
       '--output', videoPath,
       '--request', 'GET',
-      '--url', downloadUrl,
+      '--url', currentDownloadUrl,
       '--user-agent', DOUYIN_USER_AGENT,
       '--header', 'Referer: https://www.douyin.com/',
       '--header', 'Accept: */*',
@@ -1593,7 +1717,17 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
       host: downloadHost,
       upstreamStatus: 0,
       attempt: attempt + 1,
-      downloadUrl,
+      downloadUrl: currentDownloadUrl,
+      firstSelectedHost,
+      retrySwitchedHost,
+      selectedSource: currentCandidate.source || '',
+      selectedRank: currentCandidateRank > 0 ? currentCandidateRank : 1,
+      candidateRank: rankedCandidates.slice(0, 8).map((candidate, index) => ({
+        rank: index + 1,
+        host: candidate.host || '',
+        source: candidate.source || '',
+        score: candidate.score
+      })),
       hostStats
     });
 
@@ -1636,7 +1770,9 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
           curlCode: 0,
           curlStderr: stderrSummary,
           curlHttpStatus: httpStatus,
-          effectiveUrl
+          effectiveUrl,
+          firstSelectedHost,
+          retrySwitchedHost
         });
       }
 
@@ -1659,7 +1795,9 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
           curlCode: 0,
           curlStderr: stderrSummary,
           curlHttpStatus: httpStatus,
-          effectiveUrl
+          effectiveUrl,
+          firstSelectedHost,
+          retrySwitchedHost
         });
       }
 
@@ -1679,7 +1817,9 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
           curlCode: 0,
           curlStderr: stderrSummary,
           curlHttpStatus: httpStatus,
-          effectiveUrl
+          effectiveUrl,
+          firstSelectedHost,
+          retrySwitchedHost
         });
       }
 
@@ -1704,7 +1844,9 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
           curlCode: 0,
           curlStderr: stderrSummary,
           curlHttpStatus: httpStatus,
-          effectiveUrl
+          effectiveUrl,
+          firstSelectedHost,
+          retrySwitchedHost
         });
       }
 
@@ -1728,16 +1870,28 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
         ffprobeDurationSeconds: probeResult.durationSeconds,
         ffprobeFormatName: probeResult.formatName,
         ffprobeSize: probeResult.probedSize,
+        firstSelectedHost,
+        retrySwitchedHost,
+        selectedSource: currentCandidate.source || '',
+        selectedRank: currentCandidateRank > 0 ? currentCandidateRank : 1,
+        candidateRank: rankedCandidates.slice(0, 8).map((candidate, index) => ({
+          rank: index + 1,
+          host: candidate.host || '',
+          source: candidate.source || '',
+          score: candidate.score
+        })),
         hostStats: successHostStats
       });
 
+      previousAttemptHost = downloadHost;
       return {
         videoPath,
         fileSize: fileInfo.size,
         host: downloadHost,
         effectiveUrl,
         httpStatus,
-        validation: probeResult
+        validation: probeResult,
+        firstSelectedHost
       };
     } catch (error) {
       const partialFileSize = await getFileSizeIfExists(videoPath);
@@ -1748,7 +1902,9 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
           failedStage: error?.failedStage || 'video_download',
           timeoutMs: error?.timeoutMs || timeoutMs,
           targetPath: error?.targetPath || videoPath,
-          host: error?.host || downloadHost
+          host: error?.host || downloadHost,
+          firstSelectedHost: error?.firstSelectedHost || firstSelectedHost,
+          retrySwitchedHost: error?.retrySwitchedHost || retrySwitchedHost
         });
       } else {
         const curlCode = Number(error?.code || 0);
@@ -1769,7 +1925,9 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
           targetPath: videoPath,
           host: downloadHost,
           curlStderr: summarizeUpstreamBody(stderrText),
-          curlHttpStatus: 0
+          curlHttpStatus: 0,
+          firstSelectedHost,
+          retrySwitchedHost
         });
         lastError.curlCode = curlCode;
       }
@@ -1794,11 +1952,22 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
         curlHttpStatus: lastError?.curlHttpStatus || 0,
         curlStderr: lastError?.curlStderr || '',
         effectiveUrl: lastError?.effectiveUrl || '',
+        firstSelectedHost,
+        retrySwitchedHost,
+        selectedSource: currentCandidate.source || '',
+        selectedRank: currentCandidateRank > 0 ? currentCandidateRank : 1,
+        candidateRank: rankedCandidates.slice(0, 8).map((candidate, index) => ({
+          rank: index + 1,
+          host: candidate.host || '',
+          source: candidate.source || '',
+          score: candidate.score
+        })),
         message: lastError?.message || '',
         detail: lastError?.detail || '',
         hostStats: hostStatsOnFailure
       });
 
+      previousAttemptHost = downloadHost;
       if (!canRetry) {
         throw lastError;
       }
@@ -2320,6 +2489,14 @@ async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeI
       candidateCount: mergedDownloadUrlCandidates.length,
       selectedSource: selectedCandidate?.source || '',
       selectedHost: selectedCandidate?.host || '',
+      candidateRank: rankDouyinDownloadCandidates(mergedDownloadUrlCandidates)
+        .slice(0, 8)
+        .map((candidate, index) => ({
+          rank: index + 1,
+          host: candidate.host || '',
+          source: candidate.source || '',
+          score: candidate.score
+        })),
       candidateHosts: [...new Set(mergedDownloadUrlCandidates.map((candidate) => candidate.host).filter(Boolean))],
       candidateSources: mergedDownloadUrlCandidates.map((candidate) => `${candidate.source}:${candidate.host || 'unknown'}`).slice(0, 8)
     });
@@ -2327,6 +2504,7 @@ async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeI
     return {
       videoId: fallbackResult.videoId,
       downloadUrl: selectedCandidate?.url || fallbackResult.downloadUrl,
+      downloadUrlCandidates: mergedDownloadUrlCandidates,
       title: readValue(fallbackResult.caption),
       caption: '',
       authorName: fallbackResult.authorName,
@@ -4863,6 +5041,7 @@ async function handleDouyinExtractTranscript(req, res) {
       });
       const downloaded = await downloadDouyinVideoToTemp({
         downloadUrl: resolved.downloadUrl,
+        downloadUrlCandidates: resolved.downloadUrlCandidates || [],
         requestId,
         parentDeadlineAt: downloadStageDeadlineAt
       });
@@ -4968,6 +5147,8 @@ async function handleDouyinExtractTranscript(req, res) {
         curlHttpStatus: error?.curlHttpStatus || 0,
         curlStderr: error?.curlStderr || '',
         effectiveUrl: error?.effectiveUrl || '',
+        firstSelectedHost: error?.firstSelectedHost || '',
+        retrySwitchedHost: error?.retrySwitchedHost || '',
         message: error?.message || '',
         detail: error?.detail || ''
       });
@@ -5010,6 +5191,8 @@ async function handleDouyinExtractTranscript(req, res) {
       curlHttpStatus: error?.curlHttpStatus || 0,
       curlStderr: error?.curlStderr || '',
       effectiveUrl: error?.effectiveUrl || '',
+      firstSelectedHost: error?.firstSelectedHost || '',
+      retrySwitchedHost: error?.retrySwitchedHost || '',
       message: error?.message || '',
       detail: error?.detail || '',
       stack: error?.stack || ''

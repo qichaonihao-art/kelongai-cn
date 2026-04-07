@@ -213,6 +213,9 @@ cp legacy-project/.env.example legacy-project/.env
 视频下载失败时，重点补这几项字段：
 
 - `host` 和 `hostStats`
+- `firstSelectedHost`
+- `retrySwitchedHost`
+- `candidateRank`
 - `curlCode`
 - `curlHttpStatus`
 - `curlStderr`
