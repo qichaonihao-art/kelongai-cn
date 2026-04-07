@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { Readable } from 'node:stream';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -2648,6 +2649,13 @@ function getDouyinTranscriptErrorMessage(error) {
   return error?.detail || error?.message || '文案提取失败';
 }
 
+function buildDouyinVideoDownloadFileName(videoId = '') {
+  const safeVideoId = String(videoId || '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '')
+    .slice(0, 64);
+  return `douyin_${safeVideoId || Date.now().toString(36)}.mp4`;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -5210,6 +5218,108 @@ async function handleDouyinExtractTranscript(req, res) {
   }
 }
 
+async function handleDouyinDownloadVideo(req, res) {
+  const requestId = createRequestId('dy_download');
+  const startedAt = Date.now();
+
+  try {
+    const body = await readRequestBody(req);
+    const downloadUrl = readValue(body?.downloadUrl);
+    const videoId = readValue(body?.videoId);
+
+    if (!downloadUrl) {
+      sendJson(res, 400, { error: '缺少 downloadUrl' });
+      return;
+    }
+
+    const downloadHost = getHostnameFromUrl(downloadUrl);
+    const timeoutMs = DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS;
+    const fileName = buildDouyinVideoDownloadFileName(videoId);
+
+    console.log('[douyin download] proxy_started', {
+      requestId,
+      elapsedMs: Date.now() - startedAt,
+      timeoutMs,
+      targetPath: downloadUrl,
+      finalFileSize: 0,
+      host: downloadHost,
+      upstreamStatus: 0,
+      videoId
+    });
+
+    let upstreamRes;
+    try {
+      upstreamRes = await fetch(downloadUrl, {
+        method: 'GET',
+        redirect: 'follow',
+        headers: {
+          'user-agent': DOUYIN_USER_AGENT,
+          'referer': 'https://www.douyin.com/',
+          'accept': '*/*'
+        },
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+    } catch (error) {
+      sendJson(res, 502, {
+        error: '视频下载失败',
+        detail: `代理下载视频时网络异常：${error?.message || 'fetch failed'}`
+      });
+      return;
+    }
+
+    if (!upstreamRes.ok || !upstreamRes.body) {
+      const upstreamStatus = upstreamRes.status || 0;
+      const responseText = await upstreamRes.text().catch(() => '');
+      sendJson(res, upstreamStatus >= 400 && upstreamStatus < 500 ? 400 : 502, {
+        error: '视频下载失败',
+        detail: `上游视频下载失败，状态码 ${upstreamStatus || 0}`,
+        upstreamStatus,
+        upstreamBodySummary: summarizeUpstreamBody(responseText)
+      });
+      return;
+    }
+
+    const contentLength = Number.parseInt(String(upstreamRes.headers.get('content-length') || '0'), 10);
+    res.writeHead(200, {
+      'Content-Type': 'video/mp4',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+      'Cache-Control': 'no-store',
+      ...(contentLength > 0 ? { 'Content-Length': String(contentLength) } : {})
+    });
+
+    await new Promise((resolve, reject) => {
+      const stream = Readable.fromWeb(upstreamRes.body);
+      stream.on('error', reject);
+      res.on('error', reject);
+      res.on('finish', resolve);
+      stream.pipe(res);
+    });
+
+    console.log('[douyin download] proxy_finished', {
+      requestId,
+      elapsedMs: Date.now() - startedAt,
+      timeoutMs,
+      targetPath: downloadUrl,
+      finalFileSize: Number.isFinite(contentLength) && contentLength > 0 ? contentLength : 0,
+      host: downloadHost,
+      upstreamStatus: upstreamRes.status,
+      videoId,
+      fileName
+    });
+  } catch (error) {
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        error: '视频下载失败',
+        detail: error?.message || '下载代理失败'
+      });
+    } else {
+      try {
+        res.destroy(error);
+      } catch {}
+    }
+  }
+}
+
 async function serveStatic(req, res, pathname) {
   let targetPath = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.normalize(path.join(RESOLVED_FRONTEND_DIR, targetPath));
@@ -5325,6 +5435,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/douyin/extract-transcript') {
     await handleDouyinExtractTranscript(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/douyin/download-video') {
+    await handleDouyinDownloadVideo(req, res);
     return;
   }
 

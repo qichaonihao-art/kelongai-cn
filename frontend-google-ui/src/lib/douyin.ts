@@ -31,6 +31,13 @@ export interface DouyinTranscriptResult {
   resolveStrategy?: string;
 }
 
+function buildDownloadFileName(videoId: string) {
+  const safeVideoId = String(videoId || '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '')
+    .slice(0, 64);
+  return `douyin_${safeVideoId || Date.now().toString(36)}.mp4`;
+}
+
 async function parseJsonSafely(response: Response) {
   try {
     return await response.json();
@@ -108,4 +115,34 @@ export async function extractDouyinTranscript(input: string): Promise<DouyinTran
     fallbackCaptionSource: json?.fallbackCaptionSource === 'tikhub_caption' ? 'tikhub_caption' : 'none',
     resolveStrategy: typeof json?.resolveStrategy === 'string' ? json.resolveStrategy : '',
   };
+}
+
+export async function downloadDouyinVideoFile(params: { videoId: string; downloadUrl: string }) {
+  const response = await fetch('/api/douyin/download-video', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      videoId: params.videoId,
+      downloadUrl: params.downloadUrl,
+    }),
+  });
+
+  if (!response.ok) {
+    const json = await parseJsonSafely(response);
+    throw new Error(buildErrorMessage(json, '视频下载失败'));
+  }
+
+  const blob = await response.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = buildDownloadFileName(params.videoId);
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(objectUrl);
 }

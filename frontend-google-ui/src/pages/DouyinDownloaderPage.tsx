@@ -15,6 +15,7 @@ import { motion } from "motion/react";
 import { Button } from "@/src/components/ui/button";
 import { Label } from "@/src/components/ui/label";
 import {
+  downloadDouyinVideoFile,
   extractDouyinTranscript,
   resolveDouyinDownload,
   type DouyinResolveResult,
@@ -31,6 +32,7 @@ const SAMPLE_SHARE_TEXT = `7.82 复制打开抖音，看看【示例】的视频
 export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
   const [isResolving, setIsResolving] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [isTranscriptLoading, setIsTranscriptLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<DouyinResolveResult | null>(null);
@@ -107,6 +109,27 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
       setError(submitError instanceof Error ? submitError.message : '视频文案提取失败，请稍后重试。');
     } finally {
       setIsTranscriptLoading(false);
+    }
+  }
+
+  async function handleDownloadVideo() {
+    if (!result?.downloadUrl) {
+      setError('当前没有可下载的视频地址，请先解析视频。');
+      return;
+    }
+
+    setIsDownloading(true);
+    setError('');
+
+    try {
+      await downloadDouyinVideoFile({
+        videoId: result.videoId,
+        downloadUrl: result.downloadUrl,
+      });
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : '视频下载失败，请稍后重试。');
+    } finally {
+      setIsDownloading(false);
     }
   }
 
@@ -306,11 +329,22 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
                     </div>
 
                     <div className="flex flex-col gap-3">
-                      <Button asChild className="h-14 rounded-2xl px-8 text-lg font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xl shadow-indigo-600/20 transition-all active:scale-[0.98]">
-                        <a href={result.downloadUrl} target="_blank" rel="noreferrer">
-                          <Download className="mr-3 size-5" />
-                          下载视频
-                        </a>
+                      <Button
+                        onClick={handleDownloadVideo}
+                        disabled={isDownloading}
+                        className="h-14 rounded-2xl px-8 text-lg font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xl shadow-indigo-600/20 transition-all active:scale-[0.98]"
+                      >
+                        {isDownloading ? (
+                          <>
+                            <Loader2 className="mr-3 size-5 animate-spin" />
+                            下载中...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="mr-3 size-5" />
+                            下载视频
+                          </>
+                        )}
                       </Button>
 
                       <Button
