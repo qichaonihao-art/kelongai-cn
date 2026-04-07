@@ -30,6 +30,7 @@ const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
 const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-lite-260215';
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
+const STARTUP_UPLOAD_TEMP_FILE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const ACTIVE_FRONTEND_DIR = SHOULD_USE_REACT_FRONTEND ? REACT_FRONTEND_DIR : LEGACY_FRONTEND_DIR;
 const FALLBACK_FRONTEND_DIR = SHOULD_USE_REACT_FRONTEND ? LEGACY_FRONTEND_DIR : REACT_FRONTEND_DIR;
 const HAS_ACTIVE_FRONTEND_DIR = existsSync(ACTIVE_FRONTEND_DIR);
@@ -213,6 +214,141 @@ function resolvePublicBaseUrl(req) {
 
 async function ensureUploadTempDir() {
   await mkdir(UPLOAD_TEMP_DIR, { recursive: true });
+}
+
+function isPathInsideUploadTempDir(filePath) {
+  const normalizedPath = path.normalize(String(filePath || ''));
+  return normalizedPath.startsWith(`${UPLOAD_TEMP_DIR}${path.sep}`);
+}
+
+async function deleteUploadTempFile(filePath, { requestId = '', cleanupReason = '' } = {}) {
+  const normalizedPath = path.normalize(String(filePath || ''));
+  if (!isPathInsideUploadTempDir(normalizedPath)) {
+    return false;
+  }
+
+  try {
+    const info = await stat(normalizedPath);
+    if (!info.isFile()) {
+      return false;
+    }
+
+    await unlink(normalizedPath);
+    console.log('[runtime uploads] cleanup_deleted', {
+      requestId,
+      targetPath: normalizedPath,
+      finalFileSize: info.size,
+      cleanupReason
+    });
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return false;
+    }
+
+    console.error('[runtime uploads] cleanup_failed', {
+      requestId,
+      targetPath: normalizedPath,
+      cleanupReason,
+      message: error?.message || '',
+      code: error?.code || ''
+    });
+    return false;
+  }
+}
+
+async function collectRequestScopedUploadTempFiles(requestId) {
+  if (!requestId) return [];
+
+  await ensureUploadTempDir();
+  const prefix = `${requestId}_`;
+  const names = await readdir(UPLOAD_TEMP_DIR);
+  return names
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => path.join(UPLOAD_TEMP_DIR, name))
+    .filter(isPathInsideUploadTempDir);
+}
+
+async function cleanupRequestScopedUploadTempFiles({ requestId, filePaths = [] }) {
+  const cleanupStartedAt = Date.now();
+  const scopedPaths = await collectRequestScopedUploadTempFiles(requestId).catch(() => []);
+  const targets = [...new Set([...filePaths, ...scopedPaths].filter(Boolean))]
+    .map((item) => path.normalize(String(item)))
+    .filter(isPathInsideUploadTempDir);
+
+  console.log('[runtime uploads] cleanup_started', {
+    requestId,
+    targetPath: UPLOAD_TEMP_DIR,
+    matchedFileCount: targets.length
+  });
+
+  for (const targetPath of targets) {
+    await deleteUploadTempFile(targetPath, {
+      requestId,
+      cleanupReason: 'request_finally'
+    });
+  }
+
+  return {
+    requestId,
+    matchedFileCount: targets.length,
+    elapsedMs: Date.now() - cleanupStartedAt
+  };
+}
+
+async function cleanupExpiredUploadTempFilesOnStartup() {
+  await ensureUploadTempDir();
+  const names = await readdir(UPLOAD_TEMP_DIR);
+  const now = Date.now();
+  let scannedCount = 0;
+  let deletedCount = 0;
+  let failedCount = 0;
+
+  for (const name of names) {
+    const filePath = path.join(UPLOAD_TEMP_DIR, name);
+    if (!isPathInsideUploadTempDir(filePath)) {
+      continue;
+    }
+
+    try {
+      const info = await stat(filePath);
+      if (!info.isFile()) {
+        continue;
+      }
+
+      scannedCount += 1;
+      const ageMs = now - info.mtimeMs;
+      if (ageMs <= STARTUP_UPLOAD_TEMP_FILE_MAX_AGE_MS) {
+        continue;
+      }
+
+      const deleted = await deleteUploadTempFile(filePath, {
+        requestId: 'startup_cleanup',
+        cleanupReason: 'startup_expired'
+      });
+      if (deleted) {
+        deletedCount += 1;
+      }
+    } catch (error) {
+      failedCount += 1;
+      console.error('[runtime uploads] cleanup_failed', {
+        requestId: 'startup_cleanup',
+        targetPath: filePath,
+        cleanupReason: 'startup_scan',
+        message: error?.message || '',
+        code: error?.code || ''
+      });
+    }
+  }
+
+  console.log('[runtime uploads] startup_cleanup_finished', {
+    requestId: 'startup_cleanup',
+    targetPath: UPLOAD_TEMP_DIR,
+    scannedCount,
+    deletedCount,
+    failedCount,
+    maxAgeMs: STARTUP_UPLOAD_TEMP_FILE_MAX_AGE_MS
+  });
 }
 
 async function ensureVideoCompressionTools() {
@@ -2408,15 +2544,6 @@ async function transcribeAudioWithSiliconFlow({ audioPath, requestId, segmentInd
   }
 
   return transcriptText;
-}
-
-async function cleanupTempFiles(filePaths) {
-  for (const filePath of filePaths) {
-    if (!filePath) continue;
-    try {
-      await unlink(filePath);
-    } catch {}
-  }
 }
 
 async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeId, requestId, deadlineAt = 0 }) {
@@ -5214,7 +5341,10 @@ async function handleDouyinExtractTranscript(req, res) {
       stage: error?.stage || 'unknown_upstream_error'
     });
   } finally {
-    await cleanupTempFiles(tempFiles);
+    await cleanupRequestScopedUploadTempFiles({
+      requestId,
+      filePaths: tempFiles
+    });
   }
 }
 
@@ -5454,4 +5584,13 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   logFrontendSelection();
   console.log(`Server running at http://${HOST}:${PORT}`);
+  cleanupExpiredUploadTempFilesOnStartup().catch((error) => {
+    console.error('[runtime uploads] cleanup_failed', {
+      requestId: 'startup_cleanup',
+      targetPath: UPLOAD_TEMP_DIR,
+      cleanupReason: 'startup_bootstrap',
+      message: error?.message || '',
+      code: error?.code || ''
+    });
+  });
 });
