@@ -4,7 +4,6 @@ import {
   Download,
   Loader2,
   LogOut,
-  Link2,
   CheckCircle2,
   Copy,
   AudioLines,
@@ -26,8 +25,6 @@ interface DouyinDownloaderPageProps {
   onBack: () => void;
   onLogout: () => void;
 }
-
-const SAMPLE_SHARE_TEXT = `7.82 复制打开抖音，看看【示例】的视频！ https://v.douyin.com/xxxxxx/`;
 
 export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
@@ -195,9 +192,6 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
             </div>
             <div className="pt-0.5">
               <h2 className="text-3xl font-black tracking-tight text-slate-900">抖音视频解析下载</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                粘贴抖音分享内容，先解析可下载视频，再按需提取视频音频里的口播文案。
-              </p>
             </div>
           </div>
         </motion.section>
@@ -212,10 +206,6 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
               placeholder="请输入抖音链接或分享文案"
               className="w-full h-40 rounded-[2rem] border border-slate-300 bg-white/50 p-6 text-base outline-none transition-all resize-none focus:ring-4 focus:ring-indigo-500/10"
             />
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-3 text-sm text-slate-500">
-            示例：{SAMPLE_SHARE_TEXT}
           </div>
 
           <div className="flex flex-col gap-4 sm:flex-row">
@@ -292,13 +282,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
                         </div>
                       </div>
 
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div>
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">来源类型</div>
-                          <div className="mt-1 text-sm font-medium text-slate-700">
-                            {result.sourceType === 'web_url' ? '网页直链' : '分享文本 / 短链接'}
-                          </div>
-                        </div>
+                      <div className="grid gap-4 sm:grid-cols-1">
                         <div>
                           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">作者</div>
                           <div className="mt-1 text-sm font-medium text-slate-700">
@@ -306,30 +290,6 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
                           </div>
                         </div>
                       </div>
-
-                      <div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Video ID</div>
-                        <div className="mt-1 break-all font-mono text-sm text-slate-700">
-                          {result.videoId || '未提取到'}
-                        </div>
-                      </div>
-
-                      {result.normalizedUrl && (
-                        <div>
-                          <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                            <Link2 className="size-3.5" />
-                            Normalized URL
-                          </div>
-                          <a
-                            href={result.normalizedUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-1 block break-all text-sm text-indigo-600 hover:text-indigo-700"
-                          >
-                            {result.normalizedUrl}
-                          </a>
-                        </div>
-                      )}
                     </div>
 
                     <div className="flex flex-col gap-3">
