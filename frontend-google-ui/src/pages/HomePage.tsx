@@ -54,41 +54,41 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
         </motion.p>
       </motion.div>
 
-      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-12 w-full max-w-7xl">
+      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-10 w-full max-w-7xl">
         <motion.div
           whileHover={{ y: -12, scale: 1.02 }}
-          className="group relative glass-card p-12 rounded-[3.5rem] border-white/80 hover:shadow-glass-hover hover:border-indigo-300 transition-all cursor-pointer flex flex-col items-center justify-center text-center"
+          className="group relative glass-card px-9 py-10 rounded-[3rem] border-white/80 hover:shadow-glass-hover hover:border-indigo-300 transition-all cursor-pointer flex flex-col items-center justify-center text-center"
           onClick={() => onNavigate('voice')}
         >
-          <div className="size-28 rounded-[2.5rem] bg-indigo-50/60 backdrop-blur-md text-indigo-600 flex items-center justify-center mb-10 group-hover:bg-indigo-600 group-hover:text-white transition-all duration-700 shadow-sm group-hover:shadow-indigo-200 group-hover:scale-110">
-            <Mic2 className="size-14" />
+          <div className="size-24 rounded-[2rem] bg-indigo-50/60 backdrop-blur-md text-indigo-600 flex items-center justify-center mb-8 group-hover:bg-indigo-600 group-hover:text-white transition-all duration-700 shadow-sm group-hover:shadow-indigo-200 group-hover:scale-110">
+            <Mic2 className="size-12" />
           </div>
-          <h3 className="text-3xl font-black text-slate-900 tracking-tight">声音克隆</h3>
-          <p className="mt-4 text-slate-500 font-medium">克隆您的声音，开启 AI 配音之旅</p>
+          <h3 className="text-[1.75rem] font-black text-slate-900 tracking-tight">声音克隆</h3>
+          <p className="mt-3 max-w-xs text-sm leading-6 text-slate-500 font-medium">克隆您的声音，开启 AI 配音之旅</p>
         </motion.div>
 
         <motion.div
           whileHover={{ y: -12, scale: 1.02 }}
-          className="group relative glass-card p-12 rounded-[3.5rem] border-white/80 hover:shadow-glass-hover hover:border-emerald-300 transition-all cursor-pointer flex flex-col items-center justify-center text-center"
+          className="group relative glass-card px-9 py-10 rounded-[3rem] border-white/80 hover:shadow-glass-hover hover:border-emerald-300 transition-all cursor-pointer flex flex-col items-center justify-center text-center"
           onClick={() => onNavigate('creative')}
         >
-          <div className="size-28 rounded-[2.5rem] bg-emerald-50/60 backdrop-blur-md text-emerald-600 flex items-center justify-center mb-10 group-hover:bg-emerald-600 group-hover:text-white transition-all duration-700 shadow-sm group-hover:shadow-emerald-200 group-hover:scale-110">
-            <Wand2 className="size-14" />
+          <div className="size-24 rounded-[2rem] bg-emerald-50/60 backdrop-blur-md text-emerald-600 flex items-center justify-center mb-8 group-hover:bg-emerald-600 group-hover:text-white transition-all duration-700 shadow-sm group-hover:shadow-emerald-200 group-hover:scale-110">
+            <Wand2 className="size-12" />
           </div>
-          <h3 className="text-3xl font-black text-slate-900 tracking-tight">创意创作</h3>
-          <p className="mt-4 text-slate-500 font-medium">释放您的想象力，AI 助您高效创作</p>
+          <h3 className="text-[1.75rem] font-black text-slate-900 tracking-tight">创意创作</h3>
+          <p className="mt-3 max-w-xs text-sm leading-6 text-slate-500 font-medium">释放您的想象力，AI 助您高效创作</p>
         </motion.div>
 
         <motion.div
           whileHover={{ y: -12, scale: 1.02 }}
-          className="group relative glass-card p-12 rounded-[3.5rem] border-white/80 hover:shadow-glass-hover hover:border-sky-300 transition-all cursor-pointer flex flex-col items-center justify-center text-center"
+          className="group relative glass-card px-9 py-10 rounded-[3rem] border-white/80 hover:shadow-glass-hover hover:border-sky-300 transition-all cursor-pointer flex flex-col items-center justify-center text-center"
           onClick={() => onNavigate('douyin')}
         >
-          <div className="size-28 rounded-[2.5rem] bg-sky-50/70 backdrop-blur-md text-sky-600 flex items-center justify-center mb-10 group-hover:bg-sky-600 group-hover:text-white transition-all duration-700 shadow-sm group-hover:shadow-sky-200 group-hover:scale-110">
-            <Download className="size-14" />
+          <div className="size-24 rounded-[2rem] bg-sky-50/70 backdrop-blur-md text-sky-600 flex items-center justify-center mb-8 group-hover:bg-sky-600 group-hover:text-white transition-all duration-700 shadow-sm group-hover:shadow-sky-200 group-hover:scale-110">
+            <Download className="size-12" />
           </div>
-          <h3 className="text-3xl font-black text-slate-900 tracking-tight">抖音视频解析下载</h3>
-          <p className="mt-4 text-slate-500 font-medium">粘贴网页链接或分享文本，优先稳定解析并获取视频下载地址</p>
+          <h3 className="text-[1.75rem] font-black text-slate-900 tracking-tight">抖音视频解析下载</h3>
+          <p className="mt-3 max-w-xs text-sm leading-6 text-slate-500 font-medium">粘贴网页链接或分享文本，优先稳定解析并获取视频下载地址</p>
         </motion.div>
       </div>
     </div>
