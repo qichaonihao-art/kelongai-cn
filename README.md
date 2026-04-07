@@ -136,6 +136,20 @@ cp legacy-project/.env.example legacy-project/.env
 - `DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS`
   - 可选，默认 `600000`
   - 用于控制服务端下载抖音视频文件到临时目录的超时
+- `DOUYIN_VIDEO_RESOLVE_TIMEOUT_MS`
+  - 可选，默认 `120000`
+  - 用于控制“链接展开 + 页面解析 + TikHub 兜底解析”这一整个视频解析阶段的超时
+  - 兼容旧变量名 `DOUYIN_DOWNLOAD_TIMEOUT_MS`，但建议改用新名字
+- `DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS`
+  - 可选，默认 `300000`
+  - 用于控制服务端 `ffmpeg` 抽音和分段预处理阶段的超时
+- `DOUYIN_ASR_TIMEOUT_MS`
+  - 可选，默认 `720000`
+  - 用于控制单次 SiliconFlow ASR 请求的超时
+- `DOUYIN_TRANSCRIPT_TOTAL_TIMEOUT_MS`
+  - 可选，默认 `1800000`
+  - 用于控制整条“解析 -> 下载 -> 抽音 -> ASR”链路的总超时
+  - 前端不再额外写死 6 分钟超时，由后端统一决定总链路超时
 
 ### 声音克隆
 
@@ -183,6 +197,18 @@ cp legacy-project/.env.example legacy-project/.env
 3. 确认返回 `videoId`、`normalizedUrl`、作者和下载按钮
 4. 点击“提取视频文案”，确认页面进入加载态并返回转写文本
 5. 再粘贴一段抖音 App 分享文案，确认短链接也能被解析
+
+后端日志重点看这些阶段：
+
+- `video_resolved`
+- `video_download_started`
+- `video_download_finished`
+- `audio_extract_started`
+- `audio_extract_finished`
+- `siliconflow_request_started`
+- `siliconflow_response_received`
+- `transcript_succeeded`
+- `transcript_failed`
 
 ## 本地预发布验证
 

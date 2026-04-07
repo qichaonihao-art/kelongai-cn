@@ -45,25 +45,6 @@ function buildErrorMessage(json: any, fallback: string) {
   return detailMessage && detailMessage !== errorMessage ? `${errorMessage} ${detailMessage}` : errorMessage;
 }
 
-async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(input, {
-      ...init,
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('视频文案提取超时，请稍后重试。');
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-}
-
 export async function resolveDouyinDownload(input: string): Promise<DouyinResolveResult> {
   const response = await fetch('/api/douyin/resolve-download', {
     method: 'POST',
@@ -97,14 +78,14 @@ export async function resolveDouyinDownload(input: string): Promise<DouyinResolv
 }
 
 export async function extractDouyinTranscript(input: string): Promise<DouyinTranscriptResult> {
-  const response = await fetchWithTimeout('/api/douyin/extract-transcript', {
+  const response = await fetch('/api/douyin/extract-transcript', {
     method: 'POST',
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ input }),
-  }, 6 * 60 * 1000);
+  });
 
   const json = await parseJsonSafely(response);
   if (!response.ok) {
