@@ -210,6 +210,14 @@ cp legacy-project/.env.example legacy-project/.env
 - `transcript_succeeded`
 - `transcript_failed`
 
+视频下载失败时，重点补这几项字段：
+
+- `host` 和 `hostStats`
+- `curlCode`
+- `curlHttpStatus`
+- `curlStderr`
+- `effectiveUrl`
+
 ## 本地预发布验证
 
 如果要按接近线上方式验证：

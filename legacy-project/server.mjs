@@ -72,7 +72,7 @@ const DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS = readTimeoutMs(
   2 * 60 * 1000
 );
 const DOUYIN_VIDEO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = Math.max(10, Math.floor(DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS / 1000 / 6));
-const DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS = [0, 1500];
+const DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS = [0, 1500, 4000];
 const DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS = readTimeoutMs(
   process.env.DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS,
   DEFAULT_DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS,
@@ -99,6 +99,7 @@ const DOUYIN_TRANSCRIPT_TOTAL_TIMEOUT_MS = readTimeoutMs(
 const MAX_DOUYIN_VIDEO_DOWNLOAD_BYTES = 220 * 1024 * 1024;
 const DOUYIN_ASR_SEGMENT_SECONDS = 9 * 60;
 const DOUYIN_ASR_MAX_SEGMENT_DURATION_SECONDS = 55 * 60;
+const douyinDownloadHostStats = new Map();
 
 function readBooleanEnv(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -244,6 +245,39 @@ async function getVideoDurationSeconds(filePath) {
     }
     throw new Error('无法读取视频时长，无法自动压缩大视频');
   }
+}
+
+async function validateDownloadedVideoFile(filePath, timeoutMs = 30000) {
+  const { stdout } = await execFileAsync('ffprobe', [
+    '-v', 'error',
+    '-show_entries', 'format=duration,size,format_name',
+    '-of', 'json',
+    filePath
+  ], {
+    timeout: Math.max(1000, timeoutMs),
+    killSignal: 'SIGKILL'
+  });
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(String(stdout || '{}'));
+  } catch {
+    throw new Error('ffprobe output is not valid JSON');
+  }
+
+  const durationSeconds = Number.parseFloat(String(parsed?.format?.duration || '0'));
+  const formatName = readValue(parsed?.format?.format_name);
+  const probedSize = Number.parseFloat(String(parsed?.format?.size || '0'));
+
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    throw new Error('ffprobe returned invalid duration');
+  }
+
+  return {
+    durationSeconds,
+    formatName,
+    probedSize: Number.isFinite(probedSize) ? probedSize : 0
+  };
 }
 
 function computeVideoBitrateKbps(durationSeconds, audioBitrateKbps, targetBytes, ratio = 1) {
@@ -962,46 +996,83 @@ function pickNestedValue(root, path) {
 
 function collectDownloadUrlCandidates(payload) {
   const paths = [
-    ['video_data', 'video', 'play_addr', 'url_list'],
-    ['video_data', 'video', 'play_addr_h264', 'url_list'],
-    ['video_data', 'video', 'play_api', 'url_list'],
-    ['video_data', 'video', 'bit_rate', '*', 'play_addr', 'url_list'],
-    ['video_data', 'video', 'download_addr', 'url_list'],
-    ['video', 'play_addr', 'url_list'],
-    ['video', 'play_addr_h264', 'url_list'],
-    ['video', 'play_api', 'url_list'],
-    ['video', 'bit_rate', '*', 'play_addr', 'url_list'],
-    ['video', 'download_addr', 'url_list'],
-    ['aweme_detail', 'video', 'play_addr', 'url_list'],
-    ['aweme_detail', 'video', 'play_addr_h264', 'url_list'],
-    ['aweme_detail', 'video', 'play_api', 'url_list'],
-    ['aweme_detail', 'video', 'bit_rate', '*', 'play_addr', 'url_list'],
-    ['aweme_detail', 'video', 'download_addr', 'url_list'],
-    ['item_info', 'item_struct', 'video', 'play_addr', 'url_list'],
-    ['item_info', 'item_struct', 'video', 'play_addr_h264', 'url_list'],
-    ['item_info', 'item_struct', 'video', 'bit_rate', '*', 'play_addr', 'url_list']
+    { path: ['video_data', 'video', 'play_addr_h264', 'url_list'], source: 'video_data.video.play_addr_h264' },
+    { path: ['video_data', 'video', 'bit_rate', '*', 'play_addr', 'url_list'], source: 'video_data.video.bit_rate.play_addr' },
+    { path: ['video_data', 'video', 'play_addr', 'url_list'], source: 'video_data.video.play_addr' },
+    { path: ['video_data', 'video', 'play_api', 'url_list'], source: 'video_data.video.play_api' },
+    { path: ['video_data', 'video', 'download_addr', 'url_list'], source: 'video_data.video.download_addr' },
+    { path: ['video', 'play_addr_h264', 'url_list'], source: 'video.play_addr_h264' },
+    { path: ['video', 'bit_rate', '*', 'play_addr', 'url_list'], source: 'video.bit_rate.play_addr' },
+    { path: ['video', 'play_addr', 'url_list'], source: 'video.play_addr' },
+    { path: ['video', 'play_api', 'url_list'], source: 'video.play_api' },
+    { path: ['video', 'download_addr', 'url_list'], source: 'video.download_addr' },
+    { path: ['aweme_detail', 'video', 'play_addr_h264', 'url_list'], source: 'aweme_detail.video.play_addr_h264' },
+    { path: ['aweme_detail', 'video', 'bit_rate', '*', 'play_addr', 'url_list'], source: 'aweme_detail.video.bit_rate.play_addr' },
+    { path: ['aweme_detail', 'video', 'play_addr', 'url_list'], source: 'aweme_detail.video.play_addr' },
+    { path: ['aweme_detail', 'video', 'play_api', 'url_list'], source: 'aweme_detail.video.play_api' },
+    { path: ['aweme_detail', 'video', 'download_addr', 'url_list'], source: 'aweme_detail.video.download_addr' },
+    { path: ['item_info', 'item_struct', 'video', 'play_addr_h264', 'url_list'], source: 'item_info.item_struct.video.play_addr_h264' },
+    { path: ['item_info', 'item_struct', 'video', 'bit_rate', '*', 'play_addr', 'url_list'], source: 'item_info.item_struct.video.bit_rate.play_addr' },
+    { path: ['item_info', 'item_struct', 'video', 'play_addr', 'url_list'], source: 'item_info.item_struct.video.play_addr' }
   ];
 
   const candidates = [];
-  for (const path of paths) {
-    const value = pickNestedValue(payload, path);
-    const url = extractFirstUrl(value);
-    if (url) candidates.push(url);
-  }
+  const seen = new Set();
 
-  return [...new Set(candidates)];
-}
+  for (const entry of paths) {
+    const value = pickNestedValue(payload, entry.path);
+    const urls = Array.isArray(value)
+      ? value.flatMap((item) => {
+          const url = extractFirstUrl(item);
+          return url ? [url] : [];
+        })
+      : [extractFirstUrl(value)].filter(Boolean);
 
-function extractStableDownloadUrl(payload) {
-  const candidates = collectDownloadUrlCandidates(payload);
-
-  for (const candidate of candidates) {
-    if (!/download_addr/i.test(candidate)) {
-      return candidate;
+    for (const rawUrl of urls) {
+      const url = stripDouyinWatermark(rawUrl);
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      candidates.push({
+        url,
+        source: entry.source,
+        host: getHostnameFromUrl(url)
+      });
     }
   }
 
-  return candidates[0] || '';
+  return candidates;
+}
+
+function scoreDouyinDownloadCandidate(candidate) {
+  const url = String(candidate?.url || '');
+  const source = String(candidate?.source || '');
+  const host = String(candidate?.host || '');
+  let score = 0;
+
+  if (/play_addr_h264/i.test(source)) score += 60;
+  if (/bit_rate/i.test(source)) score += 55;
+  if (/play_addr/i.test(source)) score += 45;
+  if (/play_api/i.test(source)) score += 25;
+  if (/download_addr/i.test(source)) score -= 20;
+
+  if (/playwm/i.test(url)) score -= 80;
+  if (/watermark=1|[?&]wm=1/i.test(url)) score -= 40;
+  if (/byte|douyinvod|toutiao|iesdouyin|cdn/i.test(host)) score += 20;
+  if (/tikhub/i.test(host)) score -= 30;
+
+  return score;
+}
+
+function pickBestDouyinDownloadCandidate(candidates) {
+  const ranked = [...candidates]
+    .filter((candidate) => candidate?.url)
+    .sort((left, right) => scoreDouyinDownloadCandidate(right) - scoreDouyinDownloadCandidate(left));
+
+  return ranked[0] || null;
+}
+
+function extractStableDownloadUrl(payload) {
+  return pickBestDouyinDownloadCandidate(collectDownloadUrlCandidates(payload))?.url || '';
 }
 
 function extractDouyinVideoIdFromPayload(payload, fallbackAwemeId = '') {
@@ -1400,6 +1471,53 @@ function getHostnameFromUrl(rawUrl) {
   }
 }
 
+function updateDouyinDownloadHostStats(host, outcome = 'selected') {
+  const normalizedHost = String(host || 'unknown').trim() || 'unknown';
+  const current = douyinDownloadHostStats.get(normalizedHost) || {
+    selected: 0,
+    attempts: 0,
+    success: 0,
+    failure: 0,
+    timeout: 0,
+    http4xx: 0,
+    http5xx: 0,
+    empty: 0,
+    invalid: 0,
+    network: 0
+  };
+
+  if (Object.prototype.hasOwnProperty.call(current, outcome)) {
+    current[outcome] += 1;
+  }
+
+  douyinDownloadHostStats.set(normalizedHost, current);
+  return {
+    host: normalizedHost,
+    ...current
+  };
+}
+
+function getDouyinDownloadHostStatsSnapshot(host) {
+  const normalizedHost = String(host || 'unknown').trim() || 'unknown';
+  const current = douyinDownloadHostStats.get(normalizedHost) || {
+    selected: 0,
+    attempts: 0,
+    success: 0,
+    failure: 0,
+    timeout: 0,
+    http4xx: 0,
+    http5xx: 0,
+    empty: 0,
+    invalid: 0,
+    network: 0
+  };
+
+  return {
+    host: normalizedHost,
+    ...current
+  };
+}
+
 function shouldRetryDouyinVideoDownloadError(error) {
   const stage = String(error?.stage || '');
   const curlCode = Number(error?.curlCode || 0);
@@ -1412,6 +1530,14 @@ function shouldRetryDouyinVideoDownloadError(error) {
     return true;
   }
 
+  if (stage === 'douyin_video_download_http_5xx') {
+    return true;
+  }
+
+  if (stage === 'douyin_video_download_empty_file' || stage === 'douyin_video_download_invalid_file') {
+    return true;
+  }
+
   return [5, 6, 7, 18, 28, 52, 55, 56].includes(curlCode);
 }
 
@@ -1420,6 +1546,7 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
   const videoExtension = getFallbackExtensionFromUrl(downloadUrl);
   const videoPath = path.join(UPLOAD_TEMP_DIR, `${requestId}_douyin${videoExtension}`);
   const downloadHost = getHostnameFromUrl(downloadUrl);
+  updateDouyinDownloadHostStats(downloadHost, 'selected');
 
   let lastError = null;
 
@@ -1454,6 +1581,7 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
       '--max-time', String(Math.ceil(timeoutMs / 1000)),
       '--write-out', '\n__CURL_HTTP_STATUS__:%{http_code}\n__CURL_SIZE_DOWNLOAD__:%{size_download}\n__CURL_EFFECTIVE_URL__:%{url_effective}'
     ];
+    const hostStats = updateDouyinDownloadHostStats(downloadHost, 'attempts');
 
     logDouyinTranscriptEvent({
       event: 'video_download_started',
@@ -1465,7 +1593,8 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
       host: downloadHost,
       upstreamStatus: 0,
       attempt: attempt + 1,
-      downloadUrl
+      downloadUrl,
+      hostStats
     });
 
     try {
@@ -1483,11 +1612,17 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
       const httpStatus = Number.parseInt(httpStatusMatch?.[1] || '0', 10);
       const reportedSize = Number.parseFloat(sizeDownloadMatch?.[1] || '0');
       const effectiveUrl = String(effectiveUrlMatch?.[1] || '').trim();
+      const stderrSummary = summarizeUpstreamBody(stderrText);
 
       if (!httpStatus || httpStatus >= 400) {
         await unlink(videoPath).catch(() => {});
+        const httpStage = httpStatus >= 500
+          ? 'douyin_video_download_http_5xx'
+          : 'douyin_video_download_http_4xx';
+        updateDouyinDownloadHostStats(downloadHost, httpStatus >= 500 ? 'http5xx' : 'http4xx');
+        updateDouyinDownloadHostStats(downloadHost, 'failure');
         throw annotateDouyinError(createDouyinResolveError({
-          stage: 'douyin_video_download_failed',
+          stage: httpStage,
           statusCode: httpStatus >= 400 && httpStatus < 500 ? 400 : 502,
           upstreamStatus: httpStatus,
           upstreamBodySummary: summarizeUpstreamBody(stdoutText),
@@ -1497,13 +1632,40 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
           failedStage: 'video_download',
           timeoutMs,
           targetPath: videoPath,
-          host: downloadHost
+          host: downloadHost,
+          curlCode: 0,
+          curlStderr: stderrSummary,
+          curlHttpStatus: httpStatus,
+          effectiveUrl
         });
       }
 
       const fileInfo = await stat(videoPath);
+      if (fileInfo.size <= 0) {
+        await unlink(videoPath).catch(() => {});
+        updateDouyinDownloadHostStats(downloadHost, 'empty');
+        updateDouyinDownloadHostStats(downloadHost, 'failure');
+        throw annotateDouyinError(createDouyinResolveError({
+          stage: 'douyin_video_download_empty_file',
+          statusCode: 502,
+          upstreamStatus: httpStatus,
+          message: '视频下载失败',
+          detail: '视频文件下载完成，但结果为空文件。'
+        }), {
+          failedStage: 'video_download',
+          timeoutMs,
+          targetPath: videoPath,
+          host: downloadHost,
+          curlCode: 0,
+          curlStderr: stderrSummary,
+          curlHttpStatus: httpStatus,
+          effectiveUrl
+        });
+      }
+
       if (fileInfo.size > MAX_DOUYIN_VIDEO_DOWNLOAD_BYTES) {
         await unlink(videoPath).catch(() => {});
+        updateDouyinDownloadHostStats(downloadHost, 'failure');
         throw annotateDouyinError(createDouyinResolveError({
           stage: 'douyin_video_download_too_large',
           statusCode: 413,
@@ -1513,9 +1675,40 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
           failedStage: 'video_download',
           timeoutMs,
           targetPath: videoPath,
-          host: downloadHost
+          host: downloadHost,
+          curlCode: 0,
+          curlStderr: stderrSummary,
+          curlHttpStatus: httpStatus,
+          effectiveUrl
         });
       }
+
+      let probeResult;
+      try {
+        probeResult = await validateDownloadedVideoFile(videoPath, Math.min(timeoutMs, 30 * 1000));
+      } catch (probeError) {
+        await unlink(videoPath).catch(() => {});
+        updateDouyinDownloadHostStats(downloadHost, 'invalid');
+        updateDouyinDownloadHostStats(downloadHost, 'failure');
+        throw annotateDouyinError(createDouyinResolveError({
+          stage: 'douyin_video_download_invalid_file',
+          statusCode: 502,
+          upstreamStatus: httpStatus,
+          message: '视频下载失败',
+          detail: `视频文件已下载，但 ffprobe 无法读取：${probeError?.message || 'invalid media file'}`
+        }), {
+          failedStage: 'video_download',
+          timeoutMs,
+          targetPath: videoPath,
+          host: downloadHost,
+          curlCode: 0,
+          curlStderr: stderrSummary,
+          curlHttpStatus: httpStatus,
+          effectiveUrl
+        });
+      }
+
+      const successHostStats = updateDouyinDownloadHostStats(downloadHost, 'success');
 
       logDouyinTranscriptEvent({
         event: 'video_download_finished',
@@ -1529,12 +1722,22 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
         attempt: attempt + 1,
         effectiveUrl,
         reportedDownloadSize: Number.isFinite(reportedSize) ? reportedSize : 0,
-        stderr: summarizeUpstreamBody(stderrText)
+        stderr: stderrSummary,
+        curlExitCode: 0,
+        curlHttpStatus: httpStatus,
+        ffprobeDurationSeconds: probeResult.durationSeconds,
+        ffprobeFormatName: probeResult.formatName,
+        ffprobeSize: probeResult.probedSize,
+        hostStats: successHostStats
       });
 
       return {
         videoPath,
-        fileSize: fileInfo.size
+        fileSize: fileInfo.size,
+        host: downloadHost,
+        effectiveUrl,
+        httpStatus,
+        validation: probeResult
       };
     } catch (error) {
       const partialFileSize = await getFileSizeIfExists(videoPath);
@@ -1551,6 +1754,8 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
         const curlCode = Number(error?.code || 0);
         const stderrText = String(error?.stderr || '');
         const isTimeout = curlCode === 28 || error?.killed === true || /timed out|timeout/i.test(stderrText || error?.message || '');
+        updateDouyinDownloadHostStats(downloadHost, isTimeout ? 'timeout' : 'network');
+        updateDouyinDownloadHostStats(downloadHost, 'failure');
         lastError = annotateDouyinError(createDouyinResolveError({
           stage: isTimeout ? 'douyin_video_download_timeout' : 'douyin_video_download_network_error',
           statusCode: isTimeout ? 504 : 502,
@@ -1562,12 +1767,15 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
           failedStage: 'video_download',
           timeoutMs,
           targetPath: videoPath,
-          host: downloadHost
+          host: downloadHost,
+          curlStderr: summarizeUpstreamBody(stderrText),
+          curlHttpStatus: 0
         });
         lastError.curlCode = curlCode;
       }
 
       const canRetry = attempt < DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS.length - 1 && shouldRetryDouyinVideoDownloadError(lastError);
+      const hostStatsOnFailure = getDouyinDownloadHostStatsSnapshot(downloadHost);
 
       logDouyinTranscriptEvent({
         level: 'error',
@@ -1583,8 +1791,12 @@ async function downloadDouyinVideoToTemp({ downloadUrl, requestId, parentDeadlin
         canRetry,
         stage: lastError?.stage || '',
         curlCode: lastError?.curlCode || 0,
+        curlHttpStatus: lastError?.curlHttpStatus || 0,
+        curlStderr: lastError?.curlStderr || '',
+        effectiveUrl: lastError?.effectiveUrl || '',
         message: lastError?.message || '',
-        detail: lastError?.detail || ''
+        detail: lastError?.detail || '',
+        hostStats: hostStatsOnFailure
       });
 
       if (!canRetry) {
@@ -2060,6 +2272,7 @@ async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeI
 
     let fallbackResult = null;
     let fallbackError = null;
+    let highQualityResult = null;
 
     if (normalizedUrl) {
       try {
@@ -2067,19 +2280,53 @@ async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeI
       } catch (error) {
         fallbackError = error;
       }
+
+      try {
+        highQualityResult = await callTikHubHighQualityPlayUrl({ shareUrl: normalizedUrl, requestId, deadlineAt });
+      } catch {}
     }
 
     if (!fallbackResult && awemeId) {
       fallbackResult = await callTikHubVideoDetailByAwemeId({ awemeId, requestId, deadlineAt });
     }
 
+    if (!highQualityResult && awemeId) {
+      try {
+        highQualityResult = await callTikHubHighQualityPlayUrl({ awemeId, requestId, deadlineAt });
+      } catch {}
+    }
+
     if (!fallbackResult) {
       throw fallbackError || directError;
     }
 
+    const mergedDownloadUrlCandidates = [
+      ...(fallbackResult.downloadUrlCandidates || []),
+      ...(highQualityResult?.downloadUrlCandidates || [])
+    ].filter((candidate) => candidate?.url);
+
+    const selectedCandidate =
+      pickBestDouyinDownloadCandidate(mergedDownloadUrlCandidates) ||
+      (fallbackResult.downloadUrl
+        ? {
+            url: fallbackResult.downloadUrl,
+            source: 'tikhub.fallback_result',
+            host: getHostnameFromUrl(fallbackResult.downloadUrl)
+          }
+        : null);
+
+    console.log('[douyin resolve] TikHub fallback selected download candidate', {
+      requestId,
+      candidateCount: mergedDownloadUrlCandidates.length,
+      selectedSource: selectedCandidate?.source || '',
+      selectedHost: selectedCandidate?.host || '',
+      candidateHosts: [...new Set(mergedDownloadUrlCandidates.map((candidate) => candidate.host).filter(Boolean))],
+      candidateSources: mergedDownloadUrlCandidates.map((candidate) => `${candidate.source}:${candidate.host || 'unknown'}`).slice(0, 8)
+    });
+
     return {
       videoId: fallbackResult.videoId,
-      downloadUrl: fallbackResult.downloadUrl,
+      downloadUrl: selectedCandidate?.url || fallbackResult.downloadUrl,
       title: readValue(fallbackResult.caption),
       caption: '',
       authorName: fallbackResult.authorName,
@@ -2150,7 +2397,14 @@ function createDouyinResolveError({
 function getDouyinTranscriptFailedStage(error) {
   return readValue(
     error?.failedStage,
-    error?.stage === 'douyin_video_download_failed' || error?.stage === 'douyin_video_download_too_large' || error?.stage === 'douyin_video_download_timeout' || error?.stage === 'douyin_video_download_network_error'
+    error?.stage === 'douyin_video_download_failed' ||
+    error?.stage === 'douyin_video_download_too_large' ||
+    error?.stage === 'douyin_video_download_timeout' ||
+    error?.stage === 'douyin_video_download_network_error' ||
+    error?.stage === 'douyin_video_download_http_4xx' ||
+    error?.stage === 'douyin_video_download_http_5xx' ||
+    error?.stage === 'douyin_video_download_empty_file' ||
+    error?.stage === 'douyin_video_download_invalid_file'
       ? 'video_download'
       : '',
     error?.stage === 'douyin_audio_extract_failed' || error?.stage === 'douyin_audio_extract_timeout'
@@ -2178,7 +2432,11 @@ function getDouyinTranscriptErrorMessage(error) {
     stage === 'douyin_video_download_failed' ||
     stage === 'douyin_video_download_too_large' ||
     stage === 'douyin_video_download_timeout' ||
-    stage === 'douyin_video_download_network_error'
+    stage === 'douyin_video_download_network_error' ||
+    stage === 'douyin_video_download_http_4xx' ||
+    stage === 'douyin_video_download_http_5xx' ||
+    stage === 'douyin_video_download_empty_file' ||
+    stage === 'douyin_video_download_invalid_file'
   ) {
     return error?.detail || error?.message || '视频下载失败';
   }
@@ -2409,7 +2667,7 @@ async function callTikHubHighQualityPlayUrl({ shareUrl, awemeId, requestId, dead
   }
 
   const payload = json?.data && typeof json.data === 'object' ? json.data : json;
-  const downloadUrl = readValue(payload?.original_video_url);
+  const downloadUrl = stripDouyinWatermark(readValue(payload?.original_video_url));
   const videoId = readValue(payload?.video_id, payload?.aweme_id, awemeId);
 
   if (!downloadUrl) {
@@ -2431,6 +2689,11 @@ async function callTikHubHighQualityPlayUrl({ shareUrl, awemeId, requestId, dead
   return {
     videoId,
     downloadUrl,
+    downloadUrlCandidates: downloadUrl ? [{
+      url: downloadUrl,
+      source: 'tikhub.original_video_url',
+      host: getHostnameFromUrl(downloadUrl)
+    }] : [],
     caption: extractDouyinCaptionFromPayload(payload),
     authorName: extractDouyinAuthorNameFromPayload(payload),
     videoData: payload?.video_data && typeof payload.video_data === 'object' ? payload.video_data : payload || null
@@ -2527,7 +2790,9 @@ async function callTikHubDouyinVideoDetail({ path, shareUrl, awemeId, requestId,
   }
 
   const payload = json?.data && typeof json.data === 'object' ? json.data : json;
-  const downloadUrl = extractStableDownloadUrl(payload);
+  const downloadUrlCandidates = collectDownloadUrlCandidates(payload);
+  const selectedCandidate = pickBestDouyinDownloadCandidate(downloadUrlCandidates);
+  const downloadUrl = selectedCandidate?.url || '';
   const videoId = extractDouyinVideoIdFromPayload(payload, awemeId);
 
   if (!downloadUrl) {
@@ -2552,6 +2817,7 @@ async function callTikHubDouyinVideoDetail({ path, shareUrl, awemeId, requestId,
   return {
     videoId,
     downloadUrl,
+    downloadUrlCandidates,
     caption: extractDouyinCaptionFromPayload(payload),
     authorName: extractDouyinAuthorNameFromPayload(payload),
     videoData: payload || null
@@ -4698,6 +4964,10 @@ async function handleDouyinExtractTranscript(req, res) {
         upstreamStatus: error?.upstreamStatus || 0,
         failedStage: getDouyinTranscriptFailedStage(error),
         stage: error?.stage || '',
+        curlCode: error?.curlCode || 0,
+        curlHttpStatus: error?.curlHttpStatus || 0,
+        curlStderr: error?.curlStderr || '',
+        effectiveUrl: error?.effectiveUrl || '',
         message: error?.message || '',
         detail: error?.detail || ''
       });
@@ -4736,6 +5006,10 @@ async function handleDouyinExtractTranscript(req, res) {
       upstreamStatus: error?.upstreamStatus || 0,
       failedStage: getDouyinTranscriptFailedStage(error),
       stage: error?.stage || '',
+      curlCode: error?.curlCode || 0,
+      curlHttpStatus: error?.curlHttpStatus || 0,
+      curlStderr: error?.curlStderr || '',
+      effectiveUrl: error?.effectiveUrl || '',
       message: error?.message || '',
       detail: error?.detail || '',
       stack: error?.stack || ''
