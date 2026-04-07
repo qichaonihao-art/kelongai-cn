@@ -87,8 +87,8 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
           <div className="size-24 rounded-[2rem] bg-sky-50/70 backdrop-blur-md text-sky-600 flex items-center justify-center mb-8 group-hover:bg-sky-600 group-hover:text-white transition-all duration-700 shadow-sm group-hover:shadow-sky-200 group-hover:scale-110">
             <Download className="size-12" />
           </div>
-          <h3 className="text-[1.75rem] font-black text-slate-900 tracking-tight">抖音视频解析下载</h3>
-          <p className="mt-3 max-w-xs text-sm leading-6 text-slate-500 font-medium">粘贴网页链接或分享文本，优先稳定解析并获取视频下载地址</p>
+          <h3 className="text-[1.75rem] font-black text-slate-900 tracking-tight">视频解析</h3>
+          <p className="mt-3 max-w-xs text-sm leading-6 text-slate-500 font-medium">下载视频，提取文案</p>
         </motion.div>
       </div>
     </div>
