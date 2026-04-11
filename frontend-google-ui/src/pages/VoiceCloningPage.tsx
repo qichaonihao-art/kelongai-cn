@@ -100,7 +100,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [generatedAudios, setGeneratedAudios] = useState<GeneratedAudio[]>([]);
   const [inputText, setInputText] = useState("");
   const [voiceName, setVoiceName] = useState("");
-  const [referenceAudioText, setReferenceAudioText] = useState("");
   const [siliconFlowVoiceUri, setSiliconFlowVoiceUri] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadedAudioUrl, setUploadedAudioUrl] = useState("");
@@ -243,9 +242,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         return "当前为本地 mock 模式，SiliconFlow 链路会返回演示 voice uri 和演示语音。";
       }
       if (configStatus.siliconFlowApiKey) {
-        return "当前为真实模式，服务端已托管 SILICONFLOW_API_KEY。SiliconFlow 会先生成 voice uri，再用于语音合成；参考音频原文现在可选，不填时服务端会自动识别。";
+        return "当前为真实模式，服务端已托管 SILICONFLOW_API_KEY。SiliconFlow 会先生成可用音色，再用于语音合成；参考音频原文由服务端自动识别。";
       }
-      return "当前为真实模式。请在 legacy-project/.env 中配置 SILICONFLOW_API_KEY。SiliconFlow 声音克隆会直接复用这一个服务端密钥；参考音频原文可选，不填时服务端会自动识别。";
+      return "当前为真实模式。请在 legacy-project/.env 中配置 SILICONFLOW_API_KEY。SiliconFlow 声音克隆会直接复用这一个服务端密钥，参考音频原文由服务端自动识别。";
     }
 
     if (selectedPlatform === '智谱') {
@@ -393,7 +392,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
               : 'volcengine',
         file: uploadedFile,
         preferredName: voiceName.trim(),
-        referenceText: referenceAudioText.trim(),
         credentials: {
           apiKey: selectedPlatform === '智谱' ? zhipuApiKey.trim() : aliyunApiKey.trim(),
           speakerId: volcSpeakerId.trim(),
@@ -855,20 +853,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                 onChange={(event) => setVoiceName(event.target.value)}
               />
             </div>
-            {isSiliconFlowSelected && (
-              <div className="space-y-4">
-                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">参考音频原文（可选）</Label>
-                <textarea
-                  className="w-full h-28 rounded-[2rem] border border-slate-300 bg-white/50 p-5 text-base outline-none transition-all resize-none focus:ring-4 focus:ring-indigo-500/10"
-                  placeholder="可选填写；不填时服务端会自动识别参考音频原文，建议识别不准时再手动补充"
-                  value={referenceAudioText}
-                  onChange={(event) => setReferenceAudioText(event.target.value)}
-                />
-                <p className="text-xs text-slate-500 leading-6">
-                  SiliconFlow 官方要求：创建 voice uri 时必须提供参考音频原文。现在如果你不填写，服务端会先自动转写，再继续完成声音克隆。
-                </p>
-              </div>
-            )}
             <Button
               className="w-full h-14 rounded-2xl text-lg font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-xl shadow-slate-900/20 transition-all active:scale-[0.98]"
               disabled={uploadStatus !== 'done' || cloneStatus === 'processing'}
