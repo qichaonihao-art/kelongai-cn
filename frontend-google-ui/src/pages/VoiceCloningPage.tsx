@@ -243,9 +243,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         return "当前为本地 mock 模式，SiliconFlow 链路会返回演示 voice uri 和演示语音。";
       }
       if (configStatus.siliconFlowApiKey) {
-        return "当前为真实模式，服务端已托管 SILICONFLOW_API_KEY。前端不会暴露密钥，直接通过服务端代理上传参考音频并生成语音。";
+        return "当前为真实模式，服务端已托管 SILICONFLOW_API_KEY。SiliconFlow 会先生成 voice uri，再用于语音合成；参考音频原文现在可选，不填时服务端会自动识别。";
       }
-      return "当前为真实模式。请在 legacy-project/.env 中配置 SILICONFLOW_API_KEY，SiliconFlow 声音克隆会直接复用这一个服务端密钥。";
+      return "当前为真实模式。请在 legacy-project/.env 中配置 SILICONFLOW_API_KEY。SiliconFlow 声音克隆会直接复用这一个服务端密钥；参考音频原文可选，不填时服务端会自动识别。";
     }
 
     if (selectedPlatform === '智谱') {
@@ -369,11 +369,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
 
     if (!voiceName.trim()) {
       setCloneError("请先填写音色名称。");
-      return;
-    }
-
-    if (isSiliconFlowSelected && !referenceAudioText.trim()) {
-      setCloneError("请先填写参考音频对应文本。");
       return;
     }
 
@@ -862,13 +857,16 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
             </div>
             {isSiliconFlowSelected && (
               <div className="space-y-4">
-                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">参考音频对应文本</Label>
+                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">参考音频原文（可选）</Label>
                 <textarea
                   className="w-full h-28 rounded-[2rem] border border-slate-300 bg-white/50 p-5 text-base outline-none transition-all resize-none focus:ring-4 focus:ring-indigo-500/10"
-                  placeholder="请输入参考音频里真实说出来的内容"
+                  placeholder="可选填写；不填时服务端会自动识别参考音频原文，建议识别不准时再手动补充"
                   value={referenceAudioText}
                   onChange={(event) => setReferenceAudioText(event.target.value)}
                 />
+                <p className="text-xs text-slate-500 leading-6">
+                  SiliconFlow 官方要求：创建 voice uri 时必须提供参考音频原文。现在如果你不填写，服务端会先自动转写，再继续完成声音克隆。
+                </p>
               </div>
             )}
             <Button
@@ -895,15 +893,8 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                 className="flex items-center gap-2 text-xs text-indigo-600 font-bold bg-indigo-50/80 backdrop-blur-sm p-3 rounded-xl border border-indigo-100"
               >
                 <CheckCircle2 className="size-4" />
-                {activeReadyVoice.provider === 'siliconflow'
-                  ? `参考音频上传成功，当前音色为 ${activeReadyVoice.name}。`
-                  : `声音克隆成功，当前音色为 ${activeReadyVoice.name}。`}
+                声音克隆成功，当前音色为 {activeReadyVoice.name}。
               </motion.div>
-            )}
-            {isSiliconFlowSelected && hasSiliconFlowVoiceUri && (
-              <div className="rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-xs text-slate-500 break-all">
-                当前 voice uri：{siliconFlowVoiceUri}
-              </div>
             )}
             {cloneError && (
               <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-500">
@@ -935,9 +926,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                 : isSiliconFlowSelected
                   ? "请上传参考音频"
                   : "当前还没有准备好的音色，请先完成声音克隆或从我的音色中启用一个音色。"}
-              {isSiliconFlowSelected && hasSiliconFlowVoiceUri && (
-                <p className="mt-2 break-all text-xs text-slate-400">voice uri：{siliconFlowVoiceUri}</p>
-              )}
             </div>
             <div className="flex flex-col gap-4">
               <Button

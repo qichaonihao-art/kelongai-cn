@@ -4687,6 +4687,37 @@ async function handleVolcVoiceClone(req, res) {
   }
 }
 
+async function transcribeSiliconFlowVoiceReference({ apiKey, file, requestId }) {
+  const requestUrl = `${SILICONFLOW_API_BASE_URL}/audio/transcriptions`;
+  const formData = new FormData();
+  formData.append('file', file, file.name || 'voice-sample.wav');
+  formData.append('model', SILICONFLOW_ASR_MODEL);
+
+  const response = await fetch(requestUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: formData,
+    signal: AbortSignal.timeout(Math.min(SILICONFLOW_VOICE_UPLOAD_TIMEOUT_MS, DOUYIN_ASR_TIMEOUT_MS))
+  });
+
+  const responseText = await response.text();
+  let json = null;
+  try {
+    json = responseText ? JSON.parse(responseText) : null;
+  } catch {}
+
+  const transcriptText = readValue(json?.text, json?.result, json?.transcript);
+  return {
+    ok: response.ok && !!transcriptText,
+    upstreamStatus: response.status,
+    transcriptText,
+    upstreamBodySummary: summarizeUpstreamBody(responseText),
+    requestUrl,
+  };
+}
+
 async function handleSiliconFlowVoiceUpload(req, res) {
   const requestId = createRequestId('sf_voice');
   const requestStartedAt = Date.now();
@@ -4705,7 +4736,8 @@ async function handleSiliconFlowVoiceUpload(req, res) {
     const apiKey = readValue(SERVER_CONFIG.siliconFlowApiKey, process.env.SILICONFLOW_API_KEY);
     const file = body.file;
     const customName = normalizeSiliconFlowCustomName(body.customName);
-    const referenceText = readValue(body.text);
+    const manualReferenceText = readValue(body.text);
+    let referenceText = manualReferenceText;
     resolvedModel = readValue(body.model) || DEFAULT_SILICONFLOW_VOICE_MODEL;
     fileName = file?.name || '';
     fileSize = file?.size || 0;
@@ -4773,7 +4805,7 @@ async function handleSiliconFlowVoiceUpload(req, res) {
       return;
     }
 
-    if (!customName || !referenceText) {
+    if (!customName) {
       logSiliconFlowVoiceEvent({
         level: 'error',
         event: 'siliconflow_voice_upload_failed',
@@ -4786,13 +4818,43 @@ async function handleSiliconFlowVoiceUpload(req, res) {
         upstreamStatus: 0,
         failedStage: 'validate_request'
       });
-      sendJson(res, 400, {
-        error: !customName
-          ? '参考音频上传失败：缺少自定义声音名称 customName'
-          : '参考音频上传失败：请填写参考音频对应文本',
+      sendJson(res, 400, { error: '参考音频上传失败：缺少自定义声音名称 customName', requestId });
+      return;
+    }
+
+    if (!referenceText) {
+      const transcriptResult = await transcribeSiliconFlowVoiceReference({
+        apiKey,
+        file,
         requestId
       });
-      return;
+
+      upstreamStatus = transcriptResult.upstreamStatus;
+      if (!transcriptResult.ok) {
+        logSiliconFlowVoiceEvent({
+          level: 'error',
+          event: 'siliconflow_voice_upload_failed',
+          requestId,
+          model: resolvedModel,
+          fileName,
+          fileSize,
+          status: 'failed',
+          elapsedMs: Date.now() - requestStartedAt,
+          upstreamStatus,
+          failedStage: 'auto_transcribe_reference_audio',
+          upstreamBodySummary: transcriptResult.upstreamBodySummary,
+          asrModel: SILICONFLOW_ASR_MODEL
+        });
+        sendJson(res, upstreamStatus >= 400 && upstreamStatus < 500 ? 400 : 502, {
+          error: '参考音频上传失败：自动识别参考音频原文失败，请手动填写原文后重试',
+          requestId,
+          upstreamStatus,
+          upstreamBodySummary: transcriptResult.upstreamBodySummary
+        });
+        return;
+      }
+
+      referenceText = transcriptResult.transcriptText;
     }
 
     const upstreamUrl = `${SILICONFLOW_API_BASE_URL}/uploads/audio/voice`;
@@ -4878,9 +4940,17 @@ async function handleSiliconFlowVoiceUpload(req, res) {
       status: 'succeeded',
       elapsedMs: Date.now() - requestStartedAt,
       upstreamStatus,
-      voiceUri
+      voiceUri,
+      transcriptSource: manualReferenceText ? 'manual' : 'auto_asr'
     });
-    sendJson(res, 200, { ok: true, uri: voiceUri, model: resolvedModel, requestId });
+    sendJson(res, 200, {
+      ok: true,
+      uri: voiceUri,
+      model: resolvedModel,
+      requestId,
+      referenceText,
+      transcriptSource: manualReferenceText ? 'manual' : 'auto_asr'
+    });
   } catch (error) {
     const isTimeout =
       error?.name === 'TimeoutError' ||
