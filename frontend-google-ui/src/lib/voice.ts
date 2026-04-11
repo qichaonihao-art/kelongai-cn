@@ -1,9 +1,10 @@
-export type VoicePlatform = 'zhipu' | 'aliyun' | 'volcengine';
+export type VoicePlatform = 'zhipu' | 'aliyun' | 'volcengine' | 'siliconflow';
 
 export interface VoiceConfigStatus {
   reachable: boolean;
   zhipuApiKey: boolean;
   aliyunApiKey: boolean;
+  siliconFlowApiKey: boolean;
   volcAppKey: boolean;
   volcAccessKey: boolean;
   volcSpeakerId: boolean;
@@ -40,6 +41,8 @@ export interface VoiceCredentials {
 const ALIYUN_TARGET_MODEL = 'qwen3-tts-vc-realtime-2026-01-15';
 const MOCK_ALIYUN_TARGET_MODEL = 'mock-cosyvoice';
 const VOLC_RESOURCE_ID = 'seed-icl-2.0';
+const SILICONFLOW_VOICE_MODEL = 'FunAudioLLM/CosyVoice2-0.5B';
+const SILICONFLOW_RESPONSE_FORMAT = 'wav';
 
 async function parseJsonSafely(response: Response) {
   try {
@@ -98,6 +101,7 @@ export async function getVoiceConfigStatus(): Promise<VoiceConfigStatus> {
       reachable: true,
       zhipuApiKey: !!json?.serverManaged?.zhipuApiKey,
       aliyunApiKey: !!json?.serverManaged?.aliyunApiKey,
+      siliconFlowApiKey: !!json?.serverManaged?.siliconFlowApiKey,
       volcAppKey: !!json?.serverManaged?.volcAppKey,
       volcAccessKey: !!json?.serverManaged?.volcAccessKey,
       volcSpeakerId: !!json?.serverManaged?.volcSpeakerId,
@@ -108,6 +112,7 @@ export async function getVoiceConfigStatus(): Promise<VoiceConfigStatus> {
       reachable: false,
       zhipuApiKey: false,
       aliyunApiKey: false,
+      siliconFlowApiKey: false,
       volcAppKey: false,
       volcAccessKey: false,
       volcSpeakerId: false,
@@ -120,10 +125,11 @@ export async function createVoiceClone(options: {
   platform: VoicePlatform;
   file: File;
   preferredName: string;
+  referenceText?: string;
   credentials?: VoiceCredentials;
   mockMode?: boolean;
 }): Promise<ClonedVoice> {
-  const { platform, file, preferredName, credentials, mockMode = false } = options;
+  const { platform, file, preferredName, referenceText, credentials, mockMode = false } = options;
 
   if (platform === 'zhipu') {
     const audioData = await readFileAsDataUrl(file);
@@ -189,6 +195,36 @@ export async function createVoiceClone(options: {
       providerLabel: '阿里云',
       remoteVoiceId: json?.output?.voice || json?.voiceId || createId('aliyun_voice'),
       engineModel: targetModel,
+      createdAt: new Date().toLocaleString(),
+    };
+  }
+
+  if (platform === 'siliconflow') {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('model', SILICONFLOW_VOICE_MODEL);
+    formData.append('customName', preferredName);
+    formData.append('text', referenceText || '');
+    formData.append('response_format', SILICONFLOW_RESPONSE_FORMAT);
+
+    const response = await fetch('/api/siliconflow/upload-voice', {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+    });
+    const json = await parseJsonSafely(response);
+
+    if (!response.ok) {
+      throw new Error(json?.error || 'SiliconFlow 参考音频上传失败');
+    }
+
+    return {
+      id: createId('voice'),
+      name: preferredName,
+      provider: 'siliconflow',
+      providerLabel: 'SiliconFlow 声音克隆',
+      remoteVoiceId: json?.uri || createId('siliconflow_voice'),
+      engineModel: json?.model || SILICONFLOW_VOICE_MODEL,
       createdAt: new Date().toLocaleString(),
     };
   }
@@ -264,6 +300,8 @@ export async function generateSpeech(options: {
     ? '/api/tts/zhipu'
     : voice.provider === 'aliyun'
       ? '/api/tts/aliyun'
+      : voice.provider === 'siliconflow'
+        ? '/api/siliconflow/create-speech'
       : '/api/tts/volcengine';
   const payload = voice.provider === 'zhipu'
     ? {
@@ -280,6 +318,14 @@ export async function generateSpeech(options: {
         text,
         mockMode,
       }
+      : voice.provider === 'siliconflow'
+        ? {
+          model: voice.engineModel || SILICONFLOW_VOICE_MODEL,
+          input: text,
+          voice: voice.remoteVoiceId,
+          response_format: SILICONFLOW_RESPONSE_FORMAT,
+          mockMode,
+        }
       : {
         speakerId: voice.remoteVoiceId,
         resourceId: voice.resourceId || VOLC_RESOURCE_ID,

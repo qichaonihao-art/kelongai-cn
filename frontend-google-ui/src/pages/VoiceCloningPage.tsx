@@ -34,6 +34,8 @@ interface VoiceCloningPageProps {
   onBack: () => void;
 }
 
+type VoicePlatformLabel = '智谱' | '阿里云' | '火山引擎' | 'SiliconFlow 声音克隆';
+
 const MAX_AUDIO_SIZE = 10 * 1024 * 1024;
 const VOICES_STORAGE_KEY = 'kelongai.savedVoices';
 
@@ -41,6 +43,7 @@ const EMPTY_CONFIG_STATUS: VoiceConfigStatus = {
   reachable: false,
   zhipuApiKey: false,
   aliyunApiKey: false,
+  siliconFlowApiKey: false,
   volcAppKey: false,
   volcAccessKey: false,
   volcSpeakerId: false,
@@ -66,13 +69,17 @@ function loadSavedVoices(): ClonedVoice[] {
   }
 }
 
-function getPlatformLabel(provider: VoicePlatform): '智谱' | '阿里云' | '火山引擎' {
+function getPlatformLabel(provider: VoicePlatform): VoicePlatformLabel {
   if (provider === 'zhipu') {
     return '智谱';
   }
 
   if (provider === 'aliyun') {
     return '阿里云';
+  }
+
+  if (provider === 'siliconflow') {
+    return 'SiliconFlow 声音克隆';
   }
 
   return '火山引擎';
@@ -86,13 +93,14 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const generatedAudiosRef = useRef<GeneratedAudio[]>([]);
   const [isApiConfigOpen, setIsApiConfigOpen] = useState(false);
   const [isMyVoicesOpen, setIsMyVoicesOpen] = useState(false);
-  const [selectedPlatform, setSelectedPlatform] = useState<'智谱' | '阿里云' | '火山引擎'>('阿里云');
+  const [selectedPlatform, setSelectedPlatform] = useState<VoicePlatformLabel>('阿里云');
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'done'>('idle');
   const [cloneStatus, setCloneStatus] = useState<'idle' | 'processing' | 'done'>('idle');
   const [generateStatus, setGenerateStatus] = useState<'idle' | 'generating'>('idle');
   const [generatedAudios, setGeneratedAudios] = useState<GeneratedAudio[]>([]);
   const [inputText, setInputText] = useState("");
   const [voiceName, setVoiceName] = useState("");
+  const [referenceAudioText, setReferenceAudioText] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadedAudioUrl, setUploadedAudioUrl] = useState("");
   const [uploadError, setUploadError] = useState("");
@@ -116,12 +124,17 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const voicesByProvider = useMemo(
     () => ({
       aliyun: voices.filter((voice) => voice.provider === 'aliyun'),
+      siliconflow: voices.filter((voice) => voice.provider === 'siliconflow'),
       volcengine: voices.filter((voice) => voice.provider === 'volcengine'),
       zhipu: voices.filter((voice) => voice.provider === 'zhipu'),
     }),
     [voices],
   );
-  const isVoiceReady = !!selectedVoice && cloneStatus === 'done';
+  const isSiliconFlowSelected = selectedPlatform === 'SiliconFlow 声音克隆';
+  const isVoiceReady =
+    !!selectedVoice &&
+    cloneStatus === 'done' &&
+    (!isSiliconFlowSelected || selectedVoice.provider === 'siliconflow');
 
   useEffect(() => {
     window.localStorage.setItem(VOICES_STORAGE_KEY, JSON.stringify(voices));
@@ -211,6 +224,16 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     configStatus.volcAppKey && configStatus.volcAccessKey && configStatus.volcSpeakerId;
 
   const platformHint = useMemo(() => {
+    if (selectedPlatform === 'SiliconFlow 声音克隆') {
+      if (configStatus.mockMode) {
+        return "当前为本地 mock 模式，SiliconFlow 链路会返回演示 voice uri 和演示语音。";
+      }
+      if (configStatus.siliconFlowApiKey) {
+        return "当前为真实模式，服务端已托管 SILICONFLOW_API_KEY。前端不会暴露密钥，直接通过服务端代理上传参考音频并生成语音。";
+      }
+      return "当前为真实模式。请在 legacy-project/.env 中配置 SILICONFLOW_API_KEY，SiliconFlow 声音克隆会直接复用这一个服务端密钥。";
+    }
+
     if (selectedPlatform === '智谱') {
       if (configStatus.mockMode) {
         return "当前为本地 mock 模式，智谱链路会返回演示音色和演示语音。";
@@ -245,6 +268,8 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       ? '智谱 API Key（可选）'
       : selectedPlatform === '阿里云'
         ? '阿里云 API Key（可选）'
+        : selectedPlatform === 'SiliconFlow 声音克隆'
+          ? 'SiliconFlow API Key（服务端托管）'
         : '火山 Speaker ID（可选覆盖）';
 
   const configInputPlaceholder =
@@ -256,9 +281,22 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       ? (configStatus.aliyunApiKey
           ? '服务端已托管，可留空'
           : '请输入您的阿里云 API Key')
+      : selectedPlatform === 'SiliconFlow 声音克隆'
+        ? (configStatus.siliconFlowApiKey
+            ? '服务端已托管，无需前端填写'
+            : '请先在服务端配置 SILICONFLOW_API_KEY')
       : (hasVolcServerSupport
           ? '服务端已托管，可留空'
           : '请输入可用的火山 Speaker ID');
+
+  const configInputValue =
+    selectedPlatform === '智谱'
+      ? zhipuApiKey
+      : selectedPlatform === '阿里云'
+        ? aliyunApiKey
+        : selectedPlatform === 'SiliconFlow 声音克隆'
+          ? ''
+          : volcSpeakerId;
 
   function resetUploadState() {
     if (uploadedAudioUrl) {
@@ -320,6 +358,11 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       return;
     }
 
+    if (isSiliconFlowSelected && !referenceAudioText.trim()) {
+      setCloneError("请先填写参考音频对应文本。");
+      return;
+    }
+
     if (selectedPlatform === '火山引擎' && !configStatus.mockMode && !hasVolcServerSupport && !volcSpeakerId.trim()) {
       setCloneError("当前火山引擎缺少可用 Speaker ID，请先在服务端配置或在配置界面填写。");
       return;
@@ -336,9 +379,12 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
             ? 'zhipu'
             : selectedPlatform === '阿里云'
               ? 'aliyun'
+              : selectedPlatform === 'SiliconFlow 声音克隆'
+                ? 'siliconflow'
               : 'volcengine',
         file: uploadedFile,
         preferredName: voiceName.trim(),
+        referenceText: referenceAudioText.trim(),
         credentials: {
           apiKey: selectedPlatform === '智谱' ? zhipuApiKey.trim() : aliyunApiKey.trim(),
           speakerId: volcSpeakerId.trim(),
@@ -662,7 +708,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                     <select
                       value={selectedPlatform}
                       onChange={(event) => {
-                        setSelectedPlatform(event.target.value as '智谱' | '阿里云' | '火山引擎');
+                        setSelectedPlatform(event.target.value as VoicePlatformLabel);
                         setCloneError("");
                         setGenerateError("");
                       }}
@@ -671,29 +717,25 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                       <option value="智谱">智谱</option>
                       <option value="阿里云">阿里云</option>
                       <option value="火山引擎">火山引擎</option>
+                      <option value="SiliconFlow 声音克隆">SiliconFlow 声音克隆</option>
                     </select>
                   </div>
                   <div className="space-y-2 md:col-span-1">
                     <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">{configInputLabel}</Label>
                     <Input
-                      type={selectedPlatform === '火山引擎' ? 'text' : 'password'}
+                      type={selectedPlatform === '火山引擎' || selectedPlatform === 'SiliconFlow 声音克隆' ? 'text' : 'password'}
                       placeholder={configInputPlaceholder}
-                      value={
-                        selectedPlatform === '智谱'
-                          ? zhipuApiKey
-                          : selectedPlatform === '阿里云'
-                            ? aliyunApiKey
-                            : volcSpeakerId
-                      }
+                      value={configInputValue}
                       onChange={(event) => {
                         if (selectedPlatform === '智谱') {
                           setZhipuApiKey(event.target.value);
                         } else if (selectedPlatform === '阿里云') {
                           setAliyunApiKey(event.target.value);
-                        } else {
+                        } else if (selectedPlatform === '火山引擎') {
                           setVolcSpeakerId(event.target.value);
                         }
                       }}
+                      disabled={selectedPlatform === 'SiliconFlow 声音克隆'}
                       className="h-12 rounded-2xl border-slate-300 bg-white/50"
                     />
                   </div>
@@ -794,6 +836,17 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                 onChange={(event) => setVoiceName(event.target.value)}
               />
             </div>
+            {isSiliconFlowSelected && (
+              <div className="space-y-4">
+                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">参考音频对应文本</Label>
+                <textarea
+                  className="w-full h-28 rounded-[2rem] border border-slate-300 bg-white/50 p-5 text-base outline-none transition-all resize-none focus:ring-4 focus:ring-indigo-500/10"
+                  placeholder="请输入参考音频里真实说出来的内容"
+                  value={referenceAudioText}
+                  onChange={(event) => setReferenceAudioText(event.target.value)}
+                />
+              </div>
+            )}
             <Button
               className="w-full h-14 rounded-2xl text-lg font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-xl shadow-slate-900/20 transition-all active:scale-[0.98]"
               disabled={uploadStatus !== 'done' || cloneStatus === 'processing'}
@@ -807,7 +860,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
               ) : (
                 <span className="flex items-center gap-3">
                   <Mic2 className="size-6" />
-                  开始克隆
+                  {isSiliconFlowSelected ? '上传参考音频' : '开始克隆'}
                 </span>
               )}
             </Button>
@@ -818,8 +871,15 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                 className="flex items-center gap-2 text-xs text-indigo-600 font-bold bg-indigo-50/80 backdrop-blur-sm p-3 rounded-xl border border-indigo-100"
               >
                 <CheckCircle2 className="size-4" />
-                声音克隆成功，当前音色为 {selectedVoice.name}。
+                {selectedVoice.provider === 'siliconflow'
+                  ? `参考音频上传成功，当前音色为 ${selectedVoice.name}。`
+                  : `声音克隆成功，当前音色为 ${selectedVoice.name}。`}
               </motion.div>
+            )}
+            {cloneStatus === 'done' && selectedVoice?.provider === 'siliconflow' && (
+              <div className="rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-xs text-slate-500 break-all">
+                当前 voice uri：{selectedVoice.remoteVoiceId}
+              </div>
             )}
             {cloneError && (
               <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-500">
@@ -848,7 +908,12 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
             <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-3 text-sm text-slate-500">
               {isVoiceReady
                 ? `当前使用音色：${selectedVoice.name} (${selectedVoice.providerLabel})`
-                : "当前还没有准备好的音色，请先完成声音克隆或从我的音色中启用一个音色。"}
+                : isSiliconFlowSelected
+                  ? "当前还没有可用的 SiliconFlow voice uri，请先上传参考音频或从我的音色中启用一个 SiliconFlow 音色。"
+                  : "当前还没有准备好的音色，请先完成声音克隆或从我的音色中启用一个音色。"}
+              {isVoiceReady && selectedVoice?.provider === 'siliconflow' && (
+                <p className="mt-2 break-all text-xs text-slate-400">voice uri：{selectedVoice.remoteVoiceId}</p>
+              )}
             </div>
             <div className="flex flex-col gap-4">
               <Button
@@ -988,6 +1053,17 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                       titleClassName: 'text-sky-900',
                       countClassName: 'text-sky-600',
                       emptyClassName: 'border-sky-100 bg-white/80 text-sky-500/80',
+                    },
+                    {
+                      key: 'siliconflow',
+                      title: 'SiliconFlow 声音克隆',
+                      voices: voicesByProvider.siliconflow,
+                      sectionClassName: 'border-fuchsia-200 bg-fuchsia-50/85 shadow-[0_14px_30px_rgba(192,38,211,0.10)]',
+                      headerClassName: 'border-fuchsia-200/80 bg-white/85',
+                      accentClassName: 'bg-fuchsia-500',
+                      titleClassName: 'text-fuchsia-900',
+                      countClassName: 'text-fuchsia-600',
+                      emptyClassName: 'border-fuchsia-100 bg-white/80 text-fuchsia-600/80',
                     },
                     {
                       key: 'volcengine',

@@ -58,6 +58,10 @@ const TIKHUB_API_BASE_URL = 'https://api.tikhub.io';
 const DOUYIN_RETRY_DELAYS_MS = [250, 700];
 const SILICONFLOW_API_BASE_URL = String(process.env.SILICONFLOW_API_BASE_URL || 'https://api.siliconflow.cn/v1').trim().replace(/\/+$/g, '');
 const SILICONFLOW_ASR_MODEL = String(process.env.SILICONFLOW_ASR_MODEL || 'FunAudioLLM/SenseVoiceSmall').trim();
+const DEFAULT_SILICONFLOW_VOICE_MODEL = 'FunAudioLLM/CosyVoice2-0.5B';
+const DEFAULT_SILICONFLOW_RESPONSE_FORMAT = 'wav';
+const SILICONFLOW_VOICE_UPLOAD_TIMEOUT_MS = 2 * 60 * 1000;
+const SILICONFLOW_TTS_TIMEOUT_MS = 2 * 60 * 1000;
 const DEFAULT_DOUYIN_VIDEO_RESOLVE_TIMEOUT_MS = 2 * 60 * 1000;
 const DEFAULT_DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -151,13 +155,17 @@ function sendJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function sendWavResponse(res, wavBuffer) {
+function sendAudioResponse(res, audioBuffer, contentType = 'application/octet-stream') {
   res.writeHead(200, {
-    'Content-Type': 'audio/wav',
-    'Content-Length': wavBuffer.length,
+    'Content-Type': contentType,
+    'Content-Length': audioBuffer.length,
     'Cache-Control': 'no-store'
   });
-  res.end(wavBuffer);
+  res.end(audioBuffer);
+}
+
+function sendWavResponse(res, wavBuffer) {
+  sendAudioResponse(res, wavBuffer, 'audio/wav');
 }
 
 function hasFileExtension(pathname) {
@@ -738,6 +746,7 @@ function handleConfigStatus(req, res) {
       arkApiKey: !!readValue(SERVER_CONFIG.arkApiKey),
       aliyunApiKey: !!readValue(SERVER_CONFIG.aliyunApiKey),
       zhipuApiKey: !!readValue(SERVER_CONFIG.zhipuApiKey),
+      siliconFlowApiKey: !!readValue(SERVER_CONFIG.siliconFlowApiKey),
       volcAppKey: !!readValue(SERVER_CONFIG.volcAppKey),
       volcAccessKey: !!readValue(SERVER_CONFIG.volcAccessKey),
       volcSpeakerId: !!readValue(SERVER_CONFIG.volcSpeakerId),
@@ -967,6 +976,41 @@ function summarizeUpstreamBody(value) {
   if (!value) return '';
   const raw = typeof value === 'string' ? value : JSON.stringify(value);
   return raw.replace(/\s+/g, ' ').trim().slice(0, 400);
+}
+
+function logSiliconFlowVoiceEvent({
+  level = 'info',
+  event,
+  requestId = '',
+  model = '',
+  fileName = '',
+  fileSize = 0,
+  status = '',
+  elapsedMs = 0,
+  upstreamStatus = 0,
+  ...extra
+}) {
+  const payload = {
+    event,
+    requestId,
+    model,
+    fileName,
+    fileSize,
+    status,
+    elapsedMs,
+    upstreamStatus,
+    ...extra
+  };
+  const logger = level === 'error' ? console.error : console.log;
+  logger('[siliconflow voice]', payload);
+}
+
+function normalizeSiliconFlowResponseFormat(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'mp3' || normalized === 'wav' || normalized === 'pcm') {
+    return normalized;
+  }
+  return DEFAULT_SILICONFLOW_RESPONSE_FORMAT;
 }
 
 function createStageDeadlineAt({ stageStartedAt = Date.now(), stageTimeoutMs, parentDeadlineAt = 0 }) {
@@ -3185,6 +3229,31 @@ async function readMultipartFormBody(req) {
   };
 }
 
+async function readSiliconFlowVoiceUploadFormBody(req) {
+  const contentLength = Number(req.headers['content-length'] || 0);
+  if (contentLength && contentLength > 40 * 1024 * 1024) {
+    throw new Error('上传文件过大');
+  }
+
+  const request = new Request('http://localhost/upload', {
+    method: req.method || 'POST',
+    headers: req.headers,
+    body: req,
+    duplex: 'half'
+  });
+
+  const formData = await request.formData();
+  const file = formData.get('file');
+
+  return {
+    file: file instanceof File ? file : null,
+    model: readValue(formData.get('model')),
+    customName: readValue(formData.get('customName')),
+    text: readValue(formData.get('text')),
+    responseFormat: normalizeSiliconFlowResponseFormat(formData.get('response_format'))
+  };
+}
+
 function normalizeBase64ImageInput(image, imageMimeType) {
   const raw = readValue(image);
   if (!raw) {
@@ -4607,6 +4676,428 @@ async function handleVolcVoiceClone(req, res) {
   }
 }
 
+async function handleSiliconFlowVoiceUpload(req, res) {
+  const requestId = createRequestId('sf_voice');
+  const requestStartedAt = Date.now();
+  let upstreamStatus = 0;
+  let resolvedModel = DEFAULT_SILICONFLOW_VOICE_MODEL;
+  let fileName = '';
+  let fileSize = 0;
+
+  try {
+    if (!isMultipartFormRequest(req)) {
+      sendJson(res, 400, { error: '参考音频上传失败：请求必须使用 multipart/form-data', requestId });
+      return;
+    }
+
+    const body = await readSiliconFlowVoiceUploadFormBody(req);
+    const apiKey = readValue(SERVER_CONFIG.siliconFlowApiKey, process.env.SILICONFLOW_API_KEY);
+    const file = body.file;
+    const customName = readValue(body.customName);
+    const referenceText = readValue(body.text);
+    resolvedModel = readValue(body.model) || DEFAULT_SILICONFLOW_VOICE_MODEL;
+    fileName = file?.name || '';
+    fileSize = file?.size || 0;
+
+    logSiliconFlowVoiceEvent({
+      event: 'siliconflow_voice_upload_started',
+      requestId,
+      model: resolvedModel,
+      fileName,
+      fileSize,
+      status: 'started',
+      elapsedMs: 0,
+      upstreamStatus: 0
+    });
+
+    if (shouldUseVoiceCloneMock({ mockMode: false })) {
+      const mockUri = `speech:${sanitizeStoredFileName(customName) || 'mock_voice'}:${Date.now().toString(36)}`;
+      logSiliconFlowVoiceEvent({
+        event: 'siliconflow_voice_upload_succeeded',
+        requestId,
+        model: resolvedModel,
+        fileName,
+        fileSize,
+        status: 'succeeded',
+        elapsedMs: Date.now() - requestStartedAt,
+        upstreamStatus: 200,
+        voiceUri: mockUri,
+        mock: true
+      });
+      sendJson(res, 200, { ok: true, mock: true, uri: mockUri, model: resolvedModel });
+      return;
+    }
+
+    if (!apiKey) {
+      logSiliconFlowVoiceEvent({
+        level: 'error',
+        event: 'siliconflow_voice_upload_failed',
+        requestId,
+        model: resolvedModel,
+        fileName,
+        fileSize,
+        status: 'failed',
+        elapsedMs: Date.now() - requestStartedAt,
+        upstreamStatus: 0,
+        failedStage: 'api_key_missing'
+      });
+      sendJson(res, 500, { error: '缺少 API key：服务端未配置 SILICONFLOW_API_KEY', requestId });
+      return;
+    }
+
+    if (!(file instanceof File) || file.size <= 0) {
+      logSiliconFlowVoiceEvent({
+        level: 'error',
+        event: 'siliconflow_voice_upload_failed',
+        requestId,
+        model: resolvedModel,
+        fileName,
+        fileSize,
+        status: 'failed',
+        elapsedMs: Date.now() - requestStartedAt,
+        upstreamStatus: 0,
+        failedStage: 'validate_request'
+      });
+      sendJson(res, 400, { error: '参考音频上传失败：缺少参考音频文件', requestId });
+      return;
+    }
+
+    if (!customName || !referenceText) {
+      logSiliconFlowVoiceEvent({
+        level: 'error',
+        event: 'siliconflow_voice_upload_failed',
+        requestId,
+        model: resolvedModel,
+        fileName,
+        fileSize,
+        status: 'failed',
+        elapsedMs: Date.now() - requestStartedAt,
+        upstreamStatus: 0,
+        failedStage: 'validate_request'
+      });
+      sendJson(res, 400, {
+        error: !customName
+          ? '参考音频上传失败：缺少自定义声音名称 customName'
+          : '参考音频上传失败：请填写参考音频对应文本',
+        requestId
+      });
+      return;
+    }
+
+    const upstreamUrl = `${SILICONFLOW_API_BASE_URL}/uploads/audio/voice`;
+    const formData = new FormData();
+    formData.append('file', file, file.name || 'voice-sample.wav');
+    formData.append('model', resolvedModel);
+    formData.append('customName', customName);
+    formData.append('text', referenceText);
+
+    const upstreamRes = await fetch(upstreamUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: formData,
+      signal: AbortSignal.timeout(SILICONFLOW_VOICE_UPLOAD_TIMEOUT_MS)
+    });
+
+    upstreamStatus = upstreamRes.status;
+    const responseText = await upstreamRes.text();
+    let json = null;
+    try {
+      json = responseText ? JSON.parse(responseText) : null;
+    } catch {}
+
+    const voiceUri = readValue(json?.uri, json?.data?.uri, json?.voice?.uri);
+    if (!upstreamRes.ok) {
+      const upstreamBodySummary = summarizeUpstreamBody(responseText);
+      logSiliconFlowVoiceEvent({
+        level: 'error',
+        event: 'siliconflow_voice_upload_failed',
+        requestId,
+        model: resolvedModel,
+        fileName,
+        fileSize,
+        status: 'failed',
+        elapsedMs: Date.now() - requestStartedAt,
+        upstreamStatus,
+        failedStage: 'upstream_response',
+        upstreamBodySummary
+      });
+      sendJson(res, upstreamStatus >= 400 && upstreamStatus < 500 ? 400 : 502, {
+        error: upstreamStatus >= 400 && upstreamStatus < 500
+          ? '参考音频上传失败：参考音频文本不匹配或参数不合法'
+          : '参考音频上传失败：SiliconFlow 服务暂时不可用',
+        requestId,
+        upstreamStatus,
+        upstreamBodySummary
+      });
+      return;
+    }
+
+    if (!voiceUri) {
+      const upstreamBodySummary = summarizeUpstreamBody(responseText);
+      logSiliconFlowVoiceEvent({
+        level: 'error',
+        event: 'siliconflow_voice_upload_failed',
+        requestId,
+        model: resolvedModel,
+        fileName,
+        fileSize,
+        status: 'failed',
+        elapsedMs: Date.now() - requestStartedAt,
+        upstreamStatus,
+        failedStage: 'missing_voice_uri',
+        upstreamBodySummary
+      });
+      sendJson(res, 502, {
+        error: '参考音频上传失败：上游未返回可用的 voice uri',
+        requestId,
+        upstreamStatus,
+        upstreamBodySummary
+      });
+      return;
+    }
+
+    logSiliconFlowVoiceEvent({
+      event: 'siliconflow_voice_upload_succeeded',
+      requestId,
+      model: resolvedModel,
+      fileName,
+      fileSize,
+      status: 'succeeded',
+      elapsedMs: Date.now() - requestStartedAt,
+      upstreamStatus,
+      voiceUri
+    });
+    sendJson(res, 200, { ok: true, uri: voiceUri, model: resolvedModel, requestId });
+  } catch (error) {
+    const isTimeout =
+      error?.name === 'TimeoutError' ||
+      error?.name === 'AbortError' ||
+      /timed out|timeout|aborted/i.test(String(error?.message || ''));
+    const isClientInputError =
+      error?.message === '上传文件过大';
+    logSiliconFlowVoiceEvent({
+      level: 'error',
+      event: 'siliconflow_voice_upload_failed',
+      requestId,
+      model: resolvedModel,
+      fileName,
+      fileSize,
+      status: 'failed',
+      elapsedMs: Date.now() - requestStartedAt,
+      upstreamStatus,
+      failedStage: isTimeout ? 'network_timeout' : 'network_error',
+      message: error?.message || ''
+    });
+    sendJson(res, isClientInputError ? 400 : (isTimeout ? 504 : 502), {
+      error: isClientInputError
+        ? '参考音频上传失败：上传文件过大'
+        : isTimeout
+          ? '服务端网络错误或超时：参考音频上传到 SiliconFlow 超时'
+          : '服务端网络错误或超时：参考音频上传失败',
+      requestId,
+      upstreamStatus
+    });
+  }
+}
+
+async function handleSiliconFlowTts(req, res) {
+  const requestId = createRequestId('sf_tts');
+  const requestStartedAt = Date.now();
+  let upstreamStatus = 0;
+  let resolvedModel = DEFAULT_SILICONFLOW_VOICE_MODEL;
+  const fileName = '';
+  const fileSize = 0;
+
+  try {
+    const body = await readRequestBody(req);
+    const apiKey = readValue(SERVER_CONFIG.siliconFlowApiKey, process.env.SILICONFLOW_API_KEY);
+    const input = readValue(body?.input);
+    const voice = readValue(body?.voice);
+    const responseFormat = normalizeSiliconFlowResponseFormat(body?.response_format);
+    resolvedModel = readValue(body?.model) || DEFAULT_SILICONFLOW_VOICE_MODEL;
+
+    logSiliconFlowVoiceEvent({
+      event: 'siliconflow_tts_started',
+      requestId,
+      model: resolvedModel,
+      fileName,
+      fileSize,
+      status: 'started',
+      elapsedMs: 0,
+      upstreamStatus: 0
+    });
+
+    if (shouldUseVoiceCloneMock(body)) {
+      const wavBuffer = buildWaveFromPcm(createMockPcmBuffer(input), 24000, 1, 16);
+      logSiliconFlowVoiceEvent({
+        event: 'siliconflow_tts_succeeded',
+        requestId,
+        model: resolvedModel,
+        fileName,
+        fileSize,
+        status: 'succeeded',
+        elapsedMs: Date.now() - requestStartedAt,
+        upstreamStatus: 200,
+        voice,
+        mock: true
+      });
+      sendWavResponse(res, wavBuffer);
+      return;
+    }
+
+    if (!apiKey) {
+      logSiliconFlowVoiceEvent({
+        level: 'error',
+        event: 'siliconflow_tts_failed',
+        requestId,
+        model: resolvedModel,
+        fileName,
+        fileSize,
+        status: 'failed',
+        elapsedMs: Date.now() - requestStartedAt,
+        upstreamStatus: 0,
+        failedStage: 'api_key_missing'
+      });
+      sendJson(res, 500, { error: '缺少 API key：服务端未配置 SILICONFLOW_API_KEY', requestId });
+      return;
+    }
+
+    if (!input) {
+      logSiliconFlowVoiceEvent({
+        level: 'error',
+        event: 'siliconflow_tts_failed',
+        requestId,
+        model: resolvedModel,
+        fileName,
+        fileSize,
+        status: 'failed',
+        elapsedMs: Date.now() - requestStartedAt,
+        upstreamStatus: 0,
+        failedStage: 'validate_request'
+      });
+      sendJson(res, 400, { error: '生成语音失败：缺少待合成文本 input', requestId });
+      return;
+    }
+
+    if (!voice || !voice.startsWith('speech:')) {
+      logSiliconFlowVoiceEvent({
+        level: 'error',
+        event: 'siliconflow_tts_failed',
+        requestId,
+        model: resolvedModel,
+        fileName,
+        fileSize,
+        status: 'failed',
+        elapsedMs: Date.now() - requestStartedAt,
+        upstreamStatus: 0,
+        failedStage: 'validate_voice_uri',
+        voice
+      });
+      sendJson(res, 400, { error: 'voice uri 不存在或无效，请先重新上传参考音频', requestId });
+      return;
+    }
+
+    const upstreamUrl = `${SILICONFLOW_API_BASE_URL}/audio/speech`;
+    const upstreamRes = await fetch(upstreamUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: resolvedModel,
+        input,
+        voice,
+        response_format: responseFormat
+      }),
+      signal: AbortSignal.timeout(SILICONFLOW_TTS_TIMEOUT_MS)
+    });
+
+    upstreamStatus = upstreamRes.status;
+    if (!upstreamRes.ok) {
+      const responseText = await upstreamRes.text();
+      const upstreamBodySummary = summarizeUpstreamBody(responseText);
+      logSiliconFlowVoiceEvent({
+        level: 'error',
+        event: 'siliconflow_tts_failed',
+        requestId,
+        model: resolvedModel,
+        fileName,
+        fileSize,
+        status: 'failed',
+        elapsedMs: Date.now() - requestStartedAt,
+        upstreamStatus,
+        failedStage: 'upstream_response',
+        upstreamBodySummary,
+        voice
+      });
+      sendJson(res, upstreamStatus >= 400 && upstreamStatus < 500 ? 400 : 502, {
+        error: upstreamStatus >= 400 && upstreamStatus < 500
+          ? '生成语音失败：voice uri 不存在、参数不合法，或 SiliconFlow 拒绝了本次请求'
+          : '生成语音失败：SiliconFlow 服务暂时不可用',
+        requestId,
+        upstreamStatus,
+        upstreamBodySummary
+      });
+      return;
+    }
+
+    const audioBuffer = Buffer.from(await upstreamRes.arrayBuffer());
+    const contentType = readValue(upstreamRes.headers.get('content-type')) || (
+      responseFormat === 'mp3'
+        ? 'audio/mpeg'
+        : responseFormat === 'pcm'
+          ? 'audio/pcm'
+          : 'audio/wav'
+    );
+
+    logSiliconFlowVoiceEvent({
+      event: 'siliconflow_tts_succeeded',
+      requestId,
+      model: resolvedModel,
+      fileName,
+      fileSize,
+      status: 'succeeded',
+      elapsedMs: Date.now() - requestStartedAt,
+      upstreamStatus,
+      voice
+    });
+    sendAudioResponse(res, audioBuffer, contentType);
+  } catch (error) {
+    const isTimeout =
+      error?.name === 'TimeoutError' ||
+      error?.name === 'AbortError' ||
+      /timed out|timeout|aborted/i.test(String(error?.message || ''));
+    const isClientInputError =
+      error?.message === '请求体不是合法 JSON' ||
+      error?.message === '请求体过大';
+    logSiliconFlowVoiceEvent({
+      level: 'error',
+      event: 'siliconflow_tts_failed',
+      requestId,
+      model: resolvedModel,
+      fileName,
+      fileSize,
+      status: 'failed',
+      elapsedMs: Date.now() - requestStartedAt,
+      upstreamStatus,
+      failedStage: isTimeout ? 'network_timeout' : 'network_error',
+      message: error?.message || ''
+    });
+    sendJson(res, isClientInputError ? 400 : (isTimeout ? 504 : 502), {
+      error: isClientInputError
+        ? `生成语音失败：${error?.message || '请求参数不合法'}`
+        : isTimeout
+          ? '服务端网络错误或超时：SiliconFlow 生成语音超时'
+          : '服务端网络错误或超时：生成语音失败',
+      requestId,
+      upstreamStatus
+    });
+  }
+}
+
 async function handleDoubaoMultimodal(req, res) {
   const upstreamUrl = 'https://ark.cn-beijing.volces.com/api/v3/responses';
   let stage = 'init';
@@ -5550,6 +6041,16 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/voice/volcengine') {
     await handleVolcVoiceClone(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/siliconflow/upload-voice') {
+    await handleSiliconFlowVoiceUpload(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/siliconflow/create-speech') {
+    await handleSiliconFlowTts(req, res);
     return;
   }
 
