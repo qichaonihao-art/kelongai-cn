@@ -3742,6 +3742,17 @@ function normalizeAliyunPreferredName(value) {
   return `voice_${Date.now().toString(36)}`;
 }
 
+function normalizeSiliconFlowCustomName(value) {
+  const cleaned = String(value || '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_-]+|[_-]+$/g, '')
+    .slice(0, 64);
+
+  if (cleaned.length >= 1) return cleaned;
+  return `sf_voice_${Date.now().toString(36)}`.slice(0, 64);
+}
+
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -4693,7 +4704,7 @@ async function handleSiliconFlowVoiceUpload(req, res) {
     const body = await readSiliconFlowVoiceUploadFormBody(req);
     const apiKey = readValue(SERVER_CONFIG.siliconFlowApiKey, process.env.SILICONFLOW_API_KEY);
     const file = body.file;
-    const customName = readValue(body.customName);
+    const customName = normalizeSiliconFlowCustomName(body.customName);
     const referenceText = readValue(body.text);
     resolvedModel = readValue(body.model) || DEFAULT_SILICONFLOW_VOICE_MODEL;
     fileName = file?.name || '';
