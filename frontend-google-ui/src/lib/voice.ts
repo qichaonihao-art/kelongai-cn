@@ -52,6 +52,16 @@ async function parseJsonSafely(response: Response) {
   }
 }
 
+function readApiErrorMessage(json: any, fallback: string) {
+  const parts = [
+    typeof json?.error === 'string' ? json.error : '',
+    typeof json?.detail === 'string' ? json.detail : '',
+    typeof json?.upstreamBodySummary === 'string' ? json.upstreamBodySummary : '',
+  ].filter(Boolean);
+
+  return parts.length ? parts.join(' | ') : fallback;
+}
+
 function createId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -151,7 +161,7 @@ export async function createVoiceClone(options: {
     const json = await parseJsonSafely(response);
 
     if (!response.ok) {
-      throw new Error(json?.error || '智谱音色创建失败');
+      throw new Error(readApiErrorMessage(json, '智谱音色创建失败'));
     }
 
     return {
@@ -185,7 +195,7 @@ export async function createVoiceClone(options: {
     const json = await parseJsonSafely(response);
 
     if (!response.ok) {
-      throw new Error(json?.error || '阿里云音色创建失败');
+      throw new Error(readApiErrorMessage(json, '阿里云音色创建失败'));
     }
 
     return {
@@ -215,7 +225,7 @@ export async function createVoiceClone(options: {
     const json = await parseJsonSafely(response);
 
     if (!response.ok) {
-      throw new Error(json?.error || 'SiliconFlow 参考音频上传失败');
+      throw new Error(readApiErrorMessage(json, 'SiliconFlow 参考音频上传失败'));
     }
 
     return {
@@ -344,7 +354,7 @@ export async function generateSpeech(options: {
 
   if (!response.ok) {
     const json = await parseJsonSafely(response);
-    throw new Error(json?.error || `${voice.providerLabel} 语音生成失败`);
+    throw new Error(readApiErrorMessage(json, `${voice.providerLabel} 语音生成失败`));
   }
 
   const blob = await response.blob();
