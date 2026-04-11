@@ -884,7 +884,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
               ) : (
                 <span className="flex items-center gap-3">
                   <Mic2 className="size-6" />
-                  {isSiliconFlowSelected ? '上传参考音频' : '开始克隆'}
+                  开始克隆
                 </span>
               )}
             </Button>
