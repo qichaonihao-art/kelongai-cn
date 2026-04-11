@@ -101,6 +101,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [inputText, setInputText] = useState("");
   const [voiceName, setVoiceName] = useState("");
   const [referenceAudioText, setReferenceAudioText] = useState("");
+  const [siliconFlowVoiceUri, setSiliconFlowVoiceUri] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadedAudioUrl, setUploadedAudioUrl] = useState("");
   const [uploadError, setUploadError] = useState("");
@@ -131,10 +132,19 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     [voices],
   );
   const isSiliconFlowSelected = selectedPlatform === 'SiliconFlow 声音克隆';
-  const isVoiceReady =
-    !!selectedVoice &&
-    cloneStatus === 'done' &&
-    (!isSiliconFlowSelected || selectedVoice.provider === 'siliconflow');
+  const selectedSiliconFlowVoice =
+    selectedVoice?.provider === 'siliconflow'
+      ? selectedVoice
+      : null;
+  const currentSiliconFlowVoice =
+    selectedSiliconFlowVoice ||
+    voices.find((voice) => voice.provider === 'siliconflow' && voice.remoteVoiceId === siliconFlowVoiceUri) ||
+    null;
+  const hasSiliconFlowVoiceUri = !!siliconFlowVoiceUri.trim();
+  const activeReadyVoice = isSiliconFlowSelected ? currentSiliconFlowVoice : selectedVoice;
+  const isVoiceReady = isSiliconFlowSelected
+    ? hasSiliconFlowVoiceUri
+    : !!selectedVoice && cloneStatus === 'done';
 
   useEffect(() => {
     window.localStorage.setItem(VOICES_STORAGE_KEY, JSON.stringify(voices));
@@ -156,6 +166,10 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     if (!selectedVoice) {
       setCloneStatus('idle');
       return;
+    }
+
+    if (selectedVoice.provider === 'siliconflow') {
+      setSiliconFlowVoiceUri(selectedVoice.remoteVoiceId);
     }
 
     setVoiceName(selectedVoice.name);
@@ -392,6 +406,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         mockMode: configStatus.mockMode,
       });
 
+      if (voice.provider === 'siliconflow') {
+        setSiliconFlowVoiceUri(voice.remoteVoiceId);
+      }
       setVoices((previous) => [voice, ...previous]);
       setActiveVoiceId(voice.id);
       setCloneStatus('done');
@@ -402,8 +419,15 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   }
 
   async function handleGenerateAudio() {
-    if (!selectedVoice) {
+    const voiceForGeneration = isSiliconFlowSelected ? currentSiliconFlowVoice : selectedVoice;
+
+    if (!voiceForGeneration) {
       setGenerateError("请先创建并选择一个可用音色。");
+      return;
+    }
+
+    if (isSiliconFlowSelected && !hasSiliconFlowVoiceUri) {
+      setGenerateError("请先上传参考音频，拿到可用的 voice uri。");
       return;
     }
 
@@ -417,10 +441,10 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
 
     try {
       const audio = await generateSpeech({
-        voice: selectedVoice,
+        voice: voiceForGeneration,
         text: inputText.trim(),
         credentials: {
-          apiKey: selectedVoice.provider === 'zhipu' ? zhipuApiKey.trim() : aliyunApiKey.trim(),
+          apiKey: voiceForGeneration.provider === 'zhipu' ? zhipuApiKey.trim() : aliyunApiKey.trim(),
           speakerId: volcSpeakerId.trim(),
         },
         mockMode: configStatus.mockMode,
@@ -864,21 +888,21 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                 </span>
               )}
             </Button>
-            {cloneStatus === 'done' && selectedVoice && (
+            {cloneStatus === 'done' && activeReadyVoice && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 className="flex items-center gap-2 text-xs text-indigo-600 font-bold bg-indigo-50/80 backdrop-blur-sm p-3 rounded-xl border border-indigo-100"
               >
                 <CheckCircle2 className="size-4" />
-                {selectedVoice.provider === 'siliconflow'
-                  ? `参考音频上传成功，当前音色为 ${selectedVoice.name}。`
-                  : `声音克隆成功，当前音色为 ${selectedVoice.name}。`}
+                {activeReadyVoice.provider === 'siliconflow'
+                  ? `参考音频上传成功，当前音色为 ${activeReadyVoice.name}。`
+                  : `声音克隆成功，当前音色为 ${activeReadyVoice.name}。`}
               </motion.div>
             )}
-            {cloneStatus === 'done' && selectedVoice?.provider === 'siliconflow' && (
+            {isSiliconFlowSelected && hasSiliconFlowVoiceUri && (
               <div className="rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-xs text-slate-500 break-all">
-                当前 voice uri：{selectedVoice.remoteVoiceId}
+                当前 voice uri：{siliconFlowVoiceUri}
               </div>
             )}
             {cloneError && (
@@ -907,12 +931,12 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-3 text-sm text-slate-500">
               {isVoiceReady
-                ? `当前使用音色：${selectedVoice.name} (${selectedVoice.providerLabel})`
+                ? `当前使用音色：${activeReadyVoice?.name || ''} (${activeReadyVoice?.providerLabel || ''})`
                 : isSiliconFlowSelected
-                  ? "当前还没有可用的 SiliconFlow voice uri，请先上传参考音频或从我的音色中启用一个 SiliconFlow 音色。"
+                  ? "请上传参考音频"
                   : "当前还没有准备好的音色，请先完成声音克隆或从我的音色中启用一个音色。"}
-              {isVoiceReady && selectedVoice?.provider === 'siliconflow' && (
-                <p className="mt-2 break-all text-xs text-slate-400">voice uri：{selectedVoice.remoteVoiceId}</p>
+              {isSiliconFlowSelected && hasSiliconFlowVoiceUri && (
+                <p className="mt-2 break-all text-xs text-slate-400">voice uri：{siliconFlowVoiceUri}</p>
               )}
             </div>
             <div className="flex flex-col gap-4">
