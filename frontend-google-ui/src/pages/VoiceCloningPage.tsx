@@ -1061,15 +1061,10 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                     {
                       key: 'aliyun',
                       title: '阿里云',
-                      description: '偏稳定、偏正式的企业配音音色都收在这里。',
                       voices: voicesByProvider.aliyun,
                       sectionClassName: 'overflow-hidden rounded-[1.4rem] border-2 border-sky-300 bg-[linear-gradient(165deg,rgba(240,249,255,0.96)_0%,rgba(224,242,254,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_12px_24px_rgba(14,165,233,0.12)]',
                       heroClassName: 'border-b-2 border-sky-300 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(240,249,255,0.9))]',
-                      badgeClassName: 'border-sky-300 bg-sky-100 text-sky-700',
-                      accentClassName: 'bg-sky-500',
                       titleClassName: 'text-sky-950',
-                      descriptionClassName: 'text-sky-700/80',
-                      countClassName: 'border-sky-300 bg-white/92 text-sky-700',
                       listPanelClassName: 'border-t border-sky-200/90 bg-white/84',
                       emptyClassName: 'border-sky-300 bg-sky-50/75 text-sky-700/80',
                       activeCardClassName: 'border-sky-400 bg-sky-50/95 shadow-[0_8px_18px_rgba(14,165,233,0.10)]',
@@ -1079,15 +1074,10 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                     {
                       key: 'siliconflow',
                       title: 'SiliconFlow 声音克隆',
-                      description: '更灵活的克隆链路，适合快速试声和做新样本。',
                       voices: voicesByProvider.siliconflow,
                       sectionClassName: 'overflow-hidden rounded-[1.4rem] border-2 border-fuchsia-300 bg-[linear-gradient(165deg,rgba(253,244,255,0.96)_0%,rgba(250,232,255,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_12px_24px_rgba(192,38,211,0.12)]',
                       heroClassName: 'border-b-2 border-fuchsia-300 bg-[radial-gradient(circle_at_top_left,rgba(217,70,239,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(253,244,255,0.9))]',
-                      badgeClassName: 'border-fuchsia-300 bg-fuchsia-100 text-fuchsia-700',
-                      accentClassName: 'bg-fuchsia-500',
                       titleClassName: 'text-fuchsia-950',
-                      descriptionClassName: 'text-fuchsia-700/80',
-                      countClassName: 'border-fuchsia-300 bg-white/92 text-fuchsia-700',
                       listPanelClassName: 'border-t border-fuchsia-200/90 bg-white/84',
                       emptyClassName: 'border-fuchsia-300 bg-fuchsia-50/75 text-fuchsia-700/80',
                       activeCardClassName: 'border-fuchsia-400 bg-fuchsia-50/95 shadow-[0_8px_18px_rgba(192,38,211,0.10)]',
@@ -1097,15 +1087,10 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                     {
                       key: 'volcengine',
                       title: '火山引擎',
-                      description: '火山的 speaker 音色统一放在这一组里，边界更清楚。',
                       voices: voicesByProvider.volcengine,
                       sectionClassName: 'overflow-hidden rounded-[1.4rem] border-2 border-amber-300 bg-[linear-gradient(165deg,rgba(255,251,235,0.97)_0%,rgba(254,243,199,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_12px_24px_rgba(245,158,11,0.12)]',
                       heroClassName: 'border-b-2 border-amber-300 bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(255,251,235,0.9))]',
-                      badgeClassName: 'border-amber-300 bg-amber-100 text-amber-700',
-                      accentClassName: 'bg-amber-500',
                       titleClassName: 'text-amber-950',
-                      descriptionClassName: 'text-amber-700/80',
-                      countClassName: 'border-amber-300 bg-white/92 text-amber-700',
                       listPanelClassName: 'border-t border-amber-200/90 bg-white/84',
                       emptyClassName: 'border-amber-300 bg-amber-50/75 text-amber-700/80',
                       activeCardClassName: 'border-amber-400 bg-amber-50/95 shadow-[0_8px_18px_rgba(245,158,11,0.10)]',
@@ -1115,15 +1100,10 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                     {
                       key: 'zhipu',
                       title: '智谱',
-                      description: '智谱克隆音色单独成组，方便快速切换和复用。',
                       voices: voicesByProvider.zhipu,
                       sectionClassName: 'overflow-hidden rounded-[1.4rem] border-2 border-emerald-300 bg-[linear-gradient(165deg,rgba(236,253,245,0.97)_0%,rgba(209,250,229,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_12px_24px_rgba(16,185,129,0.12)]',
                       heroClassName: 'border-b-2 border-emerald-300 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(236,253,245,0.9))]',
-                      badgeClassName: 'border-emerald-300 bg-emerald-100 text-emerald-700',
-                      accentClassName: 'bg-emerald-500',
                       titleClassName: 'text-emerald-950',
-                      descriptionClassName: 'text-emerald-700/80',
-                      countClassName: 'border-emerald-300 bg-white/92 text-emerald-700',
                       listPanelClassName: 'border-t border-emerald-200/90 bg-white/84',
                       emptyClassName: 'border-emerald-300 bg-emerald-50/75 text-emerald-700/80',
                       activeCardClassName: 'border-emerald-400 bg-emerald-50/95 shadow-[0_8px_18px_rgba(16,185,129,0.10)]',
@@ -1144,25 +1124,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                           section.heroClassName,
                         )}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2.5">
-                              <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.16em]", section.badgeClassName)}>
-                                模型分组
-                              </span>
-                              <span className={cn("h-4 w-1.5 rounded-full", section.accentClassName)} />
-                            </div>
-                            <h3 className={cn("mt-2 text-[15px] font-black tracking-tight", section.titleClassName)}>
-                              {section.title}
-                            </h3>
-                            <p className={cn("mt-0.5 text-[11px] leading-4", section.descriptionClassName)}>
-                              {section.description}
-                            </p>
-                          </div>
-                          <span className={cn("shrink-0 rounded-full border px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em]", section.countClassName)}>
-                            {section.voices.length} 个音色
-                          </span>
-                        </div>
+                        <h3 className={cn("text-[15px] font-black tracking-tight", section.titleClassName)}>
+                          {section.title}
+                        </h3>
                       </div>
 
                       <div className={cn("p-2.5", section.listPanelClassName)}>
