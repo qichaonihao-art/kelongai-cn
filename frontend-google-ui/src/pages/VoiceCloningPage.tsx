@@ -85,6 +85,14 @@ function getPlatformLabel(provider: VoicePlatform): VoicePlatformLabel {
   return '火山引擎';
 }
 
+function isVoiceCompatibleWithPlatform(voice: ClonedVoice | null, platform: VoicePlatformLabel) {
+  if (!voice) {
+    return false;
+  }
+
+  return getPlatformLabel(voice.provider) === platform;
+}
+
 export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -131,8 +139,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     [voices],
   );
   const isSiliconFlowSelected = selectedPlatform === 'SiliconFlow 声音克隆';
+  const selectedVoiceMatchesPlatform = isVoiceCompatibleWithPlatform(selectedVoice, selectedPlatform);
   const selectedSiliconFlowVoice =
-    selectedVoice?.provider === 'siliconflow'
+    selectedVoiceMatchesPlatform && selectedVoice?.provider === 'siliconflow'
       ? selectedVoice
       : null;
   const currentSiliconFlowVoice =
@@ -140,10 +149,14 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     voices.find((voice) => voice.provider === 'siliconflow' && voice.remoteVoiceId === siliconFlowVoiceUri) ||
     null;
   const hasSiliconFlowVoiceUri = !!siliconFlowVoiceUri.trim();
-  const activeReadyVoice = isSiliconFlowSelected ? currentSiliconFlowVoice : selectedVoice;
+  const activeReadyVoice = isSiliconFlowSelected
+    ? currentSiliconFlowVoice
+    : selectedVoiceMatchesPlatform
+      ? selectedVoice
+      : null;
   const isVoiceReady = isSiliconFlowSelected
-    ? hasSiliconFlowVoiceUri
-    : !!selectedVoice && cloneStatus === 'done';
+    ? !!currentSiliconFlowVoice && hasSiliconFlowVoiceUri
+    : !!activeReadyVoice;
 
   useEffect(() => {
     window.localStorage.setItem(VOICES_STORAGE_KEY, JSON.stringify(voices));
@@ -173,7 +186,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
 
     setVoiceName(selectedVoice.name);
     setSelectedPlatform(getPlatformLabel(selectedVoice.provider));
-    setCloneStatus('done');
     setCloneError("");
     setGenerateError("");
   }, [selectedVoice]);
@@ -321,6 +333,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     setVoiceName("");
     setUploadError("");
     setCloneError("");
+    setCloneStatus('idle');
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -348,6 +361,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
 
     setUploadError("");
     setCloneError("");
+    setCloneStatus('idle');
     if (uploadedAudioUrl) {
       URL.revokeObjectURL(uploadedAudioUrl);
     }
@@ -412,7 +426,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   }
 
   async function handleGenerateAudio() {
-    const voiceForGeneration = isSiliconFlowSelected ? currentSiliconFlowVoice : selectedVoice;
+    const voiceForGeneration = activeReadyVoice;
 
     if (!voiceForGeneration) {
       setGenerateError("请先创建并选择一个可用音色。");
@@ -725,7 +739,12 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                     <select
                       value={selectedPlatform}
                       onChange={(event) => {
-                        setSelectedPlatform(event.target.value as VoicePlatformLabel);
+                        const nextPlatform = event.target.value as VoicePlatformLabel;
+                        setSelectedPlatform(nextPlatform);
+                        setCloneStatus('idle');
+                        if (!isVoiceCompatibleWithPlatform(selectedVoice, nextPlatform)) {
+                          setActiveVoiceId(null);
+                        }
                         setCloneError("");
                         setGenerateError("");
                       }}
@@ -1042,106 +1061,155 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                     {
                       key: 'aliyun',
                       title: '阿里云',
+                      description: '偏稳定、偏正式的企业配音音色都收在这里。',
                       voices: voicesByProvider.aliyun,
-                      sectionClassName: 'border-sky-200 bg-sky-50/85 shadow-[0_14px_30px_rgba(14,165,233,0.10)]',
-                      headerClassName: 'border-sky-200/80 bg-white/85',
+                      sectionClassName: 'overflow-hidden rounded-[1.75rem] border border-sky-200/90 bg-[linear-gradient(165deg,rgba(240,249,255,0.96)_0%,rgba(224,242,254,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_18px_40px_rgba(14,165,233,0.14)]',
+                      heroClassName: 'border-b border-sky-200/80 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(240,249,255,0.9))]',
+                      badgeClassName: 'border-sky-200 bg-sky-100 text-sky-700',
                       accentClassName: 'bg-sky-500',
-                      titleClassName: 'text-sky-900',
-                      countClassName: 'text-sky-600',
-                      emptyClassName: 'border-sky-100 bg-white/80 text-sky-500/80',
+                      titleClassName: 'text-sky-950',
+                      descriptionClassName: 'text-sky-700/80',
+                      countClassName: 'border-sky-200 bg-white/90 text-sky-700',
+                      listPanelClassName: 'bg-white/82',
+                      emptyClassName: 'border-sky-200/80 bg-sky-50/70 text-sky-700/80',
+                      activeCardClassName: 'border-sky-300 bg-sky-50/95 shadow-[0_10px_24px_rgba(14,165,233,0.10)]',
+                      activeBadgeClassName: 'bg-sky-100 text-sky-700',
+                      buttonClassName: 'hover:text-sky-700 hover:border-sky-200 hover:bg-sky-50',
                     },
                     {
                       key: 'siliconflow',
                       title: 'SiliconFlow 声音克隆',
+                      description: '更灵活的克隆链路，适合快速试声和做新样本。',
                       voices: voicesByProvider.siliconflow,
-                      sectionClassName: 'border-fuchsia-200 bg-fuchsia-50/85 shadow-[0_14px_30px_rgba(192,38,211,0.10)]',
-                      headerClassName: 'border-fuchsia-200/80 bg-white/85',
+                      sectionClassName: 'overflow-hidden rounded-[1.75rem] border border-fuchsia-200/90 bg-[linear-gradient(165deg,rgba(253,244,255,0.96)_0%,rgba(250,232,255,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_18px_40px_rgba(192,38,211,0.14)]',
+                      heroClassName: 'border-b border-fuchsia-200/80 bg-[radial-gradient(circle_at_top_left,rgba(217,70,239,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(253,244,255,0.9))]',
+                      badgeClassName: 'border-fuchsia-200 bg-fuchsia-100 text-fuchsia-700',
                       accentClassName: 'bg-fuchsia-500',
-                      titleClassName: 'text-fuchsia-900',
-                      countClassName: 'text-fuchsia-600',
-                      emptyClassName: 'border-fuchsia-100 bg-white/80 text-fuchsia-600/80',
+                      titleClassName: 'text-fuchsia-950',
+                      descriptionClassName: 'text-fuchsia-700/80',
+                      countClassName: 'border-fuchsia-200 bg-white/90 text-fuchsia-700',
+                      listPanelClassName: 'bg-white/82',
+                      emptyClassName: 'border-fuchsia-200/80 bg-fuchsia-50/70 text-fuchsia-700/80',
+                      activeCardClassName: 'border-fuchsia-300 bg-fuchsia-50/95 shadow-[0_10px_24px_rgba(192,38,211,0.10)]',
+                      activeBadgeClassName: 'bg-fuchsia-100 text-fuchsia-700',
+                      buttonClassName: 'hover:text-fuchsia-700 hover:border-fuchsia-200 hover:bg-fuchsia-50',
                     },
                     {
                       key: 'volcengine',
                       title: '火山引擎',
+                      description: '火山的 speaker 音色统一放在这一组里，边界更清楚。',
                       voices: voicesByProvider.volcengine,
-                      sectionClassName: 'border-amber-200 bg-amber-50/85 shadow-[0_14px_30px_rgba(245,158,11,0.10)]',
-                      headerClassName: 'border-amber-200/80 bg-white/85',
+                      sectionClassName: 'overflow-hidden rounded-[1.75rem] border border-amber-200/90 bg-[linear-gradient(165deg,rgba(255,251,235,0.97)_0%,rgba(254,243,199,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_18px_40px_rgba(245,158,11,0.14)]',
+                      heroClassName: 'border-b border-amber-200/80 bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(255,251,235,0.9))]',
+                      badgeClassName: 'border-amber-200 bg-amber-100 text-amber-700',
                       accentClassName: 'bg-amber-500',
-                      titleClassName: 'text-amber-900',
-                      countClassName: 'text-amber-600',
-                      emptyClassName: 'border-amber-100 bg-white/80 text-amber-600/80',
+                      titleClassName: 'text-amber-950',
+                      descriptionClassName: 'text-amber-700/80',
+                      countClassName: 'border-amber-200 bg-white/90 text-amber-700',
+                      listPanelClassName: 'bg-white/82',
+                      emptyClassName: 'border-amber-200/80 bg-amber-50/70 text-amber-700/80',
+                      activeCardClassName: 'border-amber-300 bg-amber-50/95 shadow-[0_10px_24px_rgba(245,158,11,0.10)]',
+                      activeBadgeClassName: 'bg-amber-100 text-amber-700',
+                      buttonClassName: 'hover:text-amber-700 hover:border-amber-200 hover:bg-amber-50',
                     },
                     {
                       key: 'zhipu',
                       title: '智谱',
+                      description: '智谱克隆音色单独成组，方便快速切换和复用。',
                       voices: voicesByProvider.zhipu,
-                      sectionClassName: 'border-emerald-200 bg-emerald-50/85 shadow-[0_14px_30px_rgba(16,185,129,0.10)]',
-                      headerClassName: 'border-emerald-200/80 bg-white/85',
+                      sectionClassName: 'overflow-hidden rounded-[1.75rem] border border-emerald-200/90 bg-[linear-gradient(165deg,rgba(236,253,245,0.97)_0%,rgba(209,250,229,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_18px_40px_rgba(16,185,129,0.14)]',
+                      heroClassName: 'border-b border-emerald-200/80 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(236,253,245,0.9))]',
+                      badgeClassName: 'border-emerald-200 bg-emerald-100 text-emerald-700',
                       accentClassName: 'bg-emerald-500',
-                      titleClassName: 'text-emerald-900',
-                      countClassName: 'text-emerald-600',
-                      emptyClassName: 'border-emerald-100 bg-white/80 text-emerald-600/80',
+                      titleClassName: 'text-emerald-950',
+                      descriptionClassName: 'text-emerald-700/80',
+                      countClassName: 'border-emerald-200 bg-white/90 text-emerald-700',
+                      listPanelClassName: 'bg-white/82',
+                      emptyClassName: 'border-emerald-200/80 bg-emerald-50/70 text-emerald-700/80',
+                      activeCardClassName: 'border-emerald-300 bg-emerald-50/95 shadow-[0_10px_24px_rgba(16,185,129,0.10)]',
+                      activeBadgeClassName: 'bg-emerald-100 text-emerald-700',
+                      buttonClassName: 'hover:text-emerald-700 hover:border-emerald-200 hover:bg-emerald-50',
                     },
                   ] as const).map((section) => (
                     <section
                       key={section.key}
                       className={cn(
-                        "rounded-[1.5rem] border-2 p-4 space-y-3",
+                        "space-y-0",
                         section.sectionClassName,
                       )}
                     >
                       <div
                         className={cn(
-                          "flex items-center justify-between rounded-xl border px-3 py-2.5",
-                          section.headerClassName,
+                          "px-4 py-4",
+                          section.heroClassName,
                         )}
                       >
-                        <div className="flex items-center gap-2.5">
-                          <span className={cn("h-5 w-1.5 rounded-full", section.accentClassName)} />
-                          <h3 className={cn("text-sm font-black tracking-tight", section.titleClassName)}>
-                            {section.title}
-                          </h3>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2.5">
+                              <span className={cn("inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em]", section.badgeClassName)}>
+                                模型分组
+                              </span>
+                              <span className={cn("h-5 w-1.5 rounded-full", section.accentClassName)} />
+                            </div>
+                            <h3 className={cn("mt-3 text-base font-black tracking-tight", section.titleClassName)}>
+                              {section.title}
+                            </h3>
+                            <p className={cn("mt-1 text-xs leading-5", section.descriptionClassName)}>
+                              {section.description}
+                            </p>
+                          </div>
+                          <span className={cn("shrink-0 rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em]", section.countClassName)}>
+                            {section.voices.length} 个音色
+                          </span>
                         </div>
-                        <span className={cn("text-[10px] font-bold uppercase tracking-wider", section.countClassName)}>
-                          {section.voices.length} 个音色
-                        </span>
                       </div>
 
-                      {section.voices.length === 0 ? (
-                        <div className={cn("rounded-xl border border-dashed px-4 py-5 text-center text-xs", section.emptyClassName)}>
-                          暂无 {section.title} 音色
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
+                      <div className={cn("p-3", section.listPanelClassName)}>
+                        {section.voices.length === 0 ? (
+                          <div className={cn("rounded-[1.1rem] border border-dashed px-4 py-6 text-center text-xs", section.emptyClassName)}>
+                            暂无 {section.title} 音色
+                          </div>
+                        ) : (
+                          <div className="space-y-2.5">
                           {section.voices.map((voice) => (
                             <div
                               key={voice.id}
                               className={cn(
-                                "flex items-center justify-between gap-3 rounded-xl border px-3 py-2 transition-all group bg-white/85",
+                                "flex items-center justify-between gap-3 rounded-[1.1rem] border px-3.5 py-3 transition-all group bg-white/96 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]",
                                 activeVoiceId === voice.id
-                                  ? "border-indigo-200 bg-indigo-50/20"
-                                  : "border-slate-200 hover:border-indigo-200 hover:bg-indigo-50/10"
+                                  ? section.activeCardClassName
+                                  : "border-slate-200/90 hover:border-slate-300 hover:bg-white"
                               )}
                             >
                               <div className="min-w-0 flex-1 flex items-center gap-3">
                                 {activeVoiceId === voice.id && (
-                                  <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-600">
+                                  <span className={cn("shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold", section.activeBadgeClassName)}>
                                     当前使用
                                   </span>
                                 )}
                                 <div className="min-w-0 flex-1">
-                                  <div className="truncate text-sm font-medium text-slate-900">{voice.name}</div>
-                                  <div className="truncate text-[10px] text-slate-400">{voice.createdAt}</div>
+                                  <div className="truncate text-sm font-semibold text-slate-900">{voice.name}</div>
+                                  <div className="mt-0.5 flex items-center gap-2 text-[10px] text-slate-400">
+                                    <span className="truncate">{voice.createdAt}</span>
+                                    <span className="h-1 w-1 rounded-full bg-slate-300" />
+                                    <span className="truncate">{voice.providerLabel}</span>
+                                  </div>
                                 </div>
                               </div>
                               <div className="shrink-0 flex items-center gap-1.5">
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  className="h-8 rounded-lg px-3 text-[11px] font-bold text-slate-700 bg-white border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 transition-all"
+                                  className={cn(
+                                    "h-8 rounded-lg px-3 text-[11px] font-bold text-slate-700 bg-white border border-slate-200 transition-all",
+                                    section.buttonClassName,
+                                  )}
                                   onClick={() => {
                                     setActiveVoiceId(voice.id);
+                                    setCloneStatus('idle');
+                                    setCloneError("");
+                                    setGenerateError("");
                                     setIsMyVoicesOpen(false);
                                   }}
                                 >
@@ -1158,8 +1226,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                               </div>
                             </div>
                           ))}
-                        </div>
-                      )}
+                          </div>
+                        )}
+                      </div>
                     </section>
                   ))
                 )}
