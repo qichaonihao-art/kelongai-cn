@@ -294,10 +294,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           </div>
         </div>
 
-        <div className="relative z-20 flex items-center gap-8 text-xs text-indigo-200/60">
+        <div className="relative z-20 flex items-center gap-8 text-xs text-indigo-200/70">
           <span>隐私政策</span>
           <span>服务条款</span>
           <span>联系我们</span>
+          <SiteFooter tone="dark" className="w-auto" />
         </div>
 
         <div className="absolute inset-0 bg-grid-white/[0.05] bg-[size:20px_20px]" />
@@ -352,7 +353,6 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         </div>
       </div>
 
-      <SiteFooter className="px-6 pb-6 pt-3" />
     </div>
   );
 }
