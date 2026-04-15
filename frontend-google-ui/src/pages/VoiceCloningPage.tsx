@@ -458,7 +458,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       });
 
       setGeneratedAudios((previous) => [audio, ...previous]);
-      setInputText("");
       setGenerateStatus('idle');
     } catch (error) {
       setGenerateStatus('idle');
