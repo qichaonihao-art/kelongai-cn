@@ -8,7 +8,29 @@ interface SiteFooterProps {
 export default function SiteFooter({ className, tone = "light" }: SiteFooterProps) {
   return (
     <footer className={cn("w-full", className)}>
-      <div className="mx-auto flex w-full items-center justify-center">
+      <div className="mx-auto flex w-full flex-wrap items-center justify-center gap-x-3 gap-y-1.5">
+        <a
+          href="https://beian.miit.gov.cn/"
+          target="_blank"
+          rel="noreferrer"
+          className={cn(
+            "inline-flex items-center text-[11px] leading-5 transition-colors",
+            tone === "dark"
+              ? "text-indigo-200/80 hover:text-white"
+              : "text-slate-500 hover:text-slate-700",
+          )}
+        >
+          <span>鄂ICP备2026013942号-1</span>
+        </a>
+        <span
+          aria-hidden="true"
+          className={cn(
+            "text-[10px]",
+            tone === "dark" ? "text-indigo-200/50" : "text-slate-300",
+          )}
+        >
+          |
+        </span>
         <a
           href="https://beian.mps.gov.cn/#/query/webSearch?code=42110002000329"
           target="_blank"
