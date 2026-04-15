@@ -4,6 +4,7 @@ import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
 import { Eye, EyeOff, Sparkles } from "lucide-react";
 import { EyeBall, Pupil } from "@/src/components/characters/InteractiveEyes";
+import SiteFooter from "@/src/components/SiteFooter";
 
 interface LoginPageProps {
   onLogin: (password: string) => Promise<{ ok: boolean; error?: string }>;
@@ -134,9 +135,10 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   };
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-2 bg-background">
-      {/* Left Content Section */}
-      <div className="relative hidden lg:flex flex-col justify-between bg-gradient-to-br from-indigo-600 via-indigo-700 to-indigo-800 p-12 text-white overflow-hidden">
+    <div className="min-h-screen bg-background flex flex-col">
+      <div className="grid flex-1 lg:grid-cols-2">
+        {/* Left Content Section */}
+        <div className="relative hidden lg:flex flex-col justify-between bg-gradient-to-br from-indigo-600 via-indigo-700 to-indigo-800 p-12 text-white overflow-hidden">
         <div className="relative z-20">
           <div className="flex items-center gap-2 text-lg font-semibold">
             <div className="size-8 rounded-lg bg-white/10 backdrop-blur-sm flex items-center justify-center">
@@ -301,53 +303,56 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         <div className="absolute inset-0 bg-grid-white/[0.05] bg-[size:20px_20px]" />
         <div className="absolute top-1/4 right-1/4 size-64 bg-indigo-400/20 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 left-1/4 size-96 bg-indigo-900/40 rounded-full blur-3xl" />
-      </div>
+        </div>
 
-      {/* Right Login Section */}
-      <div className="flex items-center justify-center p-8">
-        <div className="w-full max-w-[400px] space-y-8 glass-card p-8 rounded-3xl">
-          <div className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight">欢迎回来</h1>
-            <p className="text-muted-foreground text-sm mt-2">请输入密码以访问 AI 工具</p>
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="space-y-2">
-              <Label htmlFor="password">密码</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="请输入密码"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onFocus={() => setIsTyping(true)}
-                  onBlur={() => setIsTyping(false)}
-                  required
-                  className="h-12 pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  {showPassword ? <EyeOff className="size-5" /> : <Eye className="size-5" />}
-                </button>
-              </div>
+        {/* Right Login Section */}
+        <div className="flex items-center justify-center p-8">
+          <div className="w-full max-w-[400px] space-y-8 glass-card p-8 rounded-3xl">
+            <div className="text-center">
+              <h1 className="text-2xl font-bold tracking-tight">欢迎回来</h1>
+              <p className="text-muted-foreground text-sm mt-2">请输入密码以访问 AI 工具</p>
             </div>
 
-            {error && (
-              <div className="p-3 text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg">
-                {error}
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="password">密码</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="请输入密码"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onFocus={() => setIsTyping(true)}
+                    onBlur={() => setIsTyping(false)}
+                    required
+                    className="h-12 pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPassword ? <EyeOff className="size-5" /> : <Eye className="size-5" />}
+                  </button>
+                </div>
               </div>
-            )}
 
-            <Button type="submit" className="w-full h-12 text-base" disabled={isLoading}>
-              {isLoading ? "验证中..." : "登录"}
-            </Button>
-          </form>
+              {error && (
+                <div className="p-3 text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg">
+                  {error}
+                </div>
+              )}
+
+              <Button type="submit" className="w-full h-12 text-base" disabled={isLoading}>
+                {isLoading ? "验证中..." : "登录"}
+              </Button>
+            </form>
+          </div>
         </div>
       </div>
+
+      <SiteFooter className="px-6 pb-6 pt-3" />
     </div>
   );
 }

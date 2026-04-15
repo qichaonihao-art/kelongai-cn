@@ -15,6 +15,7 @@ import {
   Check,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
+import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import {
   createMediaPreviewUrl,
@@ -887,6 +888,8 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
             <span className="text-slate-200">•</span>
             <span>Shift + Enter 换行</span>
           </div>
+
+          <SiteFooter className="mt-3 pb-1" />
         </div>
       </div>
     </div>

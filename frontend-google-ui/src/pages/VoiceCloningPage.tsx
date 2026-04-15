@@ -16,6 +16,7 @@ import {
   Pause,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
+import SiteFooter from "@/src/components/SiteFooter";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
 import { cn } from "@/src/lib/utils";
@@ -1023,6 +1024,8 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
           </section>
         </div>
       </main>
+
+      <SiteFooter className="px-8 pb-8 pt-2" />
 
       <AnimatePresence>
         {isMyVoicesOpen && (

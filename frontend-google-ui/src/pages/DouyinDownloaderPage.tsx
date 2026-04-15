@@ -13,6 +13,7 @@ import {
 import { motion } from "motion/react";
 import { Button } from "@/src/components/ui/button";
 import { Label } from "@/src/components/ui/label";
+import SiteFooter from "@/src/components/SiteFooter";
 import {
   downloadDouyinVideoFile,
   extractDouyinTranscript,
@@ -419,6 +420,8 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
           </div>
         </section>
       </main>
+
+      <SiteFooter className="px-8 pb-8 pt-2" />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { Sparkles, Mic2, Wand2, LogOut, Download } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
+import SiteFooter from "@/src/components/SiteFooter";
 import { motion } from "motion/react";
 
 interface HomePageProps {
@@ -91,6 +92,8 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
           <p className="mt-3 max-w-xs text-sm leading-6 text-slate-500 font-medium">下载视频，提取文案</p>
         </motion.div>
       </div>
+
+      <SiteFooter className="mt-auto pt-10" />
     </div>
   );
 }
