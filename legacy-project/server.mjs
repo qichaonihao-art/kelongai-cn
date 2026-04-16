@@ -4584,7 +4584,7 @@ async function handleVolcVoiceClone(req, res) {
     const resolvedAppKey = readValue(SERVER_CONFIG.volcAppKey);
     const resolvedAccessKey = readValue(SERVER_CONFIG.volcAccessKey);
     const resolvedSpeakerId = readValue(speakerId) || createVolcSpeakerId();
-    const resolvedReferenceText = readValue(referenceText, '你好，这是火山引擎试听文本。');
+    const resolvedReferenceText = readValue(referenceText, '这是一段用于声音克隆的参考音频。');
 
     if (shouldUseVoiceCloneMock(body)) {
       sendJson(res, 200, buildMockVoiceClonePayload('volcengine', '', resolvedSpeakerId));

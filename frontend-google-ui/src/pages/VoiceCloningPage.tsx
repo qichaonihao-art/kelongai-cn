@@ -121,7 +121,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [generatedAudios, setGeneratedAudios] = useState<GeneratedAudio[]>([]);
   const [inputText, setInputText] = useState("");
   const [voiceName, setVoiceName] = useState("");
-  const [cloneReferenceText, setCloneReferenceText] = useState("");
   const [siliconFlowVoiceUri, setSiliconFlowVoiceUri] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadedAudioUrl, setUploadedAudioUrl] = useState("");
@@ -350,7 +349,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     setUploadedAudioUrl("");
     setUploadStatus('idle');
     setVoiceName("");
-    setCloneReferenceText("");
     setUploadError("");
     setCloneError("");
     setCloneStatus('idle');
@@ -405,11 +403,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       return;
     }
 
-    if (selectedPlatform === '火山引擎' && !cloneReferenceText.trim()) {
-      setCloneError("请先填写火山引擎音色对应的参考文本。");
-      return;
-    }
-
     setCloneStatus('processing');
     setCloneError("");
     setGenerateError("");
@@ -419,7 +412,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         platform: selectedPlatformProvider,
         file: uploadedFile,
         preferredName: voiceName.trim(),
-        referenceText: selectedPlatform === '火山引擎' ? cloneReferenceText.trim() : undefined,
         credentials: buildCredentialsForPlatform(selectedPlatformProvider, { zhipuApiKey, aliyunApiKey }),
         mockMode: configStatus.mockMode,
       });
@@ -878,18 +870,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
               />
             </div>
             {selectedPlatform === '火山引擎' && (
-              <div className="space-y-4">
-                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">参考文本</Label>
-                <textarea
-                  className="w-full min-h-28 rounded-[1.5rem] border border-slate-300 bg-white/50 p-4 text-sm outline-none transition-all resize-none focus:ring-4 focus:ring-indigo-500/10"
-                  placeholder="请输入参考音频对应的原文，用于火山引擎训练音色"
-                  value={cloneReferenceText}
-                  onChange={(event) => setCloneReferenceText(event.target.value)}
-                />
-                <p className="text-xs leading-6 text-slate-400">
-                  火山引擎会为本次新建音色自动生成唯一 speaker_id，并把它绑定到这条历史音色上。
-                </p>
-              </div>
+              <p className="text-xs leading-6 text-slate-400">
+                火山引擎会为本次新建音色自动生成唯一 speaker_id，并把它绑定到这条历史音色上。
+              </p>
             )}
             <Button
               className="w-full h-14 rounded-2xl text-lg font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-xl shadow-slate-900/20 transition-all active:scale-[0.98]"
