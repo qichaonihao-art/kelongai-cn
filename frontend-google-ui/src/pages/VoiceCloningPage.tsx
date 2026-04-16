@@ -93,7 +93,6 @@ function buildCredentialsForPlatform(
   values: {
     zhipuApiKey: string;
     aliyunApiKey: string;
-    volcCloneSpeakerId: string;
   },
 ) {
   if (platform === 'zhipu') {
@@ -102,10 +101,6 @@ function buildCredentialsForPlatform(
 
   if (platform === 'aliyun') {
     return { apiKey: values.aliyunApiKey.trim() };
-  }
-
-  if (platform === 'volcengine') {
-    return { speakerId: values.volcCloneSpeakerId.trim() };
   }
 
   return {};
@@ -126,6 +121,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [generatedAudios, setGeneratedAudios] = useState<GeneratedAudio[]>([]);
   const [inputText, setInputText] = useState("");
   const [voiceName, setVoiceName] = useState("");
+  const [cloneReferenceText, setCloneReferenceText] = useState("");
   const [siliconFlowVoiceUri, setSiliconFlowVoiceUri] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadedAudioUrl, setUploadedAudioUrl] = useState("");
@@ -137,7 +133,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [isConfigLoading, setIsConfigLoading] = useState(true);
   const [zhipuApiKey, setZhipuApiKey] = useState("");
   const [aliyunApiKey, setAliyunApiKey] = useState("");
-  const [volcCloneSpeakerId, setVolcCloneSpeakerId] = useState("");
   const [voices, setVoices] = useState<ClonedVoice[]>(loadSavedVoices);
   const [activeVoiceId, setActiveVoiceId] = useState<string | null>(loadActiveVoiceId);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
@@ -274,7 +269,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   }, [uploadedAudioUrl]);
 
   const hasVolcServerSupport =
-    configStatus.volcAppKey && configStatus.volcAccessKey && configStatus.volcSpeakerId;
+    configStatus.volcAppKey && configStatus.volcAccessKey;
 
   const platformHint = useMemo(() => {
     if (selectedPlatform === 'SiliconFlow 声音克隆') {
@@ -311,9 +306,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       return "当前为本地 mock 模式，火山链路会返回演示音色和演示语音。";
     }
     if (hasVolcServerSupport) {
-      return "服务端已托管火山引擎密钥。为了创建多个可切换的火山历史音色，新建时请在这里填写独立的 speaker_id；历史音色生成会继续使用各自保存的 speaker_id。";
+      return "服务端已托管火山引擎密钥。新建火山音色时会自动生成独立的 speaker_id，并和历史音色一起保存；后续生成会继续使用该历史音色自己的 speaker_id。";
     }
-    return "火山引擎最小版本依赖服务端配置 VOLCENGINE_APP_KEY、VOLCENGINE_ACCESS_KEY。为了得到真正多个可切换的火山音色，新建时必须填写不同的 speaker_id。";
+    return "火山引擎最小版本依赖服务端配置 VOLCENGINE_APP_KEY、VOLCENGINE_ACCESS_KEY。新建火山音色时系统会自动生成唯一 speaker_id，无需手动填写。";
   }, [configStatus, hasVolcServerSupport, selectedPlatform]);
 
   const configInputLabel =
@@ -323,7 +318,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         ? '阿里云 API Key（可选）'
         : selectedPlatform === 'SiliconFlow 声音克隆'
           ? 'SiliconFlow API Key（服务端托管）'
-        : '新建音色 Speaker ID（必填）';
+        : 'Speaker ID（自动生成）';
 
   const configInputPlaceholder =
     selectedPlatform === '智谱'
@@ -338,16 +333,14 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         ? (configStatus.siliconFlowApiKey
             ? '服务端已托管，无需前端填写'
             : '请先在服务端配置 SILICONFLOW_API_KEY')
-      : '请输入一个新的火山 Speaker ID';
+      : '创建火山音色时自动生成，无需填写';
 
   const configInputValue =
     selectedPlatform === '智谱'
       ? zhipuApiKey
       : selectedPlatform === '阿里云'
         ? aliyunApiKey
-        : selectedPlatform === 'SiliconFlow 声音克隆'
-          ? ''
-          : volcCloneSpeakerId;
+        : '';
 
   function resetUploadState() {
     if (uploadedAudioUrl) {
@@ -357,6 +350,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     setUploadedAudioUrl("");
     setUploadStatus('idle');
     setVoiceName("");
+    setCloneReferenceText("");
     setUploadError("");
     setCloneError("");
     setCloneStatus('idle');
@@ -411,8 +405,8 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       return;
     }
 
-    if (selectedPlatform === '火山引擎' && !configStatus.mockMode && !volcCloneSpeakerId.trim()) {
-      setCloneError("请先为新的火山音色填写独立的 Speaker ID。");
+    if (selectedPlatform === '火山引擎' && !cloneReferenceText.trim()) {
+      setCloneError("请先填写火山引擎音色对应的参考文本。");
       return;
     }
 
@@ -425,15 +419,13 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         platform: selectedPlatformProvider,
         file: uploadedFile,
         preferredName: voiceName.trim(),
-        credentials: buildCredentialsForPlatform(selectedPlatformProvider, { zhipuApiKey, aliyunApiKey, volcCloneSpeakerId }),
+        referenceText: selectedPlatform === '火山引擎' ? cloneReferenceText.trim() : undefined,
+        credentials: buildCredentialsForPlatform(selectedPlatformProvider, { zhipuApiKey, aliyunApiKey }),
         mockMode: configStatus.mockMode,
       });
 
       if (voice.provider === 'siliconflow') {
         setSiliconFlowVoiceUri(voice.remoteVoiceId);
-      }
-      if (voice.provider === 'volcengine') {
-        setVolcCloneSpeakerId("");
       }
       setVoices((previous) => [voice, ...previous]);
       setActiveVoiceId(voice.id);
@@ -472,9 +464,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         credentials: buildCredentialsForPlatform(voiceForGeneration.provider, {
           zhipuApiKey,
           aliyunApiKey,
-          volcCloneSpeakerId: voiceForGeneration.provider === 'volcengine'
-            ? voiceForGeneration.remoteVoiceId
-            : volcCloneSpeakerId,
         }),
         mockMode: configStatus.mockMode,
       });
@@ -785,11 +774,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                           setZhipuApiKey(event.target.value);
                         } else if (selectedPlatform === '阿里云') {
                           setAliyunApiKey(event.target.value);
-                        } else if (selectedPlatform === '火山引擎') {
-                          setVolcCloneSpeakerId(event.target.value);
                         }
                       }}
-                      disabled={selectedPlatform === 'SiliconFlow 声音克隆'}
+                      disabled={selectedPlatform === 'SiliconFlow 声音克隆' || selectedPlatform === '火山引擎'}
                       className="h-12 rounded-2xl border-slate-300 bg-white/50"
                     />
                   </div>
@@ -890,6 +877,20 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                 onChange={(event) => setVoiceName(event.target.value)}
               />
             </div>
+            {selectedPlatform === '火山引擎' && (
+              <div className="space-y-4">
+                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">参考文本</Label>
+                <textarea
+                  className="w-full min-h-28 rounded-[1.5rem] border border-slate-300 bg-white/50 p-4 text-sm outline-none transition-all resize-none focus:ring-4 focus:ring-indigo-500/10"
+                  placeholder="请输入参考音频对应的原文，用于火山引擎训练音色"
+                  value={cloneReferenceText}
+                  onChange={(event) => setCloneReferenceText(event.target.value)}
+                />
+                <p className="text-xs leading-6 text-slate-400">
+                  火山引擎会为本次新建音色自动生成唯一 speaker_id，并把它绑定到这条历史音色上。
+                </p>
+              </div>
+            )}
             <Button
               className="w-full h-14 rounded-2xl text-lg font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-xl shadow-slate-900/20 transition-all active:scale-[0.98]"
               disabled={uploadStatus !== 'done' || cloneStatus === 'processing'}

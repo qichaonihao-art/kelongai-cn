@@ -240,6 +240,7 @@ export async function createVoiceClone(options: {
   }
 
   const audioData = await readFileAsBase64(file);
+  const trimmedReferenceText = String(referenceText || '').trim();
   const response = await fetch('/api/voice/volcengine', {
     method: 'POST',
     credentials: 'include',
@@ -247,10 +248,10 @@ export async function createVoiceClone(options: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      speakerId: credentials?.speakerId || '',
       resourceId: VOLC_RESOURCE_ID,
       audioData,
       audioFormat: detectAudioFormat(file.name),
+      referenceText: trimmedReferenceText,
       mockMode,
     }),
   });
@@ -265,7 +266,7 @@ export async function createVoiceClone(options: {
     name: preferredName,
     provider: 'volcengine',
     providerLabel: '火山引擎',
-    remoteVoiceId: json?.speaker_id || credentials?.speakerId || createId('volc_voice'),
+    remoteVoiceId: json?.speaker_id || createId('volc_voice'),
     engineModel: 'volcengine-voice-clone',
     resourceId: VOLC_RESOURCE_ID,
     createdAt: new Date().toLocaleString(),

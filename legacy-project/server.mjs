@@ -788,6 +788,10 @@ function createRequestId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${randomBytes(4).toString('hex')}`;
 }
 
+function createVolcSpeakerId() {
+  return `volc_${Date.now()}_${randomBytes(3).toString('hex')}`;
+}
+
 function normalizeDouyinInput(value) {
   return String(value || '')
     .replace(/\u00a0/g, ' ')
@@ -3846,7 +3850,7 @@ function buildMockVoiceClonePayload(platform, preferredName, fallbackId) {
     ok: true,
     mock: true,
     status: 2,
-    speaker_id: fallbackId || `mock-volc-${Date.now().toString(36)}`,
+    speaker_id: fallbackId || createVolcSpeakerId(),
     meta: {
       preferredName: safeName
     }
@@ -4576,10 +4580,11 @@ async function handleVolcVoiceClone(req, res) {
   const upstreamUrl = 'https://openspeech.bytedance.com/api/v3/tts/voice_clone';
   try {
     const body = await readRequestBody(req);
-    const { speakerId, resourceId, audioData, audioFormat } = body;
+    const { speakerId, resourceId, audioData, audioFormat, referenceText } = body;
     const resolvedAppKey = readValue(SERVER_CONFIG.volcAppKey);
     const resolvedAccessKey = readValue(SERVER_CONFIG.volcAccessKey);
-    const resolvedSpeakerId = readValue(speakerId);
+    const resolvedSpeakerId = readValue(speakerId) || createVolcSpeakerId();
+    const resolvedReferenceText = readValue(referenceText, '你好，这是火山引擎试听文本。');
 
     if (shouldUseVoiceCloneMock(body)) {
       sendJson(res, 200, buildMockVoiceClonePayload('volcengine', '', resolvedSpeakerId));
@@ -4594,6 +4599,7 @@ async function handleVolcVoiceClone(req, res) {
       hasBodyAudioData: typeof audioData === 'string' && audioData.length > 0,
       hasBodyResourceId: typeof resourceId === 'string' && resourceId.length > 0,
       hasBodyAudioFormat: typeof audioFormat === 'string' && audioFormat.length > 0,
+      hasBodyReferenceText: !!readValue(referenceText),
       contentType: req.headers['content-type'] || '',
       bodyKeys: body && typeof body === 'object' ? Object.keys(body) : []
     };
@@ -4607,14 +4613,6 @@ async function handleVolcVoiceClone(req, res) {
 
     if (!debugFlags.hasEnvAccessKey) {
       sendJson(res, 400, { error: '缺少服务端环境变量 VOLCENGINE_ACCESS_KEY', debug: debugFlags });
-      return;
-    }
-
-    if (!resolvedSpeakerId) {
-      sendJson(res, 400, {
-        error: '缺少 speakerId：火山新建音色必须显式传入独立的 speakerId，服务端默认 VOLCENGINE_SPEAKER_ID 不再自动复用',
-        debug: debugFlags
-      });
       return;
     }
 
@@ -4640,7 +4638,7 @@ async function handleVolcVoiceClone(req, res) {
         language: 0,
         model_types: [resourceId === 'seed-icl-2.0' ? 4 : 1],
         extra_params: {
-          demo_text: '你好，这是火山引擎试听文本。'
+          demo_text: resolvedReferenceText
         }
       })
     });
@@ -4668,7 +4666,10 @@ async function handleVolcVoiceClone(req, res) {
       return;
     }
 
-    sendJson(res, 200, json || { raw: responseText });
+    sendJson(res, 200, {
+      ...(json || { raw: responseText }),
+      speaker_id: json?.speaker_id || resolvedSpeakerId
+    });
   } catch (error) {
     console.error('[volc voice clone] fetch error', {
       url: upstreamUrl,
