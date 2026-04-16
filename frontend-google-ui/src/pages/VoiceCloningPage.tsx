@@ -29,6 +29,12 @@ import {
   generateSpeech,
   getVoiceConfigStatus,
 } from "@/src/lib/voice";
+import {
+  loadActiveVoiceId,
+  loadSavedVoices,
+  saveActiveVoiceId,
+  saveSavedVoices,
+} from "@/src/lib/voiceStorage";
 import { motion, AnimatePresence } from "motion/react";
 
 interface VoiceCloningPageProps {
@@ -38,7 +44,6 @@ interface VoiceCloningPageProps {
 type VoicePlatformLabel = '智谱' | '阿里云' | '火山引擎' | 'SiliconFlow 声音克隆';
 
 const MAX_AUDIO_SIZE = 10 * 1024 * 1024;
-const VOICES_STORAGE_KEY = 'kelongai.savedVoices';
 
 const EMPTY_CONFIG_STATUS: VoiceConfigStatus = {
   reachable: false,
@@ -50,25 +55,6 @@ const EMPTY_CONFIG_STATUS: VoiceConfigStatus = {
   volcSpeakerId: false,
   mockMode: false,
 };
-
-function loadSavedVoices(): ClonedVoice[] {
-  if (typeof window === 'undefined') {
-    return [];
-  }
-
-  try {
-    const savedVoices = window.localStorage.getItem(VOICES_STORAGE_KEY);
-    if (!savedVoices) {
-      return [];
-    }
-
-    const parsedVoices = JSON.parse(savedVoices) as ClonedVoice[];
-    return Array.isArray(parsedVoices) ? parsedVoices : [];
-  } catch {
-    window.localStorage.removeItem(VOICES_STORAGE_KEY);
-    return [];
-  }
-}
 
 function getPlatformLabel(provider: VoicePlatform): VoicePlatformLabel {
   if (provider === 'zhipu') {
@@ -84,14 +70,6 @@ function getPlatformLabel(provider: VoicePlatform): VoicePlatformLabel {
   }
 
   return '火山引擎';
-}
-
-function isVoiceCompatibleWithPlatform(voice: ClonedVoice | null, platform: VoicePlatformLabel) {
-  if (!voice) {
-    return false;
-  }
-
-  return getPlatformLabel(voice.provider) === platform;
 }
 
 export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
@@ -122,7 +100,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [aliyunApiKey, setAliyunApiKey] = useState("");
   const [volcSpeakerId, setVolcSpeakerId] = useState("");
   const [voices, setVoices] = useState<ClonedVoice[]>(loadSavedVoices);
-  const [activeVoiceId, setActiveVoiceId] = useState<string | null>(null);
+  const [activeVoiceId, setActiveVoiceId] = useState<string | null>(loadActiveVoiceId);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [playbackProgress, setPlaybackProgress] = useState<Record<string, number>>({});
 
@@ -140,28 +118,25 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     [voices],
   );
   const isSiliconFlowSelected = selectedPlatform === 'SiliconFlow 声音克隆';
-  const selectedVoiceMatchesPlatform = isVoiceCompatibleWithPlatform(selectedVoice, selectedPlatform);
-  const selectedSiliconFlowVoice =
-    selectedVoiceMatchesPlatform && selectedVoice?.provider === 'siliconflow'
-      ? selectedVoice
-      : null;
+  const selectedSiliconFlowVoice = selectedVoice?.provider === 'siliconflow' ? selectedVoice : null;
   const currentSiliconFlowVoice =
     selectedSiliconFlowVoice ||
     voices.find((voice) => voice.provider === 'siliconflow' && voice.remoteVoiceId === siliconFlowVoiceUri) ||
     null;
   const hasSiliconFlowVoiceUri = !!siliconFlowVoiceUri.trim();
-  const activeReadyVoice = isSiliconFlowSelected
-    ? currentSiliconFlowVoice
-    : selectedVoiceMatchesPlatform
-      ? selectedVoice
-      : null;
-  const isVoiceReady = isSiliconFlowSelected
-    ? !!currentSiliconFlowVoice && hasSiliconFlowVoiceUri
-    : !!activeReadyVoice;
+  const activeReadyVoice = selectedVoice || (isSiliconFlowSelected ? currentSiliconFlowVoice : null);
+  const isUsingSiliconFlowVoice = activeReadyVoice?.provider === 'siliconflow';
+  const isVoiceReady = !!activeReadyVoice && (!isUsingSiliconFlowVoice || hasSiliconFlowVoiceUri);
+  const activeVoiceOverridesPlatform =
+    !!selectedVoice && getPlatformLabel(selectedVoice.provider) !== selectedPlatform;
 
   useEffect(() => {
-    window.localStorage.setItem(VOICES_STORAGE_KEY, JSON.stringify(voices));
+    saveSavedVoices(voices);
   }, [voices]);
+
+  useEffect(() => {
+    saveActiveVoiceId(activeVoiceId);
+  }, [activeVoiceId]);
 
   useEffect(() => {
     if (voices.length === 0 || activeVoiceId === null) {
@@ -434,7 +409,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       return;
     }
 
-    if (isSiliconFlowSelected && !hasSiliconFlowVoiceUri) {
+    if (voiceForGeneration.provider === 'siliconflow' && !hasSiliconFlowVoiceUri) {
       setGenerateError("请先上传参考音频，拿到可用的 voice uri。");
       return;
     }
@@ -666,7 +641,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     setVoices((previous) => {
       const nextVoices = previous.filter((voice) => voice.id !== voiceId);
       if (activeVoiceId === voiceId) {
-        setActiveVoiceId(nextVoices[0]?.id || null);
+        setActiveVoiceId(null);
       }
       return nextVoices;
     });
@@ -742,9 +717,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                         const nextPlatform = event.target.value as VoicePlatformLabel;
                         setSelectedPlatform(nextPlatform);
                         setCloneStatus('idle');
-                        if (!isVoiceCompatibleWithPlatform(selectedVoice, nextPlatform)) {
-                          setActiveVoiceId(null);
-                        }
                         setCloneError("");
                         setGenerateError("");
                       }}
@@ -929,6 +901,15 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                 : isSiliconFlowSelected
                   ? "请上传参考音频"
                   : "当前还没有准备好的音色，请先完成声音克隆或从我的音色中启用一个音色。"}
+              {activeVoiceOverridesPlatform && (
+                <p className="mt-2 text-xs text-slate-400">
+                  当前已启用历史音色，后续生成会继续走 {activeReadyVoice?.providerLabel}；
+                  上方平台切换只影响下一次新建音色，不会覆盖这个已选音色。
+                </p>
+              )}
+              {isUsingSiliconFlowVoice && hasSiliconFlowVoiceUri && (
+                <p className="mt-2 break-all text-xs text-slate-400">voice uri：{siliconFlowVoiceUri}</p>
+              )}
             </div>
             <div className="flex flex-col gap-4">
               <Button
