@@ -88,53 +88,6 @@ function getProviderFromPlatformLabel(platform: VoicePlatformLabel): VoicePlatfo
   return 'volcengine';
 }
 
-function buildVoiceIdentity(voice: ClonedVoice) {
-  if (voice.provider === 'volcengine') {
-    return `${voice.provider}:${voice.remoteVoiceId}:${voice.resourceId || 'seed-icl-2.0'}`;
-  }
-
-  return `${voice.provider}:${voice.remoteVoiceId}`;
-}
-
-function normalizeVoiceState(voices: ClonedVoice[], activeVoiceId: string | null) {
-  const seen = new Set<string>();
-  const activeVoice = activeVoiceId ? voices.find((voice) => voice.id === activeVoiceId) || null : null;
-  const activeVoiceIdentity = activeVoice ? buildVoiceIdentity(activeVoice) : '';
-  const normalizedVoices = voices.filter((voice) => {
-    const identity = buildVoiceIdentity(voice);
-    if (seen.has(identity)) {
-      return false;
-    }
-
-    seen.add(identity);
-    return true;
-  });
-
-  const resolvedActiveVoiceId =
-    activeVoiceId && normalizedVoices.some((voice) => voice.id === activeVoiceId)
-      ? activeVoiceId
-      : activeVoiceIdentity
-        ? normalizedVoices.find((voice) => buildVoiceIdentity(voice) === activeVoiceIdentity)?.id || null
-      : null;
-
-  return {
-    voices: normalizedVoices,
-    activeVoiceId: resolvedActiveVoiceId,
-  };
-}
-
-function upsertVoice(voices: ClonedVoice[], nextVoice: ClonedVoice) {
-  const identity = buildVoiceIdentity(nextVoice);
-  const existingVoice = voices.find((voice) => buildVoiceIdentity(voice) === identity);
-  const activeVoiceId = existingVoice?.id || nextVoice.id;
-  const mergedVoice = existingVoice ? { ...existingVoice, ...nextVoice, id: existingVoice.id } : nextVoice;
-
-  return {
-    voices: [mergedVoice, ...voices.filter((voice) => voice.id !== activeVoiceId)],
-    activeVoiceId,
-  };
-}
-
 function buildCredentialsForPlatform(
   platform: VoicePlatform,
   values: {
@@ -159,7 +112,6 @@ function buildCredentialsForPlatform(
 }
 
 export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
-  const initialVoiceStateRef = useRef(normalizeVoiceState(loadSavedVoices(), loadActiveVoiceId()));
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const activeAudioIdRef = useRef<string | null>(null);
@@ -186,8 +138,8 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [zhipuApiKey, setZhipuApiKey] = useState("");
   const [aliyunApiKey, setAliyunApiKey] = useState("");
   const [volcSpeakerId, setVolcSpeakerId] = useState("");
-  const [voices, setVoices] = useState<ClonedVoice[]>(initialVoiceStateRef.current.voices);
-  const [activeVoiceId, setActiveVoiceId] = useState<string | null>(initialVoiceStateRef.current.activeVoiceId);
+  const [voices, setVoices] = useState<ClonedVoice[]>(loadSavedVoices);
+  const [activeVoiceId, setActiveVoiceId] = useState<string | null>(loadActiveVoiceId);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [playbackProgress, setPlaybackProgress] = useState<Record<string, number>>({});
 
@@ -476,9 +428,8 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       if (voice.provider === 'siliconflow') {
         setSiliconFlowVoiceUri(voice.remoteVoiceId);
       }
-      const nextVoiceState = upsertVoice(voices, voice);
-      setVoices(nextVoiceState.voices);
-      setActiveVoiceId(nextVoiceState.activeVoiceId);
+      setVoices((previous) => [voice, ...previous]);
+      setActiveVoiceId(voice.id);
       setCloneStatus('done');
     } catch (error) {
       setCloneStatus('idle');
