@@ -72,7 +72,94 @@ function getPlatformLabel(provider: VoicePlatform): VoicePlatformLabel {
   return '火山引擎';
 }
 
+function getProviderFromPlatformLabel(platform: VoicePlatformLabel): VoicePlatform {
+  if (platform === '智谱') {
+    return 'zhipu';
+  }
+
+  if (platform === '阿里云') {
+    return 'aliyun';
+  }
+
+  if (platform === 'SiliconFlow 声音克隆') {
+    return 'siliconflow';
+  }
+
+  return 'volcengine';
+}
+
+function buildVoiceIdentity(voice: ClonedVoice) {
+  if (voice.provider === 'volcengine') {
+    return `${voice.provider}:${voice.remoteVoiceId}:${voice.resourceId || 'seed-icl-2.0'}`;
+  }
+
+  return `${voice.provider}:${voice.remoteVoiceId}`;
+}
+
+function normalizeVoiceState(voices: ClonedVoice[], activeVoiceId: string | null) {
+  const seen = new Set<string>();
+  const activeVoice = activeVoiceId ? voices.find((voice) => voice.id === activeVoiceId) || null : null;
+  const activeVoiceIdentity = activeVoice ? buildVoiceIdentity(activeVoice) : '';
+  const normalizedVoices = voices.filter((voice) => {
+    const identity = buildVoiceIdentity(voice);
+    if (seen.has(identity)) {
+      return false;
+    }
+
+    seen.add(identity);
+    return true;
+  });
+
+  const resolvedActiveVoiceId =
+    activeVoiceId && normalizedVoices.some((voice) => voice.id === activeVoiceId)
+      ? activeVoiceId
+      : activeVoiceIdentity
+        ? normalizedVoices.find((voice) => buildVoiceIdentity(voice) === activeVoiceIdentity)?.id || null
+      : null;
+
+  return {
+    voices: normalizedVoices,
+    activeVoiceId: resolvedActiveVoiceId,
+  };
+}
+
+function upsertVoice(voices: ClonedVoice[], nextVoice: ClonedVoice) {
+  const identity = buildVoiceIdentity(nextVoice);
+  const existingVoice = voices.find((voice) => buildVoiceIdentity(voice) === identity);
+  const activeVoiceId = existingVoice?.id || nextVoice.id;
+  const mergedVoice = existingVoice ? { ...existingVoice, ...nextVoice, id: existingVoice.id } : nextVoice;
+
+  return {
+    voices: [mergedVoice, ...voices.filter((voice) => voice.id !== activeVoiceId)],
+    activeVoiceId,
+  };
+}
+
+function buildCredentialsForPlatform(
+  platform: VoicePlatform,
+  values: {
+    zhipuApiKey: string;
+    aliyunApiKey: string;
+    volcSpeakerId: string;
+  },
+) {
+  if (platform === 'zhipu') {
+    return { apiKey: values.zhipuApiKey.trim() };
+  }
+
+  if (platform === 'aliyun') {
+    return { apiKey: values.aliyunApiKey.trim() };
+  }
+
+  if (platform === 'volcengine') {
+    return { speakerId: values.volcSpeakerId.trim() };
+  }
+
+  return {};
+}
+
 export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
+  const initialVoiceStateRef = useRef(normalizeVoiceState(loadSavedVoices(), loadActiveVoiceId()));
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const activeAudioIdRef = useRef<string | null>(null);
@@ -99,8 +186,8 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [zhipuApiKey, setZhipuApiKey] = useState("");
   const [aliyunApiKey, setAliyunApiKey] = useState("");
   const [volcSpeakerId, setVolcSpeakerId] = useState("");
-  const [voices, setVoices] = useState<ClonedVoice[]>(loadSavedVoices);
-  const [activeVoiceId, setActiveVoiceId] = useState<string | null>(loadActiveVoiceId);
+  const [voices, setVoices] = useState<ClonedVoice[]>(initialVoiceStateRef.current.voices);
+  const [activeVoiceId, setActiveVoiceId] = useState<string | null>(initialVoiceStateRef.current.activeVoiceId);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [playbackProgress, setPlaybackProgress] = useState<Record<string, number>>({});
 
@@ -118,6 +205,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     [voices],
   );
   const isSiliconFlowSelected = selectedPlatform === 'SiliconFlow 声音克隆';
+  const selectedPlatformProvider = getProviderFromPlatformLabel(selectedPlatform);
   const selectedSiliconFlowVoice = selectedVoice?.provider === 'siliconflow' ? selectedVoice : null;
   const currentSiliconFlowVoice =
     selectedSiliconFlowVoice ||
@@ -158,6 +246,12 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
 
     if (selectedVoice.provider === 'siliconflow') {
       setSiliconFlowVoiceUri(selectedVoice.remoteVoiceId);
+    } else {
+      setSiliconFlowVoiceUri("");
+    }
+
+    if (selectedVoice.provider === 'volcengine') {
+      setVolcSpeakerId(selectedVoice.remoteVoiceId);
     }
 
     setVoiceName(selectedVoice.name);
@@ -259,9 +353,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       return "当前为本地 mock 模式，火山链路会返回演示音色和演示语音。";
     }
     if (hasVolcServerSupport) {
-      return "服务端已托管火山引擎密钥和 Speaker ID，这里可以选填覆盖 Speaker ID。";
+      return "服务端已托管火山引擎密钥和 Speaker ID，这里可以选填覆盖 Speaker ID。同一个 speaker_id 在火山底层对应的是同一个可合成音色，重复训练不会变成多个可独立切换的历史音色。";
     }
-    return "火山引擎最小版本依赖服务端配置 VOLCENGINE_APP_KEY、VOLCENGINE_ACCESS_KEY 和 VOLCENGINE_SPEAKER_ID。";
+    return "火山引擎最小版本依赖服务端配置 VOLCENGINE_APP_KEY、VOLCENGINE_ACCESS_KEY 和 VOLCENGINE_SPEAKER_ID。只有使用不同的 speaker_id，历史音色切换才会真正切到不同的火山音色。";
   }, [configStatus, hasVolcServerSupport, selectedPlatform]);
 
   const configInputLabel =
@@ -372,28 +466,19 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
 
     try {
       const voice = await createVoiceClone({
-        platform:
-          selectedPlatform === '智谱'
-            ? 'zhipu'
-            : selectedPlatform === '阿里云'
-              ? 'aliyun'
-              : selectedPlatform === 'SiliconFlow 声音克隆'
-                ? 'siliconflow'
-              : 'volcengine',
+        platform: selectedPlatformProvider,
         file: uploadedFile,
         preferredName: voiceName.trim(),
-        credentials: {
-          apiKey: selectedPlatform === '智谱' ? zhipuApiKey.trim() : aliyunApiKey.trim(),
-          speakerId: volcSpeakerId.trim(),
-        },
+        credentials: buildCredentialsForPlatform(selectedPlatformProvider, { zhipuApiKey, aliyunApiKey, volcSpeakerId }),
         mockMode: configStatus.mockMode,
       });
 
       if (voice.provider === 'siliconflow') {
         setSiliconFlowVoiceUri(voice.remoteVoiceId);
       }
-      setVoices((previous) => [voice, ...previous]);
-      setActiveVoiceId(voice.id);
+      const nextVoiceState = upsertVoice(voices, voice);
+      setVoices(nextVoiceState.voices);
+      setActiveVoiceId(nextVoiceState.activeVoiceId);
       setCloneStatus('done');
     } catch (error) {
       setCloneStatus('idle');
@@ -426,10 +511,13 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       const audio = await generateSpeech({
         voice: voiceForGeneration,
         text: inputText.trim(),
-        credentials: {
-          apiKey: voiceForGeneration.provider === 'zhipu' ? zhipuApiKey.trim() : aliyunApiKey.trim(),
-          speakerId: volcSpeakerId.trim(),
-        },
+        credentials: buildCredentialsForPlatform(voiceForGeneration.provider, {
+          zhipuApiKey,
+          aliyunApiKey,
+          volcSpeakerId: voiceForGeneration.provider === 'volcengine'
+            ? voiceForGeneration.remoteVoiceId
+            : volcSpeakerId,
+        }),
         mockMode: configStatus.mockMode,
       });
 
