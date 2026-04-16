@@ -163,6 +163,7 @@ cp legacy-project/.env.example legacy-project/.env
   - 火山引擎真实链路必填
 - `VOLCENGINE_SPEAKER_ID`
   - 火山引擎常用默认 speaker_id
+  - 仅建议用于兼容旧链路；新版前端创建多个火山历史音色时，需要在界面里为每次新建显式填写独立的 `speaker_id`
 
 ### Mock 开关
 

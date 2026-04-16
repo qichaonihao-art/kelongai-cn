@@ -4579,7 +4579,7 @@ async function handleVolcVoiceClone(req, res) {
     const { speakerId, resourceId, audioData, audioFormat } = body;
     const resolvedAppKey = readValue(SERVER_CONFIG.volcAppKey);
     const resolvedAccessKey = readValue(SERVER_CONFIG.volcAccessKey);
-    const resolvedSpeakerId = readValue(speakerId, SERVER_CONFIG.volcSpeakerId);
+    const resolvedSpeakerId = readValue(speakerId);
 
     if (shouldUseVoiceCloneMock(body)) {
       sendJson(res, 200, buildMockVoiceClonePayload('volcengine', '', resolvedSpeakerId));
@@ -4611,7 +4611,10 @@ async function handleVolcVoiceClone(req, res) {
     }
 
     if (!resolvedSpeakerId) {
-      sendJson(res, 400, { error: '缺少 speakerId：前端 body.speakerId 与服务端 VOLCENGINE_SPEAKER_ID 都未提供', debug: debugFlags });
+      sendJson(res, 400, {
+        error: '缺少 speakerId：火山新建音色必须显式传入独立的 speakerId，服务端默认 VOLCENGINE_SPEAKER_ID 不再自动复用',
+        debug: debugFlags
+      });
       return;
     }
 
