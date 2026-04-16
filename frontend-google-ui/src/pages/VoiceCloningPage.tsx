@@ -166,9 +166,19 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const hasSiliconFlowVoiceUri = !!siliconFlowVoiceUri.trim();
   const activeReadyVoice = selectedVoice || (isSiliconFlowSelected ? currentSiliconFlowVoice : null);
   const isUsingSiliconFlowVoice = activeReadyVoice?.provider === 'siliconflow';
+  const isUsingVolcVoice = activeReadyVoice?.provider === 'volcengine';
   const isVoiceReady = !!activeReadyVoice && (!isUsingSiliconFlowVoice || hasSiliconFlowVoiceUri);
   const activeVoiceOverridesPlatform =
     !!selectedVoice && getPlatformLabel(selectedVoice.provider) !== selectedPlatform;
+  const activeVolcAliasCount = useMemo(() => {
+    if (!activeReadyVoice || activeReadyVoice.provider !== 'volcengine') {
+      return 0;
+    }
+
+    return voices.filter(
+      (voice) => voice.provider === 'volcengine' && voice.remoteVoiceId === activeReadyVoice.remoteVoiceId,
+    ).length;
+  }, [activeReadyVoice, voices]);
 
   useEffect(() => {
     saveSavedVoices(voices);
@@ -949,6 +959,15 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
               {isUsingSiliconFlowVoice && hasSiliconFlowVoiceUri && (
                 <p className="mt-2 break-all text-xs text-slate-400">voice uri：{siliconFlowVoiceUri}</p>
               )}
+              {isUsingVolcVoice && (
+                <p className="mt-2 break-all text-xs text-slate-400">speaker_id：{activeReadyVoice?.remoteVoiceId}</p>
+              )}
+              {isUsingVolcVoice && activeVolcAliasCount > 1 && (
+                <p className="mt-2 text-xs text-amber-600">
+                  当前这条火山历史音色和另外 {activeVolcAliasCount - 1} 条记录共用了同一个 speaker_id，
+                  所以切换名称不会改变底层实际发音人。要得到不同的火山音色，需要使用不同的 speaker_id 重新克隆。
+                </p>
+              )}
             </div>
             <div className="flex flex-col gap-4">
               <Button
@@ -1181,6 +1200,11 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                                     <span className="h-1 w-1 rounded-full bg-slate-300" />
                                     <span className="truncate">{voice.providerLabel}</span>
                                   </div>
+                                  {voice.provider === 'volcengine' && (
+                                    <div className="mt-1 truncate text-[10px] text-slate-500">
+                                      speaker_id: {voice.remoteVoiceId}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                               <div className="shrink-0 flex items-center gap-1.5">
