@@ -305,9 +305,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       return "当前为本地 mock 模式，火山链路会返回演示音色和演示语音。";
     }
     if (hasVolcServerSupport) {
-      return "服务端已托管火山引擎密钥。新建火山音色时会自动生成独立的 speaker_id，并和历史音色一起保存；后续生成会继续使用该历史音色自己的 speaker_id。";
+      return "服务端已托管火山引擎密钥，并会从已配置的真实 speaker_id 槽位池里自动分配一个未使用槽位给新音色；后续生成会继续使用该历史音色自己的 speaker_id。";
     }
-    return "火山引擎最小版本依赖服务端配置 VOLCENGINE_APP_KEY、VOLCENGINE_ACCESS_KEY。新建火山音色时系统会自动生成唯一 speaker_id，无需手动填写。";
+    return "火山引擎最小版本依赖服务端配置 VOLCENGINE_APP_KEY、VOLCENGINE_ACCESS_KEY，以及至少一个真实可用的 speaker_id 槽位。";
   }, [configStatus, hasVolcServerSupport, selectedPlatform]);
 
   const configInputLabel =
@@ -317,7 +317,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         ? '阿里云 API Key（可选）'
         : selectedPlatform === 'SiliconFlow 声音克隆'
           ? 'SiliconFlow API Key（服务端托管）'
-        : 'Speaker ID（自动生成）';
+        : 'Speaker ID（系统自动分配）';
 
   const configInputPlaceholder =
     selectedPlatform === '智谱'
@@ -332,7 +332,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         ? (configStatus.siliconFlowApiKey
             ? '服务端已托管，无需前端填写'
             : '请先在服务端配置 SILICONFLOW_API_KEY')
-      : '创建火山音色时自动生成，无需填写';
+      : '创建火山音色时从服务端已配置的真实 speaker_id 槽位池中自动分配';
 
   const configInputValue =
     selectedPlatform === '智谱'
@@ -413,6 +413,9 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         file: uploadedFile,
         preferredName: voiceName.trim(),
         credentials: buildCredentialsForPlatform(selectedPlatformProvider, { zhipuApiKey, aliyunApiKey }),
+        usedSpeakerIds: voices
+          .filter((voice) => voice.provider === 'volcengine')
+          .map((voice) => voice.remoteVoiceId),
         mockMode: configStatus.mockMode,
       });
 
@@ -871,7 +874,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
             </div>
             {selectedPlatform === '火山引擎' && (
               <p className="text-xs leading-6 text-slate-400">
-                火山引擎会为本次新建音色自动生成唯一 speaker_id，并把它绑定到这条历史音色上。
+                火山引擎会从服务端已配置的真实 speaker_id 槽位池里自动分配一个未使用槽位，并把它绑定到这条历史音色上。
               </p>
             )}
             <Button

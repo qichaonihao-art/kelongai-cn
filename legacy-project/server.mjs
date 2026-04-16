@@ -49,6 +49,7 @@ const SERVER_CONFIG = {
   volcAppKey: process.env.VOLCENGINE_APP_KEY || '',
   volcAccessKey: process.env.VOLCENGINE_ACCESS_KEY || '',
   volcSpeakerId: process.env.VOLCENGINE_SPEAKER_ID || '',
+  volcSpeakerIdPool: process.env.VOLCENGINE_SPEAKER_ID_POOL || '',
   tikhubApiToken: process.env.TIKHUB_API_TOKEN || '',
   siliconFlowApiKey: process.env.SILICONFLOW_API_KEY || ''
 };
@@ -749,7 +750,7 @@ function handleConfigStatus(req, res) {
       siliconFlowApiKey: !!readValue(SERVER_CONFIG.siliconFlowApiKey),
       volcAppKey: !!readValue(SERVER_CONFIG.volcAppKey),
       volcAccessKey: !!readValue(SERVER_CONFIG.volcAccessKey),
-      volcSpeakerId: !!readValue(SERVER_CONFIG.volcSpeakerId),
+      volcSpeakerId: getConfiguredVolcSpeakerIds().length > 0,
       tikhubApiToken: !!readValue(SERVER_CONFIG.tikhubApiToken),
       voiceCloneMockMode: VOICE_CLONE_MOCK_MODE,
       publicBaseUrl: !!publicBaseUrl
@@ -788,8 +789,27 @@ function createRequestId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${randomBytes(4).toString('hex')}`;
 }
 
-function createVolcSpeakerId() {
-  return `volc_${Date.now()}_${randomBytes(3).toString('hex')}`;
+function getConfiguredVolcSpeakerIds() {
+  const ids = [
+    ...String(SERVER_CONFIG.volcSpeakerIdPool || '')
+      .split(/[\s,]+/g)
+      .map((item) => item.trim())
+      .filter(Boolean),
+    readValue(SERVER_CONFIG.volcSpeakerId)
+  ].filter(Boolean);
+
+  return Array.from(new Set(ids));
+}
+
+function pickAvailableVolcSpeakerId(usedSpeakerIds = []) {
+  const configuredIds = getConfiguredVolcSpeakerIds();
+  const usedIds = new Set(
+    Array.isArray(usedSpeakerIds)
+      ? usedSpeakerIds.map((item) => readValue(item)).filter(Boolean)
+      : []
+  );
+
+  return configuredIds.find((speakerId) => !usedIds.has(speakerId)) || '';
 }
 
 function normalizeDouyinInput(value) {
@@ -3850,7 +3870,7 @@ function buildMockVoiceClonePayload(platform, preferredName, fallbackId) {
     ok: true,
     mock: true,
     status: 2,
-    speaker_id: fallbackId || createVolcSpeakerId(),
+    speaker_id: fallbackId || `mock-volc-${Date.now().toString(36)}`,
     meta: {
       preferredName: safeName
     }
@@ -4580,10 +4600,10 @@ async function handleVolcVoiceClone(req, res) {
   const upstreamUrl = 'https://openspeech.bytedance.com/api/v3/tts/voice_clone';
   try {
     const body = await readRequestBody(req);
-    const { speakerId, resourceId, audioData, audioFormat, referenceText } = body;
+    const { speakerId, resourceId, audioData, audioFormat, referenceText, usedSpeakerIds } = body;
     const resolvedAppKey = readValue(SERVER_CONFIG.volcAppKey);
     const resolvedAccessKey = readValue(SERVER_CONFIG.volcAccessKey);
-    const resolvedSpeakerId = readValue(speakerId) || createVolcSpeakerId();
+    const resolvedSpeakerId = readValue(speakerId) || pickAvailableVolcSpeakerId(usedSpeakerIds);
     const resolvedReferenceText = readValue(referenceText, '这是一段用于声音克隆的参考音频。');
 
     if (shouldUseVoiceCloneMock(body)) {
@@ -4594,8 +4614,9 @@ async function handleVolcVoiceClone(req, res) {
     const debugFlags = {
       hasEnvAppKey: !!resolvedAppKey,
       hasEnvAccessKey: !!resolvedAccessKey,
-      hasEnvSpeakerId: !!readValue(SERVER_CONFIG.volcSpeakerId),
+      configuredSpeakerIdCount: getConfiguredVolcSpeakerIds().length,
       hasBodySpeakerId: !!readValue(speakerId),
+      usedSpeakerIdsCount: Array.isArray(usedSpeakerIds) ? usedSpeakerIds.length : 0,
       hasBodyAudioData: typeof audioData === 'string' && audioData.length > 0,
       hasBodyResourceId: typeof resourceId === 'string' && resourceId.length > 0,
       hasBodyAudioFormat: typeof audioFormat === 'string' && audioFormat.length > 0,
@@ -4613,6 +4634,17 @@ async function handleVolcVoiceClone(req, res) {
 
     if (!debugFlags.hasEnvAccessKey) {
       sendJson(res, 400, { error: '缺少服务端环境变量 VOLCENGINE_ACCESS_KEY', debug: debugFlags });
+      return;
+    }
+
+    if (!resolvedSpeakerId) {
+      sendJson(res, 400, {
+        error: '当前没有可用的火山 speaker_id 槽位。请先在控制台准备多个真实 speaker_id，并通过 VOLCENGINE_SPEAKER_ID_POOL 或 VOLCENGINE_SPEAKER_ID 配置到服务端。',
+        debug: {
+          ...debugFlags,
+          configuredSpeakerIds: getConfiguredVolcSpeakerIds()
+        }
+      });
       return;
     }
 

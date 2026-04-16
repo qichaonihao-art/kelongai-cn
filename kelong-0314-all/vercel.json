@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/ai/index.html"
+    },
+    {
+      "source": "/app-config.js",
+      "destination": "/ai/app-config.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/ai/$1"
+    }
+  ]
+}

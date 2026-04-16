@@ -137,9 +137,10 @@ export async function createVoiceClone(options: {
   preferredName: string;
   referenceText?: string;
   credentials?: VoiceCredentials;
+  usedSpeakerIds?: string[];
   mockMode?: boolean;
 }): Promise<ClonedVoice> {
-  const { platform, file, preferredName, referenceText, credentials, mockMode = false } = options;
+  const { platform, file, preferredName, referenceText, credentials, usedSpeakerIds = [], mockMode = false } = options;
 
   if (platform === 'zhipu') {
     const audioData = await readFileAsDataUrl(file);
@@ -252,6 +253,7 @@ export async function createVoiceClone(options: {
       audioData,
       audioFormat: detectAudioFormat(file.name),
       referenceText: trimmedReferenceText,
+      usedSpeakerIds,
       mockMode,
     }),
   });
