@@ -166,7 +166,9 @@ cp legacy-project/.env.example legacy-project/.env
   - 兼容单槽位场景；如果只配置这一个值，系统最多只能自动分配一个火山音色槽位
 - `VOLCENGINE_SPEAKER_ID_POOL`
   - 可选，多个真实可用的火山 `speaker_id`，用逗号或空白分隔
-  - 新版前端创建火山音色时，服务端会从这里自动挑一个未被当前历史音色占用的槽位
+  - 新版前端创建火山音色时，服务端会从这里自动挑一个全站未占用的槽位
+  - 槽位占用由服务端统一记录 owner（前端每个浏览器会生成自己的 `deviceId`），记录文件默认写到 `legacy-project/.runtime-state/volc-speaker-ownership.json`
+  - 前端“我的音色”历史仍然只保存在当前浏览器 `localStorage`，不会跨电脑互相显示
 
 ### Mock 开关
 

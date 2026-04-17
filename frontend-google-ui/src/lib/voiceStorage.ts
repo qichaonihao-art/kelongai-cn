@@ -2,6 +2,7 @@ import type { ClonedVoice, VoicePlatform } from "@/src/lib/voice";
 
 const VOICES_STORAGE_KEY = 'kelongai.savedVoices';
 const ACTIVE_VOICE_ID_STORAGE_KEY = 'kelongai.activeVoiceId';
+const DEVICE_ID_STORAGE_KEY = 'kelongai.deviceId';
 const VALID_PROVIDERS: VoicePlatform[] = ['zhipu', 'aliyun', 'volcengine', 'siliconflow'];
 
 function isValidProvider(value: unknown): value is VoicePlatform {
@@ -78,4 +79,27 @@ export function saveActiveVoiceId(activeVoiceId: string | null) {
   }
 
   window.localStorage.setItem(ACTIVE_VOICE_ID_STORAGE_KEY, activeVoiceId);
+}
+
+function createDeviceId() {
+  if (typeof window !== 'undefined' && typeof window.crypto?.randomUUID === 'function') {
+    return `device_${window.crypto.randomUUID()}`;
+  }
+
+  return `device_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function loadOrCreateDeviceId() {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  const existing = window.localStorage.getItem(DEVICE_ID_STORAGE_KEY);
+  if (typeof existing === 'string' && existing.trim()) {
+    return existing.trim();
+  }
+
+  const deviceId = createDeviceId();
+  window.localStorage.setItem(DEVICE_ID_STORAGE_KEY, deviceId);
+  return deviceId;
 }

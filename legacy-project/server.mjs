@@ -29,6 +29,8 @@ const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 45 * 1024 * 1024;
 const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
 const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-lite-260215';
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
+const RUNTIME_STATE_DIR = path.join(__dirname, '.runtime-state');
+const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
 const STARTUP_UPLOAD_TEMP_FILE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const ACTIVE_FRONTEND_DIR = SHOULD_USE_REACT_FRONTEND ? REACT_FRONTEND_DIR : LEGACY_FRONTEND_DIR;
@@ -115,6 +117,9 @@ const DOUYIN_DOWNLOAD_HOST_BASE_SCORES = new Map([
   ['v6-chc.douyinvod.com', 95],
   ['v5-dy-o-abtest.zjcdn.com', -120]
 ]);
+const VOLC_SPEAKER_POOL_FULL_MESSAGE = '火山音色槽位已满，请删除旧音色或增加 speaker_id 池';
+let volcSpeakerOwnershipState = null;
+let volcSpeakerOwnershipQueue = Promise.resolve();
 
 function readBooleanEnv(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -223,6 +228,10 @@ function resolvePublicBaseUrl(req) {
 
 async function ensureUploadTempDir() {
   await mkdir(UPLOAD_TEMP_DIR, { recursive: true });
+}
+
+async function ensureRuntimeStateDir() {
+  await mkdir(RUNTIME_STATE_DIR, { recursive: true });
 }
 
 function isPathInsideUploadTempDir(filePath) {
@@ -801,15 +810,300 @@ function getConfiguredVolcSpeakerIds() {
   return Array.from(new Set(ids));
 }
 
-function pickAvailableVolcSpeakerId(usedSpeakerIds = []) {
-  const configuredIds = getConfiguredVolcSpeakerIds();
-  const usedIds = new Set(
-    Array.isArray(usedSpeakerIds)
-      ? usedSpeakerIds.map((item) => readValue(item)).filter(Boolean)
-      : []
-  );
+function normalizeDeviceId(value) {
+  return readValue(value).slice(0, 128);
+}
 
-  return configuredIds.find((speakerId) => !usedIds.has(speakerId)) || '';
+function createEmptyVolcSpeakerOwnershipState() {
+  return {
+    version: 1,
+    slots: {}
+  };
+}
+
+function sanitizeVolcSpeakerOwnershipState(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return createEmptyVolcSpeakerOwnershipState();
+  }
+
+  const rawSlots = value.slots;
+  const slots = {};
+
+  if (rawSlots && typeof rawSlots === 'object' && !Array.isArray(rawSlots)) {
+    for (const [speakerId, entry] of Object.entries(rawSlots)) {
+      const normalizedSpeakerId = readValue(speakerId);
+      if (!normalizedSpeakerId || !entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        continue;
+      }
+
+      const ownerDeviceId = normalizeDeviceId(entry.ownerDeviceId);
+      if (!ownerDeviceId) {
+        continue;
+      }
+
+      slots[normalizedSpeakerId] = {
+        ownerDeviceId,
+        claimedAt: readValue(entry.claimedAt),
+        updatedAt: readValue(entry.updatedAt),
+        preferredName: readValue(entry.preferredName),
+      };
+    }
+  }
+
+  return {
+    version: 1,
+    slots,
+  };
+}
+
+function pruneVolcSpeakerOwnershipState(state) {
+  const configuredSpeakerIds = new Set(getConfiguredVolcSpeakerIds());
+  const nextSlots = {};
+
+  for (const [speakerId, entry] of Object.entries(state.slots || {})) {
+    if (!configuredSpeakerIds.has(speakerId)) {
+      continue;
+    }
+
+    const ownerDeviceId = normalizeDeviceId(entry?.ownerDeviceId);
+    if (!ownerDeviceId) {
+      continue;
+    }
+
+    nextSlots[speakerId] = {
+      ownerDeviceId,
+      claimedAt: readValue(entry?.claimedAt),
+      updatedAt: readValue(entry?.updatedAt),
+      preferredName: readValue(entry?.preferredName),
+    };
+  }
+
+  state.slots = nextSlots;
+  return state;
+}
+
+async function loadVolcSpeakerOwnershipState() {
+  if (volcSpeakerOwnershipState) {
+    return pruneVolcSpeakerOwnershipState(volcSpeakerOwnershipState);
+  }
+
+  try {
+    const raw = await readFile(VOLC_SPEAKER_OWNERSHIP_FILE, 'utf8');
+    volcSpeakerOwnershipState = sanitizeVolcSpeakerOwnershipState(parseJsonString(raw, createEmptyVolcSpeakerOwnershipState()));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.error('[volc speaker ownership] load_failed', {
+        filePath: VOLC_SPEAKER_OWNERSHIP_FILE,
+        message: error?.message || '',
+        code: error?.code || ''
+      });
+    }
+    volcSpeakerOwnershipState = createEmptyVolcSpeakerOwnershipState();
+  }
+
+  return pruneVolcSpeakerOwnershipState(volcSpeakerOwnershipState);
+}
+
+async function persistVolcSpeakerOwnershipState(state) {
+  await ensureRuntimeStateDir();
+  await writeFile(VOLC_SPEAKER_OWNERSHIP_FILE, JSON.stringify(state, null, 2), 'utf8');
+}
+
+function withVolcSpeakerOwnershipLock(callback) {
+  const run = async () => {
+    const state = await loadVolcSpeakerOwnershipState();
+    const result = await callback(state);
+    pruneVolcSpeakerOwnershipState(state);
+    await persistVolcSpeakerOwnershipState(state);
+    return result;
+  };
+
+  const next = volcSpeakerOwnershipQueue.then(run, run);
+  volcSpeakerOwnershipQueue = next.then(() => undefined, () => undefined);
+  return next;
+}
+
+function upsertVolcSpeakerOwnership(state, { speakerId, ownerDeviceId, preferredName = '' }) {
+  const existing = state.slots[speakerId];
+  const now = new Date().toISOString();
+  state.slots[speakerId] = {
+    ownerDeviceId,
+    claimedAt: readValue(existing?.claimedAt, now),
+    updatedAt: now,
+    preferredName: readValue(preferredName, existing?.preferredName),
+  };
+  return state.slots[speakerId];
+}
+
+function deleteVolcSpeakerOwnership(state, speakerId) {
+  if (!state.slots[speakerId]) {
+    return false;
+  }
+  delete state.slots[speakerId];
+  return true;
+}
+
+function listOwnedVolcSpeakerIds(state, ownerDeviceId) {
+  return Object.entries(state.slots || {})
+    .filter(([, entry]) => normalizeDeviceId(entry?.ownerDeviceId) === ownerDeviceId)
+    .map(([speakerId]) => speakerId);
+}
+
+async function reserveVolcSpeakerIdForDevice({ requestedSpeakerId = '', ownerDeviceId, preferredName = '' }) {
+  return withVolcSpeakerOwnershipLock(async (state) => {
+    const configuredSpeakerIds = getConfiguredVolcSpeakerIds();
+    const configuredSpeakerIdSet = new Set(configuredSpeakerIds);
+    const desiredSpeakerId = readValue(requestedSpeakerId);
+
+    if (!configuredSpeakerIds.length) {
+      return {
+        ok: false,
+        statusCode: 400,
+        error: '当前没有可用的火山 speaker_id 槽位。请先在控制台准备多个真实 speaker_id，并通过 VOLCENGINE_SPEAKER_ID_POOL 或 VOLCENGINE_SPEAKER_ID 配置到服务端。'
+      };
+    }
+
+    if (desiredSpeakerId) {
+      if (!configuredSpeakerIdSet.has(desiredSpeakerId)) {
+        return {
+          ok: false,
+          statusCode: 400,
+          error: `请求的 speaker_id ${desiredSpeakerId} 不在服务端配置的槽位池中`
+        };
+      }
+
+      const existingOwner = normalizeDeviceId(state.slots[desiredSpeakerId]?.ownerDeviceId);
+      if (existingOwner && existingOwner !== ownerDeviceId) {
+        return {
+          ok: false,
+          statusCode: 409,
+          error: `speaker_id ${desiredSpeakerId} 已被其他设备占用`
+        };
+      }
+
+      upsertVolcSpeakerOwnership(state, {
+        speakerId: desiredSpeakerId,
+        ownerDeviceId,
+        preferredName,
+      });
+      return {
+        ok: true,
+        speakerId: desiredSpeakerId,
+        createdByRequest: !existingOwner,
+      };
+    }
+
+    for (const speakerId of configuredSpeakerIds) {
+      const existingOwner = normalizeDeviceId(state.slots[speakerId]?.ownerDeviceId);
+      if (existingOwner) {
+        continue;
+      }
+
+      upsertVolcSpeakerOwnership(state, {
+        speakerId,
+        ownerDeviceId,
+        preferredName,
+      });
+      return {
+        ok: true,
+        speakerId,
+        createdByRequest: true,
+      };
+    }
+
+    return {
+      ok: false,
+      statusCode: 409,
+      error: VOLC_SPEAKER_POOL_FULL_MESSAGE
+    };
+  });
+}
+
+async function releaseVolcSpeakerIdForDevice({ speakerId, ownerDeviceId }) {
+  return withVolcSpeakerOwnershipLock(async (state) => {
+    const normalizedSpeakerId = readValue(speakerId);
+    const existingOwner = normalizeDeviceId(state.slots[normalizedSpeakerId]?.ownerDeviceId);
+
+    if (!normalizedSpeakerId || !existingOwner) {
+      return { released: false, reason: 'not_found' };
+    }
+
+    if (existingOwner !== ownerDeviceId) {
+      return { released: false, reason: 'forbidden' };
+    }
+
+    deleteVolcSpeakerOwnership(state, normalizedSpeakerId);
+    return { released: true, reason: 'released' };
+  });
+}
+
+async function syncVolcSpeakerOwnershipForDevice({ ownerDeviceId, speakerIds = [] }) {
+  return withVolcSpeakerOwnershipLock(async (state) => {
+    const configuredSpeakerIdSet = new Set(getConfiguredVolcSpeakerIds());
+    const desiredSpeakerIds = Array.from(new Set(
+      (Array.isArray(speakerIds) ? speakerIds : [])
+        .map((item) => readValue(item))
+        .filter(Boolean)
+    ));
+
+    const claimed = [];
+    const released = [];
+    const conflicts = [];
+    const ignored = [];
+
+    for (const speakerId of desiredSpeakerIds) {
+      if (!configuredSpeakerIdSet.has(speakerId)) {
+        ignored.push(speakerId);
+      }
+    }
+
+    const normalizedDesiredSpeakerIds = desiredSpeakerIds.filter((speakerId) => configuredSpeakerIdSet.has(speakerId));
+    const desiredSpeakerIdSet = new Set(normalizedDesiredSpeakerIds);
+
+    for (const ownedSpeakerId of listOwnedVolcSpeakerIds(state, ownerDeviceId)) {
+      if (desiredSpeakerIdSet.has(ownedSpeakerId)) {
+        continue;
+      }
+
+      if (deleteVolcSpeakerOwnership(state, ownedSpeakerId)) {
+        released.push(ownedSpeakerId);
+      }
+    }
+
+    for (const speakerId of normalizedDesiredSpeakerIds) {
+      const existingOwner = normalizeDeviceId(state.slots[speakerId]?.ownerDeviceId);
+      if (!existingOwner) {
+        upsertVolcSpeakerOwnership(state, {
+          speakerId,
+          ownerDeviceId,
+        });
+        claimed.push(speakerId);
+        continue;
+      }
+
+      if (existingOwner === ownerDeviceId) {
+        upsertVolcSpeakerOwnership(state, {
+          speakerId,
+          ownerDeviceId,
+        });
+        continue;
+      }
+
+      conflicts.push({
+        speakerId,
+        ownerDeviceId: existingOwner
+      });
+    }
+
+    return {
+      ok: true,
+      claimed,
+      released,
+      conflicts,
+      ignored,
+      ownedSpeakerIds: listOwnedVolcSpeakerIds(state, ownerDeviceId)
+    };
+  });
 }
 
 function normalizeDouyinInput(value) {
@@ -4598,16 +4892,19 @@ async function handleZhipuTts(req, res) {
 
 async function handleVolcVoiceClone(req, res) {
   const upstreamUrl = 'https://openspeech.bytedance.com/api/v3/tts/voice_clone';
+  let reservedSpeakerId = '';
+  let resolvedDeviceId = '';
+  let shouldReleaseReservationOnFailure = false;
   try {
     const body = await readRequestBody(req);
-    const { speakerId, resourceId, audioData, audioFormat, referenceText, usedSpeakerIds } = body;
+    const { speakerId, resourceId, audioData, audioFormat, referenceText, deviceId, preferredName } = body;
     const resolvedAppKey = readValue(SERVER_CONFIG.volcAppKey);
     const resolvedAccessKey = readValue(SERVER_CONFIG.volcAccessKey);
-    const resolvedSpeakerId = readValue(speakerId) || pickAvailableVolcSpeakerId(usedSpeakerIds);
+    resolvedDeviceId = normalizeDeviceId(deviceId);
     const resolvedReferenceText = readValue(referenceText, '这是一段用于声音克隆的参考音频。');
 
     if (shouldUseVoiceCloneMock(body)) {
-      sendJson(res, 200, buildMockVoiceClonePayload('volcengine', '', resolvedSpeakerId));
+      sendJson(res, 200, buildMockVoiceClonePayload('volcengine', '', readValue(speakerId, 'mock_volc_speaker')));
       return;
     }
 
@@ -4616,7 +4913,7 @@ async function handleVolcVoiceClone(req, res) {
       hasEnvAccessKey: !!resolvedAccessKey,
       configuredSpeakerIdCount: getConfiguredVolcSpeakerIds().length,
       hasBodySpeakerId: !!readValue(speakerId),
-      usedSpeakerIdsCount: Array.isArray(usedSpeakerIds) ? usedSpeakerIds.length : 0,
+      hasBodyDeviceId: !!resolvedDeviceId,
       hasBodyAudioData: typeof audioData === 'string' && audioData.length > 0,
       hasBodyResourceId: typeof resourceId === 'string' && resourceId.length > 0,
       hasBodyAudioFormat: typeof audioFormat === 'string' && audioFormat.length > 0,
@@ -4637,9 +4934,25 @@ async function handleVolcVoiceClone(req, res) {
       return;
     }
 
-    if (!resolvedSpeakerId) {
-      sendJson(res, 400, {
-        error: '当前没有可用的火山 speaker_id 槽位。请先在控制台准备多个真实 speaker_id，并通过 VOLCENGINE_SPEAKER_ID_POOL 或 VOLCENGINE_SPEAKER_ID 配置到服务端。',
+    if (!resolvedDeviceId) {
+      sendJson(res, 400, { error: '缺少 deviceId，无法确认当前浏览器对火山 speaker_id 的占用归属', debug: debugFlags });
+      return;
+    }
+
+    if (!debugFlags.hasBodyAudioData) {
+      sendJson(res, 400, { error: '缺少 body.audioData，或音频数据为空', debug: debugFlags });
+      return;
+    }
+
+    const reservation = await reserveVolcSpeakerIdForDevice({
+      requestedSpeakerId: speakerId,
+      ownerDeviceId: resolvedDeviceId,
+      preferredName: preferredName,
+    });
+
+    if (!reservation.ok) {
+      sendJson(res, reservation.statusCode, {
+        error: reservation.error,
         debug: {
           ...debugFlags,
           configuredSpeakerIds: getConfiguredVolcSpeakerIds()
@@ -4648,10 +4961,8 @@ async function handleVolcVoiceClone(req, res) {
       return;
     }
 
-    if (!debugFlags.hasBodyAudioData) {
-      sendJson(res, 400, { error: '缺少 body.audioData，或音频数据为空', debug: debugFlags });
-      return;
-    }
+    reservedSpeakerId = reservation.speakerId;
+    shouldReleaseReservationOnFailure = reservation.createdByRequest;
 
     const response = await fetch(upstreamUrl, {
       method: 'POST',
@@ -4662,7 +4973,7 @@ async function handleVolcVoiceClone(req, res) {
         'X-Api-Request-Id': `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
       },
       body: JSON.stringify({
-        speaker_id: resolvedSpeakerId,
+        speaker_id: reservedSpeakerId,
         audio: {
           data: audioData,
           format: audioFormat || 'wav'
@@ -4682,6 +4993,12 @@ async function handleVolcVoiceClone(req, res) {
     } catch {}
 
     if (!response.ok) {
+      if (shouldReleaseReservationOnFailure) {
+        await releaseVolcSpeakerIdForDevice({
+          speakerId: reservedSpeakerId,
+          ownerDeviceId: resolvedDeviceId
+        });
+      }
       console.error('[volc voice clone] upstream non-200 response', {
         url: upstreamUrl,
         status: response.status,
@@ -4700,9 +5017,15 @@ async function handleVolcVoiceClone(req, res) {
 
     sendJson(res, 200, {
       ...(json || { raw: responseText }),
-      speaker_id: json?.speaker_id || resolvedSpeakerId
+      speaker_id: json?.speaker_id || reservedSpeakerId
     });
   } catch (error) {
+    if (shouldReleaseReservationOnFailure && reservedSpeakerId && resolvedDeviceId) {
+      await releaseVolcSpeakerIdForDevice({
+        speakerId: reservedSpeakerId,
+        ownerDeviceId: resolvedDeviceId
+      }).catch(() => {});
+    }
     console.error('[volc voice clone] fetch error', {
       url: upstreamUrl,
       message: error.message,
@@ -4720,6 +5043,61 @@ async function handleVolcVoiceClone(req, res) {
         contentType: req.headers['content-type'] || ''
       }
     });
+  }
+}
+
+async function handleSyncVolcVoiceOwnership(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const ownerDeviceId = normalizeDeviceId(body?.deviceId);
+
+    if (!ownerDeviceId) {
+      sendJson(res, 400, { error: '缺少 deviceId，无法同步火山音色槽位归属' });
+      return;
+    }
+
+    const result = await syncVolcSpeakerOwnershipForDevice({
+      ownerDeviceId,
+      speakerIds: body?.speakerIds,
+    });
+    sendJson(res, 200, result);
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '火山音色槽位同步失败' });
+  }
+}
+
+async function handleReleaseVolcVoiceOwnership(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const ownerDeviceId = normalizeDeviceId(body?.deviceId);
+    const speakerId = readValue(body?.speakerId);
+
+    if (!ownerDeviceId) {
+      sendJson(res, 400, { error: '缺少 deviceId，无法释放火山音色槽位' });
+      return;
+    }
+
+    if (!speakerId) {
+      sendJson(res, 400, { error: '缺少 speakerId，无法释放火山音色槽位' });
+      return;
+    }
+
+    const result = await releaseVolcSpeakerIdForDevice({
+      speakerId,
+      ownerDeviceId
+    });
+
+    if (result.reason === 'forbidden') {
+      sendJson(res, 403, { error: '只能释放当前 deviceId 自己占用的火山 speaker_id' });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      released: result.released
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '火山音色槽位释放失败' });
   }
 }
 
@@ -6158,6 +6536,16 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/voice/volcengine') {
     await handleVolcVoiceClone(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/voice/volcengine/sync-ownership') {
+    await handleSyncVolcVoiceOwnership(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/voice/volcengine/release-ownership') {
+    await handleReleaseVolcVoiceOwnership(req, res);
     return;
   }
 

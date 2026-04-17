@@ -28,9 +28,12 @@ import {
   createVoiceClone,
   generateSpeech,
   getVoiceConfigStatus,
+  releaseVolcVoiceOwnership,
+  syncVolcVoiceOwnership,
 } from "@/src/lib/voice";
 import {
   loadActiveVoiceId,
+  loadOrCreateDeviceId,
   loadSavedVoices,
   saveActiveVoiceId,
   saveSavedVoices,
@@ -44,6 +47,7 @@ interface VoiceCloningPageProps {
 type VoicePlatformLabel = '智谱' | '阿里云' | '火山引擎' | 'SiliconFlow 声音克隆';
 
 const MAX_AUDIO_SIZE = 10 * 1024 * 1024;
+const ALIYUN_MAX_AUDIO_DURATION_SECONDS = 60;
 
 const EMPTY_CONFIG_STATUS: VoiceConfigStatus = {
   reachable: false,
@@ -106,6 +110,59 @@ function buildCredentialsForPlatform(
   return {};
 }
 
+function formatDurationLabel(totalSeconds: number) {
+  const safeSeconds = Math.max(1, Math.round(totalSeconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
+}
+
+function readAudioDurationSeconds(file: File) {
+  return new Promise<number | null>((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const audio = new Audio();
+
+    const cleanup = () => {
+      audio.onloadedmetadata = null;
+      audio.onerror = null;
+      URL.revokeObjectURL(objectUrl);
+    };
+
+    audio.onloadedmetadata = () => {
+      const durationSeconds =
+        Number.isFinite(audio.duration) && audio.duration > 0
+          ? audio.duration
+          : null;
+      cleanup();
+      resolve(durationSeconds);
+    };
+
+    audio.onerror = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    audio.preload = 'metadata';
+    audio.src = objectUrl;
+  });
+}
+
+function getPlatformAudioGuide(platform: VoicePlatformLabel) {
+  if (platform === '智谱') {
+    return '智谱官方建议参考音频 3 到 30 秒，文件大小不超过 10MB。';
+  }
+
+  if (platform === '阿里云') {
+    return '阿里云官方推荐 10 到 20 秒，最长不超过 60 秒，文件大小不超过 10MB。';
+  }
+
+  if (platform === 'SiliconFlow 声音克隆') {
+    return 'SiliconFlow 官方建议参考音频控制在 30 秒以内，8 到 10 秒通常更稳。';
+  }
+
+  return '火山引擎官方更建议使用较短、清晰的参考音频；实践上以 10 到 30 秒更稳，超长音频容易被截断或导致效果下降。';
+}
+
 export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -124,10 +181,12 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [siliconFlowVoiceUri, setSiliconFlowVoiceUri] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadedAudioUrl, setUploadedAudioUrl] = useState("");
+  const [uploadedAudioDurationSeconds, setUploadedAudioDurationSeconds] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState("");
   const [cloneError, setCloneError] = useState("");
   const [generateError, setGenerateError] = useState("");
   const [configError, setConfigError] = useState("");
+  const [ownershipError, setOwnershipError] = useState("");
   const [configStatus, setConfigStatus] = useState<VoiceConfigStatus>(EMPTY_CONFIG_STATUS);
   const [isConfigLoading, setIsConfigLoading] = useState(true);
   const [zhipuApiKey, setZhipuApiKey] = useState("");
@@ -136,6 +195,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [activeVoiceId, setActiveVoiceId] = useState<string | null>(loadActiveVoiceId);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [playbackProgress, setPlaybackProgress] = useState<Record<string, number>>({});
+  const [deviceId] = useState(loadOrCreateDeviceId);
 
   const selectedVoice = useMemo(
     () => voices.find((voice) => voice.id === activeVoiceId) || null,
@@ -173,6 +233,17 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       (voice) => voice.provider === 'volcengine' && voice.remoteVoiceId === activeReadyVoice.remoteVoiceId,
     ).length;
   }, [activeReadyVoice, voices]);
+  const localVolcSpeakerIds = useMemo(
+    () => Array.from(new Set(
+      voices
+        .filter((voice) => voice.provider === 'volcengine')
+        .map((voice) => voice.remoteVoiceId)
+        .filter(Boolean),
+    )),
+    [voices],
+  );
+  const hasVolcServerSupport =
+    configStatus.volcAppKey && configStatus.volcAccessKey;
 
   useEffect(() => {
     saveSavedVoices(voices);
@@ -238,6 +309,46 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   }, []);
 
   useEffect(() => {
+    if (!deviceId || configStatus.mockMode || !hasVolcServerSupport) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function syncOwnership() {
+      try {
+        const result = await syncVolcVoiceOwnership({
+          deviceId,
+          speakerIds: localVolcSpeakerIds,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        if (Array.isArray(result?.conflicts) && result.conflicts.length > 0) {
+          setOwnershipError("当前浏览器里有火山历史音色对应的 speaker_id 已被其他设备占用，请删除冲突记录后重新克隆。");
+          return;
+        }
+
+        setOwnershipError("");
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setOwnershipError(error instanceof Error ? error.message : "火山音色槽位同步失败，请稍后重试。");
+      }
+    }
+
+    void syncOwnership();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [configStatus.mockMode, deviceId, hasVolcServerSupport, localVolcSpeakerIds]);
+
+  useEffect(() => {
     generatedAudiosRef.current = generatedAudios;
   }, [generatedAudios]);
 
@@ -267,8 +378,10 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     };
   }, [uploadedAudioUrl]);
 
-  const hasVolcServerSupport =
-    configStatus.volcAppKey && configStatus.volcAccessKey;
+  const platformAudioGuide = useMemo(
+    () => getPlatformAudioGuide(selectedPlatform),
+    [selectedPlatform],
+  );
 
   const platformHint = useMemo(() => {
     if (selectedPlatform === 'SiliconFlow 声音克隆') {
@@ -347,6 +460,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     }
     setUploadedFile(null);
     setUploadedAudioUrl("");
+    setUploadedAudioDurationSeconds(null);
     setUploadStatus('idle');
     setVoiceName("");
     setUploadError("");
@@ -357,7 +471,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     }
   }
 
-  function handleFileSelect(file: File | null) {
+  async function handleFileSelect(file: File | null) {
     if (!file) return;
 
     const lowerName = file.name.toLowerCase();
@@ -384,9 +498,25 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       URL.revokeObjectURL(uploadedAudioUrl);
     }
     setUploadStatus('uploading');
+    setUploadedAudioDurationSeconds(null);
+
+    const durationSeconds = await readAudioDurationSeconds(file);
+
+    if (
+      selectedPlatformProvider === 'aliyun' &&
+      durationSeconds !== null &&
+      durationSeconds > ALIYUN_MAX_AUDIO_DURATION_SECONDS
+    ) {
+      setUploadError(`阿里云官方要求参考音频最长 60 秒，当前音频约 ${formatDurationLabel(durationSeconds)}，请裁剪后再试。`);
+      setUploadStatus('idle');
+      setUploadedFile(null);
+      return;
+    }
+
     setTimeout(() => {
       setUploadedFile(file);
       setUploadedAudioUrl(URL.createObjectURL(file));
+      setUploadedAudioDurationSeconds(durationSeconds);
       setVoiceName(file.name.replace(/\.[^.]+$/, ""));
       setUploadStatus('done');
     }, 500);
@@ -413,9 +543,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
         file: uploadedFile,
         preferredName: voiceName.trim(),
         credentials: buildCredentialsForPlatform(selectedPlatformProvider, { zhipuApiKey, aliyunApiKey }),
-        usedSpeakerIds: voices
-          .filter((voice) => voice.provider === 'volcengine')
-          .map((voice) => voice.remoteVoiceId),
+        deviceId,
         mockMode: configStatus.mockMode,
       });
 
@@ -667,14 +795,42 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     }
   }
 
-  function handleDeleteVoice(voiceId: string) {
-    setVoices((previous) => {
-      const nextVoices = previous.filter((voice) => voice.id !== voiceId);
-      if (activeVoiceId === voiceId) {
-        setActiveVoiceId(null);
-      }
-      return nextVoices;
-    });
+  async function handleDeleteVoice(voiceId: string) {
+    const targetVoice = voices.find((voice) => voice.id === voiceId) || null;
+    const nextVoices = voices.filter((voice) => voice.id !== voiceId);
+
+    setVoices(nextVoices);
+    if (activeVoiceId === voiceId) {
+      setActiveVoiceId(null);
+    }
+
+    if (
+      !targetVoice ||
+      targetVoice.provider !== 'volcengine' ||
+      configStatus.mockMode ||
+      !hasVolcServerSupport ||
+      !deviceId
+    ) {
+      return;
+    }
+
+    const hasSameSpeakerRemaining = nextVoices.some(
+      (voice) => voice.provider === 'volcengine' && voice.remoteVoiceId === targetVoice.remoteVoiceId,
+    );
+
+    if (hasSameSpeakerRemaining) {
+      return;
+    }
+
+    try {
+      await releaseVolcVoiceOwnership({
+        deviceId,
+        speakerId: targetVoice.remoteVoiceId,
+      });
+      setOwnershipError("");
+    } catch (error) {
+      setOwnershipError(error instanceof Error ? error.message : "火山音色槽位释放失败，请稍后重试。");
+    }
   }
 
   return (
@@ -779,6 +935,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                     <p className="text-xs text-slate-500 leading-6">{platformHint}</p>
                     {isConfigLoading && <p className="mt-2 text-xs text-slate-400">正在读取服务端语音配置...</p>}
                     {configError && <p className="mt-2 text-xs text-red-500">{configError}</p>}
+                    {ownershipError && <p className="mt-2 text-xs text-red-500">{ownershipError}</p>}
                   </div>
                 </div>
               </motion.div>
@@ -803,7 +960,8 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                     <Upload className="size-7 text-slate-500" />
                   </div>
                   <p className="text-base font-bold text-slate-800">点击上传或拖拽文件至此</p>
-                  <p className="text-sm text-slate-400 mt-2">支持 MP3, WAV 或 M4A (最大 10MB)</p>
+                  <p className="text-sm text-slate-400 mt-2">支持 MP3, WAV 或 M4A (最大 10MB、最长 60 秒)</p>
+                  <p className="text-xs text-slate-500 mt-3 text-center max-w-md leading-6">{platformAudioGuide}</p>
                   <Button
                     variant="outline"
                     size="lg"
@@ -828,6 +986,10 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                   <p className="text-sm font-bold text-slate-900 text-center break-all max-w-xs">{uploadedFile.name} 已上传</p>
                   <p className="mt-1 text-xs text-slate-400">
                     {(uploadedFile.size / 1024 / 1024).toFixed(2)} MB
+                    {uploadedAudioDurationSeconds !== null ? ` | 约 ${formatDurationLabel(uploadedAudioDurationSeconds)}` : ''}
+                  </p>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-500 text-center max-w-md">
+                    {platformAudioGuide}
                   </p>
                   {uploadedAudioUrl && (
                     <div className="mt-3 w-full max-w-[260px] rounded-[1rem] border border-slate-200 bg-white/70 px-3 py-2">
@@ -1213,7 +1375,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                                   variant="ghost"
                                   size="sm"
                                   className="h-8 rounded-lg px-2 text-[11px] text-red-500"
-                                  onClick={() => handleDeleteVoice(voice.id)}
+                                  onClick={() => void handleDeleteVoice(voice.id)}
                                 >
                                   删除
                                 </Button>

@@ -137,10 +137,10 @@ export async function createVoiceClone(options: {
   preferredName: string;
   referenceText?: string;
   credentials?: VoiceCredentials;
-  usedSpeakerIds?: string[];
+  deviceId?: string;
   mockMode?: boolean;
 }): Promise<ClonedVoice> {
-  const { platform, file, preferredName, referenceText, credentials, usedSpeakerIds = [], mockMode = false } = options;
+  const { platform, file, preferredName, referenceText, credentials, deviceId = '', mockMode = false } = options;
 
   if (platform === 'zhipu') {
     const audioData = await readFileAsDataUrl(file);
@@ -249,11 +249,12 @@ export async function createVoiceClone(options: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
+      preferredName,
+      deviceId,
       resourceId: VOLC_RESOURCE_ID,
       audioData,
       audioFormat: detectAudioFormat(file.name),
       referenceText: trimmedReferenceText,
-      usedSpeakerIds,
       mockMode,
     }),
   });
@@ -273,6 +274,54 @@ export async function createVoiceClone(options: {
     resourceId: VOLC_RESOURCE_ID,
     createdAt: new Date().toLocaleString(),
   };
+}
+
+export async function syncVolcVoiceOwnership(options: {
+  deviceId: string;
+  speakerIds: string[];
+}) {
+  const response = await fetch('/api/voice/volcengine/sync-ownership', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      deviceId: options.deviceId,
+      speakerIds: options.speakerIds,
+    }),
+  });
+  const json = await parseJsonSafely(response);
+
+  if (!response.ok) {
+    throw new Error(readApiErrorMessage(json, '火山音色槽位同步失败'));
+  }
+
+  return json;
+}
+
+export async function releaseVolcVoiceOwnership(options: {
+  deviceId: string;
+  speakerId: string;
+}) {
+  const response = await fetch('/api/voice/volcengine/release-ownership', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      deviceId: options.deviceId,
+      speakerId: options.speakerId,
+    }),
+  });
+  const json = await parseJsonSafely(response);
+
+  if (!response.ok) {
+    throw new Error(readApiErrorMessage(json, '火山音色槽位释放失败'));
+  }
+
+  return json;
 }
 
 async function getAudioDurationLabel(audioUrl: string) {
