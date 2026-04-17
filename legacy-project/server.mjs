@@ -745,8 +745,12 @@ function handleAuthStatus(req, res) {
   sendJson(res, 200, { ok: true, authenticated: isAuthenticated(req) });
 }
 
-function handleConfigStatus(req, res) {
+async function handleConfigStatus(req, res) {
   const publicBaseUrl = getConfiguredPublicBaseUrl();
+  const configuredSpeakerIds = getConfiguredVolcSpeakerIds();
+  const ownershipState = await loadVolcSpeakerOwnershipState();
+  const occupiedSpeakerIdCount = configuredSpeakerIds.filter((speakerId) => !!ownershipState.slots[speakerId]).length;
+  const availableSpeakerIdCount = Math.max(0, configuredSpeakerIds.length - occupiedSpeakerIdCount);
   sendJson(res, 200, {
     ok: true,
     auth: {
@@ -759,7 +763,10 @@ function handleConfigStatus(req, res) {
       siliconFlowApiKey: !!readValue(SERVER_CONFIG.siliconFlowApiKey),
       volcAppKey: !!readValue(SERVER_CONFIG.volcAppKey),
       volcAccessKey: !!readValue(SERVER_CONFIG.volcAccessKey),
-      volcSpeakerId: getConfiguredVolcSpeakerIds().length > 0,
+      volcSpeakerId: configuredSpeakerIds.length > 0,
+      volcSpeakerSlotTotal: configuredSpeakerIds.length,
+      volcSpeakerSlotUsed: occupiedSpeakerIdCount,
+      volcSpeakerSlotAvailable: availableSpeakerIdCount,
       tikhubApiToken: !!readValue(SERVER_CONFIG.tikhubApiToken),
       voiceCloneMockMode: VOICE_CLONE_MOCK_MODE,
       publicBaseUrl: !!publicBaseUrl
@@ -6495,7 +6502,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/config/status') {
-    handleConfigStatus(req, res);
+    await handleConfigStatus(req, res);
     return;
   }
 

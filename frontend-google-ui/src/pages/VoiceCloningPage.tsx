@@ -57,6 +57,9 @@ const EMPTY_CONFIG_STATUS: VoiceConfigStatus = {
   volcAppKey: false,
   volcAccessKey: false,
   volcSpeakerId: false,
+  volcSpeakerSlotTotal: 0,
+  volcSpeakerSlotUsed: 0,
+  volcSpeakerSlotAvailable: 0,
   mockMode: false,
 };
 
@@ -416,7 +419,10 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       return "当前为本地 mock 模式，火山链路会返回演示音色和演示语音。";
     }
     if (hasVolcServerSupport) {
-      return "服务端已托管火山引擎密钥，并会从已配置的真实 speaker_id 槽位池里自动分配一个未使用槽位给新音色；后续生成会继续使用该历史音色自己的 speaker_id。";
+      const slotSummary = configStatus.volcSpeakerSlotTotal > 0
+        ? `当前槽位 ${configStatus.volcSpeakerSlotAvailable}/${configStatus.volcSpeakerSlotTotal} 可用。`
+        : '';
+      return `服务端已托管火山引擎密钥，并会从已配置的真实 speaker_id 槽位池里自动分配一个未使用槽位给新音色；后续生成会继续使用该历史音色自己的 speaker_id。${slotSummary ? ` ${slotSummary}` : ''}`;
     }
     return "火山引擎最小版本依赖服务端配置 VOLCENGINE_APP_KEY、VOLCENGINE_ACCESS_KEY，以及至少一个真实可用的 speaker_id 槽位。";
   }, [configStatus, hasVolcServerSupport, selectedPlatform]);

@@ -8,6 +8,9 @@ export interface VoiceConfigStatus {
   volcAppKey: boolean;
   volcAccessKey: boolean;
   volcSpeakerId: boolean;
+  volcSpeakerSlotTotal: number;
+  volcSpeakerSlotUsed: number;
+  volcSpeakerSlotAvailable: number;
   mockMode: boolean;
 }
 
@@ -115,6 +118,9 @@ export async function getVoiceConfigStatus(): Promise<VoiceConfigStatus> {
       volcAppKey: !!json?.serverManaged?.volcAppKey,
       volcAccessKey: !!json?.serverManaged?.volcAccessKey,
       volcSpeakerId: !!json?.serverManaged?.volcSpeakerId,
+      volcSpeakerSlotTotal: Number(json?.serverManaged?.volcSpeakerSlotTotal || 0),
+      volcSpeakerSlotUsed: Number(json?.serverManaged?.volcSpeakerSlotUsed || 0),
+      volcSpeakerSlotAvailable: Number(json?.serverManaged?.volcSpeakerSlotAvailable || 0),
       mockMode: !!json?.serverManaged?.voiceCloneMockMode,
     };
   } catch {
@@ -126,6 +132,9 @@ export async function getVoiceConfigStatus(): Promise<VoiceConfigStatus> {
       volcAppKey: false,
       volcAccessKey: false,
       volcSpeakerId: false,
+      volcSpeakerSlotTotal: 0,
+      volcSpeakerSlotUsed: 0,
+      volcSpeakerSlotAvailable: 0,
       mockMode: false,
     };
   }
