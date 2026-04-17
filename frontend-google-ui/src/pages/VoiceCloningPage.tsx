@@ -222,8 +222,6 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const isUsingSiliconFlowVoice = activeReadyVoice?.provider === 'siliconflow';
   const isUsingVolcVoice = activeReadyVoice?.provider === 'volcengine';
   const isVoiceReady = !!activeReadyVoice && (!isUsingSiliconFlowVoice || hasSiliconFlowVoiceUri);
-  const activeVoiceOverridesPlatform =
-    !!selectedVoice && getPlatformLabel(selectedVoice.provider) !== selectedPlatform;
   const activeVolcAliasCount = useMemo(() => {
     if (!activeReadyVoice || activeReadyVoice.provider !== 'volcengine') {
       return 0;
@@ -1096,17 +1094,8 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                 : isSiliconFlowSelected
                   ? "请上传参考音频"
                   : "当前还没有准备好的音色，请先完成声音克隆或从我的音色中启用一个音色。"}
-              {activeVoiceOverridesPlatform && (
-                <p className="mt-2 text-xs text-slate-400">
-                  当前已启用历史音色，后续生成会继续走 {activeReadyVoice?.providerLabel}；
-                  上方平台切换只影响下一次新建音色，不会覆盖这个已选音色。
-                </p>
-              )}
               {isUsingSiliconFlowVoice && hasSiliconFlowVoiceUri && (
                 <p className="mt-2 break-all text-xs text-slate-400">voice uri：{siliconFlowVoiceUri}</p>
-              )}
-              {isUsingVolcVoice && (
-                <p className="mt-2 break-all text-xs text-slate-400">speaker_id：{activeReadyVoice?.remoteVoiceId}</p>
               )}
               {isUsingVolcVoice && activeVolcAliasCount > 1 && (
                 <p className="mt-2 text-xs text-amber-600">
