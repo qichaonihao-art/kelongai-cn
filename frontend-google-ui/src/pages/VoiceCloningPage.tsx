@@ -14,6 +14,8 @@ import {
   ArrowLeft,
   Wand2,
   Pause,
+  Search,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import SiteFooter from "@/src/components/SiteFooter";
@@ -45,9 +47,47 @@ interface VoiceCloningPageProps {
 }
 
 type VoicePlatformLabel = '智谱' | '阿里云' | '火山引擎' | 'SiliconFlow 声音克隆';
+type VoiceProviderFilter = 'all' | VoicePlatform;
 
 const MAX_AUDIO_SIZE = 10 * 1024 * 1024;
 const ALIYUN_MAX_AUDIO_DURATION_SECONDS = 60;
+const VOICE_PROVIDER_ORDER: VoicePlatform[] = ['aliyun', 'siliconflow', 'volcengine', 'zhipu'];
+const VOICE_PROVIDER_META: Record<VoicePlatform, {
+  title: string;
+  shortTitle: string;
+  dotClassName: string;
+  countClassName: string;
+  activeClassName: string;
+}> = {
+  aliyun: {
+    title: '阿里云',
+    shortTitle: '阿里云',
+    dotClassName: 'bg-sky-500',
+    countClassName: 'bg-sky-50 text-sky-700 ring-sky-100',
+    activeClassName: 'border-sky-300 bg-sky-50/80 ring-sky-100',
+  },
+  siliconflow: {
+    title: 'SiliconFlow 声音克隆',
+    shortTitle: 'SiliconFlow',
+    dotClassName: 'bg-fuchsia-500',
+    countClassName: 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-100',
+    activeClassName: 'border-fuchsia-300 bg-fuchsia-50/80 ring-fuchsia-100',
+  },
+  volcengine: {
+    title: '火山引擎',
+    shortTitle: '火山',
+    dotClassName: 'bg-amber-500',
+    countClassName: 'bg-amber-50 text-amber-700 ring-amber-100',
+    activeClassName: 'border-amber-300 bg-amber-50/80 ring-amber-100',
+  },
+  zhipu: {
+    title: '智谱',
+    shortTitle: '智谱',
+    dotClassName: 'bg-emerald-500',
+    countClassName: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
+    activeClassName: 'border-emerald-300 bg-emerald-50/80 ring-emerald-100',
+  },
+};
 
 const EMPTY_CONFIG_STATUS: VoiceConfigStatus = {
   reachable: false,
@@ -199,6 +239,8 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [playbackProgress, setPlaybackProgress] = useState<Record<string, number>>({});
   const [deviceId] = useState(loadOrCreateDeviceId);
+  const [voiceSearchQuery, setVoiceSearchQuery] = useState("");
+  const [voiceProviderFilter, setVoiceProviderFilter] = useState<VoiceProviderFilter>('all');
 
   const selectedVoice = useMemo(
     () => voices.find((voice) => voice.id === activeVoiceId) || null,
@@ -212,6 +254,36 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       zhipu: voices.filter((voice) => voice.provider === 'zhipu'),
     }),
     [voices],
+  );
+  const filteredVoicesByProvider = useMemo(() => {
+    const normalizedQuery = voiceSearchQuery.trim().toLowerCase();
+    const grouped: Record<VoicePlatform, ClonedVoice[]> = {
+      aliyun: [],
+      siliconflow: [],
+      volcengine: [],
+      zhipu: [],
+    };
+
+    for (const voice of voices) {
+      const matchesProvider = voiceProviderFilter === 'all' || voice.provider === voiceProviderFilter;
+      const searchableText = [
+        voice.name,
+        voice.providerLabel,
+        voice.createdAt,
+        voice.remoteVoiceId,
+      ].join(' ').toLowerCase();
+      const matchesSearch = normalizedQuery.length === 0 || searchableText.includes(normalizedQuery);
+
+      if (matchesProvider && matchesSearch) {
+        grouped[voice.provider].push(voice);
+      }
+    }
+
+    return grouped;
+  }, [voiceProviderFilter, voiceSearchQuery, voices]);
+  const filteredVoiceCount = useMemo(
+    () => VOICE_PROVIDER_ORDER.reduce((total, provider) => total + filteredVoicesByProvider[provider].length, 0),
+    [filteredVoicesByProvider],
   );
   const isSiliconFlowSelected = selectedPlatform === 'SiliconFlow 声音克隆';
   const selectedPlatformProvider = getProviderFromPlatformLabel(selectedPlatform);
@@ -1221,141 +1293,169 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
               initial={{ x: '100%' }}
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
-              transition={{ type: 'tween', ease: 'easeInOut', duration: 0.5 }}
-              className="fixed inset-y-0 right-0 w-full max-w-md bg-white shadow-2xl z-50 flex flex-col"
+              transition={{ type: 'tween', ease: 'easeInOut', duration: 0.38 }}
+              className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[680px] flex-col border-l border-slate-200 bg-slate-50 shadow-2xl"
             >
-              <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <History className="size-5 text-indigo-600" />
-                  <h2 className="text-lg font-semibold">我的音色</h2>
+              <div className="border-b border-slate-200 bg-white px-5 py-5 sm:px-7">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
+                      <History className="size-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <h2 className="text-xl font-black tracking-tight text-slate-950">我的音色</h2>
+                      <p className="mt-1 text-sm leading-6 text-slate-500">
+                        统一管理已克隆音色，切换、查看来源和删除记录都在这里完成。
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-10 shrink-0 rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                    onClick={() => setIsMyVoicesOpen(false)}
+                    aria-label="关闭我的音色"
+                  >
+                    <X className="size-5" />
+                  </Button>
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => setIsMyVoicesOpen(false)}>
-                  <X className="size-5" />
-                </Button>
+
+                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">全部音色</div>
+                    <div className="mt-1 text-2xl font-black text-slate-950">{voices.length}</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">当前使用</div>
+                    <div className="mt-1 truncate text-sm font-bold text-slate-900">
+                      {selectedVoice ? selectedVoice.name : '未选择'}
+                    </div>
+                    <div className="mt-1 truncate text-xs text-slate-400">
+                      {selectedVoice ? selectedVoice.providerLabel : '从列表中启用'}
+                    </div>
+                  </div>
+                  <div className="col-span-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 sm:col-span-1">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">筛选结果</div>
+                    <div className="mt-1 text-2xl font-black text-slate-950">{filteredVoiceCount}</div>
+                  </div>
+                </div>
               </div>
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+
+              <div className="border-b border-slate-200 bg-white px-5 py-4 sm:px-7">
+                <div className="flex flex-col gap-3 lg:flex-row">
+                  <div className="relative flex-1">
+                    <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                    <Input
+                      value={voiceSearchQuery}
+                      onChange={(event) => setVoiceSearchQuery(event.target.value)}
+                      placeholder="搜索音色名称、平台或 speaker_id"
+                      className="h-11 rounded-2xl border-slate-200 bg-slate-50 pl-10 text-sm"
+                    />
+                  </div>
+                  <div className="grid grid-cols-5 gap-1 rounded-2xl border border-slate-200 bg-slate-50 p-1">
+                    {([
+                      { key: 'all', label: '全部' },
+                      ...VOICE_PROVIDER_ORDER.map((provider) => ({
+                        key: provider,
+                        label: VOICE_PROVIDER_META[provider].shortTitle,
+                      })),
+                    ] as Array<{ key: VoiceProviderFilter; label: string }>).map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className={cn(
+                          "h-9 rounded-xl px-2 text-xs font-bold text-slate-500 transition-colors",
+                          voiceProviderFilter === item.key
+                            ? "bg-white text-slate-950 shadow-sm ring-1 ring-slate-200"
+                            : "hover:bg-white/70 hover:text-slate-800",
+                        )}
+                        onClick={() => setVoiceProviderFilter(item.key)}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5 sm:px-7">
                 {voices.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-400">
-                    还没有创建好的音色。先上传一段样本音频并完成克隆吧。
+                  <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+                    <div className="mx-auto flex size-14 items-center justify-center rounded-3xl bg-slate-100 text-slate-400">
+                      <Mic2 className="size-7" />
+                    </div>
+                    <p className="mt-5 text-base font-bold text-slate-900">还没有创建好的音色</p>
+                    <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-500">
+                      先上传一段样本音频并完成克隆，之后它会自动出现在这里。
+                    </p>
+                  </div>
+                ) : filteredVoiceCount === 0 ? (
+                  <div className="rounded-3xl border border-slate-200 bg-white px-6 py-12 text-center">
+                    <p className="text-base font-bold text-slate-900">没有匹配的音色</p>
+                    <p className="mt-2 text-sm text-slate-500">换个关键词，或切回全部平台再看看。</p>
                   </div>
                 ) : (
-                  ([
-                    {
-                      key: 'aliyun',
-                      title: '阿里云',
-                      voices: voicesByProvider.aliyun,
-                      sectionClassName: 'overflow-hidden rounded-[1.4rem] border-2 border-sky-300 bg-[linear-gradient(165deg,rgba(240,249,255,0.96)_0%,rgba(224,242,254,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_12px_24px_rgba(14,165,233,0.12)]',
-                      heroClassName: 'border-b-2 border-sky-300 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(240,249,255,0.9))]',
-                      titleClassName: 'text-sky-950',
-                      listPanelClassName: 'border-t border-sky-200/90 bg-white/84',
-                      emptyClassName: 'border-sky-300 bg-sky-50/75 text-sky-700/80',
-                      activeCardClassName: 'border-sky-400 bg-sky-50/95 shadow-[0_8px_18px_rgba(14,165,233,0.10)]',
-                      activeBadgeClassName: 'bg-sky-100 text-sky-700',
-                      buttonClassName: 'hover:text-sky-700 hover:border-sky-300 hover:bg-sky-50',
-                    },
-                    {
-                      key: 'siliconflow',
-                      title: 'SiliconFlow 声音克隆',
-                      voices: voicesByProvider.siliconflow,
-                      sectionClassName: 'overflow-hidden rounded-[1.4rem] border-2 border-fuchsia-300 bg-[linear-gradient(165deg,rgba(253,244,255,0.96)_0%,rgba(250,232,255,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_12px_24px_rgba(192,38,211,0.12)]',
-                      heroClassName: 'border-b-2 border-fuchsia-300 bg-[radial-gradient(circle_at_top_left,rgba(217,70,239,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(253,244,255,0.9))]',
-                      titleClassName: 'text-fuchsia-950',
-                      listPanelClassName: 'border-t border-fuchsia-200/90 bg-white/84',
-                      emptyClassName: 'border-fuchsia-300 bg-fuchsia-50/75 text-fuchsia-700/80',
-                      activeCardClassName: 'border-fuchsia-400 bg-fuchsia-50/95 shadow-[0_8px_18px_rgba(192,38,211,0.10)]',
-                      activeBadgeClassName: 'bg-fuchsia-100 text-fuchsia-700',
-                      buttonClassName: 'hover:text-fuchsia-700 hover:border-fuchsia-300 hover:bg-fuchsia-50',
-                    },
-                    {
-                      key: 'volcengine',
-                      title: '火山引擎',
-                      voices: voicesByProvider.volcengine,
-                      sectionClassName: 'overflow-hidden rounded-[1.4rem] border-2 border-amber-300 bg-[linear-gradient(165deg,rgba(255,251,235,0.97)_0%,rgba(254,243,199,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_12px_24px_rgba(245,158,11,0.12)]',
-                      heroClassName: 'border-b-2 border-amber-300 bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(255,251,235,0.9))]',
-                      titleClassName: 'text-amber-950',
-                      listPanelClassName: 'border-t border-amber-200/90 bg-white/84',
-                      emptyClassName: 'border-amber-300 bg-amber-50/75 text-amber-700/80',
-                      activeCardClassName: 'border-amber-400 bg-amber-50/95 shadow-[0_8px_18px_rgba(245,158,11,0.10)]',
-                      activeBadgeClassName: 'bg-amber-100 text-amber-700',
-                      buttonClassName: 'hover:text-amber-700 hover:border-amber-300 hover:bg-amber-50',
-                    },
-                    {
-                      key: 'zhipu',
-                      title: '智谱',
-                      voices: voicesByProvider.zhipu,
-                      sectionClassName: 'overflow-hidden rounded-[1.4rem] border-2 border-emerald-300 bg-[linear-gradient(165deg,rgba(236,253,245,0.97)_0%,rgba(209,250,229,0.92)_55%,rgba(255,255,255,0.98)_100%)] shadow-[0_12px_24px_rgba(16,185,129,0.12)]',
-                      heroClassName: 'border-b-2 border-emerald-300 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_48%),linear-gradient(135deg,rgba(255,255,255,0.96),rgba(236,253,245,0.9))]',
-                      titleClassName: 'text-emerald-950',
-                      listPanelClassName: 'border-t border-emerald-200/90 bg-white/84',
-                      emptyClassName: 'border-emerald-300 bg-emerald-50/75 text-emerald-700/80',
-                      activeCardClassName: 'border-emerald-400 bg-emerald-50/95 shadow-[0_8px_18px_rgba(16,185,129,0.10)]',
-                      activeBadgeClassName: 'bg-emerald-100 text-emerald-700',
-                      buttonClassName: 'hover:text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50',
-                    },
-                  ] as const).map((section) => (
+                  VOICE_PROVIDER_ORDER
+                    .filter((provider) => filteredVoicesByProvider[provider].length > 0)
+                    .map((provider) => {
+                    const meta = VOICE_PROVIDER_META[provider];
+                    const sectionVoices = filteredVoicesByProvider[provider];
+
+                    return (
                     <section
-                      key={section.key}
-                      className={cn(
-                        "space-y-0",
-                        section.sectionClassName,
-                      )}
+                      key={provider}
+                      className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
                     >
-                      <div
-                        className={cn(
-                          "px-3.5 py-3",
-                          section.heroClassName,
-                        )}
-                      >
-                        <h3 className={cn("text-[15px] font-black tracking-tight", section.titleClassName)}>
-                          {section.title}
-                        </h3>
+                      <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3.5 sm:px-5">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className={cn("size-2.5 shrink-0 rounded-full", meta.dotClassName)} />
+                          <h3 className="truncate text-sm font-black text-slate-950">{meta.title}</h3>
+                        </div>
+                        <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-bold ring-1", meta.countClassName)}>
+                          {sectionVoices.length} 个
+                        </span>
                       </div>
 
-                      <div className={cn("p-2.5", section.listPanelClassName)}>
-                        {section.voices.length === 0 ? (
-                          <div className={cn("rounded-[1rem] border-2 border-dashed px-4 py-5 text-center text-xs", section.emptyClassName)}>
-                            暂无 {section.title} 音色
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                          {section.voices.map((voice) => (
-                            <div
+                      <div className="divide-y divide-slate-100">
+                        {sectionVoices.map((voice) => {
+                          const isActive = activeVoiceId === voice.id;
+
+                          return (
+                            <article
                               key={voice.id}
                               className={cn(
-                                "flex items-center justify-between gap-3 rounded-[1rem] border-2 px-3 py-2.5 transition-all group bg-white/96 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]",
-                                activeVoiceId === voice.id
-                                  ? section.activeCardClassName
-                                  : "border-slate-300/90 hover:border-slate-400 hover:bg-white"
+                                "grid gap-4 px-4 py-4 transition-colors sm:grid-cols-[1fr_auto] sm:items-center sm:px-5",
+                                isActive ? cn("border-l-4 ring-1", meta.activeClassName) : "hover:bg-slate-50/80",
                               )}
                             >
-                              <div className="min-w-0 flex-1 flex items-center gap-3">
-                                {activeVoiceId === voice.id && (
-                                  <span className={cn("shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold", section.activeBadgeClassName)}>
-                                    当前使用
-                                  </span>
-                                )}
-                                <div className="min-w-0 flex-1">
-                                  <div className="truncate text-sm font-semibold text-slate-900">{voice.name}</div>
-                                  <div className="mt-0.5 flex items-center gap-2 text-[10px] text-slate-400">
-                                    <span className="truncate">{voice.createdAt}</span>
-                                    <span className="h-1 w-1 rounded-full bg-slate-300" />
-                                    <span className="truncate">{voice.providerLabel}</span>
-                                  </div>
-                                  {voice.provider === 'volcengine' && (
-                                    <div className="mt-1 truncate text-[10px] text-slate-500">
-                                      speaker_id: {voice.remoteVoiceId}
-                                    </div>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h4 className="min-w-0 max-w-full truncate text-base font-black text-slate-950">
+                                    {voice.name}
+                                  </h4>
+                                  {isActive && (
+                                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-bold text-white">
+                                      <CheckCircle2 className="size-3.5" />
+                                      当前使用
+                                    </span>
                                   )}
                                 </div>
+                                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                                  <span>{voice.createdAt}</span>
+                                  <span className="h-1 w-1 rounded-full bg-slate-300" />
+                                  <span>{voice.providerLabel}</span>
+                                </div>
+                                {voice.provider === 'volcengine' && (
+                                  <div className="mt-2 rounded-xl bg-slate-50 px-3 py-2 font-mono text-[11px] leading-5 text-slate-500">
+                                    speaker_id: {voice.remoteVoiceId}
+                                  </div>
+                                )}
                               </div>
-                              <div className="shrink-0 flex items-center gap-1.5">
+                              <div className="flex shrink-0 items-center gap-2">
                                 <Button
-                                  variant="ghost"
+                                  variant={isActive ? "secondary" : "outline"}
                                   size="sm"
-                                  className={cn(
-                                    "h-8 rounded-lg px-3 text-[11px] font-bold text-slate-700 bg-white border-2 border-slate-300 transition-all",
-                                    section.buttonClassName,
-                                  )}
+                                  className="h-9 rounded-xl border-slate-200 px-4 text-xs font-bold"
                                   onClick={() => {
                                     setActiveVoiceId(voice.id);
                                     setCloneStatus('idle');
@@ -1364,24 +1464,25 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                                     setIsMyVoicesOpen(false);
                                   }}
                                 >
-                                  使用此音色
+                                  {isActive ? '使用中' : '启用'}
                                 </Button>
                                 <Button
                                   variant="ghost"
-                                  size="sm"
-                                  className="h-8 rounded-lg px-2 text-[11px] text-red-500"
+                                  size="icon"
+                                  className="size-9 rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-600"
                                   onClick={() => void handleDeleteVoice(voice.id)}
+                                  aria-label={`删除 ${voice.name}`}
                                 >
-                                  删除
+                                  <Trash2 className="size-4" />
                                 </Button>
                               </div>
-                            </div>
-                          ))}
-                          </div>
-                        )}
+                            </article>
+                          );
+                        })}
                       </div>
                     </section>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </motion.div>
