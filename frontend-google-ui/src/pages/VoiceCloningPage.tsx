@@ -46,9 +46,24 @@ interface VoiceCloningPageProps {
 }
 
 type VoicePlatformLabel = '智谱' | '阿里云' | '火山引擎' | 'SiliconFlow 声音克隆';
+interface TextInputHistoryItem {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+interface TextHistoryPreview {
+  item: TextInputHistoryItem;
+  top: number;
+  left: number;
+  width: number;
+  maxBodyHeight: number;
+  height: number;
+}
 
 const MAX_AUDIO_SIZE = 10 * 1024 * 1024;
 const ALIYUN_MAX_AUDIO_DURATION_SECONDS = 60;
+const TEXT_HISTORY_STORAGE_KEY = 'voice-cloning-text-history';
+const MAX_TEXT_HISTORY_ITEMS = 100;
 const VOICE_PROVIDER_ORDER: VoicePlatform[] = ['aliyun', 'volcengine', 'zhipu', 'siliconflow'];
 const VOICE_PROVIDER_META: Record<VoicePlatform, {
   title: string;
@@ -204,6 +219,45 @@ function getPlatformAudioGuide(platform: VoicePlatformLabel) {
   return '火山引擎官方更建议使用较短、清晰的参考音频；实践上以 10 到 30 秒更稳，超长音频容易被截断或导致效果下降。';
 }
 
+function loadTextInputHistory(): TextInputHistoryItem[] {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(TEXT_HISTORY_STORAGE_KEY);
+    const parsed = rawValue ? JSON.parse(rawValue) : [];
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter(
+        (item): item is TextInputHistoryItem =>
+          typeof item?.id === 'string' &&
+          typeof item?.text === 'string' &&
+          typeof item?.createdAt === 'string' &&
+          item.text.trim().length > 0,
+      )
+      .slice(0, MAX_TEXT_HISTORY_ITEMS);
+  } catch {
+    return [];
+  }
+}
+
+function saveTextInputHistory(items: TextInputHistoryItem[]) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(TEXT_HISTORY_STORAGE_KEY, JSON.stringify(items.slice(0, MAX_TEXT_HISTORY_ITEMS)));
+  } catch {
+    // Ignore storage failures; text generation should keep working.
+  }
+}
+
 export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textToSpeechSectionRef = useRef<HTMLElement>(null);
@@ -220,6 +274,10 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [generateStatus, setGenerateStatus] = useState<'idle' | 'generating'>('idle');
   const [generatedAudios, setGeneratedAudios] = useState<GeneratedAudio[]>([]);
   const [inputText, setInputText] = useState("");
+  const [textHistory, setTextHistory] = useState<TextInputHistoryItem[]>(loadTextInputHistory);
+  const [textHistoryPreview, setTextHistoryPreview] = useState<TextHistoryPreview | null>(null);
+  const [isTextHistoryOpen, setIsTextHistoryOpen] = useState(false);
+  const [isTextCountLit, setIsTextCountLit] = useState(false);
   const [voiceName, setVoiceName] = useState("");
   const [siliconFlowVoiceUri, setSiliconFlowVoiceUri] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -295,6 +353,19 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   useEffect(() => {
     saveActiveVoiceId(activeVoiceId);
   }, [activeVoiceId]);
+
+  useEffect(() => {
+    saveTextInputHistory(textHistory);
+  }, [textHistory]);
+
+  useEffect(() => {
+    setIsTextCountLit(true);
+    const timeoutId = window.setTimeout(() => {
+      setIsTextCountLit(false);
+    }, 360);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [inputText.length]);
 
   useEffect(() => {
     if (voices.length === 0 || activeVoiceId === null) {
@@ -605,6 +676,79 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     }
   }
 
+  function rememberInputText(value = inputText) {
+    const trimmedText = value.trim();
+    if (!trimmedText) {
+      return;
+    }
+
+    setTextHistory((previous) => {
+      if (previous.some((item) => item.text.trim() === trimmedText)) {
+        return previous;
+      }
+
+      return [
+        {
+          id: `text_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+          text: trimmedText,
+          createdAt: new Date().toLocaleString('zh-CN', {
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+        },
+        ...previous,
+      ].slice(0, MAX_TEXT_HISTORY_ITEMS);
+    });
+  }
+
+  function useHistoryText(item: TextInputHistoryItem) {
+    setInputText(item.text);
+    setTextHistoryPreview(null);
+    setIsTextHistoryOpen(false);
+    window.setTimeout(() => {
+      inputTextRef.current?.focus({ preventScroll: true });
+    }, 0);
+  }
+
+  function deleteHistoryText(itemId: string) {
+    setTextHistory((previous) => previous.filter((item) => item.id !== itemId));
+    setTextHistoryPreview((preview) => (preview?.item.id === itemId ? null : preview));
+  }
+
+  function showTextHistoryPreview(item: TextInputHistoryItem, element: HTMLElement) {
+    const rect = element.getBoundingClientRect();
+    const preferredPreviewWidth = 360;
+    const minPreviewWidth = 260;
+    const viewportPadding = 16;
+    const rightSideLeft = rect.right + 12;
+    const availableRightWidth = Math.max(minPreviewWidth, window.innerWidth - rightSideLeft - viewportPadding);
+    const previewWidth = Math.min(preferredPreviewWidth, availableRightWidth);
+    const left = rightSideLeft;
+    const charsPerLine = Math.max(14, Math.floor((previewWidth - 40) / 15));
+    const estimatedLineCount = Math.ceil(item.text.length / charsPerLine);
+    const estimatedBodyHeight = Math.min(
+      Math.max(112, estimatedLineCount * 28),
+      Math.max(240, window.innerHeight - viewportPadding * 2 - 86),
+    );
+    const previewHeight = estimatedBodyHeight + 86;
+    const targetCenterY = rect.top + rect.height / 2;
+    const top = Math.min(
+      Math.max(viewportPadding, targetCenterY - previewHeight / 2),
+      Math.max(viewportPadding, window.innerHeight - previewHeight - viewportPadding),
+    );
+
+    setTextHistoryPreview({
+      item,
+      left,
+      top,
+      width: previewWidth,
+      maxBodyHeight: estimatedBodyHeight,
+      height: previewHeight,
+    });
+  }
+
   async function handleGenerateAudio() {
     const voiceForGeneration = activeReadyVoice;
 
@@ -625,6 +769,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
 
     setGenerateStatus('generating');
     setGenerateError("");
+    rememberInputText(inputText);
 
     try {
       const audio = await generateSpeech({
@@ -1136,22 +1281,114 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
             ref={textToSpeechSectionRef}
             className="glass-card p-10 rounded-[2.5rem] border-white/80 shadow-glass space-y-6"
           >
-            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em]">3. 文本转语音</h2>
-            <div className="space-y-4">
-              <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">输入文本</Label>
-              <textarea
-                ref={inputTextRef}
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-4">
+                <h2 className="shrink-0 text-xs font-bold text-slate-400 uppercase tracking-[0.2em]">3. 文本转语音</h2>
+                <Label className="truncate text-xs font-bold text-slate-500 uppercase tracking-wider">
+                  输入文本（
+                  <span
+                    className={cn(
+                      "inline-block min-w-4 text-center transition-all duration-300",
+                      isTextCountLit
+                        ? "scale-110 text-emerald-500 drop-shadow-[0_0_8px_rgba(34,197,94,0.75)]"
+                        : "text-slate-500",
+                    )}
+                  >
+                    {inputText.length}
+                  </span>
+                  字）
+                </Label>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
                 className={cn(
-                  "w-full h-40 rounded-[2rem] border p-6 text-base outline-none transition-all resize-none",
-                  isVoiceReady
-                    ? "border-slate-300 bg-white/50 focus:ring-4 focus:ring-indigo-500/10"
-                    : "border-slate-200 bg-slate-100/80 text-slate-400 cursor-not-allowed"
+                  "h-8 rounded-xl border-slate-200 bg-white/60 px-3 text-xs font-bold text-slate-500 hover:bg-emerald-50 hover:text-emerald-700",
+                  isTextHistoryOpen && "border-emerald-200 bg-emerald-50 text-emerald-700",
                 )}
-                placeholder={isVoiceReady ? "请输入您想转换成语音的文本内容..." : "请先完成音色准备，再输入文案内容"}
-                value={inputText}
-                onChange={(event) => setInputText(event.target.value)}
-                disabled={!isVoiceReady}
-              />
+                onClick={() => {
+                  setIsTextHistoryOpen((previous) => {
+                    if (previous) {
+                      setTextHistoryPreview(null);
+                    }
+                    return !previous;
+                  });
+                }}
+              >
+                <History className="mr-1.5 size-3.5" />
+                {isTextHistoryOpen ? '收起记录' : `文案记录 ${textHistory.length}`}
+              </Button>
+            </div>
+            <div
+              className={cn(
+                "grid items-start gap-5",
+                isTextHistoryOpen && "lg:grid-cols-[minmax(0,1fr)_300px]",
+              )}
+            >
+              <div className="space-y-3">
+                <textarea
+                  ref={inputTextRef}
+                  className={cn(
+                    "w-full h-52 rounded-[2rem] border p-5 text-[15px] leading-7 outline-none transition-all resize-none",
+                    isVoiceReady
+                      ? "border-slate-300 bg-white/50 focus:ring-4 focus:ring-indigo-500/10"
+                      : "border-slate-200 bg-slate-100/80 text-slate-400 cursor-not-allowed"
+                  )}
+                  placeholder={isVoiceReady ? "请输入您想转换成语音的文本内容..." : "请先完成音色准备，再输入文案内容"}
+                  value={inputText}
+                  onBlur={() => rememberInputText()}
+                  onChange={(event) => setInputText(event.target.value)}
+                  disabled={!isVoiceReady}
+                  style={{
+                    fontFamily: '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif',
+                  }}
+                />
+              </div>
+
+              {isTextHistoryOpen && (
+                <aside>
+                  <div className="h-52 space-y-2 overflow-y-auto rounded-[2rem] border border-slate-200 bg-white/55 p-3">
+                    {textHistory.length === 0 ? (
+                      <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-xs leading-5 text-slate-400">
+                        生成或离开输入框后，会自动保存文案记录。
+                      </div>
+                    ) : (
+                      textHistory.map((item, index) => (
+                        <div
+                          key={item.id}
+                          className="group flex items-start gap-2 rounded-2xl border border-slate-200 bg-white/80 p-2 transition-colors hover:border-emerald-300 hover:bg-emerald-50"
+                          onMouseEnter={(event) => showTextHistoryPreview(item, event.currentTarget)}
+                          onMouseLeave={() => setTextHistoryPreview(null)}
+                        >
+                          <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-black text-slate-400 group-hover:bg-emerald-100 group-hover:text-emerald-700">
+                            {index + 1}
+                          </span>
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 text-left"
+                            onClick={() => useHistoryText(item)}
+                          >
+                            <p className="max-h-8 overflow-hidden text-xs leading-4 text-slate-700 group-hover:text-slate-900">
+                              {item.text}
+                            </p>
+                            <p className="mt-1 text-[10px] font-bold text-slate-400 group-hover:text-emerald-700">
+                              {item.createdAt}
+                            </p>
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 shrink-0 rounded-lg px-2 text-[11px] text-slate-400 hover:bg-red-50 hover:text-red-600"
+                            onClick={() => deleteHistoryText(item.id)}
+                          >
+                            删除
+                          </Button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </aside>
+              )}
             </div>
             <div
               className={cn(
@@ -1279,6 +1516,39 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       </main>
 
       <SiteFooter className="px-8 pb-8 pt-2" />
+
+      <AnimatePresence>
+        {textHistoryPreview && (
+          <motion.div
+            key={textHistoryPreview.item.id}
+            initial={{ opacity: 0, scale: 0.96, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 8 }}
+            transition={{ duration: 0.16, ease: 'easeOut' }}
+            className="pointer-events-none fixed z-[70] rounded-[1.5rem] border border-white/70 bg-white/55 p-5 text-slate-900 shadow-[0_24px_70px_rgba(15,23,42,0.24),inset_0_1px_0_rgba(255,255,255,0.82)] ring-1 ring-emerald-100/60 backdrop-blur-3xl"
+            style={{
+              left: textHistoryPreview.left,
+              top: textHistoryPreview.top,
+              width: textHistoryPreview.width,
+              maxHeight: textHistoryPreview.height,
+            }}
+          >
+            <div className="mb-3 flex items-center justify-between gap-3 border-b border-white/60 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="size-2.5 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(34,197,94,0.95)]" />
+                <span className="text-xs font-black uppercase tracking-wider text-emerald-700">文案预览</span>
+              </div>
+              <span className="shrink-0 text-[10px] font-bold text-slate-400">{textHistoryPreview.item.createdAt}</span>
+            </div>
+            <div
+              className="overflow-y-auto pr-1 text-sm font-medium leading-7 text-slate-800"
+              style={{ maxHeight: textHistoryPreview.maxBodyHeight }}
+            >
+              {textHistoryPreview.item.text}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {isMyVoicesOpen && (
