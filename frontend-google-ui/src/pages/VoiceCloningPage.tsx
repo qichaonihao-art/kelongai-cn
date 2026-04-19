@@ -14,7 +14,6 @@ import {
   ArrowLeft,
   Wand2,
   Pause,
-  Search,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
@@ -47,11 +46,10 @@ interface VoiceCloningPageProps {
 }
 
 type VoicePlatformLabel = '智谱' | '阿里云' | '火山引擎' | 'SiliconFlow 声音克隆';
-type VoiceProviderFilter = 'all' | VoicePlatform;
 
 const MAX_AUDIO_SIZE = 10 * 1024 * 1024;
 const ALIYUN_MAX_AUDIO_DURATION_SECONDS = 60;
-const VOICE_PROVIDER_ORDER: VoicePlatform[] = ['aliyun', 'siliconflow', 'volcengine', 'zhipu'];
+const VOICE_PROVIDER_ORDER: VoicePlatform[] = ['aliyun', 'volcengine', 'zhipu', 'siliconflow'];
 const VOICE_PROVIDER_META: Record<VoicePlatform, {
   title: string;
   shortTitle: string;
@@ -239,8 +237,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [playbackProgress, setPlaybackProgress] = useState<Record<string, number>>({});
   const [deviceId] = useState(loadOrCreateDeviceId);
-  const [voiceSearchQuery, setVoiceSearchQuery] = useState("");
-  const [voiceProviderFilter, setVoiceProviderFilter] = useState<VoiceProviderFilter>('all');
+  const [voiceProviderFilter, setVoiceProviderFilter] = useState<VoicePlatform>('aliyun');
 
   const selectedVoice = useMemo(
     () => voices.find((voice) => voice.id === activeVoiceId) || null,
@@ -255,36 +252,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     }),
     [voices],
   );
-  const filteredVoicesByProvider = useMemo(() => {
-    const normalizedQuery = voiceSearchQuery.trim().toLowerCase();
-    const grouped: Record<VoicePlatform, ClonedVoice[]> = {
-      aliyun: [],
-      siliconflow: [],
-      volcengine: [],
-      zhipu: [],
-    };
-
-    for (const voice of voices) {
-      const matchesProvider = voiceProviderFilter === 'all' || voice.provider === voiceProviderFilter;
-      const searchableText = [
-        voice.name,
-        voice.providerLabel,
-        voice.createdAt,
-        voice.remoteVoiceId,
-      ].join(' ').toLowerCase();
-      const matchesSearch = normalizedQuery.length === 0 || searchableText.includes(normalizedQuery);
-
-      if (matchesProvider && matchesSearch) {
-        grouped[voice.provider].push(voice);
-      }
-    }
-
-    return grouped;
-  }, [voiceProviderFilter, voiceSearchQuery, voices]);
-  const filteredVoiceCount = useMemo(
-    () => VOICE_PROVIDER_ORDER.reduce((total, provider) => total + filteredVoicesByProvider[provider].length, 0),
-    [filteredVoicesByProvider],
-  );
+  const filteredVoices = voicesByProvider[voiceProviderFilter];
   const isSiliconFlowSelected = selectedPlatform === 'SiliconFlow 声音克隆';
   const selectedPlatformProvider = getProviderFromPlatformLabel(selectedPlatform);
   const selectedSiliconFlowVoice = selectedVoice?.provider === 'siliconflow' ? selectedVoice : null;
@@ -1294,19 +1262,16 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'tween', ease: 'easeInOut', duration: 0.38 }}
-              className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[680px] flex-col border-l border-slate-200 bg-slate-50 shadow-2xl"
+              className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[520px] flex-col border-l border-slate-200 bg-slate-50 shadow-2xl"
             >
-              <div className="border-b border-slate-200 bg-white px-5 py-5 sm:px-7">
+              <div className="border-b border-slate-200 bg-white px-5 py-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex min-w-0 items-start gap-3">
-                    <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
+                    <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
                       <History className="size-5" />
                     </div>
                     <div className="min-w-0">
                       <h2 className="text-xl font-black tracking-tight text-slate-950">我的音色</h2>
-                      <p className="mt-1 text-sm leading-6 text-slate-500">
-                        统一管理已克隆音色，切换、查看来源和删除记录都在这里完成。
-                      </p>
                     </div>
                   </div>
                   <Button
@@ -1320,7 +1285,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                   </Button>
                 </div>
 
-                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className="mt-5 grid grid-cols-2 gap-3">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                     <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">全部音色</div>
                     <div className="mt-1 text-2xl font-black text-slate-950">{voices.length}</div>
@@ -1334,47 +1299,48 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                       {selectedVoice ? selectedVoice.providerLabel : '从列表中启用'}
                     </div>
                   </div>
-                  <div className="col-span-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 sm:col-span-1">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">筛选结果</div>
-                    <div className="mt-1 text-2xl font-black text-slate-950">{filteredVoiceCount}</div>
-                  </div>
                 </div>
               </div>
 
-              <div className="border-b border-slate-200 bg-white px-5 py-4 sm:px-7">
-                <div className="flex flex-col gap-3 lg:flex-row">
-                  <div className="relative flex-1">
-                    <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-                    <Input
-                      value={voiceSearchQuery}
-                      onChange={(event) => setVoiceSearchQuery(event.target.value)}
-                      placeholder="搜索音色名称、平台或 speaker_id"
-                      className="h-11 rounded-2xl border-slate-200 bg-slate-50 pl-10 text-sm"
-                    />
-                  </div>
-                  <div className="grid grid-cols-5 gap-1 rounded-2xl border border-slate-200 bg-slate-50 p-1">
-                    {([
-                      { key: 'all', label: '全部' },
-                      ...VOICE_PROVIDER_ORDER.map((provider) => ({
-                        key: provider,
-                        label: VOICE_PROVIDER_META[provider].shortTitle,
-                      })),
-                    ] as Array<{ key: VoiceProviderFilter; label: string }>).map((item) => (
+              <div className="border-b border-slate-200 bg-white px-5 py-4">
+                <div className="grid grid-cols-4 gap-1 rounded-2xl border border-slate-200 bg-slate-50 p-1">
+                    {VOICE_PROVIDER_ORDER.map((provider) => {
+                      const meta = VOICE_PROVIDER_META[provider];
+                      const isSelected = voiceProviderFilter === provider;
+
+                      return (
                       <button
-                        key={item.key}
+                        key={provider}
                         type="button"
                         className={cn(
-                          "h-9 rounded-xl px-2 text-xs font-bold text-slate-500 transition-colors",
-                          voiceProviderFilter === item.key
-                            ? "bg-white text-slate-950 shadow-sm ring-1 ring-slate-200"
+                          "relative flex h-10 items-center justify-center gap-2 overflow-hidden rounded-xl px-2 text-xs font-bold text-slate-500 transition-all",
+                          isSelected
+                            ? "bg-emerald-50 text-emerald-950 shadow-[0_0_18px_rgba(16,185,129,0.35),inset_0_1px_0_rgba(255,255,255,0.9)] ring-2 ring-emerald-400"
                             : "hover:bg-white/70 hover:text-slate-800",
                         )}
-                        onClick={() => setVoiceProviderFilter(item.key)}
+                        onClick={() => setVoiceProviderFilter(provider)}
                       >
-                        {item.label}
+                        {isSelected && (
+                          <span className="pointer-events-none absolute inset-0 rounded-xl bg-[radial-gradient(circle_at_50%_0%,rgba(34,197,94,0.32),transparent_70%)]" />
+                        )}
+                        <span
+                          className={cn(
+                            "relative z-10 size-2 rounded-full",
+                            isSelected
+                              ? "bg-emerald-500 shadow-[0_0_10px_rgba(34,197,94,0.95)]"
+                              : meta.dotClassName,
+                          )}
+                        />
+                        <span className="relative z-10 truncate">{meta.shortTitle}</span>
+                        <span className={cn(
+                          "relative z-10 rounded-full px-1.5 py-0.5 text-[10px] ring-1",
+                          isSelected ? "bg-emerald-100 text-emerald-700 ring-emerald-200" : "bg-white text-slate-400 ring-slate-200",
+                        )}>
+                          {voicesByProvider[provider].length}
+                        </span>
                       </button>
-                    ))}
-                  </div>
+                      );
+                    })}
                 </div>
               </div>
 
@@ -1389,17 +1355,18 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                       先上传一段样本音频并完成克隆，之后它会自动出现在这里。
                     </p>
                   </div>
-                ) : filteredVoiceCount === 0 ? (
+                ) : filteredVoices.length === 0 ? (
                   <div className="rounded-3xl border border-slate-200 bg-white px-6 py-12 text-center">
-                    <p className="text-base font-bold text-slate-900">没有匹配的音色</p>
-                    <p className="mt-2 text-sm text-slate-500">换个关键词，或切回全部平台再看看。</p>
+                    <p className="text-base font-bold text-slate-900">
+                      暂无 {VOICE_PROVIDER_META[voiceProviderFilter].title} 音色
+                    </p>
+                    <p className="mt-2 text-sm text-slate-500">切换到其他模型，或先创建一个该模型的音色。</p>
                   </div>
                 ) : (
-                  VOICE_PROVIDER_ORDER
-                    .filter((provider) => filteredVoicesByProvider[provider].length > 0)
-                    .map((provider) => {
+                  (() => {
+                    const provider = voiceProviderFilter;
                     const meta = VOICE_PROVIDER_META[provider];
-                    const sectionVoices = filteredVoicesByProvider[provider];
+                    const sectionVoices = filteredVoices;
 
                     return (
                     <section
@@ -1482,7 +1449,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                       </div>
                     </section>
                     );
-                  })
+                  })()
                 )}
               </div>
             </motion.div>
