@@ -1134,14 +1134,28 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                 disabled={!isVoiceReady}
               />
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white/50 px-4 py-3 text-sm text-slate-500">
-              {isVoiceReady
-                ? `当前使用音色：${activeReadyVoice?.name || ''} (${activeReadyVoice?.providerLabel || ''})`
-                : isSiliconFlowSelected
+            <div
+              className={cn(
+                "rounded-2xl border px-4 py-3 text-sm transition-all",
+                isVoiceReady
+                  ? "border-emerald-300 bg-emerald-50/90 text-emerald-950 shadow-[0_0_22px_rgba(16,185,129,0.22),inset_0_1px_0_rgba(255,255,255,0.9)] ring-1 ring-emerald-200"
+                  : "border-slate-200 bg-white/50 text-slate-500",
+              )}
+            >
+              {isVoiceReady ? (
+                <div className="flex items-center gap-3">
+                  <span className="size-2.5 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(34,197,94,0.95)]" />
+                  <span className="min-w-0 font-bold">
+                    当前使用音色：{activeReadyVoice?.name || ''} ({activeReadyVoice?.providerLabel || ''})
+                  </span>
+                </div>
+              ) : (
+                isSiliconFlowSelected
                   ? "请上传参考音频"
-                  : "当前还没有准备好的音色，请先完成声音克隆或从我的音色中启用一个音色。"}
+                  : "当前还没有准备好的音色，请先完成声音克隆或从我的音色中启用一个音色。"
+              )}
               {isUsingSiliconFlowVoice && hasSiliconFlowVoiceUri && (
-                <p className="mt-2 break-all text-xs text-slate-400">voice uri：{siliconFlowVoiceUri}</p>
+                <p className="mt-2 break-all text-xs text-emerald-700/75">voice uri：{siliconFlowVoiceUri}</p>
               )}
               {isUsingVolcVoice && activeVolcAliasCount > 1 && (
                 <p className="mt-2 text-xs text-amber-600">
