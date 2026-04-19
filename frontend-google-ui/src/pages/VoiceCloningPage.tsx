@@ -206,6 +206,8 @@ function getPlatformAudioGuide(platform: VoicePlatformLabel) {
 
 export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textToSpeechSectionRef = useRef<HTMLElement>(null);
+  const inputTextRef = useRef<HTMLTextAreaElement>(null);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const activeAudioIdRef = useRef<string | null>(null);
   const progressAnimationFrameRef = useRef<number | null>(null);
@@ -877,6 +879,19 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     }
   }
 
+  function scrollToTextInputAfterVoiceSelect() {
+    window.setTimeout(() => {
+      textToSpeechSectionRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+
+      window.setTimeout(() => {
+        inputTextRef.current?.focus({ preventScroll: true });
+      }, 320);
+    }, 420);
+  }
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <input
@@ -1117,11 +1132,15 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
             )}
           </section>
 
-          <section className="glass-card p-10 rounded-[2.5rem] border-white/80 shadow-glass space-y-6">
+          <section
+            ref={textToSpeechSectionRef}
+            className="glass-card p-10 rounded-[2.5rem] border-white/80 shadow-glass space-y-6"
+          >
             <h2 className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em]">3. 文本转语音</h2>
             <div className="space-y-4">
               <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">输入文本</Label>
               <textarea
+                ref={inputTextRef}
                 className={cn(
                   "w-full h-40 rounded-[2rem] border p-6 text-base outline-none transition-all resize-none",
                   isVoiceReady
@@ -1443,6 +1462,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                                     setCloneError("");
                                     setGenerateError("");
                                     setIsMyVoicesOpen(false);
+                                    scrollToTextInputAfterVoiceSelect();
                                   }}
                                 >
                                   {isActive ? '使用中' : '启用'}
