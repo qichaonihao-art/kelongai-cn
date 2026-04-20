@@ -84,7 +84,7 @@ const MAX_SEEDANCE_HISTORY_ITEMS = 20;
 const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
-const VIDEO_REVERSE_PROMPT = '请分析这个视频，并反推出可以用于文生视频模型的高质量提示词。请按以下结构输出：一、画面主体；二、场景环境；三、镜头语言；四、动作节奏；五、光影色彩；六、情绪氛围；七、完整视频生成提示词。';
+const VIDEO_REVERSE_PROMPT = '请分析这个视频，并反推出可以用于文生视频模型的高质量提示词。请按以下结构输出：一、画面主体；二、场景环境；三、镜头语言；四、动作节奏；五、光影色彩；六、情绪氛围；七、完整复刻该视频生成提示词。';
 const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上七个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。';
 const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const;
 const SEEDANCE_DURATIONS = [4, 5, 6, 8, 10, 12, 15] as const;
@@ -1684,6 +1684,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
               </div>
 
               <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3">
+                {/* 提示词输入框 */}
                 <textarea
                   value={seedancePrompt}
                   onChange={(event) => setSeedancePrompt(event.target.value)}
@@ -1691,236 +1692,241 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   className="min-h-[156px] w-full resize-none rounded-xl border border-slate-300 bg-white p-3 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300"
                 />
 
-                <div ref={seedanceSettingsRef} className="relative mt-3">
-                  <button
-                    type="button"
-                    onClick={() => setShowSeedanceSettings((value) => !value)}
-                    className="flex w-full flex-wrap items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-left text-xs font-bold text-slate-600 transition-colors hover:border-violet-200 hover:bg-violet-50/40"
-                  >
-                    <SlidersHorizontal className="size-4 text-violet-500" />
-                    <span>{getSeedanceRatioLabel(seedanceRatio)}</span>
-                    <span className="h-4 w-px bg-slate-200" />
-                    <span>{seedanceDuration} 秒</span>
-                    <span className="h-4 w-px bg-slate-200" />
-                    <span className="inline-flex items-center gap-1">
-                      <Volume2 className="size-3.5" />
-                      {seedanceGenerateAudio ? '生成声音' : '无声音'}
-                    </span>
-                    <span className="h-4 w-px bg-slate-200" />
-                    <span>{seedanceWatermark ? '有水印' : '无水印'}</span>
-                  </button>
-
-                  {showSeedanceSettings && (
-                    <div className="absolute left-0 right-0 z-20 mt-2 rounded-2xl border border-slate-300 bg-white p-3 shadow-[0_18px_45px_rgba(15,23,42,0.14)]">
-                      <div>
-                        <div className="mb-2 text-xs font-black text-slate-700">视频比例</div>
-                        <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
-                          {SEEDANCE_RATIOS.map((ratio) => (
-                            <button
-                              key={ratio}
-                              type="button"
-                              onClick={() => setSeedanceRatio(ratio)}
-                              className={cn(
-                                "rounded-xl border px-2 py-2 text-xs font-black transition-colors",
-                                seedanceRatio === ratio
-                                  ? "border-violet-300 bg-violet-50 text-violet-700"
-                                  : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
-                              )}
-                            >
-                              {getSeedanceRatioLabel(ratio)}
-                            </button>
-                          ))}
+                {/* 已上传的参考素材列表 */}
+                {seedanceReferences.length > 0 && (
+                  <div className="mt-3 grid gap-2">
+                    {seedanceReferences.map((reference) => (
+                      <div key={reference.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-2">
+                        <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-slate-400">
+                          {reference.kind === 'image' && reference.previewUrl ? (
+                            <img src={reference.previewUrl} alt={reference.fileName} className="size-full object-cover" />
+                          ) : reference.kind === 'video' && reference.previewUrl ? (
+                            <video src={reference.previewUrl} className="size-full object-cover" muted />
+                          ) : (
+                            <Music className="size-4" />
+                          )}
                         </div>
-                      </div>
-
-                      <div className="mt-4">
-                        <div className="mb-2 text-xs font-black text-slate-700">视频时长</div>
-                        <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
-                          {SEEDANCE_DURATIONS.map((duration) => (
-                            <button
-                              key={duration}
-                              type="button"
-                              onClick={() => setSeedanceDuration(duration)}
-                              className={cn(
-                                "rounded-xl border px-2 py-2 text-xs font-black transition-colors",
-                                seedanceDuration === duration
-                                  ? "border-violet-300 bg-violet-50 text-violet-700"
-                                  : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
-                              )}
-                            >
-                              {duration} 秒
-                            </button>
-                          ))}
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs font-bold text-slate-700">{reference.fileName}</div>
+                          <div className="text-[11px] text-slate-400">
+                            {reference.kind === 'image' ? '参考图片' : reference.kind === 'video' ? '参考视频' : '参考音频'}
+                          </div>
                         </div>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-2 gap-2">
                         <button
                           type="button"
-                          onClick={() => setSeedanceGenerateAudio((value) => !value)}
-                          className={cn(
-                            "rounded-xl border px-3 py-2 text-xs font-black transition-colors",
-                            seedanceGenerateAudio
-                              ? "border-violet-300 bg-violet-50 text-violet-700"
-                              : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
-                          )}
+                          onClick={() => removeSeedanceReference(reference.id)}
+                          className="rounded-full p-1.5 text-slate-400 transition-colors hover:bg-slate-50 hover:text-red-500"
+                          aria-label="移除参考素材"
                         >
-                          {seedanceGenerateAudio ? '生成声音' : '不生成声音'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSeedanceWatermark((value) => !value)}
-                          className={cn(
-                            "rounded-xl border px-3 py-2 text-xs font-black transition-colors",
-                            seedanceWatermark
-                              ? "border-violet-300 bg-violet-50 text-violet-700"
-                              : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
-                          )}
-                        >
-                          {seedanceWatermark ? '添加水印' : '无水印'}
+                          <X className="size-3.5" />
                         </button>
                       </div>
-                    </div>
-                  )}
-                </div>
+                    ))}
+                  </div>
+                )}
 
-                <div className="mt-3 rounded-xl border border-slate-300 bg-white p-3">
-                  {/* 参考素材列表 */}
-                  {seedanceReferences.length > 0 && (
-                    <div className="mb-3 grid gap-2">
-                      {seedanceReferences.map((reference) => (
-                        <div key={reference.id} className="flex items-center gap-3 rounded-xl border border-slate-300 bg-white p-2">
-                          <div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-slate-400">
-                            {reference.kind === 'image' && reference.previewUrl ? (
-                              <img src={reference.previewUrl} alt={reference.fileName} className="size-full object-cover" />
-                            ) : reference.kind === 'video' && reference.previewUrl ? (
-                              <video src={reference.previewUrl} className="size-full object-cover" muted />
-                            ) : (
-                              <Music className="size-5" />
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-xs font-bold text-slate-700">{reference.fileName}</div>
-                            <div className="text-[11px] text-slate-400">
-                              {reference.kind === 'image' ? '参考图片' : reference.kind === 'video' ? '参考视频' : '参考音频'}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => removeSeedanceReference(reference.id)}
-                            className="rounded-full p-2 text-slate-400 transition-colors hover:bg-white hover:text-red-500"
-                            aria-label="移除参考素材"
-                          >
-                            <X className="size-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* 生成任务状态 / 视频 */}
-                  {isSeedanceLoading ? (
-                    <div className="flex min-h-[74px] items-center justify-center gap-2 text-xs font-bold text-violet-600">
-                      <Loader2 className="size-4 animate-spin" />
-                      正在创建 Seedance 任务
-                    </div>
-                  ) : seedanceTask ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className={cn(
-                          "text-xs font-black",
-                          seedanceTask.videoUrl ? "text-emerald-600" : isSeedanceFailureStatus(seedanceTask.status) ? "text-red-500" : "text-violet-600"
-                        )}>
-                          {getSeedanceStatusLabel(seedanceTask.status, !!seedanceTask.videoUrl)}
-                        </div>
-                        {!seedanceTask.videoUrl && !isSeedanceFailureStatus(seedanceTask.status) && (
-                          <div className="flex items-center gap-1 text-[11px] font-bold text-slate-400">
-                            {isSeedancePolling && <Loader2 className="size-3 animate-spin" />}
-                            {isSeedancePolling ? '后台同步中' : `已等待 ${seedanceElapsedText}`}
-                          </div>
-                        )}
-                      </div>
-                      {seedanceTask.taskId && (
-                        <div className="break-all rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
-                          任务 ID：{seedanceTask.taskId}
-                        </div>
-                      )}
-                      {seedanceTask.videoUrl ? (
-                        <div className="overflow-hidden rounded-xl border border-slate-300 bg-slate-950">
-                          <video
-                            src={seedanceTask.videoUrl}
-                            className="aspect-video w-full bg-slate-950 object-contain"
-                            controls
-                            playsInline
-                          />
-                        </div>
-                      ) : (
-                        <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">
-                          <div className="mb-2 flex items-center justify-between gap-3">
-                            <span className="font-bold text-slate-700">{getSeedanceStatusLabel(seedanceTask.status, false)}</span>
-                            <span className="text-[11px] text-slate-400">{seedanceProgressPercent}%</span>
-                          </div>
-                          <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-                            <div
-                              className="h-full rounded-full bg-violet-500 transition-all duration-700"
-                              style={{ width: `${seedanceProgressPercent}%` }}
-                            />
-                          </div>
-                          <div className="mt-2">{seedanceEstimatedText}</div>
-                          <div className="mt-1 text-[11px] text-slate-400">
-                            页面会每 {Math.round(SEEDANCE_POLL_INTERVAL_MS / 1000)} 秒在后台同步一次状态；官方没有提供真实倒计时或排队位置。
-                          </div>
-                        </div>
-                      )}
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          onClick={handleRefreshSeedanceTask}
-                          disabled={!seedanceTask.taskId || isSeedancePolling}
-                          className="h-8 rounded-full bg-white px-3 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-                        >
-                          {isSeedancePolling ? <Loader2 className="size-3.5 animate-spin" /> : <History className="size-3.5" />}
-                          刷新状态
-                        </Button>
-                        {seedanceTask.videoUrl && (
-                          <a
-                            href={seedanceTask.videoUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex h-8 items-center rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
-                          >
-                            打开视频
-                          </a>
-                        )}
-                        {seedanceTask.videoUrl && (
-                          <a
-                            href={seedanceTask.videoUrl}
-                            download={`seedance-${seedanceTask.taskId || 'video'}.mp4`}
-                            className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
-                          >
-                            <Download className="size-3.5" />
-                            下载视频
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {/* 上传按钮 — 始终显示在底部 */}
+                {/* 底部工具栏：添加素材 + 设置 */}
+                <div className="mt-3 flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => seedanceFileInputRef.current?.click()}
                     disabled={isSeedanceLoading}
-                    className={cn(
-                      "flex w-full flex-col items-center justify-center gap-2 rounded-lg text-center text-slate-400 transition-colors hover:bg-slate-50 hover:text-violet-600 disabled:cursor-not-allowed disabled:opacity-60",
-                      seedanceTask ? "mt-3 min-h-[52px] border-t border-dashed border-slate-200 pt-3" : "min-h-[120px]"
-                    )}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-500 transition-colors hover:border-violet-200 hover:text-violet-600 hover:bg-violet-50/40 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <Plus className="size-5" />
-                    <span className="text-sm font-bold">添加图片 / 视频 / 音频</span>
-                    <span className="text-[11px] text-slate-400">图片最多 9 张，视频最多 3 个，音频最多 3 段</span>
+                    <Plus className="size-4" />
+                    添加素材
                   </button>
+
+                  <div ref={seedanceSettingsRef} className="relative flex-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowSeedanceSettings((value) => !value)}
+                      className="flex w-full flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs font-bold text-slate-500 transition-colors hover:border-violet-200 hover:bg-violet-50/40"
+                    >
+                      <SlidersHorizontal className="size-4 text-violet-500" />
+                      <span>{getSeedanceRatioLabel(seedanceRatio)}</span>
+                      <span className="h-4 w-px bg-slate-200" />
+                      <span>{seedanceDuration} 秒</span>
+                      <span className="h-4 w-px bg-slate-200" />
+                      <span className="inline-flex items-center gap-1">
+                        <Volume2 className="size-3.5" />
+                        {seedanceGenerateAudio ? '声音' : '静音'}
+                      </span>
+                      <span className="h-4 w-px bg-slate-200" />
+                      <span>{seedanceWatermark ? '水印' : '无水印'}</span>
+                    </button>
+
+                    {showSeedanceSettings && (
+                      <div className="absolute left-0 right-0 z-20 mt-2 rounded-2xl border border-slate-300 bg-white p-3 shadow-[0_18px_45px_rgba(15,23,42,0.14)]">
+                        <div>
+                          <div className="mb-2 text-xs font-black text-slate-700">视频比例</div>
+                          <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                            {SEEDANCE_RATIOS.map((ratio) => (
+                              <button
+                                key={ratio}
+                                type="button"
+                                onClick={() => setSeedanceRatio(ratio)}
+                                className={cn(
+                                  "rounded-xl border px-2 py-2 text-xs font-black transition-colors",
+                                  seedanceRatio === ratio
+                                    ? "border-violet-300 bg-violet-50 text-violet-700"
+                                    : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
+                                )}
+                              >
+                                {getSeedanceRatioLabel(ratio)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="mt-4">
+                          <div className="mb-2 text-xs font-black text-slate-700">视频时长</div>
+                          <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                            {SEEDANCE_DURATIONS.map((duration) => (
+                              <button
+                                key={duration}
+                                type="button"
+                                onClick={() => setSeedanceDuration(duration)}
+                                className={cn(
+                                  "rounded-xl border px-2 py-2 text-xs font-black transition-colors",
+                                  seedanceDuration === duration
+                                    ? "border-violet-300 bg-violet-50 text-violet-700"
+                                    : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
+                                )}
+                              >
+                                {duration} 秒
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSeedanceGenerateAudio((value) => !value)}
+                            className={cn(
+                              "rounded-xl border px-3 py-2 text-xs font-black transition-colors",
+                              seedanceGenerateAudio
+                                ? "border-violet-300 bg-violet-50 text-violet-700"
+                                : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
+                            )}
+                          >
+                            {seedanceGenerateAudio ? '生成声音' : '不生成声音'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSeedanceWatermark((value) => !value)}
+                            className={cn(
+                              "rounded-xl border px-3 py-2 text-xs font-black transition-colors",
+                              seedanceWatermark
+                                ? "border-violet-300 bg-violet-50 text-violet-700"
+                                : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
+                            )}
+                          >
+                            {seedanceWatermark ? '添加水印' : '无水印'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
+              </div>
+
+              {/* 生成任务预览区域 */}
+              <div className="mt-3 rounded-xl border border-slate-300 bg-white p-3">
+                {isSeedanceLoading ? (
+                  <div className="flex min-h-[74px] items-center justify-center gap-2 text-xs font-bold text-violet-600">
+                    <Loader2 className="size-4 animate-spin" />
+                    正在创建 Seedance 任务
+                  </div>
+                ) : seedanceTask ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className={cn(
+                        "text-xs font-black",
+                        seedanceTask.videoUrl ? "text-emerald-600" : isSeedanceFailureStatus(seedanceTask.status) ? "text-red-500" : "text-violet-600"
+                      )}>
+                        {getSeedanceStatusLabel(seedanceTask.status, !!seedanceTask.videoUrl)}
+                      </div>
+                      {!seedanceTask.videoUrl && !isSeedanceFailureStatus(seedanceTask.status) && (
+                        <div className="flex items-center gap-1 text-[11px] font-bold text-slate-400">
+                          {isSeedancePolling && <Loader2 className="size-3 animate-spin" />}
+                          {isSeedancePolling ? '后台同步中' : `已等待 ${seedanceElapsedText}`}
+                        </div>
+                      )}
+                    </div>
+                    {seedanceTask.taskId && (
+                      <div className="break-all rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                        任务 ID：{seedanceTask.taskId}
+                      </div>
+                    )}
+                    {seedanceTask.videoUrl ? (
+                      <div className="overflow-hidden rounded-xl border border-slate-300 bg-slate-950">
+                        <video
+                          src={seedanceTask.videoUrl}
+                          className="aspect-video w-full bg-slate-950 object-contain"
+                          controls
+                          playsInline
+                        />
+                      </div>
+                    ) : (
+                      <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <span className="font-bold text-slate-700">{getSeedanceStatusLabel(seedanceTask.status, false)}</span>
+                          <span className="text-[11px] text-slate-400">{seedanceProgressPercent}%</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                          <div
+                            className="h-full rounded-full bg-violet-500 transition-all duration-700"
+                            style={{ width: `${seedanceProgressPercent}%` }}
+                          />
+                        </div>
+                        <div className="mt-2">{seedanceEstimatedText}</div>
+                        <div className="mt-1 text-[11px] text-slate-400">
+                          页面会每 {Math.round(SEEDANCE_POLL_INTERVAL_MS / 1000)} 秒在后台同步一次状态；官方没有提供真实倒计时或排队位置。
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        onClick={handleRefreshSeedanceTask}
+                        disabled={!seedanceTask.taskId || isSeedancePolling}
+                        className="h-8 rounded-full bg-white px-3 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+                      >
+                        {isSeedancePolling ? <Loader2 className="size-3.5 animate-spin" /> : <History className="size-3.5" />}
+                        刷新状态
+                      </Button>
+                      {seedanceTask.videoUrl && (
+                        <a
+                          href={seedanceTask.videoUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex h-8 items-center rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
+                        >
+                          打开视频
+                        </a>
+                      )}
+                      {seedanceTask.videoUrl && (
+                        <a
+                          href={seedanceTask.videoUrl}
+                          download={`seedance-${seedanceTask.taskId || 'video'}.mp4`}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
+                        >
+                          <Download className="size-3.5" />
+                          下载视频
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid min-h-[74px] place-items-center text-center">
+                    <div>
+                      <div className="text-xs font-bold text-slate-500">生成预览</div>
+                      <div className="mt-1 text-[11px] text-slate-400">创建任务后会自动查询状态，成功后直接显示视频</div>
+                    </div>
+                  </div>
+                )}
 
                 {seedanceError && (
                   <div className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium leading-5 text-red-500">
