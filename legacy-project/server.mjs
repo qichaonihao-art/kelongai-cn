@@ -48,6 +48,7 @@ const SERVER_CONFIG = {
   zhipuApiKey: process.env.ZHIPU_API_KEY || '',
   aliyunApiKey: process.env.ALIYUN_API_KEY || '',
   arkApiKey: process.env.ARK_API_KEY || '',
+  seedanceApiKey: process.env.SEEDANCE_API_KEY || process.env.ARK_API_KEY || '',
   volcAppKey: process.env.VOLCENGINE_APP_KEY || '',
   volcAccessKey: process.env.VOLCENGINE_ACCESS_KEY || '',
   volcSpeakerId: process.env.VOLCENGINE_SPEAKER_ID || '',
@@ -761,6 +762,7 @@ async function handleConfigStatus(req, res) {
       aliyunApiKey: !!readValue(SERVER_CONFIG.aliyunApiKey),
       zhipuApiKey: !!readValue(SERVER_CONFIG.zhipuApiKey),
       siliconFlowApiKey: !!readValue(SERVER_CONFIG.siliconFlowApiKey),
+      seedanceApiKey: !!readValue(SERVER_CONFIG.seedanceApiKey),
       volcAppKey: !!readValue(SERVER_CONFIG.volcAppKey),
       volcAccessKey: !!readValue(SERVER_CONFIG.volcAccessKey),
       volcSpeakerId: configuredSpeakerIds.length > 0,
@@ -3554,6 +3556,47 @@ async function readMultipartFormBody(req) {
   };
 }
 
+async function readSeedanceTaskFormBody(req) {
+  const contentLength = Number(req.headers['content-length'] || 0);
+  if (contentLength && contentLength > MAX_MULTIMODAL_UPLOAD_BYTES) {
+    throw new Error('上传文件过大');
+  }
+
+  const request = new Request('http://localhost/upload', {
+    method: req.method || 'POST',
+    headers: req.headers,
+    body: req,
+    duplex: 'half'
+  });
+
+  const formData = await request.formData();
+
+  return {
+    prompt: readValue(formData.get('prompt')),
+    model: readValue(formData.get('model')),
+    ratio: readValue(formData.get('ratio')),
+    duration: Number.parseInt(String(formData.get('duration') || 5), 10),
+    generateAudio: readValue(formData.get('generateAudio')).toLowerCase() !== 'false',
+    watermark: readValue(formData.get('watermark')).toLowerCase() === 'true',
+    files: formData.getAll('files').filter((item) => item instanceof File && item.size > 0)
+  };
+}
+
+async function normalizeUploadedAudioInput(file) {
+  if (!(file instanceof File)) {
+    throw new Error('上传音频无效');
+  }
+
+  const mimeType = readValue(file.type) || 'audio/mpeg';
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const base64Data = bytes.toString('base64');
+
+  return {
+    mimeType,
+    audioUrl: `data:${mimeType};base64,${base64Data}`
+  };
+}
+
 async function readSiliconFlowVoiceUploadFormBody(req) {
   const contentLength = Number(req.headers['content-length'] || 0);
   if (contentLength && contentLength > 40 * 1024 * 1024) {
@@ -5931,6 +5974,325 @@ async function handleDoubaoMultimodal(req, res) {
   }
 }
 
+function extractSeedanceVideoUrl(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const visited = new Set();
+  const queue = [payload];
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || typeof current !== 'object' || visited.has(current)) continue;
+    visited.add(current);
+
+    if (Array.isArray(current)) {
+      queue.push(...current);
+      continue;
+    }
+
+    const record = current;
+    const directUrl = readValue(record.video_url, record.videoUrl);
+    if (/^https?:\/\//i.test(directUrl)) return directUrl;
+
+    if (record.video_url && typeof record.video_url === 'object') {
+      const url = readValue(record.video_url.url, record.video_url.uri);
+      if (/^https?:\/\//i.test(url)) return url;
+    }
+
+    if (record.output && typeof record.output === 'object') queue.push(record.output);
+    if (record.result && typeof record.result === 'object') queue.push(record.result);
+    if (record.data && typeof record.data === 'object') queue.push(record.data);
+    if (record.content && typeof record.content === 'object') queue.push(record.content);
+  }
+
+  return '';
+}
+
+function extractSeedanceStatus(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const record = payload;
+  return readValue(
+    record.status,
+    record.state,
+    record.task_status,
+    record.taskStatus,
+    record.data?.status,
+    record.data?.state,
+    record.response?.status
+  );
+}
+
+async function handleSeedanceGetTask(req, res, taskId) {
+  const requestId = randomBytes(6).toString('hex');
+  const startedAt = Date.now();
+
+  try {
+    const resolvedApiKey = readValue(SERVER_CONFIG.seedanceApiKey);
+    const normalizedTaskId = readValue(taskId);
+
+    if (!resolvedApiKey) {
+      sendJson(res, 500, { error: '服务端未配置 SEEDANCE_API_KEY' });
+      return;
+    }
+
+    if (!normalizedTaskId) {
+      sendJson(res, 400, { error: '缺少视频生成任务 ID' });
+      return;
+    }
+
+    const upstreamUrl = `https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${encodeURIComponent(normalizedTaskId)}`;
+    const upstreamRes = await fetch(upstreamUrl, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${resolvedApiKey}`
+      },
+      signal: AbortSignal.timeout(60 * 1000)
+    });
+    const responseText = await upstreamRes.text();
+    let json = null;
+    try {
+      json = responseText ? JSON.parse(responseText) : null;
+    } catch {}
+
+    if (!upstreamRes.ok) {
+      console.error('[seedance get task] upstream non-200 response', {
+        requestId,
+        taskId: normalizedTaskId,
+        status: upstreamRes.status,
+        upstreamBody: responseText,
+        elapsedMs: Date.now() - startedAt
+      });
+      sendJson(res, upstreamRes.status, {
+        error: json?.error?.message || json?.message || json?.code || `Seedance 查询任务失败，上游状态码 ${upstreamRes.status}`,
+        upstream: json || responseText
+      });
+      return;
+    }
+
+    const status = extractSeedanceStatus(json);
+    const videoUrl = extractSeedanceVideoUrl(json);
+
+    sendJson(res, 200, {
+      ok: true,
+      taskId: normalizedTaskId,
+      status,
+      videoUrl,
+      createdAt: Number(json?.created_at || json?.data?.created_at || 0) || undefined,
+      updatedAt: Number(json?.updated_at || json?.data?.updated_at || 0) || undefined,
+      executionExpiresAfter: Number(json?.execution_expires_after || json?.data?.execution_expires_after || 0) || undefined,
+      response: json
+    });
+  } catch (error) {
+    console.error('[seedance get task] request failed', {
+      requestId,
+      taskId,
+      message: error?.message || '',
+      stack: error?.stack || '',
+      elapsedMs: Date.now() - startedAt
+    });
+    sendJson(res, 500, {
+      error: error?.message || 'Seedance 查询任务失败'
+    });
+  }
+}
+
+async function handleSeedanceCreateTask(req, res) {
+  const upstreamUrl = 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
+  const requestId = randomBytes(6).toString('hex');
+  const startedAt = Date.now();
+
+  try {
+    const body = isMultipartFormRequest(req)
+      ? await readSeedanceTaskFormBody(req)
+      : await readRequestBody(req);
+    const resolvedApiKey = readValue(SERVER_CONFIG.seedanceApiKey);
+    const prompt = readValue(body?.prompt);
+    const model = readValue(body?.model) || 'doubao-seedance-2-0-260128';
+    const ratio = readValue(body?.ratio) || '16:9';
+    const duration = Number.parseInt(String(body?.duration || 5), 10);
+    const generateAudio = body?.generateAudio !== false;
+    const watermark = body?.watermark === true;
+    const uploadedFiles = Array.isArray(body?.files) ? body.files : [];
+
+    console.log('[seedance create task] request start', {
+      requestId,
+      model,
+      ratio,
+      duration,
+      generateAudio,
+      watermark,
+      promptLength: prompt.length,
+      fileCount: uploadedFiles.length
+    });
+
+    if (!resolvedApiKey) {
+      sendJson(res, 500, { error: '服务端未配置 SEEDANCE_API_KEY' });
+      return;
+    }
+
+    if (!prompt) {
+      sendJson(res, 400, { error: '缺少视频生成提示词 prompt' });
+      return;
+    }
+
+    if (!['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive'].includes(ratio)) {
+      sendJson(res, 400, { error: 'ratio 取值不合法' });
+      return;
+    }
+
+    if (!Number.isInteger(duration) || duration < 4 || duration > 15) {
+      sendJson(res, 400, { error: 'Seedance 2.0 的 duration 需为 4 到 15 秒之间的整数' });
+      return;
+    }
+
+    if (uploadedFiles.length > 13) {
+      sendJson(res, 400, { error: '参考素材最多支持 9 张图片、3 个视频、3 段音频，请减少上传数量。' });
+      return;
+    }
+
+    let imageCount = 0;
+    let videoCount = 0;
+    let audioCount = 0;
+    const content = [
+      {
+        type: 'text',
+        text: prompt
+      }
+    ];
+
+    for (const file of uploadedFiles) {
+      const mimeType = readValue(file.type);
+
+      if (mimeType.startsWith('image/')) {
+        imageCount += 1;
+        if (imageCount > 9) {
+          sendJson(res, 400, { error: 'Seedance 2.0 最多支持 9 张参考图片。' });
+          return;
+        }
+        const normalized = await normalizeUploadedMediaInput(file, 'image');
+        content.push({
+          type: 'image_url',
+          image_url: {
+            url: normalized.imageUrl
+          },
+          role: 'reference_image'
+        });
+        continue;
+      }
+
+      if (mimeType.startsWith('video/')) {
+        videoCount += 1;
+        if (videoCount > 3) {
+          sendJson(res, 400, { error: 'Seedance 2.0 最多支持 3 个参考视频。' });
+          return;
+        }
+        if (file.size > 50 * 1024 * 1024) {
+          sendJson(res, 400, { error: 'Seedance 参考视频单个文件不能超过 50MB。' });
+          return;
+        }
+        const normalized = await normalizeUploadedMediaInput(file, 'video');
+        content.push({
+          type: 'video_url',
+          video_url: {
+            url: normalized.videoUrl
+          },
+          role: 'reference_video'
+        });
+        continue;
+      }
+
+      if (mimeType.startsWith('audio/')) {
+        audioCount += 1;
+        if (audioCount > 3) {
+          sendJson(res, 400, { error: 'Seedance 2.0 最多支持 3 段参考音频。' });
+          return;
+        }
+        if (file.size > 15 * 1024 * 1024) {
+          sendJson(res, 400, { error: 'Seedance 参考音频单个文件不能超过 15MB。' });
+          return;
+        }
+        const normalized = await normalizeUploadedAudioInput(file);
+        content.push({
+          type: 'audio_url',
+          audio_url: {
+            url: normalized.audioUrl
+          },
+          role: 'reference_audio'
+        });
+        continue;
+      }
+
+      sendJson(res, 400, { error: `不支持的参考素材格式：${file.name || mimeType || '未知文件'}` });
+      return;
+    }
+
+    if (audioCount > 0 && imageCount === 0 && videoCount === 0) {
+      sendJson(res, 400, { error: 'Seedance 不支持单独输入音频，请至少再上传 1 张图片或 1 个视频。' });
+      return;
+    }
+
+    const requestPayload = {
+      model,
+      content,
+      generate_audio: generateAudio,
+      ratio,
+      duration,
+      watermark
+    };
+
+    const upstreamRes = await fetch(upstreamUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resolvedApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestPayload),
+      signal: AbortSignal.timeout(60 * 1000)
+    });
+    const responseText = await upstreamRes.text();
+    let json = null;
+    try {
+      json = responseText ? JSON.parse(responseText) : null;
+    } catch {}
+
+    if (!upstreamRes.ok) {
+      console.error('[seedance create task] upstream non-200 response', {
+        requestId,
+        status: upstreamRes.status,
+        upstreamBody: responseText,
+        elapsedMs: Date.now() - startedAt
+      });
+      sendJson(res, upstreamRes.status, {
+        error: json?.error?.message || json?.message || json?.code || `Seedance 创建任务失败，上游状态码 ${upstreamRes.status}`,
+        upstream: json || responseText
+      });
+      return;
+    }
+
+    const taskId = readValue(json?.id, json?.data?.id, json?.task_id, json?.taskId);
+    console.log('[seedance create task] request complete', {
+      requestId,
+      taskId,
+      elapsedMs: Date.now() - startedAt
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      taskId,
+      response: json
+    });
+  } catch (error) {
+    console.error('[seedance create task] request failed', {
+      requestId,
+      message: error?.message || '',
+      stack: error?.stack || '',
+      elapsedMs: Date.now() - startedAt
+    });
+    sendJson(res, error?.message === '请求体不是合法 JSON' ? 400 : 500, {
+      error: error?.message || 'Seedance 创建任务失败'
+    });
+  }
+}
+
 async function handleDouyinResolveDownload(req, res) {
   const requestId = createRequestId('douyin');
   const startedAt = Date.now();
@@ -6568,6 +6930,17 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/doubao/multimodal') {
     await handleDoubaoMultimodal(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/seedance/tasks') {
+    await handleSeedanceCreateTask(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/api/seedance/tasks/')) {
+    const taskId = decodeURIComponent(url.pathname.replace(/^\/api\/seedance\/tasks\//, ''));
+    await handleSeedanceGetTask(req, res, taskId);
     return;
   }
 

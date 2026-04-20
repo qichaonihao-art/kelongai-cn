@@ -45,6 +45,57 @@
     background-size: 200% auto;
     animation: shimmer 6s linear infinite;
   }
+  .creative-answer {
+    color: #334155;
+    font-size: 16px;
+    line-height: 1.92;
+    letter-spacing: 0;
+    word-break: break-word;
+  }
+  .creative-answer > * + * {
+    margin-top: 14px;
+  }
+  .creative-answer h3 {
+    margin: 18px 0 8px;
+    color: #0f172a;
+    font-size: 16px;
+    font-weight: 800;
+    line-height: 1.6;
+  }
+  .creative-answer h3:first-child {
+    margin-top: 0;
+  }
+  .creative-answer p {
+    margin: 0;
+    white-space: pre-line;
+  }
+  .creative-answer ol,
+  .creative-answer ul {
+    margin: 8px 0 0;
+    padding-left: 1.35rem;
+  }
+  .creative-answer li {
+    padding-left: 0.25rem;
+  }
+  .creative-answer li + li {
+    margin-top: 8px;
+  }
+  .creative-answer-section > * + * {
+    margin-top: 8px;
+  }
+  .creative-answer-split-list {
+    display: grid;
+    gap: 14px;
+  }
+  .creative-answer-numbered-sections {
+    display: grid;
+    gap: 20px;
+  }
+  .creative-answer-numbered-sections h3 {
+    margin: 0;
+    line-height: 1.85;
+    font-weight: 600;
+  }
 }
 
 @keyframes shimmer {

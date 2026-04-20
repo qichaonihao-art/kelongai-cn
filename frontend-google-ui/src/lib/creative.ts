@@ -10,9 +10,29 @@ export interface SelectedCreativeMedia {
   fileName: string;
 }
 
+export interface SeedanceReferenceFile {
+  id: string;
+  kind: 'image' | 'video' | 'audio';
+  file: File;
+  previewUrl?: string;
+  fileName: string;
+}
+
 interface CreativeConfigStatus {
   reachable: boolean;
   arkApiKey: boolean;
+  seedanceApiKey: boolean;
+}
+
+export interface SeedanceTaskResult {
+  ok: boolean;
+  taskId: string;
+  status?: string;
+  videoUrl?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  executionExpiresAfter?: number;
+  response: unknown;
 }
 
 function extractResponseText(payload: unknown) {
@@ -296,11 +316,13 @@ export async function getCreativeConfigStatus(): Promise<CreativeConfigStatus> {
     return {
       reachable: true,
       arkApiKey: !!json?.serverManaged?.arkApiKey,
+      seedanceApiKey: !!json?.serverManaged?.seedanceApiKey,
     };
   } catch {
     return {
       reachable: false,
       arkApiKey: false,
+      seedanceApiKey: false,
     };
   }
 }
@@ -378,4 +400,100 @@ export async function sendCreativeMessage(options: {
     throw new Error('模型已返回结果，但 answer 为空');
   }
   return answer;
+}
+
+export async function createSeedanceTask(options: {
+  prompt: string;
+  ratio: string;
+  duration: number;
+  generateAudio: boolean;
+  watermark: boolean;
+  references?: SeedanceReferenceFile[];
+}): Promise<SeedanceTaskResult> {
+  let headers: Record<string, string> | undefined = {
+    'Content-Type': 'application/json',
+  };
+  let body: BodyInit;
+
+  if (options.references?.length) {
+    const formData = new FormData();
+    formData.append('prompt', options.prompt);
+    formData.append('model', 'doubao-seedance-2-0-260128');
+    formData.append('ratio', options.ratio);
+    formData.append('duration', String(options.duration));
+    formData.append('generateAudio', String(options.generateAudio));
+    formData.append('watermark', String(options.watermark));
+    for (const reference of options.references) {
+      formData.append('files', reference.file, reference.fileName);
+    }
+    headers = undefined;
+    body = formData;
+  } else {
+    body = JSON.stringify({
+      prompt: options.prompt,
+      model: 'doubao-seedance-2-0-260128',
+      ratio: options.ratio,
+      duration: options.duration,
+      generateAudio: options.generateAudio,
+      watermark: options.watermark,
+    });
+  }
+
+  const response = await fetch('/api/seedance/tasks', {
+    method: 'POST',
+    credentials: 'include',
+    ...(headers ? { headers } : {}),
+    body,
+  });
+
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    let message = `Seedance 创建任务失败（HTTP ${response.status}）`;
+    if (json?.error) {
+      message = String(json.error);
+    } else if (json?.upstream) {
+      message = typeof json.upstream === 'string' ? json.upstream : JSON.stringify(json.upstream);
+    }
+    throw new Error(message);
+  }
+
+  return {
+    ok: true,
+    taskId: String(json?.taskId || json?.id || ''),
+    status: typeof json?.status === 'string' ? json.status : undefined,
+    videoUrl: typeof json?.videoUrl === 'string' ? json.videoUrl : undefined,
+    createdAt: typeof json?.createdAt === 'number' ? json.createdAt : undefined,
+    updatedAt: typeof json?.updatedAt === 'number' ? json.updatedAt : undefined,
+    executionExpiresAfter: typeof json?.executionExpiresAfter === 'number' ? json.executionExpiresAfter : undefined,
+    response: json?.response || json,
+  };
+}
+
+export async function querySeedanceTask(taskId: string): Promise<SeedanceTaskResult> {
+  const response = await fetch(`/api/seedance/tasks/${encodeURIComponent(taskId)}`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    let message = `Seedance 查询任务失败（HTTP ${response.status}）`;
+    if (json?.error) {
+      message = String(json.error);
+    } else if (json?.upstream) {
+      message = typeof json.upstream === 'string' ? json.upstream : JSON.stringify(json.upstream);
+    }
+    throw new Error(message);
+  }
+
+  return {
+    ok: true,
+    taskId: String(json?.taskId || taskId),
+    status: typeof json?.status === 'string' ? json.status : undefined,
+    videoUrl: typeof json?.videoUrl === 'string' ? json.videoUrl : undefined,
+    createdAt: typeof json?.createdAt === 'number' ? json.createdAt : undefined,
+    updatedAt: typeof json?.updatedAt === 'number' ? json.updatedAt : undefined,
+    executionExpiresAfter: typeof json?.executionExpiresAfter === 'number' ? json.executionExpiresAfter : undefined,
+    response: json?.response || json,
+  };
 }
