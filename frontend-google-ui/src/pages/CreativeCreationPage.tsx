@@ -612,6 +612,8 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   const [showSeedanceImport, setShowSeedanceImport] = useState(false);
   const [showSeedanceSettings, setShowSeedanceSettings] = useState(false);
   const [seedanceClock, setSeedanceClock] = useState(Date.now());
+  const [seedanceVideoModal, setSeedanceVideoModal] = useState(false);
+  const [seedanceModalItem, setSeedanceModalItem] = useState<SeedanceHistoryItem | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -691,6 +693,21 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [showSeedanceSettings]);
+
+  useEffect(() => {
+    if (!seedanceVideoModal) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setSeedanceVideoModal(false);
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [seedanceVideoModal]);
 
   useEffect(() => {
     const taskId = seedanceTask?.taskId;
@@ -1082,6 +1099,11 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   }
 
   function handleViewSeedanceHistoryItem(item: SeedanceHistoryItem) {
+    if (item.videoUrl) {
+      setSeedanceModalItem(item);
+      setSeedanceVideoModal(true);
+      return;
+    }
     setSeedanceTask({
       ok: true,
       taskId: item.taskId,
@@ -2042,6 +2064,58 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
           <SiteFooter className="mt-3 pb-1" />
         </div>
       </div>
+
+      <AnimatePresence>
+        {seedanceVideoModal && seedanceModalItem?.videoUrl && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm"
+            onClick={() => setSeedanceVideoModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 20 }}
+              transition={{ duration: 0.25, ease: 'easeOut' }}
+              className="relative mx-4 w-full max-w-5xl rounded-3xl border border-white/10 bg-slate-950 p-2 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="absolute -top-12 left-0 right-0 flex items-center justify-between px-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-bold text-white">
+                    {seedanceModalItem.prompt.replace(/\s+/g, ' ').slice(0, 60) || 'Seedance 视频'}
+                  </div>
+                  <div className="mt-0.5 flex gap-3 text-xs text-slate-400">
+                    <span>{seedanceModalItem.ratio}</span>
+                    <span>{seedanceModalItem.duration} 秒</span>
+                    <span>{getSeedanceStatusLabel(seedanceModalItem.status, true)}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSeedanceVideoModal(false)}
+                  className="ml-4 rounded-full p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                  aria-label="关闭弹窗"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+              <div className="overflow-hidden rounded-2xl bg-black">
+                <video
+                  src={seedanceModalItem.videoUrl}
+                  className="max-h-[78vh] w-full object-contain"
+                  controls
+                  playsInline
+                  autoPlay
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
