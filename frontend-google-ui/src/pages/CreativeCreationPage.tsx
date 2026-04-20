@@ -1468,7 +1468,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
         className="flex-1 overflow-y-auto p-3 md:p-4 space-y-4 scroll-smooth"
       >
         <div className="max-w-6xl mx-auto w-full space-y-6">
-          <section className="grid gap-4 lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
+          <section className="grid gap-6 lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
             <div className="rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
@@ -1581,7 +1581,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                           >
                             <div className="mb-1.5 flex items-center gap-2 px-1">
                               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                                {msg.role === 'user' ? '指令' : 'AI 助手'}
+                                {msg.role === 'user' ? '学生' : 'AI 助手'}
                               </span>
                               <span className="text-[10px] text-slate-300">•</span>
                               <span className="text-[10px] font-bold text-slate-400">
