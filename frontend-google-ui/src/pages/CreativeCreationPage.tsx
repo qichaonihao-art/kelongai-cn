@@ -438,7 +438,21 @@ function renderAssistantMessageContent(content: string) {
     return null;
   }
 
-  const blocks = normalized.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+  let rawBlocks = normalized.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+
+  // 合并相邻的中文序号段落，否则 split 后每个 block 只有一个序号，
+  // getInlineNumberedParts 无法跨 block 匹配，导致中文序号内容变成一整段。
+  const chineseNumberPattern = /^[一二三四五六七八九十]+[、.]\s*/;
+  const mergedBlocks: string[] = [];
+  for (const block of rawBlocks) {
+    const lastBlock = mergedBlocks[mergedBlocks.length - 1];
+    if (lastBlock && chineseNumberPattern.test(block)) {
+      mergedBlocks[mergedBlocks.length - 1] = lastBlock + '\n' + block;
+    } else {
+      mergedBlocks.push(block);
+    }
+  }
+  const blocks = mergedBlocks;
 
   return (
     <div className="creative-answer">
@@ -472,11 +486,21 @@ function renderAssistantMessageContent(content: string) {
               {inlineNumberedParts.intro ? <p>{renderInlineContent(inlineNumberedParts.intro)}</p> : null}
               {hasChineseMarkers ? (
                 <div className="creative-answer-numbered-sections">
-                  {inlineNumberedParts.items.map((item, itemIndex) => (
-                    <section key={`${item.marker}-${itemIndex}`}>
-                      <h3>{stripMarkdownMarks(item.marker)} {renderListItemContent(item.text)}</h3>
-                    </section>
-                  ))}
+                  {inlineNumberedParts.items.map((item, itemIndex) => {
+                    const titleMatch = item.text.match(/^([^：:，,。；;]{2,18}[：:])\s*(.*)$/);
+                    const titleText = titleMatch ? stripMarkdownMarks(titleMatch[1]) : '';
+                    const bodyText = titleMatch ? titleMatch[2] : item.text;
+                    return (
+                      <section key={`${item.marker}-${itemIndex}`} className="creative-answer-item">
+                        <div className="creative-answer-item-title">
+                          {stripMarkdownMarks(item.marker)} {titleText}
+                        </div>
+                        <div className="creative-answer-item-body">
+                          {renderInlineContent(bodyText)}
+                        </div>
+                      </section>
+                    );
+                  })}
                 </div>
               ) : (
                 <ol className="creative-answer-split-list">
@@ -507,6 +531,44 @@ function renderAssistantMessageContent(content: string) {
               ))}
             </ul>
           );
+        }
+
+        const fallbackChinesePattern = /([一二三四五六七八九十]{1,3}[、.]\s*)/g;
+        const fallbackMatches = Array.from(block.matchAll(fallbackChinesePattern));
+        if (fallbackMatches.length >= 2) {
+          const intro = block.slice(0, fallbackMatches[0].index || 0).trim();
+          const parts = fallbackMatches.map((match, index) => {
+            const start = match.index || 0;
+            const end = fallbackMatches[index + 1]?.index ?? block.length;
+            const partText = block.slice(start, end).trim();
+            const markerMatch = partText.match(/^([一二三四五六七八九十]{1,3}[、.]\s*)/);
+            const marker = markerMatch ? markerMatch[1].trim() : '';
+            const content = partText.slice(marker.length).trim();
+            const titleMatch = content.match(/^([^：:，,。；;]{2,18}[：:])\s*(.*)$/);
+            const titleText = titleMatch ? stripMarkdownMarks(titleMatch[1]) : '';
+            const bodyText = titleMatch ? titleMatch[2] : content;
+            return { marker, titleText, bodyText };
+          }).filter((p) => p.marker && p.bodyText);
+
+          if (parts.length >= 2) {
+            return (
+              <div key={blockIndex} className="creative-answer-section">
+                {intro ? <p>{renderInlineContent(intro)}</p> : null}
+                <div className="creative-answer-numbered-sections">
+                  {parts.map((part, partIndex) => (
+                    <section key={partIndex} className="creative-answer-item">
+                      <div className="creative-answer-item-title">
+                        {part.marker} {part.titleText}
+                      </div>
+                      <div className="creative-answer-item-body">
+                        {renderInlineContent(part.bodyText)}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </div>
+            );
+          }
         }
 
         return (
@@ -551,10 +613,19 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   const [showSeedanceSettings, setShowSeedanceSettings] = useState(false);
   const [seedanceClock, setSeedanceClock] = useState(Date.now());
   const scrollRef = useRef<HTMLDivElement>(null);
+  const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const seedanceFileInputRef = useRef<HTMLInputElement>(null);
   const seedanceSettingsRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  function scrollAnalysisToBottom() {
+    requestAnimationFrame(() => {
+      if (analysisScrollRef.current) {
+        analysisScrollRef.current.scrollTop = analysisScrollRef.current.scrollHeight;
+      }
+    });
+  }
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -1234,6 +1305,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     setSelectedMedia(null);
     setIsLoading(true);
     setRequestError("");
+    scrollAnalysisToBottom();
 
     try {
       const answer = await sendCreativeMessage({
@@ -1246,6 +1318,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
             content: text,
             pending: true,
           }));
+          scrollAnalysisToBottom();
         },
       });
 
@@ -1286,7 +1359,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   );
 
   return (
-    <div className="h-screen bg-slate-50 flex flex-col">
+    <div className="h-screen bg-slate-200 flex flex-col">
       <input
         ref={fileInputRef}
         type="file"
@@ -1303,7 +1376,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
         onChange={(event) => handleSeedanceReferenceChange(event.target.files)}
       />
 
-      <header className="h-14 border-b border-slate-200 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 shrink-0 sticky top-0 z-30">
+      <header className="h-14 border-b border-slate-300 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 shrink-0 sticky top-0 z-30">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={onBack} className="rounded-full h-8 w-8">
             <ArrowLeft className="size-4" />
@@ -1374,7 +1447,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
       >
         <div className="max-w-6xl mx-auto w-full space-y-6">
           <section className="grid gap-4 lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
-            <div className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.05)] md:p-5">
+            <div className="rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
                   <div className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">
@@ -1388,7 +1461,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 </span>
               </div>
 
-              <div className="min-h-[190px] rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-3">
+              <div className="min-h-[190px] rounded-2xl border border-slate-300 bg-slate-100 p-3">
                 {selectedMedia?.kind === 'video' ? (
                   <div className="space-y-3">
                     <video
@@ -1452,8 +1525,8 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 </Button>
               </div>
 
-              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/70">
-                <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+              <div className="mt-5 rounded-2xl border border-slate-300 bg-slate-100">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-300 px-4 py-3">
                   <div>
                     <div className="text-xs font-black text-slate-900">豆包分析记录</div>
                     <div className="mt-0.5 text-[11px] text-slate-400">反推结果会显示在这里，并可同步到右侧</div>
@@ -1466,7 +1539,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   )}
                 </div>
 
-                <div className="max-h-[440px] overflow-y-auto p-3">
+                <div ref={analysisScrollRef} className="max-h-[440px] overflow-y-auto p-3">
                   {messages.filter((msg) => msg.id !== 'creative_welcome').length === 0 ? (
                     <div className="grid min-h-[130px] place-items-center rounded-xl bg-white text-center">
                       <div>
@@ -1497,7 +1570,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                               "border transition-all duration-300",
                               msg.role === 'user'
                                 ? "max-w-[86%] rounded-2xl rounded-tr-sm border-slate-800 bg-slate-900 px-4 py-3 text-sm leading-7 text-white shadow-sm whitespace-pre-wrap"
-                                : "w-full rounded-2xl border-slate-200 bg-white px-4 py-4 text-slate-700 shadow-sm"
+                                : "w-full rounded-2xl border border-slate-300 bg-white px-4 py-4 text-slate-700 shadow-sm"
                             )}>
                               {msg.type === 'video' && msg.mediaUrl ? (
                                 <div className="space-y-2">
@@ -1523,7 +1596,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 </div>
               </div>
 
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm focus-within:border-indigo-300">
+              <div className="mt-4 rounded-2xl border border-slate-300 bg-white p-3 shadow-sm focus-within:border-indigo-300">
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -1560,7 +1633,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
               )}
             </div>
 
-            <div className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.05)] md:p-5">
+            <div className="rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
                   <div className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-violet-500">
@@ -1577,15 +1650,15 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 </span>
               </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+              <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3">
                 <textarea
                   value={seedancePrompt}
                   onChange={(event) => setSeedancePrompt(event.target.value)}
                   placeholder="等待模块一反推出视频提示词..."
-                  className="min-h-[156px] w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300"
+                  className="min-h-[156px] w-full resize-none rounded-xl border border-slate-300 bg-white p-3 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300"
                 />
 
-                <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-white p-3">
+                <div className="mt-3 rounded-xl border border-slate-300 bg-white p-3">
                   <button
                     type="button"
                     onClick={() => seedanceFileInputRef.current?.click()}
@@ -1600,7 +1673,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   {seedanceReferences.length > 0 && (
                     <div className="mt-3 grid gap-2">
                       {seedanceReferences.map((reference) => (
-                        <div key={reference.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                        <div key={reference.id} className="flex items-center gap-3 rounded-xl border border-slate-300 bg-white p-2">
                           <div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-slate-400">
                             {reference.kind === 'image' && reference.previewUrl ? (
                               <img src={reference.previewUrl} alt={reference.fileName} className="size-full object-cover" />
@@ -1634,7 +1707,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   <button
                     type="button"
                     onClick={() => setShowSeedanceSettings((value) => !value)}
-                    className="flex w-full flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs font-bold text-slate-600 transition-colors hover:border-violet-200 hover:bg-violet-50/40"
+                    className="flex w-full flex-wrap items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-left text-xs font-bold text-slate-600 transition-colors hover:border-violet-200 hover:bg-violet-50/40"
                   >
                     <SlidersHorizontal className="size-4 text-violet-500" />
                     <span>{getSeedanceRatioLabel(seedanceRatio)}</span>
@@ -1650,7 +1723,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   </button>
 
                   {showSeedanceSettings && (
-                    <div className="absolute left-0 right-0 z-20 mt-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_18px_45px_rgba(15,23,42,0.14)]">
+                    <div className="absolute left-0 right-0 z-20 mt-2 rounded-2xl border border-slate-300 bg-white p-3 shadow-[0_18px_45px_rgba(15,23,42,0.14)]">
                       <div>
                         <div className="mb-2 text-xs font-black text-slate-700">视频比例</div>
                         <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
@@ -1723,7 +1796,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   )}
                 </div>
 
-                <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-white p-3">
+                <div className="mt-3 rounded-xl border border-slate-300 bg-white p-3">
                   {isSeedanceLoading ? (
                     <div className="flex min-h-[74px] items-center justify-center gap-2 text-xs font-bold text-violet-600">
                       <Loader2 className="size-4 animate-spin" />
@@ -1751,7 +1824,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                         </div>
                       )}
                       {seedanceTask.videoUrl ? (
-                        <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-950">
+                        <div className="overflow-hidden rounded-xl border border-slate-300 bg-slate-950">
                           <video
                             src={seedanceTask.videoUrl}
                             className="aspect-video w-full bg-slate-950 object-contain"
@@ -1847,7 +1920,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 </Button>
               </div>
 
-              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+              <div className="mt-5 rounded-2xl border border-slate-300 bg-slate-100 p-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <div className="text-xs font-black text-slate-800">生成历史</div>
@@ -1868,12 +1941,12 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 </div>
 
                 {showSeedanceImport && (
-                  <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-2 sm:flex-row">
+                  <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-300 bg-white p-2 sm:flex-row">
                     <input
                       value={seedanceImportTaskId}
                       onChange={(event) => setSeedanceImportTaskId(event.target.value)}
                       placeholder="输入任务 ID，例如 cgt-..."
-                      className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 outline-none focus:border-violet-300"
+                      className="h-9 min-w-0 flex-1 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 outline-none focus:border-violet-300"
                     />
                     <Button
                       type="button"
@@ -1888,7 +1961,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 )}
 
                 {seedanceHistory.length === 0 ? (
-                  <div className="grid min-h-[84px] place-items-center rounded-xl border border-dashed border-slate-200 bg-white text-center">
+                  <div className="grid min-h-[84px] place-items-center rounded-xl border border-slate-300 bg-white text-center">
                     <div>
                       <div className="text-xs font-bold text-slate-500">暂无生成记录</div>
                       <div className="mt-1 text-[11px] text-slate-400">提交视频任务后会自动保存到这里</div>
@@ -1897,7 +1970,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 ) : (
                   <div className="space-y-2">
                     {seedanceHistory.map((item) => (
-                      <div key={item.taskId} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div key={item.taskId} className="rounded-xl border border-slate-300 bg-white p-3">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-xs font-black text-slate-700">

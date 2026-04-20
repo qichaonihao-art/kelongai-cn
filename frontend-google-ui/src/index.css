@@ -89,12 +89,25 @@
   }
   .creative-answer-numbered-sections {
     display: grid;
-    gap: 20px;
+    gap: 16px;
   }
-  .creative-answer-numbered-sections h3 {
-    margin: 0;
-    line-height: 1.85;
-    font-weight: 600;
+  .creative-answer-item {
+    padding: 16px 20px;
+    border-radius: 16px;
+    background-color: #f1f5f9;
+    border: 1px solid #e2e8f0;
+  }
+  .creative-answer-item-title {
+    font-size: 15px;
+    font-weight: 800;
+    color: #0f172a;
+    margin-bottom: 10px;
+    line-height: 1.5;
+  }
+  .creative-answer-item-body {
+    font-size: 15px;
+    line-height: 1.92;
+    color: #334155;
   }
 }
 
