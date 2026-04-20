@@ -476,7 +476,12 @@ function renderAssistantMessageContent(content: string) {
         }
 
         if (/^[一二三四五六七八九十]+[、.]\s*/.test(firstLine) && lines.length === 1) {
-          return <h3 key={blockIndex}>{renderInlineContent(stripMarkdownMarks(firstLine))}</h3>;
+          // 如果单行文本里包含多个中文序号，不要在这里提前返回，
+          // 让后续 inlineNumberedParts / fallback 做分段卡片渲染。
+          const chineseMarkerCount = (lines.join(' ').match(/[一二三四五六七八九十]{1,3}[、.]/g) || []).length;
+          if (chineseMarkerCount < 2) {
+            return <h3 key={blockIndex}>{renderInlineContent(stripMarkdownMarks(firstLine))}</h3>;
+          }
         }
 
         if (inlineNumberedParts) {
@@ -1400,8 +1405,14 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
 
       <header className="h-14 border-b border-slate-300 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 shrink-0 sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={onBack} className="rounded-full h-8 w-8">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onBack}
+            className="rounded-full h-9 px-4 text-xs font-bold text-slate-700 bg-white border border-slate-200 shadow-sm hover:bg-slate-50 hover:text-slate-900 hover:border-slate-300 transition-all gap-2"
+          >
             <ArrowLeft className="size-4" />
+            返回
           </Button>
           <div>
             <h1 className="text-xs font-bold text-slate-900">创意创作</h1>
@@ -1680,51 +1691,6 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   className="min-h-[156px] w-full resize-none rounded-xl border border-slate-300 bg-white p-3 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300"
                 />
 
-                <div className="mt-3 rounded-xl border border-slate-300 bg-white p-3">
-                  <button
-                    type="button"
-                    onClick={() => seedanceFileInputRef.current?.click()}
-                    disabled={isSeedanceLoading}
-                    className="flex min-h-[82px] w-full flex-col items-center justify-center gap-2 rounded-lg text-center text-slate-400 transition-colors hover:bg-slate-50 hover:text-violet-600 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <Plus className="size-5" />
-                    <span className="text-sm font-bold">图片 / 视频 / 音频</span>
-                    <span className="text-[11px] text-slate-400">图片最多 9 张，视频最多 3 个，音频最多 3 段</span>
-                  </button>
-
-                  {seedanceReferences.length > 0 && (
-                    <div className="mt-3 grid gap-2">
-                      {seedanceReferences.map((reference) => (
-                        <div key={reference.id} className="flex items-center gap-3 rounded-xl border border-slate-300 bg-white p-2">
-                          <div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-slate-400">
-                            {reference.kind === 'image' && reference.previewUrl ? (
-                              <img src={reference.previewUrl} alt={reference.fileName} className="size-full object-cover" />
-                            ) : reference.kind === 'video' && reference.previewUrl ? (
-                              <video src={reference.previewUrl} className="size-full object-cover" muted />
-                            ) : (
-                              <Music className="size-5" />
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-xs font-bold text-slate-700">{reference.fileName}</div>
-                            <div className="text-[11px] text-slate-400">
-                              {reference.kind === 'image' ? '参考图片' : reference.kind === 'video' ? '参考视频' : '参考音频'}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => removeSeedanceReference(reference.id)}
-                            className="rounded-full p-2 text-slate-400 transition-colors hover:bg-white hover:text-red-500"
-                            aria-label="移除参考素材"
-                          >
-                            <X className="size-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
                 <div ref={seedanceSettingsRef} className="relative mt-3">
                   <button
                     type="button"
@@ -1819,6 +1785,40 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 </div>
 
                 <div className="mt-3 rounded-xl border border-slate-300 bg-white p-3">
+                  {/* 参考素材列表 */}
+                  {seedanceReferences.length > 0 && (
+                    <div className="mb-3 grid gap-2">
+                      {seedanceReferences.map((reference) => (
+                        <div key={reference.id} className="flex items-center gap-3 rounded-xl border border-slate-300 bg-white p-2">
+                          <div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-slate-400">
+                            {reference.kind === 'image' && reference.previewUrl ? (
+                              <img src={reference.previewUrl} alt={reference.fileName} className="size-full object-cover" />
+                            ) : reference.kind === 'video' && reference.previewUrl ? (
+                              <video src={reference.previewUrl} className="size-full object-cover" muted />
+                            ) : (
+                              <Music className="size-5" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-bold text-slate-700">{reference.fileName}</div>
+                            <div className="text-[11px] text-slate-400">
+                              {reference.kind === 'image' ? '参考图片' : reference.kind === 'video' ? '参考视频' : '参考音频'}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeSeedanceReference(reference.id)}
+                            className="rounded-full p-2 text-slate-400 transition-colors hover:bg-white hover:text-red-500"
+                            aria-label="移除参考素材"
+                          >
+                            <X className="size-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 生成任务状态 / 视频 */}
                   {isSeedanceLoading ? (
                     <div className="flex min-h-[74px] items-center justify-center gap-2 text-xs font-bold text-violet-600">
                       <Loader2 className="size-4 animate-spin" />
@@ -1904,14 +1904,22 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                         )}
                       </div>
                     </div>
-                  ) : (
-                    <div className="grid min-h-[74px] place-items-center text-center">
-                      <div>
-                        <div className="text-xs font-bold text-slate-500">生成预览</div>
-                        <div className="mt-1 text-[11px] text-slate-400">创建任务后会自动查询状态，成功后直接显示视频</div>
-                      </div>
-                    </div>
-                  )}
+                  ) : null}
+
+                  {/* 上传按钮 — 始终显示在底部 */}
+                  <button
+                    type="button"
+                    onClick={() => seedanceFileInputRef.current?.click()}
+                    disabled={isSeedanceLoading}
+                    className={cn(
+                      "flex w-full flex-col items-center justify-center gap-2 rounded-lg text-center text-slate-400 transition-colors hover:bg-slate-50 hover:text-violet-600 disabled:cursor-not-allowed disabled:opacity-60",
+                      seedanceTask ? "mt-3 min-h-[52px] border-t border-dashed border-slate-200 pt-3" : "min-h-[120px]"
+                    )}
+                  >
+                    <Plus className="size-5" />
+                    <span className="text-sm font-bold">添加图片 / 视频 / 音频</span>
+                    <span className="text-[11px] text-slate-400">图片最多 9 张，视频最多 3 个，音频最多 3 段</span>
+                  </button>
                 </div>
 
                 {seedanceError && (
