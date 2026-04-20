@@ -1479,7 +1479,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   <h2 className="text-base font-black text-slate-900">视频反推提示词</h2>
                 </div>
                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black tracking-wider text-emerald-600">
-                  已接入助手
+                  已接入豆包多模态
                 </span>
               </div>
 
@@ -1668,7 +1668,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   "rounded-full px-3 py-1 text-[10px] font-black tracking-wider",
                   seedanceApiConfigured ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
                 )}>
-                  {seedanceApiConfigured ? '已接入 API' : '待配置'}
+                  {seedanceApiConfigured ? '已接入 Seedance 2.0' : '待配置'}
                 </span>
               </div>
 
