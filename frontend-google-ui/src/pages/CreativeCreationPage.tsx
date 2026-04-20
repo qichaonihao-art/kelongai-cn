@@ -85,6 +85,7 @@ const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
 const VIDEO_REVERSE_PROMPT = '请分析这个视频，并反推出可以用于文生视频模型的高质量提示词。请按以下结构输出：一、画面主体；二、场景环境；三、镜头语言；四、动作节奏；五、光影色彩；六、情绪氛围；七、完整视频生成提示词。';
+const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上七个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。';
 const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const;
 const SEEDANCE_DURATIONS = [4, 5, 6, 8, 10, 12, 15] as const;
 
@@ -628,12 +629,6 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
       }
     });
   }
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1288,7 +1283,12 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   async function handleSend() {
     if (!input.trim() || isLoading) return;
 
-    const question = input.trim();
+    const rawQuestion = input.trim();
+    // If the user is sending the video reverse prompt, silently append format
+    // instructions so Doubao returns each section on its own line without
+    // cluttering the input box.
+    const isReversePrompt = rawQuestion.includes('请分析这个视频') && rawQuestion.includes('画面主体');
+    const question = isReversePrompt ? rawQuestion + VIDEO_REVERSE_FORMAT_SUFFIX : rawQuestion;
     const mediaToSend = selectedMedia;
     const mediaMessage = mediaToSend ? {
       id: createMessageId(`creative_${mediaToSend.kind}`),
