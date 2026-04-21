@@ -14,6 +14,8 @@ import {
   Download,
   SlidersHorizontal,
   Volume2,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import SiteFooter from "@/src/components/SiteFooter";
@@ -76,6 +78,7 @@ interface SeedanceHistoryItem {
   duration: number;
   generateAudio: boolean;
   watermark: boolean;
+  elapsedSeconds?: number;
 }
 
 const MAX_VIDEO_SIZE_BYTES = 150 * 1024 * 1024;
@@ -139,39 +142,22 @@ function formatSeedanceWait(seconds: number) {
   return `${minutes} 分 ${remainder} 秒`;
 }
 
+function formatElapsedDuration(seconds?: number) {
+  if (!seconds || seconds <= 0) return '';
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hrs > 0) return `${hrs}小时${mins}分${secs}秒`;
+  if (mins > 0) return `${mins}分${secs}秒`;
+  return `${secs}秒`;
+}
+
 function getSeedanceElapsedSeconds(task: SeedanceTaskResult | null, nowMs = Date.now()) {
   if (!task) return 0;
   if (task.createdAt && task.createdAt > 0) {
     return Math.max(0, Math.floor(nowMs / 1000) - task.createdAt);
   }
   return 0;
-}
-
-function getSeedanceEstimatedText(task: SeedanceTaskResult | null, selectedDuration: number, generateAudio: boolean, referenceCount: number, nowMs = Date.now()) {
-  if (!task || task.videoUrl) return '';
-  const elapsed = getSeedanceElapsedSeconds(task, nowMs);
-  const baseMin = selectedDuration <= 4 ? 4 : selectedDuration <= 8 ? 6 : 8;
-  const audioExtra = generateAudio ? 3 : 0;
-  const referenceExtra = referenceCount > 0 ? Math.min(6, Math.ceil(referenceCount / 2) * 2) : 0;
-  const low = baseMin + audioExtra + referenceExtra;
-  const high = low + 8;
-
-  if (!task.status || ['queued', 'pending', 'created'].includes(String(task.status).toLowerCase())) {
-    return `官方未返回排队 ETA，当前已等待 ${formatSeedanceWait(elapsed)}，通常可能需要 ${low}-${high} 分钟。`;
-  }
-
-  return `官方未返回剩余时间，当前已等待 ${formatSeedanceWait(elapsed)}，同类任务通常可能需要 ${low}-${high} 分钟。`;
-}
-
-function getSeedanceProgressPercent(task: SeedanceTaskResult | null, selectedDuration: number, generateAudio: boolean, referenceCount: number, nowMs = Date.now()) {
-  if (!task) return 0;
-  if (task.videoUrl) return 100;
-  if (isSeedanceFailureStatus(task.status)) return 100;
-  const elapsed = getSeedanceElapsedSeconds(task, nowMs);
-  const estimatedTotalSeconds = (selectedDuration <= 4 ? 8 : selectedDuration <= 8 ? 12 : 16) * 60
-    + (generateAudio ? 3 * 60 : 0)
-    + Math.min(6 * 60, referenceCount * 60);
-  return Math.max(8, Math.min(92, Math.round((elapsed / estimatedTotalSeconds) * 100)));
 }
 
 function createWelcomeMessage(): Message {
@@ -280,6 +266,7 @@ function createSeedanceHistoryItem(
     duration: number;
     generateAudio: boolean;
     watermark: boolean;
+    elapsedSeconds?: number;
   }
 ): SeedanceHistoryItem {
   const createdAt = getSeedanceTaskTime(task);
@@ -297,6 +284,7 @@ function createSeedanceHistoryItem(
     duration: options.duration,
     generateAudio: options.generateAudio,
     watermark: options.watermark,
+    elapsedSeconds: options.elapsedSeconds,
   };
 }
 
@@ -620,6 +608,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   const [seedanceClock, setSeedanceClock] = useState(Date.now());
   const [seedanceVideoModal, setSeedanceVideoModal] = useState(false);
   const [seedanceModalItem, setSeedanceModalItem] = useState<SeedanceHistoryItem | null>(null);
+  const [isHistoryFolded, setIsHistoryFolded] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -954,14 +943,20 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   function updateSeedanceHistoryTask(task: SeedanceTaskResult) {
     if (!task.taskId) return;
     setSeedanceHistory((previous) =>
-      previous.map((item) =>
-        item.taskId === task.taskId
-          ? {
-              ...item,
-              ...seedanceTaskToHistoryPatch(task),
-            }
-          : item
-      )
+      previous.map((item) => {
+        if (item.taskId !== task.taskId) return item;
+        const isNowTerminal = !!task.videoUrl || isSeedanceTerminalStatus(task.status);
+        const wasAlreadyTerminal = !!item.videoUrl || isSeedanceTerminalStatus(item.status);
+        const elapsedSeconds =
+          isNowTerminal && !wasAlreadyTerminal && item.createdAt
+            ? Math.max(0, Math.floor(Date.now() / 1000) - item.createdAt)
+            : item.elapsedSeconds;
+        return {
+          ...item,
+          ...seedanceTaskToHistoryPatch(task),
+          elapsedSeconds,
+        };
+      })
     );
   }
 
@@ -1370,20 +1365,6 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   const seedanceElapsedText = seedanceTask && !seedanceTask.videoUrl
     ? formatSeedanceWait(getSeedanceElapsedSeconds(seedanceTask, seedanceClock))
     : '';
-  const seedanceEstimatedText = getSeedanceEstimatedText(
-    seedanceTask,
-    seedanceDuration,
-    seedanceGenerateAudio,
-    seedanceReferences.length,
-    seedanceClock
-  );
-  const seedanceProgressPercent = getSeedanceProgressPercent(
-    seedanceTask,
-    seedanceDuration,
-    seedanceGenerateAudio,
-    seedanceReferences.length,
-    seedanceClock
-  );
 
   return (
     <div className="h-screen bg-slate-200 flex flex-col">
@@ -1849,9 +1830,12 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                         {getSeedanceStatusLabel(seedanceTask.status, !!seedanceTask.videoUrl)}
                       </div>
                       {!seedanceTask.videoUrl && !isSeedanceFailureStatus(seedanceTask.status) && (
-                        <div className="flex items-center gap-1 text-[11px] font-bold text-slate-400">
-                          {isSeedancePolling && <Loader2 className="size-3 animate-spin" />}
-                          {isSeedancePolling ? '后台同步中' : `已等待 ${seedanceElapsedText}`}
+                        <div className="flex items-center gap-2 text-[11px] font-bold text-slate-400">
+                          <span className="relative flex h-2 w-2">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
+                            <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
+                          </span>
+                          已等待 {seedanceElapsedText}
                         </div>
                       )}
                     </div>
@@ -1860,30 +1844,26 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                         任务 ID：{seedanceTask.taskId}
                       </div>
                     )}
-                    {seedanceTask.videoUrl ? (
-                      <div className="overflow-hidden rounded-xl border border-slate-300 bg-slate-950">
-                        <video
-                          src={seedanceTask.videoUrl}
-                          className="aspect-video w-full bg-slate-950 object-contain"
-                          controls
-                          playsInline
-                        />
-                      </div>
-                    ) : (
-                      <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">
-                        <div className="mb-2 flex items-center justify-between gap-3">
-                          <span className="font-bold text-slate-700">{getSeedanceStatusLabel(seedanceTask.status, false)}</span>
-                          <span className="text-[11px] text-slate-400">{seedanceProgressPercent}%</span>
+                    {/* 等待中状态：动态动画 + 仅已等待时间 */}
+                    {!seedanceTask.videoUrl && !isSeedanceFailureStatus(seedanceTask.status) && (
+                      <div className="rounded-lg bg-violet-50 px-3 py-4 text-center">
+                        <div className="mb-3 flex justify-center gap-1">
+                          {[0, 1, 2].map((i) => (
+                            <span
+                              key={i}
+                              className="inline-block h-2.5 w-2.5 rounded-full bg-violet-400"
+                              style={{
+                                animation: `bounce 1.4s infinite ease-in-out both`,
+                                animationDelay: `${i * 0.16}s`,
+                              }}
+                            />
+                          ))}
                         </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-                          <div
-                            className="h-full rounded-full bg-violet-500 transition-all duration-700"
-                            style={{ width: `${seedanceProgressPercent}%` }}
-                          />
+                        <div className="text-xs font-bold text-violet-700">
+                          {isSeedancePolling ? '正在同步状态' : '任务处理中'}
                         </div>
-                        <div className="mt-2">{seedanceEstimatedText}</div>
-                        <div className="mt-1 text-[11px] text-slate-400">
-                          页面会每 {Math.round(SEEDANCE_POLL_INTERVAL_MS / 1000)} 秒在后台同步一次状态；官方没有提供真实倒计时或排队位置。
+                        <div className="mt-1 text-[11px] text-violet-500">
+                          已等待 {seedanceElapsedText}
                         </div>
                       </div>
                     )}
@@ -1898,14 +1878,30 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                         刷新状态
                       </Button>
                       {seedanceTask.videoUrl && (
-                        <a
-                          href={seedanceTask.videoUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex h-8 items-center rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            setSeedanceModalItem({
+                              id: seedanceTask.taskId || createMessageId('seedance_modal'),
+                              taskId: seedanceTask.taskId || '',
+                              prompt: seedancePrompt,
+                              status: seedanceTask.status,
+                              videoUrl: seedanceTask.videoUrl,
+                              createdAt: seedanceTask.createdAt,
+                              updatedAt: seedanceTask.updatedAt,
+                              savedAt: new Date().toISOString(),
+                              ratio: seedanceRatio,
+                              duration: seedanceDuration,
+                              generateAudio: seedanceGenerateAudio,
+                              watermark: seedanceWatermark,
+                            });
+                            setSeedanceVideoModal(true);
+                          }}
+                          className="h-8 rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
                         >
-                          打开视频
-                        </a>
+                          <Sparkles className="size-3.5 mr-1" />
+                          查看视频
+                        </Button>
                       )}
                       {seedanceTask.videoUrl && (
                         <a
@@ -2005,70 +2001,167 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {seedanceHistory.map((item) => (
-                      <div key={item.taskId} className="rounded-xl border border-slate-300 bg-white p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-xs font-black text-slate-700">
-                              {item.prompt.replace(/\s+/g, ' ').slice(0, 48) || 'Seedance 视频任务'}
+                    {/* 最近一条始终展开 */}
+                    {(() => {
+                      const latest = seedanceHistory[0];
+                      return (
+                        <div key={latest.taskId} className="rounded-xl border border-slate-300 bg-white p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-xs font-black text-slate-700">
+                                {latest.prompt.replace(/\s+/g, ' ').slice(0, 48) || 'Seedance 视频任务'}
+                              </div>
+                              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-slate-400">
+                                <span>{formatSessionTime(latest.savedAt)}</span>
+                                <span>{latest.ratio}</span>
+                                <span>{latest.duration} 秒</span>
+                                <span>{getSeedanceStatusLabel(latest.status, !!latest.videoUrl)}</span>
+                                {latest.elapsedSeconds !== undefined && latest.elapsedSeconds > 0 && (
+                                  <span className="text-emerald-600">
+                                    生成耗时 {formatElapsedDuration(latest.elapsedSeconds)}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-slate-400">
-                              <span>{formatSessionTime(item.savedAt)}</span>
-                              <span>{item.ratio}</span>
-                              <span>{item.duration} 秒</span>
-                              <span>{getSeedanceStatusLabel(item.status, !!item.videoUrl)}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeSeedanceHistoryItem(latest.taskId)}
+                              className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                              aria-label="删除生成记录"
+                            >
+                              <X className="size-3.5" />
+                            </button>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              onClick={() => handleViewSeedanceHistoryItem(latest)}
+                              className="h-8 rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
+                            >
+                              {latest.videoUrl ? (
+                                <>
+                                  <Sparkles className="size-3.5 mr-1" />
+                                  查看视频
+                                </>
+                              ) : (
+                                '查看'
+                              )}
+                            </Button>
+                            <Button
+                              type="button"
+                              onClick={() => handleRefreshSeedanceHistoryItem(latest)}
+                              disabled={isSeedancePolling}
+                              className="h-8 rounded-full bg-white px-3 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+                            >
+                              {isSeedancePolling ? <Loader2 className="size-3.5 animate-spin" /> : <History className="size-3.5" />}
+                              更新状态
+                            </Button>
+                            {latest.videoUrl && (
+                              <a
+                                href={latest.videoUrl}
+                                download={`seedance-${latest.taskId}.mp4`}
+                                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
+                              >
+                                <Download className="size-3.5" />
+                                下载
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* 折叠的 older records */}
+                    {seedanceHistory.length > 1 && isHistoryFolded && (
+                      <button
+                        type="button"
+                        onClick={() => setIsHistoryFolded(false)}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-violet-300 hover:text-violet-600"
+                      >
+                        <ChevronDown className="size-4" />
+                        展开更多 ({seedanceHistory.length - 1} 条)
+                      </button>
+                    )}
+
+                    {seedanceHistory.length > 1 && !isHistoryFolded && (
+                      <>
+                        {seedanceHistory.slice(1).map((item) => (
+                          <div key={item.taskId} className="rounded-xl border border-slate-300 bg-white p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-xs font-black text-slate-700">
+                                  {item.prompt.replace(/\s+/g, ' ').slice(0, 48) || 'Seedance 视频任务'}
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-slate-400">
+                                  <span>{formatSessionTime(item.savedAt)}</span>
+                                  <span>{item.ratio}</span>
+                                  <span>{item.duration} 秒</span>
+                                  <span>{getSeedanceStatusLabel(item.status, !!item.videoUrl)}</span>
+                                  {item.elapsedSeconds !== undefined && item.elapsedSeconds > 0 && (
+                                    <span className="text-emerald-600">
+                                      生成耗时 {formatElapsedDuration(item.elapsedSeconds)}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeSeedanceHistoryItem(item.taskId)}
+                                className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                                aria-label="删除生成记录"
+                              >
+                                <X className="size-3.5" />
+                              </button>
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                onClick={() => handleViewSeedanceHistoryItem(item)}
+                                className="h-8 rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
+                              >
+                                {item.videoUrl ? (
+                                  <>
+                                    <Sparkles className="size-3.5 mr-1" />
+                                    查看视频
+                                  </>
+                                ) : (
+                                  '查看'
+                                )}
+                              </Button>
+                              <Button
+                                type="button"
+                                onClick={() => handleRefreshSeedanceHistoryItem(item)}
+                                disabled={isSeedancePolling}
+                                className="h-8 rounded-full bg-white px-3 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+                              >
+                                {isSeedancePolling ? <Loader2 className="size-3.5 animate-spin" /> : <History className="size-3.5" />}
+                                更新状态
+                              </Button>
+                              {item.videoUrl && (
+                                <a
+                                  href={item.videoUrl}
+                                  download={`seedance-${item.taskId}.mp4`}
+                                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
+                                >
+                                  <Download className="size-3.5" />
+                                  下载
+                                </a>
+                              )}
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => removeSeedanceHistoryItem(item.taskId)}
-                            className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
-                            aria-label="删除生成记录"
-                          >
-                            <X className="size-3.5" />
-                          </button>
-                        </div>
-
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <Button
-                            type="button"
-                            onClick={() => handleViewSeedanceHistoryItem(item)}
-                            className="h-8 rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
-                          >
-                            查看
-                          </Button>
-                          <Button
-                            type="button"
-                            onClick={() => handleRefreshSeedanceHistoryItem(item)}
-                            disabled={isSeedancePolling}
-                            className="h-8 rounded-full bg-white px-3 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-                          >
-                            {isSeedancePolling ? <Loader2 className="size-3.5 animate-spin" /> : <History className="size-3.5" />}
-                            更新状态
-                          </Button>
-                          {item.videoUrl && (
-                            <a
-                              href={item.videoUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex h-8 items-center rounded-full bg-white px-3 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-                            >
-                              打开
-                            </a>
-                          )}
-                          {item.videoUrl && (
-                            <a
-                              href={item.videoUrl}
-                              download={`seedance-${item.taskId}.mp4`}
-                              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
-                            >
-                              <Download className="size-3.5" />
-                              下载
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => setIsHistoryFolded(true)}
+                          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-violet-300 hover:text-violet-600"
+                        >
+                          <ChevronUp className="size-4" />
+                          收起
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
