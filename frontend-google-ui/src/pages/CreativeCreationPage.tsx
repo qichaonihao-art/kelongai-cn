@@ -606,8 +606,6 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   const [seedanceError, setSeedanceError] = useState("");
   const [seedanceTask, setSeedanceTask] = useState<SeedanceTaskResult | null>(null);
   const [seedanceHistory, setSeedanceHistory] = useState<SeedanceHistoryItem[]>(loadSeedanceHistory);
-  const [seedanceImportTaskId, setSeedanceImportTaskId] = useState("cgt-20260420210308-cjhsm");
-  const [showSeedanceImport, setShowSeedanceImport] = useState(false);
   const [showSeedanceSettings, setShowSeedanceSettings] = useState(false);
   const [seedanceClock, setSeedanceClock] = useState(Date.now());
   const [seedanceVideoModal, setSeedanceVideoModal] = useState(false);
@@ -1201,35 +1199,6 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   function removeSeedanceHistoryItem(taskId: string) {
     setSeedanceHistory((previous) => previous.filter((item) => item.taskId !== taskId));
     setSeedanceTask((previous) => previous?.taskId === taskId ? null : previous);
-  }
-
-  async function handleImportSeedanceTask() {
-    const taskId = seedanceImportTaskId.trim();
-    if (!taskId || isSeedancePolling) return;
-
-    setIsSeedancePolling(true);
-    setSeedanceError("");
-
-    try {
-      const task = await querySeedanceTask(taskId);
-      const historyItem = createSeedanceHistoryItem(task, {
-        prompt: seedancePrompt.trim() || `已导入任务 ${taskId}`,
-        ratio: seedanceRatio,
-        duration: seedanceDuration,
-        generateAudio: seedanceGenerateAudio,
-        watermark: seedanceWatermark,
-      });
-
-      setSeedanceHistory((previous) => mergeSeedanceHistoryItem(previous, historyItem));
-      setSeedanceTask(task);
-      if (!seedancePrompt.trim()) {
-        setSeedancePrompt(historyItem.prompt);
-      }
-    } catch (error) {
-      setSeedanceError(error instanceof Error ? error.message : 'Seedance 导入任务失败');
-    } finally {
-      setIsSeedancePolling(false);
-    }
   }
 
   async function handleMediaChange(file: File | null) {
@@ -1989,15 +1958,6 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                       </div>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setSeedancePrompt("")}
-                    disabled={!seedancePrompt.trim() || isSeedanceLoading}
-                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-500 transition-colors hover:border-red-200 hover:text-red-500 hover:bg-red-50/40 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <X className="size-4" />
-                    清空
-                  </button>
                 </div>
               </div>
 
@@ -2018,8 +1978,21 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   className="rounded-full bg-slate-900 px-4 text-xs font-bold text-white hover:bg-slate-800"
                 >
                   {isSeedanceLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-                  生成类似视频
+                  开始生成视频
                 </Button>
+                <button
+                  type="button"
+                  onClick={() => setSeedancePrompt("")}
+                  disabled={!seedancePrompt.trim() || isSeedanceLoading}
+                  className={cn(
+                    "ml-auto inline-flex items-center rounded-full px-3 py-2 text-xs font-bold transition-colors disabled:cursor-not-allowed",
+                    seedancePrompt.trim()
+                      ? "bg-red-500 text-white hover:bg-red-600"
+                      : "border border-slate-100 bg-slate-50 text-slate-300 opacity-60"
+                  )}
+                >
+                  清空提示词
+                </button>
               </div>
 
               {/* 生成任务预览区域 */}
@@ -2148,39 +2121,10 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                     <div className="text-xs font-black text-slate-800">生成历史</div>
                     <div className="mt-0.5 text-[11px] text-slate-400">保存最近 {MAX_SEEDANCE_HISTORY_ITEMS} 个 Seedance 任务</div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowSeedanceImport((value) => !value)}
-                      className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-slate-400 ring-1 ring-slate-200 transition-colors hover:text-violet-600"
-                    >
-                      导入旧任务
-                    </button>
-                    <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-slate-400 ring-1 ring-slate-200">
-                      {seedanceHistory.length} 条
-                    </span>
-                  </div>
+                  <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-slate-400 ring-1 ring-slate-200">
+                    {seedanceHistory.length} 条
+                  </span>
                 </div>
-
-                {showSeedanceImport && (
-                  <div className="mb-3 flex flex-col gap-2 rounded-xl border border-slate-300 bg-white p-2 sm:flex-row">
-                    <input
-                      value={seedanceImportTaskId}
-                      onChange={(event) => setSeedanceImportTaskId(event.target.value)}
-                      placeholder="输入任务 ID，例如 cgt-..."
-                      className="h-9 min-w-0 flex-1 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 outline-none focus:border-violet-300"
-                    />
-                    <Button
-                      type="button"
-                      onClick={handleImportSeedanceTask}
-                      disabled={!seedanceImportTaskId.trim() || isSeedancePolling}
-                      className="h-9 rounded-lg bg-violet-600 px-3 text-xs font-bold text-white hover:bg-violet-700"
-                    >
-                      {isSeedancePolling ? <Loader2 className="size-3.5 animate-spin" /> : <History className="size-3.5" />}
-                      导入
-                    </Button>
-                  </div>
-                )}
 
                 {seedanceHistory.length === 0 ? (
                   <div className="grid min-h-[84px] place-items-center rounded-xl border border-slate-300 bg-white text-center">
@@ -2255,20 +2199,11 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                                 '查看'
                               )}
                             </Button>
-                            <Button
-                              type="button"
-                              onClick={() => handleRefreshSeedanceHistoryItem(latest)}
-                              disabled={isSeedancePolling}
-                              className="h-8 rounded-full bg-white px-3 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-                            >
-                              {isSeedancePolling ? <Loader2 className="size-3.5 animate-spin" /> : <History className="size-3.5" />}
-                              更新状态
-                            </Button>
                             {latest.videoUrl && (
                               <a
                                 href={latest.videoUrl}
                                 download={`seedance-${latest.taskId}.mp4`}
-                                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
+                                className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
                               >
                                 <Download className="size-3.5" />
                                 下载
@@ -2374,20 +2309,11 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                                       '查看'
                                     )}
                                   </Button>
-                                  <Button
-                                    type="button"
-                                    onClick={() => handleRefreshSeedanceHistoryItem(item)}
-                                    disabled={isSeedancePolling}
-                                    className="h-8 rounded-full bg-white px-3 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-                                  >
-                                    {isSeedancePolling ? <Loader2 className="size-3.5 animate-spin" /> : <History className="size-3.5" />}
-                                    更新状态
-                                  </Button>
                                   {item.videoUrl && (
                                     <a
                                       href={item.videoUrl}
                                       download={`seedance-${item.taskId}.mp4`}
-                                      className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
+                                      className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
                                     >
                                       <Download className="size-3.5" />
                                       下载
