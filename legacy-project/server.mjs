@@ -6189,11 +6189,16 @@ async function handleSeedanceCreateTask(req, res) {
           sendJson(res, 400, { error: 'Seedance 参考视频单个文件不能超过 50MB。' });
           return;
         }
-        const normalized = await normalizeUploadedMediaInput(file, 'video');
+        // Seedance API requires video references to be public web URLs, not base64 data URLs
+        const mediaResult = await createPublicMediaUrl({ file, req });
+        if (!mediaResult.ok) {
+          sendJson(res, 400, { error: mediaResult.error || '视频参考上传失败，请检查 PUBLIC_BASE_URL 配置。' });
+          return;
+        }
         content.push({
           type: 'video_url',
           video_url: {
-            url: normalized.videoUrl
+            url: mediaResult.url
           },
           role: 'reference_video'
         });
@@ -6230,6 +6235,48 @@ async function handleSeedanceCreateTask(req, res) {
       return;
     }
 
+    // ── Seedance 视频参考 URL 自检 ──
+    const referenceVideoUrls = content
+      .filter((item) => item.type === 'video_url' && item.role === 'reference_video')
+      .map((item) => item.video_url?.url)
+      .filter(Boolean);
+
+    if (referenceVideoUrls.length > 0) {
+      console.log('[seedance create task] reference_video URLs check', {
+        requestId,
+        count: referenceVideoUrls.length,
+        urls: referenceVideoUrls,
+      });
+
+      for (const url of referenceVideoUrls) {
+        if (!/^https?:\/\//i.test(url)) {
+          console.error('[seedance create task] reference_video URL is NOT a valid web URL', { requestId, url });
+          sendJson(res, 400, { error: `视频参考地址不是有效的公网 URL：${url}` });
+          return;
+        }
+
+        // 非阻塞 HEAD 探活：验证 URL 是否可被外部访问
+        // eslint-disable-next-line no-loop-func
+        fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(8000) })
+          .then((headRes) => {
+            if (!headRes.ok) {
+              console.warn('[seedance create task] reference_video URL HEAD probe failed', {
+                requestId, url, status: headRes.status, statusText: headRes.statusText,
+              });
+            } else {
+              console.log('[seedance create task] reference_video URL HEAD probe OK', {
+                requestId, url, contentLength: headRes.headers.get('content-length'),
+              });
+            }
+          })
+          .catch((err) => {
+            console.warn('[seedance create task] reference_video URL HEAD probe error', {
+              requestId, url, error: err?.message,
+            });
+          });
+      }
+    }
+
     const requestPayload = {
       model,
       content,
@@ -6238,6 +6285,12 @@ async function handleSeedanceCreateTask(req, res) {
       duration,
       watermark
     };
+
+    console.log('[seedance create task] upstream payload preview', {
+      requestId,
+      contentTypes: content.map((c) => ({ type: c.type, role: c.role })),
+      referenceVideoCount: referenceVideoUrls.length,
+    });
 
     const upstreamRes = await fetch(upstreamUrl, {
       method: 'POST',

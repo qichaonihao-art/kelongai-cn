@@ -22,6 +22,7 @@ interface CreativeConfigStatus {
   reachable: boolean;
   arkApiKey: boolean;
   seedanceApiKey: boolean;
+  publicBaseUrl: boolean;
 }
 
 export interface SeedanceTaskResult {
@@ -317,12 +318,14 @@ export async function getCreativeConfigStatus(): Promise<CreativeConfigStatus> {
       reachable: true,
       arkApiKey: !!json?.serverManaged?.arkApiKey,
       seedanceApiKey: !!json?.serverManaged?.seedanceApiKey,
+      publicBaseUrl: !!json?.serverManaged?.publicBaseUrl,
     };
   } catch {
     return {
       reachable: false,
       arkApiKey: false,
       seedanceApiKey: false,
+      publicBaseUrl: false,
     };
   }
 }
