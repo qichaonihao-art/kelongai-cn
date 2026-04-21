@@ -16,6 +16,8 @@ import {
   Volume2,
   ChevronDown,
   ChevronUp,
+  Copy,
+  Check,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import SiteFooter from "@/src/components/SiteFooter";
@@ -87,7 +89,7 @@ const MAX_SEEDANCE_HISTORY_ITEMS = 20;
 const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
-const VIDEO_REVERSE_PROMPT = '请分析这个视频，并反推出可以用于文生视频模型的高质量提示词。请按以下结构输出：一、画面主体；二、场景环境；三、镜头语言；四、动作节奏；五、光影色彩；六、情绪氛围；七、完整复刻该视频生成提示词。';
+const VIDEO_REVERSE_PROMPT = '请把这个视频当作“待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以“生成指令”的方式输出，不要写成分析说明。\n5. 目标不是“风格相似”，而是“尽量复刻接近原视频”。';
 const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上七个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。';
 const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const;
 const SEEDANCE_DURATIONS = [4, 5, 6, 8, 10, 12, 15] as const;
@@ -582,6 +584,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     const savedSessions = loadSavedCreativeSessions();
     return savedSessions[0] ? inflateSavedMessages(savedSessions[0].messages) : getDefaultMessages();
   });
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [input, setInput] = useState("");
@@ -610,12 +613,14 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   const [seedanceVideoModal, setSeedanceVideoModal] = useState(false);
   const [seedanceModalItem, setSeedanceModalItem] = useState<SeedanceHistoryItem | null>(null);
   const [isHistoryFolded, setIsHistoryFolded] = useState(true);
+  const [showAtMenu, setShowAtMenu] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const seedanceFileInputRef = useRef<HTMLInputElement>(null);
   const seedanceSettingsRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const seedancePromptRef = useRef<HTMLTextAreaElement>(null);
 
   function scrollAnalysisToBottom() {
     requestAnimationFrame(() => {
@@ -634,12 +639,29 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   }, [savedSessions]);
 
   useEffect(() => {
+    scrollAnalysisToBottom();
+  }, [messages.length]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
 
     window.localStorage.setItem(SEEDANCE_HISTORY_STORAGE_KEY, JSON.stringify(seedanceHistory));
   }, [seedanceHistory]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (!showAtMenu) return;
+      const target = event.target as HTMLElement;
+      if (seedancePromptRef.current && seedancePromptRef.current.contains(target)) return;
+      const menuEl = seedancePromptRef.current?.parentElement?.querySelector('[data-at-menu]');
+      if (menuEl && menuEl.contains(target)) return;
+      setShowAtMenu(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showAtMenu]);
 
   useEffect(() => {
     let cancelled = false;
@@ -856,6 +878,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    scrollAnalysisToBottom();
   }
 
   function handleStartRenameSession() {
@@ -998,6 +1021,60 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
 
     setSeedancePrompt(latestAssistantText);
     setRequestError("");
+  }
+
+  function getAtReferenceLabel(ref: SeedanceReferenceFile, index: number) {
+    const kindPrefix = ref.kind === 'image' ? 'img' : ref.kind === 'video' ? 'vid' : 'aud';
+    const kindIndex = seedanceReferences.filter((r, i) => r.kind === ref.kind && i <= index).length;
+    return `@${kindPrefix}${kindIndex}`;
+  }
+
+  function handleSeedancePromptChange(event: { target: { value: string; selectionStart: number | null } }) {
+    const value = event.target.value;
+    setSeedancePrompt(value);
+
+    const cursorPosition = event.target.selectionStart;
+    const textBeforeCursor = value.slice(0, cursorPosition);
+    const atIndex = textBeforeCursor.lastIndexOf('@');
+
+    if (atIndex !== -1) {
+      const textAfterAt = textBeforeCursor.slice(atIndex + 1);
+      if (!textAfterAt.includes(' ') && !textAfterAt.includes('\n')) {
+        setShowAtMenu(true);
+        return;
+      }
+    }
+
+    setShowAtMenu(false);
+  }
+
+  function insertAtReference(index: number) {
+    const ref = seedanceReferences[index];
+    if (!ref || !seedancePromptRef.current) return;
+
+    const cursorPosition = seedancePromptRef.current.selectionStart;
+    const value = seedancePrompt;
+
+    const textBeforeCursor = value.slice(0, cursorPosition);
+    const atIndex = textBeforeCursor.lastIndexOf('@');
+    if (atIndex === -1) return;
+
+    const placeholder = getAtReferenceLabel(ref, index);
+    const before = value.slice(0, atIndex);
+    const after = value.slice(cursorPosition);
+    const newValue = before + placeholder + after;
+
+    setSeedancePrompt(newValue);
+    setShowAtMenu(false);
+
+    requestAnimationFrame(() => {
+      if (seedancePromptRef.current) {
+        const newCursorPos = atIndex + placeholder.length;
+        seedancePromptRef.current.selectionStart = newCursorPos;
+        seedancePromptRef.current.selectionEnd = newCursorPos;
+        seedancePromptRef.current.focus();
+      }
+    });
   }
 
   async function handleCreateSeedanceVideo() {
@@ -1286,6 +1363,16 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     }
   }
 
+  async function copyMessageContent(id: string, content: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessageId(id);
+      setTimeout(() => setCopiedMessageId((current) => (current === id ? null : current)), 2000);
+    } catch {
+      // Fallback for environments without clipboard API
+    }
+  }
+
   async function handleSend() {
     if (!input.trim() || isLoading) return;
 
@@ -1293,7 +1380,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     // If the user is sending the video reverse prompt, silently append format
     // instructions so Doubao returns each section on its own line without
     // cluttering the input box.
-    const isReversePrompt = rawQuestion.includes('请分析这个视频') && rawQuestion.includes('画面主体');
+    const isReversePrompt = rawQuestion.includes('待复刻样片') && rawQuestion.includes('核心主体信息');
     const question = isReversePrompt ? rawQuestion + VIDEO_REVERSE_FORMAT_SUFFIX : rawQuestion;
     const mediaToSend = selectedMedia;
     const mediaMessage = mediaToSend ? {
@@ -1585,6 +1672,26 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                               <span className="text-[10px] font-bold text-slate-400">
                                 {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
+                              {msg.role === 'assistant' && msg.content && (
+                                <button
+                                  type="button"
+                                  onClick={() => copyMessageContent(msg.id, msg.content)}
+                                  className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                                  aria-label="复制消息"
+                                >
+                                  {copiedMessageId === msg.id ? (
+                                    <>
+                                      <Check className="size-3 text-emerald-500" />
+                                      已复制
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="size-3" />
+                                      复制
+                                    </>
+                                  )}
+                                </button>
+                              )}
                             </div>
                             <div className={cn(
                               "border transition-all duration-300",
@@ -1670,14 +1777,61 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 </span>
               </div>
 
-              <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3">
+              <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3 relative">
                 {/* 提示词输入框 */}
                 <textarea
+                  ref={seedancePromptRef}
                   value={seedancePrompt}
-                  onChange={(event) => setSeedancePrompt(event.target.value)}
+                  onChange={handleSeedancePromptChange}
                   placeholder="等待模块一反推出视频提示词..."
                   className="min-h-[156px] w-full resize-none rounded-xl border border-slate-300 bg-white p-3 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300"
                 />
+
+                {/* @ 引用下拉菜单 */}
+                {showAtMenu && (
+                  <div data-at-menu className="absolute left-3 right-3 top-[calc(100%-8px)] z-10 rounded-xl border border-slate-200 bg-white shadow-lg overflow-hidden">
+                    {seedanceReferences.length === 0 ? (
+                      <div className="px-3 py-3 text-center text-xs text-slate-400">
+                        暂无参考素材，请先点击下方“添加参考素材”上传
+                      </div>
+                    ) : (
+                      <>
+                        <div className="px-3 py-2 text-[10px] font-bold text-slate-400 border-b border-slate-100">
+                          选择参考素材插入到提示词中
+                        </div>
+                        {seedanceReferences.map((reference, index) => {
+                          const label = getAtReferenceLabel(reference, index);
+                          return (
+                            <button
+                              key={reference.id}
+                              type="button"
+                              onClick={() => insertAtReference(index)}
+                              className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-violet-50"
+                            >
+                              <div className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100 text-slate-400">
+                                {reference.kind === 'image' && reference.previewUrl ? (
+                                  <img src={reference.previewUrl} alt={reference.fileName} className="size-full object-cover" />
+                                ) : reference.kind === 'video' && reference.previewUrl ? (
+                                  <video src={reference.previewUrl} className="size-full object-cover" muted />
+                                ) : (
+                                  <Music className="size-3.5" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-xs font-bold text-slate-700">
+                                  {label} <span className="text-slate-400 font-medium">{reference.fileName}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-400">
+                                  {reference.kind === 'image' ? '参考图片' : reference.kind === 'video' ? '参考视频' : '参考音频'}
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {/* 已上传的参考素材列表 */}
                 {seedanceReferences.length > 0 && (
@@ -2080,94 +2234,108 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                     })()}
 
                     {/* 折叠的 older records */}
-                    {seedanceHistory.length > 1 && isHistoryFolded && (
-                      <button
-                        type="button"
-                        onClick={() => setIsHistoryFolded(false)}
-                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-violet-300 hover:text-violet-600"
-                      >
-                        <ChevronDown className="size-4" />
-                        展开更多 ({seedanceHistory.length - 1} 条)
-                      </button>
-                    )}
-
-                    {seedanceHistory.length > 1 && !isHistoryFolded && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => setIsHistoryFolded(true)}
-                          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-violet-300 hover:text-violet-600"
-                        >
-                          <ChevronUp className="size-4" />
-                          收起
-                        </button>
-                        {seedanceHistory.slice(1).map((item) => (
-                          <div key={item.taskId} className="rounded-xl border border-slate-300 bg-white p-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate text-xs font-black text-slate-700">
-                                  {item.prompt.replace(/\s+/g, ' ').slice(0, 48) || 'Seedance 视频任务'}
+                    {seedanceHistory.length > 1 && (
+                      <AnimatePresence initial={false} mode="wait">
+                        {isHistoryFolded ? (
+                          <motion.button
+                            key="expand"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.15 }}
+                            type="button"
+                            onClick={() => setIsHistoryFolded(false)}
+                            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-violet-300 hover:text-violet-600"
+                          >
+                            <ChevronDown className="size-4" />
+                            展开更多 ({seedanceHistory.length - 1} 条)
+                          </motion.button>
+                        ) : (
+                          <motion.div
+                            key="collapse"
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.3, ease: 'easeInOut' }}
+                            className="space-y-2 overflow-hidden"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setIsHistoryFolded(true)}
+                              className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-violet-300 hover:text-violet-600"
+                            >
+                              <ChevronUp className="size-4" />
+                              收起
+                            </button>
+                            {seedanceHistory.slice(1).map((item) => (
+                              <div key={item.taskId} className="rounded-xl border border-slate-300 bg-white p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate text-xs font-black text-slate-700">
+                                      {item.prompt.replace(/\s+/g, ' ').slice(0, 48) || 'Seedance 视频任务'}
+                                    </div>
+                                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-slate-400">
+                                      <span>{formatSessionTime(item.savedAt)}</span>
+                                      <span>{item.ratio}</span>
+                                      <span>{item.duration} 秒</span>
+                                      <span>{getSeedanceStatusLabel(item.status, !!item.videoUrl)}</span>
+                                      {item.elapsedSeconds !== undefined && item.elapsedSeconds > 0 && (
+                                        <span className="text-emerald-600">
+                                          生成耗时 {formatElapsedDuration(item.elapsedSeconds)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeSeedanceHistoryItem(item.taskId)}
+                                    className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                                    aria-label="删除生成记录"
+                                  >
+                                    <X className="size-3.5" />
+                                  </button>
                                 </div>
-                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-slate-400">
-                                  <span>{formatSessionTime(item.savedAt)}</span>
-                                  <span>{item.ratio}</span>
-                                  <span>{item.duration} 秒</span>
-                                  <span>{getSeedanceStatusLabel(item.status, !!item.videoUrl)}</span>
-                                  {item.elapsedSeconds !== undefined && item.elapsedSeconds > 0 && (
-                                    <span className="text-emerald-600">
-                                      生成耗时 {formatElapsedDuration(item.elapsedSeconds)}
-                                    </span>
+
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <Button
+                                    type="button"
+                                    onClick={() => handleViewSeedanceHistoryItem(item)}
+                                    className="h-8 rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
+                                  >
+                                    {item.videoUrl ? (
+                                      <>
+                                        <Sparkles className="size-3.5 mr-1" />
+                                        查看视频
+                                      </>
+                                    ) : (
+                                      '查看'
+                                    )}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    onClick={() => handleRefreshSeedanceHistoryItem(item)}
+                                    disabled={isSeedancePolling}
+                                    className="h-8 rounded-full bg-white px-3 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+                                  >
+                                    {isSeedancePolling ? <Loader2 className="size-3.5 animate-spin" /> : <History className="size-3.5" />}
+                                    更新状态
+                                  </Button>
+                                  {item.videoUrl && (
+                                    <a
+                                      href={item.videoUrl}
+                                      download={`seedance-${item.taskId}.mp4`}
+                                      className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
+                                    >
+                                      <Download className="size-3.5" />
+                                      下载
+                                    </a>
                                   )}
                                 </div>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => removeSeedanceHistoryItem(item.taskId)}
-                                className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
-                                aria-label="删除生成记录"
-                              >
-                                <X className="size-3.5" />
-                              </button>
-                            </div>
-
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <Button
-                                type="button"
-                                onClick={() => handleViewSeedanceHistoryItem(item)}
-                                className="h-8 rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
-                              >
-                                {item.videoUrl ? (
-                                  <>
-                                    <Sparkles className="size-3.5 mr-1" />
-                                    查看视频
-                                  </>
-                                ) : (
-                                  '查看'
-                                )}
-                              </Button>
-                              <Button
-                                type="button"
-                                onClick={() => handleRefreshSeedanceHistoryItem(item)}
-                                disabled={isSeedancePolling}
-                                className="h-8 rounded-full bg-white px-3 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-                              >
-                                {isSeedancePolling ? <Loader2 className="size-3.5 animate-spin" /> : <History className="size-3.5" />}
-                                更新状态
-                              </Button>
-                              {item.videoUrl && (
-                                <a
-                                  href={item.videoUrl}
-                                  download={`seedance-${item.taskId}.mp4`}
-                                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
-                                >
-                                  <Download className="size-3.5" />
-                                  下载
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     )}
                   </div>
                 )}

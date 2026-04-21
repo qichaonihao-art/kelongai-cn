@@ -88,20 +88,20 @@
     gap: 14px;
   }
   .creative-answer-numbered-sections {
-    display: grid;
-    gap: 16px;
+    display: flex;
+    flex-direction: column;
   }
   .creative-answer-item {
-    padding: 16px 20px;
-    border-radius: 16px;
-    background-color: #f1f5f9;
-    border: 1px solid #e2e8f0;
+    padding: 12px 0;
+  }
+  .creative-answer-item + .creative-answer-item {
+    border-top: 1px solid #e2e8f0;
   }
   .creative-answer-item-title {
     font-size: 15px;
     font-weight: 800;
     color: #0f172a;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     line-height: 1.5;
   }
   .creative-answer-item-body {
