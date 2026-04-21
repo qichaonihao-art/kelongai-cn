@@ -227,6 +227,54 @@ function resolvePublicBaseUrl(req) {
   return `${getRequestProtocol(req)}://${host}`.replace(/\/+$/g, '');
 }
 
+function translateUpstreamError(rawError, fallback = '请求失败，请稍后重试。') {
+  const raw = String(rawError || '');
+  const lower = raw.toLowerCase();
+
+  // Seedance / 方舟 明确错误映射
+  if (/real person|contain real person|真人/i.test(raw)) {
+    return '上传失败：当前参考视频可能包含真人，平台限制使用这类视频作为参考素材。建议改用图片参考 + 反推提示词。';
+  }
+  if (/reference_video.*web url|must be provided as a web url|web url/i.test(raw)) {
+    return '上传失败：视频参考素材必须使用可公网访问的视频链接，当前环境暂不支持这种上传方式。';
+  }
+  if (/invalid authentication|authentication failed|unauthorized|鉴权|认证/i.test(raw)) {
+    return '接口鉴权失败，请检查 API Key 或服务端配置。';
+  }
+  if (/api key|apikey|api-key/i.test(raw)) {
+    return '接口密钥异常，请检查 API Key 配置是否正确。';
+  }
+  if (/timeout|etimedout|timed out|network timeout|connect timeout/i.test(raw)) {
+    return '请求超时，请稍后重试。';
+  }
+  if (/429|too many requests|rate limit|rate exceeded|throttled/i.test(raw)) {
+    return '当前请求过于频繁，请稍后再试。';
+  }
+  if (/5\d\d|internal server error|bad gateway|service unavailable|upstream error/i.test(raw)) {
+    return '服务暂时不可用，请稍后再试。';
+  }
+  if (/file.*too large|file size|unsupported format|file.*format|invalid file/i.test(raw)) {
+    return '上传失败：文件大小或格式不符合要求，请更换素材后再试。';
+  }
+  if (/content.*violation|content.*policy|safety|harmful|inappropriate|违规|敏感/i.test(raw)) {
+    return '内容审核未通过：提示词或参考素材可能包含敏感内容，请调整后重试。';
+  }
+  if (/quota|额度|余额不足|insufficient|credit|billing/i.test(raw)) {
+    return '账户额度不足，请检查方舟平台余额或配额。';
+  }
+  if (/not found|404|task not found|task_id|任务不存在/i.test(raw)) {
+    return '任务不存在或已过期，请确认任务 ID 是否正确。';
+  }
+  if (/parameter|param|参数|invalid request|bad request/i.test(raw)) {
+    return '请求参数有误，请检查输入内容是否符合要求。';
+  }
+  if (/network|connection|connect|dns|refused|econnrefused/i.test(raw)) {
+    return '网络连接异常，请检查网络或稍后重试。';
+  }
+
+  return fallback;
+}
+
 async function ensureUploadTempDir() {
   await mkdir(UPLOAD_TEMP_DIR, { recursive: true });
 }
@@ -5895,15 +5943,15 @@ async function handleDoubaoMultimodal(req, res) {
         bodyKeys: body && typeof body === 'object' ? Object.keys(body) : [],
         upstreamBody: responseText
       });
+      const rawError = json?.error?.message || json?.message || json?.code || '';
+      const zhError = translateUpstreamError(rawError, `方舟 API 请求失败（状态码 ${upstreamRes.status}）`);
       if (shouldStream) {
-        writeSseEvent(res, 'error', {
-          error: json?.error?.message || json?.message || json?.code || `方舟 Responses API 请求失败，上游状态码 ${upstreamRes.status}`
-        });
+        writeSseEvent(res, 'error', { error: zhError, upstream: json || responseText });
         res.end();
         return;
       }
       sendJson(res, upstreamRes.status, {
-        error: json?.error?.message || json?.message || json?.code || `方舟 Responses API 请求失败，上游状态码 ${upstreamRes.status}`,
+        error: zhError,
         upstream: json || responseText
       });
       return;
@@ -5957,19 +6005,19 @@ async function handleDoubaoMultimodal(req, res) {
       error.message === '请求体过大' ||
       error.message === '上传文件过大';
 
+    const zhError = isBodyParseOrSizeError
+      ? error.message
+      : translateUpstreamError(error?.message, `豆包请求失败，请稍后重试。`);
+
     if (shouldStream) {
-      writeSseEvent(res, 'error', {
-        error: isBodyParseOrSizeError ? error.message : (error.message || `豆包多模态理解失败（阶段: ${stage}）`)
-      });
+      writeSseEvent(res, 'error', { error: zhError, debug: { originalMessage: error?.message || '', stage } });
       res.end();
       return;
     }
 
     sendJson(res, isBodyParseOrSizeError ? 400 : 500, {
-      error: isBodyParseOrSizeError ? error.message : (error.message || `豆包多模态理解失败（阶段: ${stage}）`),
-      debug: {
-        stage
-      }
+      error: zhError,
+      debug: { originalMessage: error?.message || '', stage }
     });
   }
 }
@@ -6061,8 +6109,9 @@ async function handleSeedanceGetTask(req, res, taskId) {
         upstreamBody: responseText,
         elapsedMs: Date.now() - startedAt
       });
+      const rawError = json?.error?.message || json?.message || json?.code || '';
       sendJson(res, upstreamRes.status, {
-        error: json?.error?.message || json?.message || json?.code || `Seedance 查询任务失败，上游状态码 ${upstreamRes.status}`,
+        error: translateUpstreamError(rawError, `Seedance 查询任务失败（状态码 ${upstreamRes.status}）`),
         upstream: json || responseText
       });
       return;
@@ -6090,7 +6139,8 @@ async function handleSeedanceGetTask(req, res, taskId) {
       elapsedMs: Date.now() - startedAt
     });
     sendJson(res, 500, {
-      error: error?.message || 'Seedance 查询任务失败'
+      error: translateUpstreamError(error?.message, 'Seedance 查询任务失败，请稍后重试。'),
+      debug: { originalMessage: error?.message || '' }
     });
   }
 }
@@ -6314,8 +6364,9 @@ async function handleSeedanceCreateTask(req, res) {
         upstreamBody: responseText,
         elapsedMs: Date.now() - startedAt
       });
+      const rawError = json?.error?.message || json?.message || json?.code || '';
       sendJson(res, upstreamRes.status, {
-        error: json?.error?.message || json?.message || json?.code || `Seedance 创建任务失败，上游状态码 ${upstreamRes.status}`,
+        error: translateUpstreamError(rawError, `Seedance 创建任务失败（状态码 ${upstreamRes.status}）`),
         upstream: json || responseText
       });
       return;
@@ -6340,8 +6391,10 @@ async function handleSeedanceCreateTask(req, res) {
       stack: error?.stack || '',
       elapsedMs: Date.now() - startedAt
     });
-    sendJson(res, error?.message === '请求体不是合法 JSON' ? 400 : 500, {
-      error: error?.message || 'Seedance 创建任务失败'
+    const isBodyParseError = error?.message === '请求体不是合法 JSON';
+    sendJson(res, isBodyParseError ? 400 : 500, {
+      error: isBodyParseError ? error.message : translateUpstreamError(error?.message, 'Seedance 创建任务失败，请稍后重试。'),
+      debug: { originalMessage: error?.message || '' }
     });
   }
 }

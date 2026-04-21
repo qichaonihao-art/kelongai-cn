@@ -595,7 +595,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   const [seedancePrompt, setSeedancePrompt] = useState("");
   const [seedanceRatio, setSeedanceRatio] = useState("9:16");
   const [seedanceDuration, setSeedanceDuration] = useState(5);
-  const [seedanceGenerateAudio, setSeedanceGenerateAudio] = useState(true);
+  const [seedanceGenerateAudio, setSeedanceGenerateAudio] = useState(false);
   const [seedanceWatermark, setSeedanceWatermark] = useState(false);
   const [seedanceReferences, setSeedanceReferences] = useState<SeedanceReferenceFile[]>([]);
   const [isSeedanceLoading, setIsSeedanceLoading] = useState(false);
@@ -725,26 +725,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
             : previous
         );
 
-        if (nextTask.videoUrl) {
-          // 视频生成成功，自动弹出大窗口预览
-          setSeedanceModalItem({
-            id: nextTask.taskId || createMessageId('seedance_modal'),
-            taskId: nextTask.taskId || '',
-            prompt: seedancePrompt,
-            status: nextTask.status,
-            videoUrl: nextTask.videoUrl,
-            createdAt: nextTask.createdAt,
-            updatedAt: nextTask.updatedAt,
-            savedAt: new Date().toISOString(),
-            ratio: seedanceRatio,
-            duration: seedanceDuration,
-            generateAudio: seedanceGenerateAudio,
-            watermark: seedanceWatermark,
-          });
-          setSeedanceVideoModal(true);
-          return;
-        }
-        if (isSeedanceTerminalStatus(nextTask.status)) {
+        if (nextTask.videoUrl || isSeedanceTerminalStatus(nextTask.status)) {
           return;
         }
       } catch (error) {
@@ -1742,12 +1723,6 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                     <Plus className="size-4" />
                     添加素材
                   </button>
-                  {!publicBaseUrlConfigured && (
-                    <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-600 ring-1 ring-amber-200">
-                      视频参考仅线上可用
-                    </span>
-                  )}
-
                   <div ref={seedanceSettingsRef} className="relative flex-1">
                     <button
                       type="button"
@@ -1843,107 +1818,6 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 </div>
               </div>
 
-              {/* 生成任务预览区域 */}
-              <div className="mt-3">
-                {isSeedanceLoading ? (
-                  <div className="flex min-h-[74px] items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white p-3 text-xs font-bold text-violet-600">
-                    <Loader2 className="size-4 animate-spin" />
-                    正在创建 Seedance 任务
-                  </div>
-                ) : seedanceTask ? (
-                  <div className="space-y-2">
-                    {/* 等待中：简洁彩色卡片，仅动画+文字 */}
-                    {!seedanceTask.videoUrl && !isSeedanceFailureStatus(seedanceTask.status) && (
-                      <div className="rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 px-5 py-6 text-center shadow-lg shadow-violet-200">
-                        <div className="mb-4 flex justify-center gap-1.5">
-                          {[0, 1, 2].map((i) => (
-                            <span
-                              key={i}
-                              className="inline-block h-2.5 w-2.5 rounded-full bg-white/90"
-                              style={{
-                                animation: `bounce 1.4s infinite ease-in-out both`,
-                                animationDelay: `${i * 0.16}s`,
-                              }}
-                            />
-                          ))}
-                        </div>
-                        <div className="text-sm font-black text-white">
-                          任务处理中
-                        </div>
-                        <div className="mt-1 text-xs font-semibold text-violet-200">
-                          已等待 {seedanceElapsedText}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 成功/失败：白底信息卡片 */}
-                    {(seedanceTask.videoUrl || isSeedanceFailureStatus(seedanceTask.status)) && (
-                      <div className="rounded-xl border border-slate-300 bg-white p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className={cn(
-                            "text-xs font-black",
-                            seedanceTask.videoUrl ? "text-emerald-600" : "text-red-500"
-                          )}>
-                            {getSeedanceStatusLabel(seedanceTask.status, !!seedanceTask.videoUrl)}
-                          </div>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {seedanceTask.videoUrl && (
-                            <Button
-                              type="button"
-                              onClick={() => {
-                                setSeedanceModalItem({
-                                  id: seedanceTask.taskId || createMessageId('seedance_modal'),
-                                  taskId: seedanceTask.taskId || '',
-                                  prompt: seedancePrompt,
-                                  status: seedanceTask.status,
-                                  videoUrl: seedanceTask.videoUrl,
-                                  createdAt: seedanceTask.createdAt,
-                                  updatedAt: seedanceTask.updatedAt,
-                                  savedAt: new Date().toISOString(),
-                                  ratio: seedanceRatio,
-                                  duration: seedanceDuration,
-                                  generateAudio: seedanceGenerateAudio,
-                                  watermark: seedanceWatermark,
-                                });
-                                setSeedanceVideoModal(true);
-                              }}
-                              className="h-8 rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
-                            >
-                              <Sparkles className="size-3.5 mr-1" />
-                              查看视频
-                            </Button>
-                          )}
-                          {seedanceTask.videoUrl && (
-                            <a
-                              href={seedanceTask.videoUrl}
-                              download={`seedance-${seedanceTask.taskId || 'video'}.mp4`}
-                              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
-                            >
-                              <Download className="size-3.5" />
-                              下载视频
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="grid min-h-[74px] place-items-center rounded-xl border border-slate-300 bg-white p-3 text-center">
-                    <div>
-                      <div className="text-xs font-bold text-slate-500">生成预览</div>
-                      <div className="mt-1 text-[11px] text-slate-400">创建任务后会自动查询状态，成功后直接显示视频</div>
-                    </div>
-                  </div>
-                )}
-
-                {seedanceError && (
-                  <div className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium leading-5 text-red-500">
-                    {seedanceError}
-                  </div>
-                )}
-              </div>
-
               <div className="mt-4 flex flex-wrap gap-2">
                 <Button
                   type="button"
@@ -1965,7 +1839,127 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 </Button>
               </div>
 
-              <div className="mt-5 rounded-2xl border border-slate-300 bg-slate-100 p-3">
+              {/* 生成任务预览区域 */}
+              <div className="mt-3">
+                {isSeedanceLoading ? (
+                  <div className="flex min-h-[180px] items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white p-3 text-xs font-bold text-violet-600">
+                    <Loader2 className="size-4 animate-spin" />
+                    正在创建 Seedance 任务
+                  </div>
+                ) : seedanceTask ? (
+                  <div className="space-y-2">
+                    {/* 等待中：科技感深色卡片 */}
+                    {!seedanceTask.videoUrl && !isSeedanceFailureStatus(seedanceTask.status) && (
+                      <div className="relative overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 px-5 py-8 text-center shadow-xl">
+                        {/* 网格背景 */}
+                        <div
+                          className="pointer-events-none absolute inset-0 opacity-10"
+                          style={{
+                            backgroundImage: 'linear-gradient(rgba(99,102,241,0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.4) 1px, transparent 1px)',
+                            backgroundSize: '24px 24px',
+                          }}
+                        />
+                        {/* 扫描线 */}
+                        <div
+                          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400 to-transparent opacity-60"
+                          style={{ animation: 'tech-scan 2.5s linear infinite' }}
+                        />
+                        {/* 顶部光晕 */}
+                        <div className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-cyan-500/10 to-transparent" />
+
+                        <div className="relative">
+                          <div className="mb-5 flex justify-center gap-2">
+                            {[0, 1, 2].map((i) => (
+                              <span
+                                key={i}
+                                className="inline-block h-2 w-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]"
+                                style={{
+                                  animation: `tech-pulse 1.6s infinite ease-in-out both`,
+                                  animationDelay: `${i * 0.2}s`,
+                                }}
+                              />
+                            ))}
+                          </div>
+                          <div className="text-sm font-black tracking-wider text-white">
+                            任务处理中
+                          </div>
+                          <div className="mt-1.5 text-xs font-semibold text-cyan-300/80">
+                            已等待 {seedanceElapsedText}
+                          </div>
+                          <div className="mt-3 text-[11px] text-slate-500">
+                            视频生成中，完成后将在此自动展示
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 成功：内联视频播放 */}
+                    {seedanceTask.videoUrl && (
+                      <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                        <div className="flex items-center justify-between gap-2 px-1">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-2 w-2 rounded-full bg-emerald-500" />
+                            <span className="text-xs font-black text-emerald-600">
+                              {getSeedanceStatusLabel(seedanceTask.status, true)}
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-slate-400">
+                            {seedanceRatio} · {seedanceDuration}秒
+                          </span>
+                        </div>
+                        <div className="relative mx-auto w-full overflow-hidden rounded-xl bg-slate-950">
+                          <video
+                            src={seedanceTask.videoUrl}
+                            controls
+                            autoPlay
+                            loop
+                            playsInline
+                            className="mx-auto aspect-[9/16] w-full max-h-[480px] object-contain"
+                          />
+                        </div>
+                        <div className="flex flex-wrap gap-2 px-1 pt-1">
+                          <a
+                            href={seedanceTask.videoUrl}
+                            download={`seedance-${seedanceTask.taskId || 'video'}.mp4`}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
+                          >
+                            <Download className="size-3.5" />
+                            下载视频
+                          </a>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 失败 */}
+                    {isSeedanceFailureStatus(seedanceTask.status) && !seedanceTask.videoUrl && (
+                      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-center">
+                        <div className="text-sm font-black text-red-600">
+                          {getSeedanceStatusLabel(seedanceTask.status, false)}
+                        </div>
+                        <div className="mt-1 text-xs text-red-400">
+                          任务执行失败，请检查提示词或参考素材后重试
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid min-h-[200px] place-items-center rounded-xl border border-dashed border-slate-300 bg-white p-3 text-center">
+                    <div>
+                      <div className="text-xs font-bold text-slate-400">视频生成预览区</div>
+                      <div className="mt-1 text-[11px] text-slate-400">创建任务后，生成视频将在此展示</div>
+                    </div>
+                  </div>
+                )}
+
+                {seedanceError && (
+                  <div className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium leading-5 text-red-500">
+                    {seedanceError}
+                  </div>
+                )}
+              </div>
+
+              {/* 生成历史 — 底部全宽区域 */}
+              <div className="mt-6 rounded-2xl border border-slate-300 bg-slate-100 p-3 md:p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <div className="text-xs font-black text-slate-800">生成历史</div>
@@ -2180,6 +2174,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
               </div>
             </div>
           </section>
+
 
           <SiteFooter className="mt-3 pb-1" />
         </div>
