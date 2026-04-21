@@ -1464,7 +1464,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
       <input
         ref={fileInputRef}
         type="file"
-        accept="video/*"
+        accept="image/*,video/*"
         className="hidden"
         onChange={(event) => handleMediaChange(event.target.files?.[0] || null)}
       />
@@ -1569,14 +1569,22 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
               </div>
 
               <div className="min-h-[190px] rounded-2xl border border-slate-300 bg-slate-100 p-3">
-                {selectedMedia?.kind === 'video' ? (
+                {selectedMedia ? (
                   <div className="space-y-3">
-                    <video
-                      src={selectedMedia.previewUrl}
-                      controls
-                      preload="metadata"
-                      className="aspect-video w-full rounded-xl bg-slate-950 object-contain"
-                    />
+                    {selectedMedia.kind === 'video' ? (
+                      <video
+                        src={selectedMedia.previewUrl}
+                        controls
+                        preload="metadata"
+                        className="aspect-video w-full rounded-xl bg-slate-950 object-contain"
+                      />
+                    ) : (
+                      <img
+                        src={selectedMedia.previewUrl}
+                        alt={selectedMedia.fileName}
+                        className="aspect-video w-full rounded-xl bg-slate-950 object-contain"
+                      />
+                    )}
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0 text-xs font-semibold text-slate-500">
                         <span className="block truncate">{selectedMedia.fileName}</span>
@@ -1586,7 +1594,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                         type="button"
                         onClick={clearSelectedMedia}
                         className="rounded-full p-2 text-slate-400 transition-colors hover:bg-white hover:text-slate-600"
-                        aria-label="移除视频"
+                        aria-label="移除媒体"
                       >
                         <X className="size-4" />
                       </button>
@@ -1602,9 +1610,9 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                     <span className="flex size-12 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
                       <Plus className="size-5" />
                     </span>
-                    <span className="text-sm font-bold text-slate-700">上传视频</span>
+                    <span className="text-sm font-bold text-slate-700">上传图片或视频</span>
                     <span className="max-w-xs text-xs leading-5 text-slate-400">
-                      支持常见视频格式，当前上限 150MB。
+                      支持常见图片和视频格式，当前上限 150MB。
                     </span>
                   </button>
                 )}
@@ -1738,7 +1746,19 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   className="min-h-[104px] w-full resize-none border-none bg-transparent p-1 pr-14 text-sm leading-7 text-slate-700 outline-none"
                 />
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-[11px] font-medium text-slate-400">Enter 发送，Shift + Enter 换行</div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isLoading}
+                      className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <ImageIcon className="size-3.5" />
+                      上传图片
+                    </button>
+                    <span className="text-[11px] font-medium text-slate-300">|</span>
+                    <span className="text-[11px] font-medium text-slate-400">Enter 发送，Shift + Enter 换行</span>
+                  </div>
                   <Button
                     size="sm"
                     onClick={handleSend}
