@@ -1969,6 +1969,15 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                       </div>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setSeedancePrompt("")}
+                    disabled={!seedancePrompt.trim() || isSeedanceLoading}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-500 transition-colors hover:border-red-200 hover:text-red-500 hover:bg-red-50/40 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <X className="size-4" />
+                    清空
+                  </button>
                 </div>
               </div>
 
@@ -2184,14 +2193,31 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                                 )}
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => removeSeedanceHistoryItem(latest.taskId)}
-                              className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
-                              aria-label="删除生成记录"
-                            >
-                              <X className="size-3.5" />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await navigator.clipboard.writeText(latest.prompt);
+                                    setCopiedMessageId(latest.taskId);
+                                    setTimeout(() => setCopiedMessageId((current) => (current === latest.taskId ? null : current)), 2000);
+                                  } catch {}
+                                }}
+                                className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500"
+                                aria-label="复制提示词"
+                                title="复制提示词"
+                              >
+                                {copiedMessageId === latest.taskId ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeSeedanceHistoryItem(latest.taskId)}
+                                className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                                aria-label="删除生成记录"
+                              >
+                                <X className="size-3.5" />
+                              </button>
+                            </div>
                           </div>
 
                           <div className="mt-3 flex flex-wrap gap-2">
@@ -2286,14 +2312,31 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                                       )}
                                     </div>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => removeSeedanceHistoryItem(item.taskId)}
-                                    className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
-                                    aria-label="删除生成记录"
-                                  >
-                                    <X className="size-3.5" />
-                                  </button>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        try {
+                                          await navigator.clipboard.writeText(item.prompt);
+                                          setCopiedMessageId(item.taskId);
+                                          setTimeout(() => setCopiedMessageId((current) => (current === item.taskId ? null : current)), 2000);
+                                        } catch {}
+                                      }}
+                                      className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500"
+                                      aria-label="复制提示词"
+                                      title="复制提示词"
+                                    >
+                                      {copiedMessageId === item.taskId ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeSeedanceHistoryItem(item.taskId)}
+                                      className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                                      aria-label="删除生成记录"
+                                    >
+                                      <X className="size-3.5" />
+                                    </button>
+                                  </div>
                                 </div>
 
                                 <div className="mt-3 flex flex-wrap gap-2">
