@@ -1079,6 +1079,17 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     const prompt = seedancePrompt.trim();
     if (!prompt || isSeedanceLoading) return;
 
+    if (seedanceReferences.length === 0) {
+      const confirmed = window.confirm('当前未添加任何参考图片或视频，确定只使用文本提示词生成视频吗？');
+      if (!confirmed) return;
+    }
+
+    const lastPrompt = seedanceHistory[0]?.prompt;
+    if (lastPrompt && lastPrompt.trim() === prompt) {
+      const confirmed = window.confirm('检测到本次提示词与上次完全相同，确定要再次生成一模一样的内容吗？');
+      if (!confirmed) return;
+    }
+
     setIsSeedanceLoading(true);
     setSeedanceError("");
     setSeedanceTask(null);
@@ -1448,17 +1459,17 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
 
       <header className="h-14 border-b border-slate-300 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 shrink-0 sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            size="sm"
+          <button
+            type="button"
             onClick={onBack}
-            className="rounded-full h-9 px-4 text-xs font-bold text-slate-700 bg-white border border-slate-200 shadow-sm hover:bg-slate-50 hover:text-slate-900 hover:border-slate-300 transition-all gap-2"
+            className="group inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 shadow-sm transition-all hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 hover:shadow"
           >
-            <ArrowLeft className="size-4" />
+            <ArrowLeft className="size-3.5 transition-transform group-hover:-translate-x-0.5" />
             返回
-          </Button>
+          </button>
+          <div className="h-4 w-px bg-slate-200" />
           <div>
-            <h1 className="text-xs font-bold text-slate-900">创意创作</h1>
+            <h1 className="tech-shine text-sm font-black">创意创作</h1>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -1481,16 +1492,15 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 ))}
               </select>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
+              type="button"
               onClick={handleCreateNewSession}
               disabled={isLoading}
-              className="rounded-full border border-slate-200 px-3 text-xs font-bold text-slate-600 hover:bg-slate-50"
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Plus className="size-3.5" />
               新建会话
-            </Button>
+            </button>
           </div>
           <div className="flex items-center gap-2">
             <div className={cn(
@@ -1505,15 +1515,14 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
             </span>
           </div>
           <div className="w-px h-4 bg-slate-300 mx-2" />
-          <Button
-            variant="ghost"
-            size="sm"
+          <button
+            type="button"
             onClick={onLogout}
-            className="text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors gap-2 rounded-full px-4"
+            className="inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-xs font-bold text-slate-500 transition-colors hover:bg-red-50 hover:text-red-500"
           >
-            <LogOut className="size-4" />
-            <span className="text-xs font-bold">退出登录</span>
-          </Button>
+            <LogOut className="size-3.5" />
+            退出登录
+          </button>
         </div>
       </header>
 
@@ -1562,10 +1571,10 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                       <button
                         type="button"
                         onClick={clearSelectedMedia}
-                        className="rounded-full p-2 text-slate-400 transition-colors hover:bg-white hover:text-slate-600"
+                        className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-white hover:text-slate-600"
                         aria-label="移除媒体"
                       >
-                        <X className="size-4" />
+                        <X className="size-3.5" />
                       </button>
                     </div>
                   </div>
@@ -1588,25 +1597,24 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
-                <Button
+                <button
                   type="button"
                   onClick={prepareVideoReversePrompt}
                   disabled={isLoading || selectedMedia?.kind !== 'video'}
-                  className="rounded-full bg-slate-900 px-4 text-xs font-bold text-white hover:bg-slate-800"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Sparkles className="size-3.5" />
                   填入反推指令
-                </Button>
-                <Button
+                </button>
+                <button
                   type="button"
-                  variant="ghost"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isLoading}
-                  className="rounded-full border border-slate-200 px-4 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Film className="size-3.5" />
                   更换视频
-                </Button>
+                </button>
               </div>
 
               <div className="mt-5 rounded-2xl border border-slate-300 bg-slate-100">
@@ -1653,7 +1661,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                                 <button
                                   type="button"
                                   onClick={() => copyMessageContent(msg.id, msg.content)}
-                                  className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                                  className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
                                   aria-label="复制消息"
                                 >
                                   {copiedMessageId === msg.id ? (
@@ -1720,7 +1728,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={isLoading}
-                      className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <ImageIcon className="size-3.5" />
                       上传图片
@@ -1728,15 +1736,15 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                     <span className="text-[11px] font-medium text-slate-300">|</span>
                     <span className="text-[11px] font-medium text-slate-400">Enter 发送，Shift + Enter 换行</span>
                   </div>
-                  <Button
-                    size="sm"
+                  <button
+                    type="button"
                     onClick={handleSend}
                     disabled={!input.trim() || isLoading}
-                    className="rounded-full bg-indigo-600 px-4 text-xs font-bold text-white hover:bg-indigo-700"
+                    className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
                     发送给豆包
-                  </Button>
+                  </button>
                 </div>
               </div>
 
@@ -1845,7 +1853,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                         <button
                           type="button"
                           onClick={() => removeSeedanceReference(reference.id)}
-                          className="rounded-full p-1.5 text-slate-400 transition-colors hover:bg-slate-50 hover:text-red-500"
+                          className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-red-500"
                           aria-label="移除参考素材"
                         >
                           <X className="size-3.5" />
@@ -1861,27 +1869,27 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                     type="button"
                     onClick={() => seedanceFileInputRef.current?.click()}
                     disabled={isSeedanceLoading}
-                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-500 transition-colors hover:border-violet-200 hover:text-violet-600 hover:bg-violet-50/40 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <Plus className="size-4" />
+                    <Plus className="size-3.5" />
                     添加素材
                   </button>
                   <div ref={seedanceSettingsRef} className="relative flex-1">
                     <button
                       type="button"
                       onClick={() => setShowSeedanceSettings((value) => !value)}
-                      className="flex w-full flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs font-bold text-slate-500 transition-colors hover:border-violet-200 hover:bg-violet-50/40"
+                      className="flex h-9 w-full flex-wrap items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-left text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50"
                     >
-                      <SlidersHorizontal className="size-4 text-violet-500" />
+                      <SlidersHorizontal className="size-3.5 text-slate-500" />
                       <span>{getSeedanceRatioLabel(seedanceRatio)}</span>
-                      <span className="h-4 w-px bg-slate-200" />
+                      <span className="h-3.5 w-px bg-slate-200" />
                       <span>{seedanceDuration} 秒</span>
-                      <span className="h-4 w-px bg-slate-200" />
+                      <span className="h-3.5 w-px bg-slate-200" />
                       <span className="inline-flex items-center gap-1">
-                        <Volume2 className="size-3.5" />
+                        <Volume2 className="size-3" />
                         {seedanceGenerateAudio ? '声音' : '静音'}
                       </span>
-                      <span className="h-4 w-px bg-slate-200" />
+                      <span className="h-3.5 w-px bg-slate-200" />
                       <span>{seedanceWatermark ? '水印' : '无水印'}</span>
                     </button>
 
@@ -1962,24 +1970,24 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
-                <Button
+                <button
                   type="button"
                   onClick={syncLatestPromptToSeedance}
                   disabled={!latestAssistantText}
-                  className="rounded-full bg-violet-600 px-4 text-xs font-bold text-white hover:bg-violet-700"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Send className="size-3.5" />
                   同步最新提示词
-                </Button>
-                <Button
+                </button>
+                <button
                   type="button"
                   onClick={handleCreateSeedanceVideo}
                   disabled={!seedancePrompt.trim() || isSeedanceLoading || !seedanceApiConfigured}
-                  className="rounded-full bg-slate-900 px-4 text-xs font-bold text-white hover:bg-slate-800"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isSeedanceLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
                   开始生成视频
-                </Button>
+                </button>
                 <button
                   type="button"
                   onClick={() => setSeedancePrompt("")}
@@ -2157,7 +2165,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                                 )}
                               </div>
                             </div>
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-0.5">
                               <button
                                 type="button"
                                 onClick={async () => {
@@ -2167,7 +2175,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                                     setTimeout(() => setCopiedMessageId((current) => (current === latest.taskId ? null : current)), 2000);
                                   } catch {}
                                 }}
-                                className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500"
+                                className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
                                 aria-label="复制提示词"
                                 title="复制提示词"
                               >
@@ -2176,7 +2184,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                               <button
                                 type="button"
                                 onClick={() => removeSeedanceHistoryItem(latest.taskId)}
-                                className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                                className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
                                 aria-label="删除生成记录"
                               >
                                 <X className="size-3.5" />
@@ -2185,25 +2193,25 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                           </div>
 
                           <div className="mt-3 flex flex-wrap gap-2">
-                            <Button
+                            <button
                               type="button"
                               onClick={() => handleViewSeedanceHistoryItem(latest)}
-                              className="h-8 rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
+                              className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800"
                             >
                               {latest.videoUrl ? (
                                 <>
-                                  <Sparkles className="size-3.5 mr-1" />
+                                  <Sparkles className="size-3.5" />
                                   查看视频
                                 </>
                               ) : (
                                 '查看'
                               )}
-                            </Button>
+                            </button>
                             {latest.videoUrl && (
                               <a
                                 href={latest.videoUrl}
                                 download={`seedance-${latest.taskId}.mp4`}
-                                className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
+                                className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-bold text-white transition-colors hover:bg-emerald-700"
                               >
                                 <Download className="size-3.5" />
                                 下载
@@ -2226,7 +2234,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                             transition={{ duration: 0.15 }}
                             type="button"
                             onClick={() => setIsHistoryFolded(false)}
-                            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-violet-300 hover:text-violet-600"
+                            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-slate-400 hover:text-slate-700"
                           >
                             <ChevronDown className="size-4" />
                             展开更多 ({seedanceHistory.length - 1} 条)
@@ -2243,7 +2251,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                             <button
                               type="button"
                               onClick={() => setIsHistoryFolded(true)}
-                              className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-violet-300 hover:text-violet-600"
+                              className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-slate-400 hover:text-slate-700"
                             >
                               <ChevronUp className="size-4" />
                               收起
@@ -2267,7 +2275,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                                       )}
                                     </div>
                                   </div>
-                                  <div className="flex items-center gap-1">
+                                  <div className="flex items-center gap-0.5">
                                     <button
                                       type="button"
                                       onClick={async () => {
@@ -2277,7 +2285,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                                           setTimeout(() => setCopiedMessageId((current) => (current === item.taskId ? null : current)), 2000);
                                         } catch {}
                                       }}
-                                      className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500"
+                                      className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
                                       aria-label="复制提示词"
                                       title="复制提示词"
                                     >
@@ -2286,7 +2294,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                                     <button
                                       type="button"
                                       onClick={() => removeSeedanceHistoryItem(item.taskId)}
-                                      className="rounded-full p-1.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                                      className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
                                       aria-label="删除生成记录"
                                     >
                                       <X className="size-3.5" />
@@ -2295,25 +2303,25 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                                 </div>
 
                                 <div className="mt-3 flex flex-wrap gap-2">
-                                  <Button
+                                  <button
                                     type="button"
                                     onClick={() => handleViewSeedanceHistoryItem(item)}
-                                    className="h-8 rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white hover:bg-slate-800"
+                                    className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800"
                                   >
                                     {item.videoUrl ? (
                                       <>
-                                        <Sparkles className="size-3.5 mr-1" />
+                                        <Sparkles className="size-3.5" />
                                         查看视频
                                       </>
                                     ) : (
                                       '查看'
                                     )}
-                                  </Button>
+                                  </button>
                                   {item.videoUrl && (
                                     <a
                                       href={item.videoUrl}
                                       download={`seedance-${item.taskId}.mp4`}
-                                      className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-600 px-3 text-[11px] font-bold text-white hover:bg-emerald-700"
+                                      className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-bold text-white transition-colors hover:bg-emerald-700"
                                     >
                                       <Download className="size-3.5" />
                                       下载
@@ -2369,7 +2377,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 <button
                   type="button"
                   onClick={() => setSeedanceVideoModal(false)}
-                  className="ml-4 rounded-full p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                  className="ml-4 flex size-9 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white"
                   aria-label="关闭弹窗"
                 >
                   <X className="size-5" />

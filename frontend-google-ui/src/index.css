@@ -109,6 +109,14 @@
     line-height: 1.92;
     color: #334155;
   }
+  .tech-shine {
+    background: linear-gradient(90deg, #0f172a 0%, #0f172a 35%, #6366f1 50%, #8b5cf6 55%, #0f172a 65%, #0f172a 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: tech-shine 3s linear infinite;
+  }
 }
 
 @keyframes shimmer {
@@ -140,6 +148,11 @@
 @keyframes tech-grid-move {
   0% { background-position: 0 0; }
   100% { background-position: 20px 20px; }
+}
+
+@keyframes tech-shine {
+  0% { background-position: 200% center; }
+  100% { background-position: -200% center; }
 }
 
 @layer base {
