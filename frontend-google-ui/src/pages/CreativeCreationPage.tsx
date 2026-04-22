@@ -86,6 +86,7 @@ interface SeedanceHistoryItem {
 const MAX_VIDEO_SIZE_BYTES = 150 * 1024 * 1024;
 const MAX_SAVED_CREATIVE_SESSIONS = 8;
 const MAX_SEEDANCE_HISTORY_ITEMS = 20;
+const SEEDANCE_HISTORY_MAX_AGE_HOURS = 24;
 const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
@@ -312,14 +313,27 @@ function loadSeedanceHistory() {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
 
-    return parsed
+    const maxAgeMs = SEEDANCE_HISTORY_MAX_AGE_HOURS * 60 * 60 * 1000;
+    const now = Date.now();
+
+    const filtered = parsed
       .filter((item): item is SeedanceHistoryItem => (
         item &&
         typeof item === 'object' &&
         typeof item.taskId === 'string' &&
         typeof item.prompt === 'string'
       ))
-      .slice(0, MAX_SEEDANCE_HISTORY_ITEMS);
+      .filter((item) => {
+        const savedTime = new Date(item.savedAt).getTime();
+        return now - savedTime < maxAgeMs;
+      });
+
+    // 如果有被清理掉的记录，同步更新 localStorage
+    if (filtered.length < parsed.length) {
+      window.localStorage.setItem(SEEDANCE_HISTORY_STORAGE_KEY, JSON.stringify(filtered));
+    }
+
+    return filtered.slice(0, MAX_SEEDANCE_HISTORY_ITEMS);
   } catch {
     window.localStorage.removeItem(SEEDANCE_HISTORY_STORAGE_KEY);
     return [];
