@@ -1781,7 +1781,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   value={seedancePrompt}
                   onChange={handleSeedancePromptChange}
                   placeholder="等待模块一反推出视频提示词..."
-                  className="min-h-[156px] w-full resize-none rounded-xl border border-slate-300 bg-white p-3 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300"
+                  className="min-h-[220px] w-full resize-none rounded-xl border border-slate-300 bg-white p-3 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300"
                 />
 
                 {/* @ 引用下拉菜单 */}
