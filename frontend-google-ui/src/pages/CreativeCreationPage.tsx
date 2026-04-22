@@ -1476,15 +1476,13 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
           <button
             type="button"
             onClick={onBack}
-            className="group inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 shadow-sm transition-all hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 hover:shadow"
+            className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
           >
-            <ArrowLeft className="size-3.5 transition-transform group-hover:-translate-x-0.5" />
-            返回
+            <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
+              <ArrowLeft className="size-3.5" />
+            </div>
+            <span className="text-xs font-bold text-slate-700">返回</span>
           </button>
-          <div className="h-4 w-px bg-slate-200" />
-          <div>
-            <h1 className="tech-shine text-sm font-black">创意创作</h1>
-          </div>
         </div>
         <div className="flex items-center gap-4">
           <div className="hidden md:flex items-center gap-2">
