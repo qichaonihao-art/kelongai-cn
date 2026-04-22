@@ -3,7 +3,6 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { Readable } from 'node:stream';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -68,6 +67,7 @@ const SILICONFLOW_VOICE_UPLOAD_TIMEOUT_MS = 2 * 60 * 1000;
 const SILICONFLOW_TTS_TIMEOUT_MS = 2 * 60 * 1000;
 const DEFAULT_DOUYIN_VIDEO_RESOLVE_TIMEOUT_MS = 2 * 60 * 1000;
 const DEFAULT_DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS = 45 * 1000;
 const DEFAULT_DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_DOUYIN_ASR_TIMEOUT_MS = 12 * 60 * 1000;
 const DEFAULT_DOUYIN_TRANSCRIPT_TOTAL_TIMEOUT_MS = 30 * 60 * 1000;
@@ -81,8 +81,16 @@ const DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS = readTimeoutMs(
   DEFAULT_DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS,
   2 * 60 * 1000
 );
-const DOUYIN_VIDEO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = Math.max(10, Math.floor(DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS / 1000 / 6));
-const DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS = [0, 1500, 4000];
+const DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS = readTimeoutMs(
+  process.env.DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS,
+  DEFAULT_DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS,
+  10 * 1000
+);
+const DOUYIN_VIDEO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = Math.min(
+  15,
+  Math.max(6, Math.floor(DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS / 1000 / 3))
+);
+const DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS = [0, 800, 1500];
 const DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS = readTimeoutMs(
   process.env.DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS,
   DEFAULT_DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS,
@@ -460,15 +468,29 @@ async function getVideoDurationSeconds(filePath) {
 }
 
 async function validateDownloadedVideoFile(filePath, timeoutMs = 30000) {
-  const { stdout } = await execFileAsync('ffprobe', [
-    '-v', 'error',
-    '-show_entries', 'format=duration,size,format_name',
-    '-of', 'json',
-    filePath
-  ], {
-    timeout: Math.max(1000, timeoutMs),
-    killSignal: 'SIGKILL'
-  });
+  let stdout = '';
+  try {
+    const result = await execFileAsync('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'format=duration,size,format_name',
+      '-of', 'json',
+      filePath
+    ], {
+      timeout: Math.max(1000, timeoutMs),
+      killSignal: 'SIGKILL'
+    });
+    stdout = result.stdout;
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw createDouyinResolveError({
+        stage: 'ffprobe_missing',
+        statusCode: 500,
+        message: '服务器未安装 ffprobe，无法校验抖音视频文件。',
+        detail: '请先在本地安装 ffmpeg；ffprobe 会随 ffmpeg 一起安装。'
+      });
+    }
+    throw error;
+  }
 
   let parsed = null;
   try {
@@ -1700,6 +1722,16 @@ function normalizeDouyinDownloadCandidates(downloadUrlCandidates = [], fallbackU
   return merged;
 }
 
+function serializeDouyinDownloadCandidates(downloadUrlCandidates = [], fallbackUrl = '') {
+  return normalizeDouyinDownloadCandidates(downloadUrlCandidates, fallbackUrl)
+    .slice(0, 12)
+    .map((candidate) => ({
+      url: candidate.url,
+      source: candidate.source,
+      host: candidate.host
+    }));
+}
+
 function extractStableDownloadUrl(payload) {
   return pickBestDouyinDownloadCandidate(collectDownloadUrlCandidates(payload))?.url || '';
 }
@@ -2239,7 +2271,7 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
     const { timeoutMs } = getStageTimeoutContext({
       parentDeadlineAt,
       stageStartedAt: attemptStartedAt,
-      stageTimeoutMs: DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS,
+      stageTimeoutMs: Math.min(DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS, DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS),
       timeoutStage: 'douyin_transcript_total_timeout',
       failedStage: 'video_download',
       timeoutMessage: '文案提取失败',
@@ -2384,6 +2416,20 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
         probeResult = await validateDownloadedVideoFile(videoPath, Math.min(timeoutMs, 30 * 1000));
       } catch (probeError) {
         await unlink(videoPath).catch(() => {});
+        if (probeError?.stage === 'ffprobe_missing') {
+          throw annotateDouyinError(probeError, {
+            failedStage: 'video_download',
+            timeoutMs,
+            targetPath: videoPath,
+            host: downloadHost,
+            curlCode: 0,
+            curlStderr: stderrSummary,
+            curlHttpStatus: httpStatus,
+            effectiveUrl,
+            firstSelectedHost,
+            retrySwitchedHost
+          });
+        }
         updateDouyinDownloadHostStats(downloadHost, 'invalid');
         updateDouyinDownloadHostStats(downloadHost, 'failure');
         throw annotateDouyinError(createDouyinResolveError({
@@ -3164,6 +3210,10 @@ function getDouyinTranscriptErrorMessage(error) {
     stage === 'douyin_video_download_invalid_file'
   ) {
     return error?.detail || error?.message || '视频下载失败';
+  }
+
+  if (stage === 'ffprobe_missing') {
+    return error?.detail || error?.message || '服务器未安装 ffprobe，无法校验抖音视频文件。';
   }
 
   if (
@@ -6529,6 +6579,7 @@ async function handleDouyinResolveDownload(req, res) {
       videoId: result.videoId || awemeId,
       title: result.title || '',
       downloadUrl: result.downloadUrl,
+      downloadUrlCandidates: serializeDouyinDownloadCandidates(result.downloadUrlCandidates || [], result.downloadUrl),
       caption: result.caption || '',
       fallbackCaption: result.fallbackCaption || '',
       fallbackCaptionSource: result.fallbackCaptionSource || 'none',
@@ -6711,6 +6762,7 @@ async function handleDouyinExtractTranscript(req, res) {
         videoId: resolved.videoId || '',
         title: resolved.title || '',
         downloadUrl: resolved.downloadUrl,
+        downloadUrlCandidates: serializeDouyinDownloadCandidates(resolved.downloadUrlCandidates || [], resolved.downloadUrl),
         authorName: resolved.authorName || '',
         normalizedUrl: resolved.normalizedUrl || redirectInfo.normalizedUrl || extracted.url,
         sourceType: extracted.sourceType,
@@ -6812,10 +6864,12 @@ async function handleDouyinExtractTranscript(req, res) {
 async function handleDouyinDownloadVideo(req, res) {
   const requestId = createRequestId('dy_download');
   const startedAt = Date.now();
+  const tempFiles = [];
 
   try {
     const body = await readRequestBody(req);
     const downloadUrl = readValue(body?.downloadUrl);
+    const downloadUrlCandidates = Array.isArray(body?.downloadUrlCandidates) ? body.downloadUrlCandidates : [];
     const videoId = readValue(body?.videoId);
 
     if (!downloadUrl) {
@@ -6823,91 +6877,70 @@ async function handleDouyinDownloadVideo(req, res) {
       return;
     }
 
-    const downloadHost = getHostnameFromUrl(downloadUrl);
-    const timeoutMs = DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS;
     const fileName = buildDouyinVideoDownloadFileName(videoId);
+    const downloadDeadlineAt = startedAt + DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS;
+    const candidateCount = serializeDouyinDownloadCandidates(downloadUrlCandidates, downloadUrl).length;
 
     console.log('[douyin download] proxy_started', {
       requestId,
       elapsedMs: Date.now() - startedAt,
-      timeoutMs,
+      timeoutMs: DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS,
+      attemptTimeoutMs: DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS,
       targetPath: downloadUrl,
       finalFileSize: 0,
-      host: downloadHost,
+      host: getHostnameFromUrl(downloadUrl),
       upstreamStatus: 0,
-      videoId
+      videoId,
+      candidateCount
     });
 
-    let upstreamRes;
-    try {
-      upstreamRes = await fetch(downloadUrl, {
-        method: 'GET',
-        redirect: 'follow',
-        headers: {
-          'user-agent': DOUYIN_USER_AGENT,
-          'referer': 'https://www.douyin.com/',
-          'accept': '*/*'
-        },
-        signal: AbortSignal.timeout(timeoutMs)
-      });
-    } catch (error) {
-      sendJson(res, 502, {
-        error: '视频下载失败',
-        detail: `代理下载视频时网络异常：${error?.message || 'fetch failed'}`
-      });
-      return;
-    }
+    const downloaded = await downloadDouyinVideoToTemp({
+      downloadUrl,
+      downloadUrlCandidates,
+      requestId,
+      parentDeadlineAt: downloadDeadlineAt
+    });
+    tempFiles.push(downloaded.videoPath);
 
-    if (!upstreamRes.ok || !upstreamRes.body) {
-      const upstreamStatus = upstreamRes.status || 0;
-      const responseText = await upstreamRes.text().catch(() => '');
-      sendJson(res, upstreamStatus >= 400 && upstreamStatus < 500 ? 400 : 502, {
-        error: '视频下载失败',
-        detail: `上游视频下载失败，状态码 ${upstreamStatus || 0}`,
-        upstreamStatus,
-        upstreamBodySummary: summarizeUpstreamBody(responseText)
-      });
-      return;
-    }
-
-    const contentLength = Number.parseInt(String(upstreamRes.headers.get('content-length') || '0'), 10);
+    const content = await readFile(downloaded.videoPath);
     res.writeHead(200, {
       'Content-Type': 'video/mp4',
       'Content-Disposition': `attachment; filename="${fileName}"`,
       'Cache-Control': 'no-store',
-      ...(contentLength > 0 ? { 'Content-Length': String(contentLength) } : {})
+      'Content-Length': String(content.length)
     });
-
-    await new Promise((resolve, reject) => {
-      const stream = Readable.fromWeb(upstreamRes.body);
-      stream.on('error', reject);
-      res.on('error', reject);
-      res.on('finish', resolve);
-      stream.pipe(res);
-    });
+    res.end(content);
 
     console.log('[douyin download] proxy_finished', {
       requestId,
       elapsedMs: Date.now() - startedAt,
-      timeoutMs,
-      targetPath: downloadUrl,
-      finalFileSize: Number.isFinite(contentLength) && contentLength > 0 ? contentLength : 0,
-      host: downloadHost,
-      upstreamStatus: upstreamRes.status,
+      timeoutMs: DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS,
+      attemptTimeoutMs: DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS,
+      targetPath: downloaded.videoPath,
+      finalFileSize: content.length,
+      host: downloaded.host,
+      upstreamStatus: downloaded.httpStatus || 0,
       videoId,
       fileName
     });
   } catch (error) {
     if (!res.headersSent) {
-      sendJson(res, 500, {
-        error: '视频下载失败',
-        detail: error?.message || '下载代理失败'
+      sendJson(res, error?.statusCode || 500, {
+        error: error?.message || '视频下载失败',
+        detail: error?.detail || error?.message || '下载代理失败',
+        stage: error?.stage || 'douyin_video_download_failed',
+        upstreamStatus: error?.upstreamStatus || 0
       });
     } else {
       try {
         res.destroy(error);
       } catch {}
     }
+  } finally {
+    await cleanupRequestScopedUploadTempFiles({
+      requestId,
+      filePaths: tempFiles
+    });
   }
 }
 

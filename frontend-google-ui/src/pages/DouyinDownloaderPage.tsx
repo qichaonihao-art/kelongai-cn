@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   Download,
@@ -15,13 +15,16 @@ import {
   Play,
   User,
   Clock,
+  Settings2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import SiteFooter from "@/src/components/SiteFooter";
 import {
   downloadDouyinVideoFile,
   extractDouyinTranscript,
+  getDouyinConfigStatus,
   resolveDouyinDownload,
+  type DouyinConfigStatus,
   type DouyinResolveResult,
   type DouyinTranscriptResult,
 } from "@/src/lib/douyin";
@@ -40,6 +43,24 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
   const [result, setResult] = useState<DouyinResolveResult | null>(null);
   const [transcriptResult, setTranscriptResult] = useState<DouyinTranscriptResult | null>(null);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'done' | 'error'>('idle');
+  const [configStatus, setConfigStatus] = useState<DouyinConfigStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadConfigStatus() {
+      const status = await getDouyinConfigStatus();
+      if (!cancelled) {
+        setConfigStatus(status);
+      }
+    }
+
+    loadConfigStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleResolve() {
     const nextInput = input.trim();
@@ -96,6 +117,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
           videoId: normalizedTranscriptResult.videoId,
           title: normalizedTranscriptResult.title,
           downloadUrl: normalizedTranscriptResult.downloadUrl,
+          downloadUrlCandidates: normalizedTranscriptResult.downloadUrlCandidates,
           authorName: normalizedTranscriptResult.authorName,
           normalizedUrl: normalizedTranscriptResult.normalizedUrl,
           sourceType: normalizedTranscriptResult.sourceType,
@@ -127,6 +149,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
       await downloadDouyinVideoFile({
         videoId: result.videoId,
         downloadUrl: result.downloadUrl,
+        downloadUrlCandidates: result.downloadUrlCandidates,
       });
     } catch (downloadError) {
       setError(downloadError instanceof Error ? downloadError.message : '视频下载失败，请稍后重试。');
@@ -161,6 +184,8 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
 
   const fallbackCaption = transcriptResult?.fallbackCaption || result?.fallbackCaption || '';
   const hasResult = !!result || !!transcriptResult;
+  const siliconFlowConfigured = configStatus?.siliconFlowApiKey === true;
+  const tikhubConfigured = configStatus?.tikhubApiToken === true;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -201,6 +226,36 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
               <h1 className="text-xl font-black tracking-tight text-slate-900">抖音视频解析</h1>
               <p className="text-xs text-slate-500 mt-0.5 font-medium">粘贴链接，一键解析下载视频与提取文案</p>
             </div>
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400">
+              <Settings2 className="size-3.5" />
+              本地配置
+            </div>
+            <span
+              className={`rounded-full border px-3 py-1 text-[11px] font-bold ${
+                siliconFlowConfigured
+                  ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                  : 'border-amber-100 bg-amber-50 text-amber-700'
+              }`}
+            >
+              SiliconFlow：{siliconFlowConfigured ? '已配置' : '未配置'}
+            </span>
+            <span
+              className={`rounded-full border px-3 py-1 text-[11px] font-bold ${
+                tikhubConfigured
+                  ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                  : 'border-slate-200 bg-white/60 text-slate-500'
+              }`}
+            >
+              TikHub：{tikhubConfigured ? '已配置' : '可选'}
+            </span>
+            {configStatus && !configStatus.reachable && (
+              <span className="rounded-full border border-red-100 bg-red-50 px-3 py-1 text-[11px] font-bold text-red-600">
+                配置读取失败
+              </span>
+            )}
           </div>
         </motion.section>
 
@@ -338,7 +393,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
                         {isDownloading ? (
                           <>
                             <Loader2 className="size-4 animate-spin" />
-                            下载中...
+                            正在下载视频...
                           </>
                         ) : (
                           <>
@@ -366,6 +421,7 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
                         )}
                       </button>
                     </div>
+
                   </div>
                 ) : (
                   <div className="rounded-xl border border-slate-100 bg-white/40 px-4 py-6 text-sm text-slate-400 text-center">

@@ -136,6 +136,9 @@ cp legacy-project/.env.example legacy-project/.env
 - `DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS`
   - 可选，默认 `600000`
   - 用于控制服务端下载抖音视频文件到临时目录的超时
+- `DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS`
+  - 可选，默认 `45000`
+  - 用于控制单个抖音视频下载 host/CDN 的尝试超时；超时后会尽快切换候选地址
 - `DOUYIN_VIDEO_RESOLVE_TIMEOUT_MS`
   - 可选，默认 `120000`
   - 用于控制“链接展开 + 页面解析 + TikHub 兜底解析”这一整个视频解析阶段的超时

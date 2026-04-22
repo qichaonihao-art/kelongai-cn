@@ -1,9 +1,16 @@
+export interface DouyinDownloadCandidate {
+  url: string;
+  source?: string;
+  host?: string;
+}
+
 export interface DouyinResolveResult {
   ok: boolean;
   mode: 'stable';
   videoId: string;
   title?: string;
   downloadUrl: string;
+  downloadUrlCandidates?: DouyinDownloadCandidate[];
   caption?: string;
   fallbackCaption?: string;
   fallbackCaptionSource?: 'none' | 'tikhub_caption';
@@ -20,6 +27,7 @@ export interface DouyinTranscriptResult {
   videoId: string;
   title?: string;
   downloadUrl: string;
+  downloadUrlCandidates?: DouyinDownloadCandidate[];
   authorName?: string;
   normalizedUrl?: string;
   sourceType: 'web_url' | 'short_share_text';
@@ -29,6 +37,12 @@ export interface DouyinTranscriptResult {
   fallbackCaption?: string;
   fallbackCaptionSource?: 'none' | 'tikhub_caption';
   resolveStrategy?: string;
+}
+
+export interface DouyinConfigStatus {
+  reachable: boolean;
+  siliconFlowApiKey: boolean;
+  tikhubApiToken: boolean;
 }
 
 function buildDownloadFileName(videoId: string) {
@@ -52,6 +66,51 @@ function buildErrorMessage(json: any, fallback: string) {
   return detailMessage && detailMessage !== errorMessage ? `${errorMessage} ${detailMessage}` : errorMessage;
 }
 
+function readDownloadUrlCandidates(value: unknown): DouyinDownloadCandidate[] {
+  if (!Array.isArray(value)) return [];
+
+  const candidates: DouyinDownloadCandidate[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    const url = typeof record.url === 'string' ? record.url : '';
+    if (!url) continue;
+
+    candidates.push({
+      url,
+      source: typeof record.source === 'string' ? record.source : '',
+      host: typeof record.host === 'string' ? record.host : '',
+    });
+  }
+
+  return candidates;
+}
+
+export async function getDouyinConfigStatus(): Promise<DouyinConfigStatus> {
+  try {
+    const response = await fetch('/api/config/status', {
+      credentials: 'include',
+    });
+    const json = await parseJsonSafely(response);
+
+    if (!response.ok) {
+      throw new Error(json?.error || '读取服务端配置失败');
+    }
+
+    return {
+      reachable: true,
+      siliconFlowApiKey: !!json?.serverManaged?.siliconFlowApiKey,
+      tikhubApiToken: !!json?.serverManaged?.tikhubApiToken,
+    };
+  } catch {
+    return {
+      reachable: false,
+      siliconFlowApiKey: false,
+      tikhubApiToken: false,
+    };
+  }
+}
+
 export async function resolveDouyinDownload(input: string): Promise<DouyinResolveResult> {
   const response = await fetch('/api/douyin/resolve-download', {
     method: 'POST',
@@ -73,6 +132,7 @@ export async function resolveDouyinDownload(input: string): Promise<DouyinResolv
     videoId: String(json?.videoId || ''),
     title: typeof json?.title === 'string' ? json.title : '',
     downloadUrl: String(json?.downloadUrl || ''),
+    downloadUrlCandidates: readDownloadUrlCandidates(json?.downloadUrlCandidates),
     caption: typeof json?.caption === 'string' ? json.caption : '',
     fallbackCaption: typeof json?.fallbackCaption === 'string' ? json.fallbackCaption : '',
     fallbackCaptionSource: json?.fallbackCaptionSource === 'tikhub_caption' ? 'tikhub_caption' : 'none',
@@ -105,6 +165,7 @@ export async function extractDouyinTranscript(input: string): Promise<DouyinTran
     videoId: String(json?.videoId || ''),
     title: typeof json?.title === 'string' ? json.title : '',
     downloadUrl: String(json?.downloadUrl || ''),
+    downloadUrlCandidates: readDownloadUrlCandidates(json?.downloadUrlCandidates),
     authorName: typeof json?.authorName === 'string' ? json.authorName : '',
     normalizedUrl: typeof json?.normalizedUrl === 'string' ? json.normalizedUrl : '',
     sourceType: json?.sourceType === 'web_url' ? 'web_url' : 'short_share_text',
@@ -117,7 +178,11 @@ export async function extractDouyinTranscript(input: string): Promise<DouyinTran
   };
 }
 
-export async function downloadDouyinVideoFile(params: { videoId: string; downloadUrl: string }) {
+export async function downloadDouyinVideoFile(params: {
+  videoId: string;
+  downloadUrl: string;
+  downloadUrlCandidates?: DouyinDownloadCandidate[];
+}) {
   const response = await fetch('/api/douyin/download-video', {
     method: 'POST',
     credentials: 'include',
@@ -127,6 +192,7 @@ export async function downloadDouyinVideoFile(params: { videoId: string; downloa
     body: JSON.stringify({
       videoId: params.videoId,
       downloadUrl: params.downloadUrl,
+      downloadUrlCandidates: params.downloadUrlCandidates || [],
     }),
   });
 
