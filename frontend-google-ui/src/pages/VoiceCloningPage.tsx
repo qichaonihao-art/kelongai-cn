@@ -377,6 +377,14 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
     return () => window.clearTimeout(timeoutId);
   }, [inputText.length]);
 
+  // Auto-resize textarea based on content
+  useEffect(() => {
+    const textarea = inputTextRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(600, textarea.scrollHeight)}px`;
+  }, [inputText]);
+
   useEffect(() => {
     if (voices.length === 0 || activeVoiceId === null) {
       return;
@@ -1351,8 +1359,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                 </div>
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wider"
                 >文本转语音</span>
-                <span className="text-[10px] font-bold text-slate-300"
-                >
+                <span className="text-[10px] font-bold text-indigo-500">
                   {inputText.length} 字
                 </span>
               </div>
@@ -1388,7 +1395,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
                   <textarea
                     ref={inputTextRef}
                     className={cn(
-                      "w-full h-40 rounded-2xl border p-4 text-sm leading-6 outline-none transition-all resize-none",
+                      "w-full min-h-[160px] max-h-[600px] rounded-2xl border p-4 text-sm leading-6 outline-none transition-all resize-none",
                       isVoiceReady
                         ? "border-slate-200 bg-white/60 focus:ring-2 focus:ring-indigo-500/10"
                         : "border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed",
@@ -1405,7 +1412,7 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
 
                 {isTextHistoryOpen && (
                   <aside>
-                    <div className="h-40 space-y-1.5 overflow-y-auto rounded-2xl border border-slate-200 bg-white/55 p-2.5"
+                    <div className="space-y-1.5 overflow-y-auto rounded-2xl border border-slate-200 bg-white/55 p-2.5 max-h-[600px]"
                     >
                       {textHistory.length === 0 ? (
                         <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 text-center text-[11px] text-slate-400"
