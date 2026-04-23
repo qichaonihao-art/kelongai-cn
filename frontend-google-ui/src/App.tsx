@@ -74,16 +74,23 @@ export default function App() {
           onLogout={handleLogout} 
         />
       )}
-      {currentPage === 'voice' && <VoiceCloningPage onBack={handleBackToHome} />}
+      {currentPage === 'voice' && (
+        <VoiceCloningPage
+          onBack={handleBackToHome}
+          onNavigate={handleNavigate}
+        />
+      )}
       {currentPage === 'creative' && (
-        <CreativeCreationPage 
-          onBack={handleBackToHome} 
-          onLogout={handleLogout} 
+        <CreativeCreationPage
+          onBack={handleBackToHome}
+          onNavigate={handleNavigate}
+          onLogout={handleLogout}
         />
       )}
       {currentPage === 'douyin' && (
         <DouyinDownloaderPage
           onBack={handleBackToHome}
+          onNavigate={handleNavigate}
           onLogout={handleLogout}
         />
       )}

@@ -3643,6 +3643,8 @@ async function readMultipartFormBody(req) {
 
   const formData = await request.formData();
   const file = formData.get('file');
+  const files = formData.getAll('files').filter((item) => item instanceof File && item.size > 0);
+  const filesKinds = parseJsonString(formData.get('files_kinds'), []);
 
   return {
     question: readValue(formData.get('question')),
@@ -3650,7 +3652,9 @@ async function readMultipartFormBody(req) {
     stream: readValue(formData.get('stream')).toLowerCase() === 'true',
     model: readValue(formData.get('model')),
     mediaKind: readValue(formData.get('media_kind')),
-    file: file instanceof File ? file : null
+    file: file instanceof File ? file : null,
+    files,
+    filesKinds
   };
 }
 
@@ -5754,12 +5758,13 @@ async function handleDoubaoMultimodal(req, res) {
     const body = isMultipartFormRequest(req)
       ? await readMultipartFormBody(req)
       : await readRequestBody(req);
-    const { model, image, imageMimeType, video, videoMimeType, question, history, mediaKind, file } = body;
+    const { model, image, imageMimeType, video, videoMimeType, question, history, mediaKind, file, files, filesKinds } = body;
     shouldStream = wantsDoubaoStream(body, req);
     const resolvedApiKey = readValue(SERVER_CONFIG.arkApiKey);
     const resolvedQuestion = readValue(question);
     const resolvedModel = readValue(model) || DEFAULT_DOUBAO_MULTIMODAL_MODEL;
     const hasUploadedFile = file instanceof File && file.size > 0;
+    const hasMultipleFiles = Array.isArray(files) && files.length > 0;
 
     console.log('[doubao multimodal] request start', {
       requestId,
@@ -5769,6 +5774,7 @@ async function handleDoubaoMultimodal(req, res) {
       hasImageField: !!readValue(image),
       hasVideoField: !!readValue(video),
       hasUploadedFile,
+      hasMultipleFiles: hasMultipleFiles ? files.length : false,
       mediaKind: mediaKind || '',
       fileName: file?.name || '',
       fileType: file?.type || '',
@@ -5825,7 +5831,95 @@ async function handleDoubaoMultimodal(req, res) {
       });
     }
 
-    if (hasUploadedFile) {
+    if (hasMultipleFiles) {
+      stage = 'normalize_uploaded_media_multiple';
+      for (let index = 0; index < files.length; index += 1) {
+        const currentFile = files[index];
+        const resolvedMediaKind =
+          Array.isArray(filesKinds) && filesKinds[index]
+            ? filesKinds[index]
+            : String(currentFile.type || '').startsWith('image/')
+              ? 'image'
+              : 'video';
+        const canExposePublicVideoUrl = resolvedMediaKind === 'video' && !!resolvePublicBaseUrl(req);
+        const shouldPreferPublicVideoUrl =
+          resolvedMediaKind === 'video' &&
+          canExposePublicVideoUrl &&
+          currentFile.size > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES;
+
+        console.log('[doubao multimodal] media route selected', {
+          requestId,
+          stage,
+          index,
+          mediaKind: resolvedMediaKind,
+          fileName: currentFile.name || '',
+          fileType: currentFile.type || '',
+          fileSize: currentFile.size || 0,
+          canExposePublicVideoUrl,
+          shouldPreferPublicVideoUrl,
+          inlineVideoLimit: MAX_VIDEO_ORIGINAL_UPLOAD_BYTES
+        });
+
+        if (shouldPreferPublicVideoUrl) {
+          stage = 'create_public_media_url';
+          const publicMedia = await createPublicMediaUrl({ file: currentFile, req });
+          if (!publicMedia.ok) {
+            sendJson(res, 400, {
+              error: publicMedia.error,
+              debug: {
+                stage,
+                index,
+                fileSize: currentFile.size
+              }
+            });
+            return;
+          }
+
+          console.log('[doubao multimodal] using public video url', {
+            requestId,
+            stage,
+            index,
+            fileName: currentFile.name || '',
+            originalFileSize: publicMedia.originalSize,
+            compressionTriggered: publicMedia.compressionTriggered,
+            compressedFileSize: publicMedia.finalSize,
+            publicVideoUrl: publicMedia.url
+          });
+
+          content.push({
+            type: 'input_video',
+            video_url: publicMedia.url
+          });
+        } else {
+          const normalizedUploadedMedia = await normalizeUploadedMediaInput(currentFile, resolvedMediaKind);
+
+          content.push(
+            resolvedMediaKind === 'image'
+              ? {
+                  type: 'input_image',
+                  image_url: normalizedUploadedMedia.imageUrl
+                }
+              : {
+                  type: 'input_video',
+                  video_url: normalizedUploadedMedia.videoUrl
+                }
+          );
+        }
+
+        if (resolvedMediaKind === 'video' && currentFile.size > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES && !canExposePublicVideoUrl) {
+          sendJson(res, 400, {
+            error: '当前环境没有可供方舟访问的公网地址。请配置 PUBLIC_BASE_URL 为你的线上域名或可公网访问的隧道地址，再重试大视频分析。',
+            debug: {
+              stage: 'missing_public_base_url_for_large_video',
+              index,
+              fileSize: currentFile.size,
+              maxInlineVideoSize: MAX_VIDEO_ORIGINAL_UPLOAD_BYTES
+            }
+          });
+          return;
+        }
+      }
+    } else if (hasUploadedFile) {
       stage = 'normalize_uploaded_media';
       const resolvedMediaKind = mediaKind === 'image' ? 'image' : 'video';
       const canExposePublicVideoUrl = resolvedMediaKind === 'video' && !!resolvePublicBaseUrl(req);

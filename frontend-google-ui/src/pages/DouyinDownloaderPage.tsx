@@ -18,6 +18,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import ModuleQuickNav from "@/src/components/ModuleQuickNav";
 import SiteFooter from "@/src/components/SiteFooter";
 import {
   downloadDouyinVideoFile,
@@ -31,10 +32,11 @@ import {
 
 interface DouyinDownloaderPageProps {
   onBack: () => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin') => void;
   onLogout: () => void;
 }
 
-export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloaderPageProps) {
+export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
   const [isResolving, setIsResolving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -191,16 +193,18 @@ export default function DouyinDownloaderPage({ onBack, onLogout }: DouyinDownloa
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
       <header className="h-16 border-b border-slate-200/60 bg-white/50 backdrop-blur-xl flex items-center justify-between px-6 sticky top-0 z-30">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
-        >
-          <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
-            <ArrowLeft className="size-3.5" />
-          </div>
-          <span className="text-xs font-bold text-slate-700">返回</span>
-        </button>
-
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
+          >
+            <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
+              <ArrowLeft className="size-3.5" />
+            </div>
+            <span className="text-xs font-bold text-slate-700">返回</span>
+          </button>
+          <ModuleQuickNav current="douyin" onNavigate={onNavigate} />
+        </div>
         <button
           onClick={onLogout}
           className="flex items-center gap-2 h-9 rounded-full px-4 text-xs font-bold text-slate-600 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300"

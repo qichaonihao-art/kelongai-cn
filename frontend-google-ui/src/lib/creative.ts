@@ -332,7 +332,7 @@ export async function getCreativeConfigStatus(): Promise<CreativeConfigStatus> {
 
 export async function sendCreativeMessage(options: {
   question: string;
-  media?: SelectedCreativeMedia | null;
+  media?: SelectedCreativeMedia | SelectedCreativeMedia[] | null;
   history: CreativeHistoryItem[];
   onDelta?: (text: string) => void;
 }) {
@@ -341,13 +341,28 @@ export async function sendCreativeMessage(options: {
   };
 
   let body: BodyInit;
-  if (options.media) {
+  const mediaArray = options.media
+    ? Array.isArray(options.media)
+      ? options.media
+      : [options.media]
+    : [];
+
+  if (mediaArray.length > 0) {
     const formData = new FormData();
     formData.append('question', options.question);
     formData.append('history', JSON.stringify(options.history));
     formData.append('stream', 'true');
-    formData.append('media_kind', options.media.kind);
-    formData.append('file', options.media.file, options.media.fileName);
+    if (mediaArray.length === 1) {
+      formData.append('media_kind', mediaArray[0].kind);
+      formData.append('file', mediaArray[0].file, mediaArray[0].fileName);
+    } else {
+      const kinds: string[] = [];
+      for (const media of mediaArray) {
+        formData.append('files', media.file, media.fileName);
+        kinds.push(media.kind);
+      }
+      formData.append('files_kinds', JSON.stringify(kinds));
+    }
     body = formData;
   } else {
     headers['Content-Type'] = 'application/json';

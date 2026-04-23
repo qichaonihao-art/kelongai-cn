@@ -17,6 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
+import ModuleQuickNav from "@/src/components/ModuleQuickNav";
 import SiteFooter from "@/src/components/SiteFooter";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
@@ -43,6 +44,7 @@ import { motion, AnimatePresence } from "motion/react";
 
 interface VoiceCloningPageProps {
   onBack: () => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin') => void;
 }
 
 type VoicePlatformLabel = '智谱' | '阿里云' | '火山引擎' | 'SiliconFlow 声音克隆';
@@ -268,7 +270,7 @@ function saveTextInputHistory(items: TextInputHistoryItem[]) {
   }
 }
 
-export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
+export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textToSpeechSectionRef = useRef<HTMLElement>(null);
   const inputTextRef = useRef<HTMLTextAreaElement>(null);
@@ -1066,15 +1068,18 @@ export default function VoiceCloningPage({ onBack }: VoiceCloningPageProps) {
       />
 
       <header className="h-16 border-b border-slate-200/60 bg-white/50 backdrop-blur-xl flex items-center justify-between px-6 sticky top-0 z-30">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
-        >
-          <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
-            <ArrowLeft className="size-3.5" />
-          </div>
-          <span className="text-xs font-bold text-slate-700">返回</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
+          >
+            <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
+              <ArrowLeft className="size-3.5" />
+            </div>
+            <span className="text-xs font-bold text-slate-700">返回</span>
+          </button>
+          <ModuleQuickNav current="voice" onNavigate={onNavigate} />
+        </div>
         <button
           onClick={() => setIsMyVoicesOpen(true)}
           className="flex items-center gap-2 h-9 rounded-full px-4 text-xs font-bold text-slate-600 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300"

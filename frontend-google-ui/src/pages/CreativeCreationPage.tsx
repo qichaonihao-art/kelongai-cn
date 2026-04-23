@@ -18,8 +18,10 @@ import {
   ChevronUp,
   Copy,
   Check,
+  Replace,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
+import ModuleQuickNav from "@/src/components/ModuleQuickNav";
 import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import {
@@ -49,6 +51,7 @@ interface Message {
 
 interface CreativeCreationPageProps {
   onBack: () => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin') => void;
   onLogout: () => void;
 }
 
@@ -92,6 +95,34 @@ const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
 const VIDEO_REVERSE_PROMPT = '请把这个视频当作“待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以“生成指令”的方式输出，不要写成分析说明。\n5. 目标不是“风格相似”，而是“尽量复刻接近原视频”。';
 const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上七个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。';
+const VIDEO_REPLACE_PROMPT = (target: string, replacement: string) => `我上传了一个视频和一个参考图片。请你完成以下任务：
+
+1. 先像分析"待复刻样片"一样，完整分析这个视频，提取所有影响复刻结果的关键信息（主体、构图、镜头、动作、节奏、光影、氛围等）。
+2. 同时参考我上传的图片，把视频中的【${target}】替换成【${replacement}】。
+3. 替换时，${replacement}的外观、风格、质感要与我上传的参考图片保持一致。
+4. 除了被替换的元素外，视频中其他所有内容（场景、人物、动作、镜头运动、光影、色彩、节奏等）必须与原视频完全一致，不能有任何改变。
+
+请严格按以下结构输出：
+
+一、核心主体信息
+二、场景与背景环境
+三、构图与机位
+四、镜头运动
+五、动作设计与时间顺序
+六、节奏与动态风格
+七、光影与色彩
+八、情绪与气质
+九、复刻关键约束（提炼 8 条最关键因素，并明确指出"${target}"已替换为"${replacement}"）
+十、负面约束（列出应避免的问题）
+十一、最终可直接用于视频生成模型的完整复刻提示词（其中已包含替换后的元素描述）
+十二、负面提示词
+
+要求：
+1. 描述必须具体，避免空泛词语。
+2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。
+3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。
+4. 最终提示词要以"生成指令"的方式输出，不要写成分析说明。
+5. 目标不是"风格相似"，而是"尽量复刻接近原视频，同时仅替换指定元素"。`;
 const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const;
 const SEEDANCE_DURATIONS = [4, 5, 6, 8, 10, 12, 15] as const;
 
@@ -591,7 +622,7 @@ function renderAssistantMessageContent(content: string) {
   );
 }
 
-export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreationPageProps) {
+export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: CreativeCreationPageProps) {
   const [savedSessions, setSavedSessions] = useState<SavedCreativeSession[]>(loadSavedCreativeSessions);
   const [activeSessionId, setActiveSessionId] = useState<string>(() => loadSavedCreativeSessions()[0]?.id || createSessionId());
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -626,9 +657,14 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   const [seedanceModalItem, setSeedanceModalItem] = useState<SeedanceHistoryItem | null>(null);
   const [isHistoryFolded, setIsHistoryFolded] = useState(true);
   const [showAtMenu, setShowAtMenu] = useState(false);
+  const [reverseMode, setReverseMode] = useState<'direct' | 'replace'>('direct');
+  const [replaceImage, setReplaceImage] = useState<SelectedCreativeMedia | null>(null);
+  const [replaceTarget, setReplaceTarget] = useState('');
+  const [replaceWith, setReplaceWith] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceImageInputRef = useRef<HTMLInputElement>(null);
   const seedanceFileInputRef = useRef<HTMLInputElement>(null);
   const seedanceSettingsRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1017,12 +1053,26 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
   }
 
   function prepareVideoReversePrompt() {
-    setInput(VIDEO_REVERSE_PROMPT);
-    setRequestError("");
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(VIDEO_REVERSE_PROMPT.length, VIDEO_REVERSE_PROMPT.length);
-    });
+    if (reverseMode === 'replace') {
+      if (!replaceTarget.trim() || !replaceWith.trim()) {
+        setRequestError('请填写需要替换的元素和目标元素');
+        return;
+      }
+      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim());
+      setInput(prompt);
+      setRequestError("");
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
+      });
+    } else {
+      setInput(VIDEO_REVERSE_PROMPT);
+      setRequestError("");
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.setSelectionRange(VIDEO_REVERSE_PROMPT.length, VIDEO_REVERSE_PROMPT.length);
+      });
+    }
   }
 
   function syncLatestPromptToSeedance() {
@@ -1357,6 +1407,45 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     }
   }
 
+  async function handleReplaceImageChange(file: File | null) {
+    setRequestError("");
+    if (!file) return;
+    try {
+      validateMediaFile(file);
+      if (!file.type.startsWith('image/')) {
+        setRequestError('替换参考图必须是图片格式');
+        return;
+      }
+      const previewUrl = createMediaPreviewUrl(file);
+      if (replaceImage) {
+        URL.revokeObjectURL(replaceImage.previewUrl);
+      }
+      setReplaceImage({
+        kind: 'image',
+        file,
+        previewUrl,
+        fileName: file.name,
+      });
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : '图片读取失败，请换一张再试。');
+    } finally {
+      if (replaceImageInputRef.current) {
+        replaceImageInputRef.current.value = '';
+      }
+    }
+  }
+
+  function clearReplaceImage() {
+    if (replaceImage) {
+      URL.revokeObjectURL(replaceImage.previewUrl);
+    }
+    setReplaceImage(null);
+    setRequestError("");
+    if (replaceImageInputRef.current) {
+      replaceImageInputRef.current.value = '';
+    }
+  }
+
   async function copyMessageContent(id: string, content: string) {
     try {
       await navigator.clipboard.writeText(content);
@@ -1376,17 +1465,48 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     // cluttering the input box.
     const isReversePrompt = rawQuestion.includes('待复刻样片') && rawQuestion.includes('核心主体信息');
     const question = isReversePrompt ? rawQuestion + VIDEO_REVERSE_FORMAT_SUFFIX : rawQuestion;
-    const mediaToSend = selectedMedia;
-    const mediaMessage = mediaToSend ? {
-      id: createMessageId(`creative_${mediaToSend.kind}`),
-      role: 'user' as const,
-      type: mediaToSend.kind,
-      content: '',
-      mediaUrl: mediaToSend.previewUrl,
-      mediaKind: mediaToSend.kind,
-      fileName: mediaToSend.fileName,
-      timestamp: new Date(),
-    } : null;
+    const isReplaceMode = reverseMode === 'replace' && selectedMedia?.kind === 'video' && replaceImage;
+    const mediaToSend: SelectedCreativeMedia | SelectedCreativeMedia[] | null = isReplaceMode
+      ? [selectedMedia!, replaceImage!]
+      : selectedMedia;
+    const mediaMessages: Message[] = [];
+    if (isReplaceMode) {
+      if (selectedMedia) {
+        mediaMessages.push({
+          id: createMessageId(`creative_${selectedMedia.kind}`),
+          role: 'user',
+          type: selectedMedia.kind,
+          content: '',
+          mediaUrl: selectedMedia.previewUrl,
+          mediaKind: selectedMedia.kind,
+          fileName: selectedMedia.fileName,
+          timestamp: new Date(),
+        });
+      }
+      if (replaceImage) {
+        mediaMessages.push({
+          id: createMessageId(`creative_${replaceImage.kind}`),
+          role: 'user',
+          type: replaceImage.kind,
+          content: '',
+          mediaUrl: replaceImage.previewUrl,
+          mediaKind: replaceImage.kind,
+          fileName: replaceImage.fileName,
+          timestamp: new Date(),
+        });
+      }
+    } else if (selectedMedia) {
+      mediaMessages.push({
+        id: createMessageId(`creative_${selectedMedia.kind}`),
+        role: 'user',
+        type: selectedMedia.kind,
+        content: '',
+        mediaUrl: selectedMedia.previewUrl,
+        mediaKind: selectedMedia.kind,
+        fileName: selectedMedia.fileName,
+        timestamp: new Date(),
+      });
+    }
     const userMessage: Message = {
       id: createMessageId('creative_user'),
       role: 'user',
@@ -1399,7 +1519,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
 
     setMessages((previous) => [
       ...previous,
-      ...(mediaMessage ? [mediaMessage] : []),
+      ...mediaMessages,
       userMessage,
       {
         id: assistantMessageId,
@@ -1412,6 +1532,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
     ]);
     setInput("");
     setSelectedMedia(null);
+    setReplaceImage(null);
     setIsLoading(true);
     setRequestError("");
     scrollAnalysisToBottom();
@@ -1470,6 +1591,13 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
         className="hidden"
         onChange={(event) => handleSeedanceReferenceChange(event.target.files)}
       />
+      <input
+        ref={replaceImageInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => handleReplaceImageChange(event.target.files?.[0] || null)}
+      />
 
       <header className="h-14 border-b border-slate-300 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 shrink-0 sticky top-0 z-30">
         <div className="flex items-center gap-3">
@@ -1483,6 +1611,7 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
             </div>
             <span className="text-xs font-bold text-slate-700">返回</span>
           </button>
+          <ModuleQuickNav current="creative" onNavigate={onNavigate} />
         </div>
         <div className="flex items-center gap-4">
           <div className="hidden md:flex items-center gap-2">
@@ -1558,6 +1687,39 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 </span>
               </div>
 
+              <div className="mb-4 flex rounded-xl bg-slate-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => setReverseMode('direct')}
+                  className={cn(
+                    'flex-1 rounded-lg px-3 py-1.5 text-xs font-bold transition-all',
+                    reverseMode === 'direct'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  )}
+                >
+                  <span className="flex items-center justify-center gap-1.5">
+                    <Sparkles className="size-3.5" />
+                    直接反推
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReverseMode('replace')}
+                  className={cn(
+                    'flex-1 rounded-lg px-3 py-1.5 text-xs font-bold transition-all',
+                    reverseMode === 'replace'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  )}
+                >
+                  <span className="flex items-center justify-center gap-1.5">
+                    <Replace className="size-3.5" />
+                    元素替换
+                  </span>
+                </button>
+              </div>
+
               <div className="min-h-[190px] rounded-2xl border border-slate-300 bg-slate-100 p-3">
                 {selectedMedia ? (
                   <div className="space-y-3">
@@ -1578,7 +1740,9 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0 text-xs font-semibold text-slate-500">
                         <span className="block truncate">{selectedMedia.fileName}</span>
-                        <span className="text-slate-400">将随下一条消息发送给 AI 助手</span>
+                        <span className="text-slate-400">
+                          {reverseMode === 'replace' ? '待分析的原视频' : '将随下一条消息发送给 AI 助手'}
+                        </span>
                       </div>
                       <button
                         type="button"
@@ -1600,7 +1764,9 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                     <span className="flex size-12 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
                       <Plus className="size-5" />
                     </span>
-                    <span className="text-sm font-bold text-slate-700">上传图片或视频</span>
+                    <span className="text-sm font-bold text-slate-700">
+                      {reverseMode === 'replace' ? '上传原视频' : '上传图片或视频'}
+                    </span>
                     <span className="max-w-xs text-xs leading-5 text-slate-400">
                       支持常见图片和视频格式，当前上限 150MB。
                     </span>
@@ -1608,15 +1774,89 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                 )}
               </div>
 
+              {reverseMode === 'replace' && (
+                <div className="mt-3 space-y-3">
+                  <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3">
+                    {replaceImage ? (
+                      <div className="space-y-3">
+                        <img
+                          src={replaceImage.previewUrl}
+                          alt={replaceImage.fileName}
+                          className="aspect-video w-full rounded-xl bg-slate-950 object-contain"
+                        />
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 text-xs font-semibold text-slate-500">
+                            <span className="block truncate">{replaceImage.fileName}</span>
+                            <span className="text-slate-400">替换参考图</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={clearReplaceImage}
+                            className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-white hover:text-slate-600"
+                            aria-label="移除参考图"
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => replaceImageInputRef.current?.click()}
+                        disabled={isLoading}
+                        className="flex min-h-[120px] w-full flex-col items-center justify-center gap-3 rounded-xl text-center transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <span className="flex size-10 items-center justify-center rounded-full bg-amber-50 text-amber-600">
+                          <ImageIcon className="size-4" />
+                        </span>
+                        <span className="text-sm font-bold text-slate-700">上传替换参考图</span>
+                        <span className="max-w-xs text-xs leading-5 text-slate-400">
+                          上传你想替换成的元素图片
+                        </span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-600">替换目标</label>
+                      <input
+                        type="text"
+                        value={replaceTarget}
+                        onChange={(e) => setReplaceTarget(e.target.value)}
+                        placeholder="如：青云志挂画"
+                        disabled={isLoading}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-600">替换成</label>
+                      <input
+                        type="text"
+                        value={replaceWith}
+                        onChange={(e) => setReplaceWith(e.target.value)}
+                        placeholder="如：曾国藩家训挂画"
+                        disabled={isLoading}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={prepareVideoReversePrompt}
-                  disabled={isLoading || selectedMedia?.kind !== 'video'}
+                  disabled={
+                    isLoading ||
+                    selectedMedia?.kind !== 'video' ||
+                    (reverseMode === 'replace' && (!replaceImage || !replaceTarget.trim() || !replaceWith.trim()))
+                  }
                   className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Sparkles className="size-3.5" />
-                  填入反推指令
+                  {reverseMode === 'replace' ? '填入替换指令' : '填入反推指令'}
                 </button>
                 <button
                   type="button"
@@ -1627,6 +1867,17 @@ export default function CreativeCreationPage({ onBack, onLogout }: CreativeCreat
                   <Film className="size-3.5" />
                   更换视频
                 </button>
+                {reverseMode === 'replace' && (
+                  <button
+                    type="button"
+                    onClick={() => replaceImageInputRef.current?.click()}
+                    disabled={isLoading}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <ImageIcon className="size-3.5" />
+                    更换参考图
+                  </button>
+                )}
               </div>
 
               <div className="mt-5 rounded-2xl border border-slate-300 bg-slate-100">
