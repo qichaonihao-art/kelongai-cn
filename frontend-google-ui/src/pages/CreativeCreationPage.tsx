@@ -93,11 +93,16 @@ const SEEDANCE_HISTORY_MAX_AGE_HOURS = 24;
 const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
-const VIDEO_REVERSE_PROMPT = '请把这个视频当作“待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以“生成指令”的方式输出，不要写成分析说明。\n5. 目标不是“风格相似”，而是“尽量复刻接近原视频”。';
 const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上七个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。';
-const VIDEO_REPLACE_PROMPT = (target: string, replacement: string) => `我上传了一个视频和一个参考图片。请你完成以下任务：
+const VIDEO_REVERSE_PROMPT = (additionalChange?: string) => {
+  const base = `请把这个视频当作”待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。\n5. 目标不是”风格相似”，而是”尽量复刻接近原视频”。\n6. 对于画面中的挂画、海报、装饰画、屏幕显示内容等平面元素，必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换或修改后的元素在画面中的空间占比和边界框大小必须与原元素一致。\n7. 如果原视频中存在水印、平台标识、AI生成标记（如”豆包AI生成”等文字或Logo），必须在复刻时去除，不得保留任何水印信息。`;
+  if (!additionalChange?.trim()) return base;
+  return `${base}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
+};
+const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, additionalChange?: string) => {
+  const base = `我上传了一个视频和一个参考图片。请你完成以下任务：
 
-1. 先像分析"待复刻样片"一样，完整分析这个视频，提取所有影响复刻结果的关键信息（主体、构图、镜头、动作、节奏、光影、氛围等）。
+1. 先像分析”待复刻样片”一样，完整分析这个视频，提取所有影响复刻结果的关键信息（主体、构图、镜头、动作、节奏、光影、氛围等）。
 2. 同时参考我上传的图片，把视频中的【${target}】替换成【${replacement}】。
 3. 替换时，${replacement}的外观、风格、质感要与我上传的参考图片保持一致。
 4. 除了被替换的元素外，视频中其他所有内容（场景、人物、动作、镜头运动、光影、色彩、节奏等）必须与原视频完全一致，不能有任何改变。
@@ -112,7 +117,7 @@ const VIDEO_REPLACE_PROMPT = (target: string, replacement: string) => `我上传
 六、节奏与动态风格
 七、光影与色彩
 八、情绪与气质
-九、复刻关键约束（提炼 8 条最关键因素，并明确指出"${target}"已替换为"${replacement}"）
+九、复刻关键约束（提炼 8 条最关键因素，并明确指出”${target}”已替换为”${replacement}”）
 十、负面约束（列出应避免的问题）
 十一、最终可直接用于视频生成模型的完整复刻提示词（其中已包含替换后的元素描述）
 十二、负面提示词
@@ -121,8 +126,13 @@ const VIDEO_REPLACE_PROMPT = (target: string, replacement: string) => `我上传
 1. 描述必须具体，避免空泛词语。
 2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。
 3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。
-4. 最终提示词要以"生成指令"的方式输出，不要写成分析说明。
-5. 目标不是"风格相似"，而是"尽量复刻接近原视频，同时仅替换指定元素"。`;
+4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。
+5. 目标不是”风格相似”，而是”尽量复刻接近原视频，同时仅替换指定元素”。
+6. 被替换的元素（如挂画、海报、装饰画、屏幕显示内容等平面元素）必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换后的新元素在画面中的空间占比、边界框大小和透视关系必须与原元素完全一致。
+7. 如果原视频中存在水印、平台标识、AI生成标记（如"豆包AI生成"等文字或Logo），必须在复刻时去除，不得保留任何水印信息。`;
+  if (!additionalChange?.trim()) return base;
+  return `${base}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
+};
 const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const;
 const SEEDANCE_DURATIONS = [4, 5, 6, 8, 10, 12, 15] as const;
 
@@ -661,6 +671,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [replaceImage, setReplaceImage] = useState<SelectedCreativeMedia | null>(null);
   const [replaceTarget, setReplaceTarget] = useState('');
   const [replaceWith, setReplaceWith] = useState('');
+  const [additionalChange, setAdditionalChange] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1058,7 +1069,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
         setRequestError('请填写需要替换的元素和目标元素');
         return;
       }
-      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim());
+      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), additionalChange);
       setInput(prompt);
       setRequestError("");
       requestAnimationFrame(() => {
@@ -1066,7 +1077,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
         textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
       });
     } else {
-      setInput(VIDEO_REVERSE_PROMPT);
+      const prompt = VIDEO_REVERSE_PROMPT(additionalChange);
+      setInput(prompt);
       setRequestError("");
       requestAnimationFrame(() => {
         textareaRef.current?.focus();
@@ -1411,9 +1423,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     setRequestError("");
     if (!file) return;
     try {
-      validateMediaFile(file);
       if (!file.type.startsWith('image/')) {
         setRequestError('替换参考图必须是图片格式');
+        return;
+      }
+      if (file.size > MAX_VIDEO_SIZE_BYTES) {
+        setRequestError('图片请控制在 150MB 以内。');
         return;
       }
       const previewUrl = createMediaPreviewUrl(file);
@@ -1579,7 +1594,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*,video/*"
+        accept="video/*"
         className="hidden"
         onChange={(event) => handleMediaChange(event.target.files?.[0] || null)}
       />
@@ -1765,10 +1780,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                       <Plus className="size-5" />
                     </span>
                     <span className="text-sm font-bold text-slate-700">
-                      {reverseMode === 'replace' ? '上传原视频' : '上传图片或视频'}
+                      {reverseMode === 'replace' ? '上传原视频' : '上传视频'}
                     </span>
                     <span className="max-w-xs text-xs leading-5 text-slate-400">
-                      支持常见图片和视频格式，当前上限 150MB。
+                      支持常见视频格式，当前上限 150MB。
                     </span>
                   </button>
                 )}
@@ -1843,6 +1858,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   </div>
                 </div>
               )}
+
+              <div className="mt-3 space-y-1.5">
+                <label className="text-[11px] font-bold text-slate-600">额外调整（可选）</label>
+                <input
+                  type="text"
+                  value={additionalChange}
+                  onChange={(e) => setAdditionalChange(e.target.value)}
+                  placeholder="如：把模特的衣服换成红色"
+                  disabled={isLoading}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
+                />
+              </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
