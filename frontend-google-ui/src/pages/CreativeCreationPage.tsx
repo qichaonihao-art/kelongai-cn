@@ -1093,7 +1093,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
       return;
     }
 
-    setSeedancePrompt(latestAssistantText);
+    // 格式化：在每个章节标题前插入一个空行，标题后紧跟正文不空行
+    const formatted = latestAssistantText
+      .replace(/\n{2,}/g, '\n')
+      .replace(/(\d+[.、]\s*|第?[一二三四五六七八九十]+[、.]?\s*)(核心主体信息|场景与背景环境|构图与机位|镜头运动|动作设计与时间顺序|节奏与动态风格|光影与色彩|情绪与气质|复刻关键约束|负面约束|最终可直接用于|负面提示词)/g, '\n\n$1$2')
+      .replace(/(最终可直接用于[^\n]*)/g, '\n\n$1')
+      .replace(/(负面提示词[^\n]*)/g, '\n\n$1')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    setSeedancePrompt(formatted);
     setRequestError("");
   }
 
@@ -1839,7 +1848,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                         type="text"
                         value={replaceTarget}
                         onChange={(e) => setReplaceTarget(e.target.value)}
-                        placeholder="如：青云志挂画"
+                        placeholder="如：书架"
                         disabled={isLoading}
                         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
                       />
@@ -1850,7 +1859,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                         type="text"
                         value={replaceWith}
                         onChange={(e) => setReplaceWith(e.target.value)}
-                        placeholder="如：曾国藩家训挂画"
+                        placeholder="如：书桌"
                         disabled={isLoading}
                         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
                       />
@@ -2071,7 +2080,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   value={seedancePrompt}
                   onChange={handleSeedancePromptChange}
                   placeholder="等待模块一反推出视频提示词..."
-                  className="min-h-[220px] w-full resize-none rounded-xl border border-slate-300 bg-white p-3 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300"
+                  className="min-h-[280px] w-full resize-none rounded-xl border border-slate-300 bg-white p-4 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300 whitespace-pre-wrap"
                 />
 
                 {/* @ 引用下拉菜单 */}

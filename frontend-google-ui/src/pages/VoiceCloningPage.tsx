@@ -1655,16 +1655,16 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'tween', ease: 'easeInOut', duration: 0.38 }}
-              className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[600px] flex-col border-l border-white/40 bg-white/20 backdrop-blur-2xl shadow-[0_0_60px_rgba(0,0,0,0.3)]"
+              className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[480px] flex-col border-l border-white/40 bg-white/20 backdrop-blur-2xl shadow-[0_0_60px_rgba(0,0,0,0.3)]"
             >
               {/* Header */}
-              <div className="flex items-center justify-between gap-4 px-6 py-5 bg-white/40 backdrop-blur-xl border-b border-white/30">
+              <div className="flex items-center justify-between gap-4 px-5 py-3 bg-white/40 backdrop-blur-xl border-b border-white/30">
                 <div className="flex items-center gap-3">
-                  <div className="flex size-10 items-center justify-center rounded-xl bg-slate-900 text-white shadow-md">
-                    <History className="size-5" />
+                  <div className="flex size-8 items-center justify-center rounded-lg bg-slate-900 text-white shadow-md">
+                    <History className="size-4" />
                   </div>
                   <div>
-                    <h2 className="text-lg font-black text-slate-900">我的音色</h2>
+                    <h2 className="text-base font-black text-slate-900">我的音色</h2>
                     <p className="text-[11px] text-slate-500 mt-0.5">
                       共 {voices.length} 个音色 · {selectedVoice ? (
                         <span className="inline-flex items-center gap-1.5">
@@ -1680,15 +1680,15 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                   </div>
                 </div>
                 <button
-                  className="size-9 rounded-xl flex items-center justify-center text-slate-500 hover:bg-white/60 transition-colors border border-white/50 bg-white/30"
+                  className="size-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-white/60 transition-colors border border-white/50 bg-white/30"
                   onClick={() => setIsMyVoicesOpen(false)}
                 >
-                  <X className="size-4" />
+                  <X className="size-3.5" />
                 </button>
               </div>
 
               {/* Platform Filter */}
-              <div className="px-6 py-4 bg-white/30 backdrop-blur-lg border-b border-white/30">
+              <div className="px-5 py-2.5 bg-white/30 backdrop-blur-lg border-b border-white/30">
                 <div className="grid grid-cols-4 gap-2">
                   {VOICE_PROVIDER_ORDER.map((provider) => {
                     const meta = VOICE_PROVIDER_META[provider];
@@ -1701,19 +1701,19 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                         type="button"
                         onClick={() => setVoiceProviderFilter(provider)}
                         className={cn(
-                          "relative flex flex-col items-center gap-1.5 py-3 px-1 rounded-2xl text-xs font-bold transition-all overflow-hidden border backdrop-blur-sm",
+                          "relative flex flex-col items-center gap-1 py-2 px-1 rounded-xl text-xs font-bold transition-all overflow-hidden border backdrop-blur-sm",
                           isSelected
                             ? "bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-500/25"
                             : "bg-white/60 text-slate-600 border-white/50 hover:bg-white/80 hover:border-white/70",
                         )}
                       >
                         <span className={cn(
-                          "size-2 rounded-full",
+                          "size-1.5 rounded-full",
                           isSelected ? "bg-white shadow-[0_0_8px_rgba(255,255,255,0.6)]" : meta.dotClassName,
                         )} />
                         <span className="truncate">{meta.shortTitle}</span>
                         <span className={cn(
-                          "text-[10px] font-black px-2 py-0.5 rounded-full",
+                          "text-[10px] font-black px-1.5 py-0 rounded-full",
                           isSelected ? "bg-white/20 text-white" : "bg-white/50 text-slate-500 ring-1 ring-white/40",
                         )}>
                           {count}
@@ -1725,19 +1725,19 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
               </div>
 
               {/* Voice List */}
-              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-3">
+              <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2">
                 {voices.length === 0 ? (
-                  <div className="rounded-3xl border border-dashed border-white/50 bg-white/50 backdrop-blur-xl px-6 py-16 text-center shadow-sm">
-                    <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-white/60 text-slate-400 mb-4">
-                      <Mic2 className="size-7" />
+                  <div className="rounded-3xl border border-dashed border-white/50 bg-white/50 backdrop-blur-xl px-5 py-10 text-center shadow-sm">
+                    <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-white/60 text-slate-400 mb-3">
+                      <Mic2 className="size-6" />
                     </div>
-                    <p className="text-base font-black text-slate-800">还没有创建好的音色</p>
-                    <p className="mt-2 text-sm text-slate-500">上传音频样本并完成克隆后会出现在这里</p>
+                    <p className="text-sm font-black text-slate-800">还没有创建好的音色</p>
+                    <p className="mt-1.5 text-xs text-slate-500">上传音频样本并完成克隆后会出现在这里</p>
                   </div>
                 ) : filteredVoices.length === 0 ? (
-                  <div className="rounded-3xl border border-white/50 bg-white/50 backdrop-blur-xl px-6 py-14 text-center shadow-sm">
-                    <p className="text-base font-black text-slate-800">暂无该模型音色</p>
-                    <p className="mt-2 text-sm text-slate-500">切换到其他模型看看</p>
+                  <div className="rounded-3xl border border-white/50 bg-white/50 backdrop-blur-xl px-5 py-8 text-center shadow-sm">
+                    <p className="text-sm font-black text-slate-800">暂无该模型音色</p>
+                    <p className="mt-1.5 text-xs text-slate-500">切换到其他模型看看</p>
                   </div>
                 ) : (
                   filteredVoices.map((voice) => {
@@ -1748,7 +1748,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                       <div
                         key={voice.id}
                         className={cn(
-                          "group relative rounded-2xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-sm backdrop-blur-sm",
+                          "group relative rounded-xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-sm backdrop-blur-sm",
                           isActive
                             ? cn("shadow-md ring-1", meta.activeClassName)
                             : "bg-white/70 border-white/60 hover:bg-white/90 hover:border-white/80 hover:shadow-md",
@@ -1765,28 +1765,28 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                       >
                         {/* Active left glow bar */}
                         {isActive && (
-                          <div className={cn("absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-b", meta.gradient)} />
+                          <div className={cn("absolute left-0 top-0 bottom-0 w-2 bg-gradient-to-b", meta.gradient)} />
                         )}
 
-                        <div className={cn("flex items-center gap-4 p-4", isActive ? "pl-5" : "")}>
+                        <div className={cn("flex items-center gap-3 p-3", isActive ? "pl-4" : "")}>
                           {/* Avatar */}
                           <div className={cn(
-                            "shrink-0 size-11 rounded-xl flex items-center justify-center border transition-colors",
+                            "shrink-0 size-9 rounded-lg flex items-center justify-center border transition-colors",
                             isActive
                               ? "bg-white text-slate-700 border-white/60 shadow-sm"
                               : "bg-white/80 text-slate-400 border-white/60",
                           )}>
-                            <Mic2 className="size-5" />
+                            <Mic2 className="size-4" />
                           </div>
 
                           {/* Info */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-[15px] font-black truncate text-slate-900">
+                              <span className="text-sm font-black truncate text-slate-900">
                                 {voice.name}
                               </span>
                             </div>
-                            <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-1">
+                            <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
                               <span className={cn("font-bold", meta.textColor)}>{voice.providerLabel}</span>
                               <span className="text-slate-300">|</span>
                               <span>{voice.createdAt}</span>
@@ -1796,7 +1796,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                           {/* Delete */}
                           <button
                             className={cn(
-                              "shrink-0 size-9 rounded-xl flex items-center justify-center border transition-all opacity-0 group-hover:opacity-100",
+                              "shrink-0 size-8 rounded-lg flex items-center justify-center border transition-all opacity-0 group-hover:opacity-100",
                               isActive
                                 ? "text-slate-400 hover:text-red-500 hover:bg-white hover:border-red-100 bg-white/60 border-white/40"
                                 : "text-slate-400 hover:text-red-500 hover:bg-red-50 border-transparent hover:border-red-200",
@@ -1806,7 +1806,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                               void handleDeleteVoice(voice.id);
                             }}
                           >
-                            <Trash2 className="size-4" />
+                            <Trash2 className="size-3.5" />
                           </button>
                         </div>
                       </div>
