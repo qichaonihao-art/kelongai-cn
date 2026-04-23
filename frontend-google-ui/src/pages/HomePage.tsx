@@ -7,6 +7,7 @@ interface HomePageProps {
   onLogout: () => void;
 }
 
+
 const modules = [
   {
     id: 'voice' as const,
@@ -63,18 +64,18 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
           <Sparkles className="size-8" />
         </div>
         <h1 className="text-6xl md:text-7xl font-black tracking-tighter leading-tight flex flex-wrap justify-center gap-x-4">
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-slate-500 to-slate-900 animate-shimmer">欢迎来到</span>
-          <span className="relative inline-block">
-            <span className="relative z-10 text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-white/80 to-violet-600 animate-shimmer italic px-2">AI</span>
-            <motion.span
-              initial={{ scaleX: 0 }}
-              animate={{ scaleX: 1 }}
-              transition={{ delay: 0.5, duration: 0.8 }}
-              className="absolute bottom-2 left-0 w-full h-4 bg-indigo-100/60 -z-10 origin-left rounded-full"
-            />
-          </span>
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-violet-600 via-white/80 to-emerald-600 animate-shimmer">创意工作台</span>
-        </h1>
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-slate-500 to-slate-900 animate-shimmer">欢迎来到</span>
+            <span className="relative inline-block">
+              <span className="relative z-10 text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-white/80 to-violet-600 animate-shimmer italic px-2">AI</span>
+              <motion.span
+                initial={{ scaleX: 0 }}
+                animate={{ scaleX: 1 }}
+                transition={{ delay: 0.5, duration: 0.8 }}
+                className="absolute bottom-2 left-0 w-full h-4 bg-indigo-100/60 -z-10 origin-left rounded-full"
+              />
+            </span>
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-violet-600 via-white/80 to-emerald-600 animate-shimmer">创意工作台</span>
+          </h1>
         <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
