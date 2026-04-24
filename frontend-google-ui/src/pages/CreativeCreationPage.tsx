@@ -1935,7 +1935,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                     <div className="grid min-h-[130px] place-items-center rounded-xl bg-white text-center">
                       <div>
                         <div className="text-sm font-bold text-slate-600">上传视频后开始反推</div>
-                        <div className="mt-1 text-xs text-slate-400">点击“填入反推指令”，再发送给豆包分析。</div>
+                        <div className="mt-1 text-xs text-slate-400">点击"填入反推指令"，再开始反推。</div>
                       </div>
                     </div>
                   ) : (
@@ -2042,7 +2042,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                     className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-                    发送给豆包
+                    开始反推
                   </button>
                 </div>
               </div>

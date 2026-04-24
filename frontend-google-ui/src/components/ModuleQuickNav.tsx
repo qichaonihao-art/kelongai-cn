@@ -23,7 +23,7 @@ export default function ModuleQuickNav({ current, onNavigate }: ModuleQuickNavPr
           <button
             key={m.id}
             onClick={() => onNavigate(m.id)}
-            className="flex items-center gap-1.5 h-9 rounded-full px-3 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-200"
+            className="flex items-center gap-1.5 h-9 px-2 hover:opacity-70 transition-opacity duration-200"
           >
             <div className={cn('size-5 rounded-md bg-gradient-to-br flex items-center justify-center text-white', m.gradient)}>
               <Icon className="size-3" />

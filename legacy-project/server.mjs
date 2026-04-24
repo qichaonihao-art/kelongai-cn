@@ -6815,21 +6815,21 @@ async function handleDouyinExtractTranscript(req, res) {
         }
       }
 
-      const transcriptSegments = [];
-      for (let index = 0; index < audioSegments.length; index += 1) {
-        const asrStageDeadlineAt = createStageDeadlineAt({
-          stageStartedAt: Date.now(),
-          stageTimeoutMs: DOUYIN_ASR_TIMEOUT_MS,
-          parentDeadlineAt: transcriptDeadlineAt
-        });
-        const segmentTranscript = await transcribeAudioWithSiliconFlow({
-          audioPath: audioSegments[index],
-          requestId,
-          segmentIndex: index,
-          parentDeadlineAt: asrStageDeadlineAt
-        });
-        transcriptSegments.push(segmentTranscript.trim());
-      }
+      const transcriptSegments = await Promise.all(
+        audioSegments.map((segmentAudioPath, index) => {
+          const asrStageDeadlineAt = createStageDeadlineAt({
+            stageStartedAt: Date.now(),
+            stageTimeoutMs: DOUYIN_ASR_TIMEOUT_MS,
+            parentDeadlineAt: transcriptDeadlineAt
+          });
+          return transcribeAudioWithSiliconFlow({
+            audioPath: segmentAudioPath,
+            requestId,
+            segmentIndex: index,
+            parentDeadlineAt: asrStageDeadlineAt
+          }).then((text) => text.trim());
+        })
+      );
 
       const transcript = transcriptSegments.filter(Boolean).join('\n\n').trim();
       const finalAudioSize = audioSegments.length

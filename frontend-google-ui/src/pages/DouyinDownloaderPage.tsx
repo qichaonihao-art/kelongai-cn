@@ -24,6 +24,7 @@ import {
   downloadDouyinVideoFile,
   extractDouyinTranscript,
   getDouyinConfigStatus,
+  polishDouyinTranscript,
   resolveDouyinDownload,
   type DouyinConfigStatus,
   type DouyinResolveResult,
@@ -36,6 +37,67 @@ interface DouyinDownloaderPageProps {
   onLogout: () => void;
 }
 
+interface DiffPart {
+  type: 'same' | 'removed' | 'added';
+  text: string;
+}
+
+function computeTextDiff(oldText: string, newText: string): DiffPart[] {
+  const a = oldText;
+  const b = newText;
+  const m = a.length;
+  const n = b.length;
+
+  if (m === 0) return b ? [{ type: 'added', text: b }] : [];
+  if (n === 0) return a ? [{ type: 'removed', text: a }] : [];
+
+  const dp: number[][] = Array(m + 1)
+    .fill(null)
+    .map(() => Array(n + 1).fill(0));
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  const raw: DiffPart[] = [];
+  let i = m;
+  let j = n;
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+      raw.push({ type: 'same', text: a[i - 1] });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      raw.push({ type: 'added', text: b[j - 1] });
+      j--;
+    } else {
+      raw.push({ type: 'removed', text: a[i - 1] });
+      i--;
+    }
+  }
+
+  raw.reverse();
+
+  const merged: DiffPart[] = [];
+  for (const part of raw) {
+    const last = merged[merged.length - 1];
+    if (last && last.type === part.type) {
+      last.text += part.text;
+    } else {
+      merged.push({ type: part.type, text: part.text });
+    }
+  }
+
+  return merged;
+}
+
 export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
   const [isResolving, setIsResolving] = useState(false);
@@ -46,6 +108,10 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
   const [transcriptResult, setTranscriptResult] = useState<DouyinTranscriptResult | null>(null);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'done' | 'error'>('idle');
   const [configStatus, setConfigStatus] = useState<DouyinConfigStatus | null>(null);
+  const [isPolishing, setIsPolishing] = useState(false);
+  const [displayTranscript, setDisplayTranscript] = useState('');
+  const [originalTranscript, setOriginalTranscript] = useState('');
+  const [showDiff, setShowDiff] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,6 +177,8 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
           };
 
       setTranscriptResult(normalizedTranscriptResult);
+      setDisplayTranscript(normalizedTranscriptResult.transcript);
+      setOriginalTranscript(normalizedTranscriptResult.transcript);
 
       if (!result) {
         setResult({
@@ -132,10 +200,41 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
       }
     } catch (submitError) {
       setTranscriptResult(null);
+      setDisplayTranscript('');
+      setOriginalTranscript('');
       setError(submitError instanceof Error ? submitError.message : '视频文案提取失败，请稍后重试。');
     } finally {
       setIsTranscriptLoading(false);
     }
+  }
+
+  async function handlePolishTranscript() {
+    const rawTranscript = transcriptResult?.transcript?.trim();
+
+    if (!rawTranscript) {
+      setError('缺少原始文案，无法校对');
+      return;
+    }
+
+    setIsPolishing(true);
+    setError('');
+
+    try {
+      const polished = await polishDouyinTranscript({
+        originalTranscript: rawTranscript,
+        onDelta: (text) => setDisplayTranscript(text),
+      });
+      setDisplayTranscript(polished);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '文案校对失败');
+      setDisplayTranscript(originalTranscript);
+    } finally {
+      setIsPolishing(false);
+    }
+  }
+
+  function handleRestoreOriginal() {
+    setDisplayTranscript(originalTranscript);
   }
 
   async function handleDownloadVideo() {
@@ -161,7 +260,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
   }
 
   async function handleCopyTranscript() {
-    const transcript = transcriptResult?.transcript?.trim() || '';
+    const transcript = displayTranscript.trim() || transcriptResult?.transcript?.trim() || '';
     if (!transcript) {
       setCopyStatus('error');
       return;
@@ -182,12 +281,17 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
     setResult(null);
     setTranscriptResult(null);
     setCopyStatus('idle');
+    setDisplayTranscript('');
+    setOriginalTranscript('');
+    setIsPolishing(false);
+    setShowDiff(true);
   }
 
   const fallbackCaption = transcriptResult?.fallbackCaption || result?.fallbackCaption || '';
   const hasResult = !!result || !!transcriptResult;
   const siliconFlowConfigured = configStatus?.siliconFlowApiKey === true;
   const tikhubConfigured = configStatus?.tikhubApiToken === true;
+  const arkApiKeyConfigured = configStatus?.arkApiKey === true;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -254,6 +358,15 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
               }`}
             >
               TikHub：{tikhubConfigured ? '已配置' : '可选'}
+            </span>
+            <span
+              className={`rounded-full border px-3 py-1 text-[11px] font-bold ${
+                arkApiKeyConfigured
+                  ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                  : 'border-amber-100 bg-amber-50 text-amber-700'
+              }`}
+            >
+              豆包多模态：{arkApiKeyConfigured ? '已配置' : '未配置'}
             </span>
             {configStatus && !configStatus.reachable && (
               <span className="rounded-full border border-red-100 bg-red-50 px-3 py-1 text-[11px] font-bold text-red-600">
@@ -469,9 +582,16 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                       className="space-y-4"
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-xs text-emerald-600 font-bold bg-emerald-50/80 px-3 py-2 rounded-lg border border-emerald-100/80">
-                          <CheckCircle2 className="size-3.5" />
-                          文案提取成功
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 text-xs text-emerald-600 font-bold bg-emerald-50/80 px-3 py-2 rounded-lg border border-emerald-100/80">
+                            <CheckCircle2 className="size-3.5" />
+                            文案提取成功
+                          </div>
+                          {displayTranscript !== originalTranscript && originalTranscript && (
+                            <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50/80 px-2 py-1 rounded-md border border-indigo-100/80">
+                              已AI校对
+                            </span>
+                          )}
                         </div>
 
                         <div className="flex items-center gap-2">
@@ -480,6 +600,37 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                               <Clock className="size-3" />
                               {transcriptResult.transcriptSegments} 段音频
                             </span>
+                          )}
+                          {displayTranscript !== originalTranscript && originalTranscript && (
+                            <button
+                              onClick={() => setShowDiff((v) => !v)}
+                              className="h-8 rounded-full px-3 text-xs font-bold text-slate-500 bg-white/70 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all flex items-center gap-1.5"
+                            >
+                              {showDiff ? '显示完整' : '显示修改'}
+                            </button>
+                          )}
+                          {displayTranscript !== originalTranscript && originalTranscript && (
+                            <button
+                              onClick={handleRestoreOriginal}
+                              className="h-8 rounded-full px-3 text-xs font-bold text-slate-500 bg-white/70 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all flex items-center gap-1.5"
+                            >
+                              <ArrowLeft className="size-3" />
+                              恢复原始
+                            </button>
+                          )}
+                          {isPolishing ? (
+                            <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-indigo-100/80 bg-indigo-50/80 px-3 text-xs font-bold text-indigo-600">
+                              <Loader2 className="size-3 animate-spin" />
+                              校对中...
+                            </span>
+                          ) : (
+                            <button
+                              onClick={handlePolishTranscript}
+                              className="h-8 rounded-full px-3 text-xs font-bold text-indigo-600 bg-indigo-50/80 hover:bg-indigo-50 border border-indigo-100/80 shadow-sm hover:shadow-md transition-all flex items-center gap-1.5"
+                            >
+                              <Sparkles className="size-3" />
+                              AI 校对
+                            </button>
                           )}
                           <button
                             onClick={handleCopyTranscript}
@@ -492,7 +643,29 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                       </div>
 
                       <div className="rounded-2xl border border-slate-100 bg-white/60 p-4 text-sm leading-7 text-slate-700 whitespace-pre-wrap break-words max-h-96 overflow-y-auto">
-                        {transcriptResult.transcript}
+                        {showDiff && !isPolishing && displayTranscript !== originalTranscript && originalTranscript ? (
+                          <span className="leading-7">
+                            {computeTextDiff(originalTranscript, displayTranscript).map((part, idx) => {
+                              if (part.type === 'removed') {
+                                return (
+                                  <span key={idx} className="bg-red-100 text-red-700 line-through decoration-red-400 rounded px-0.5">
+                                    {part.text}
+                                  </span>
+                                );
+                              }
+                              if (part.type === 'added') {
+                                return (
+                                  <span key={idx} className="bg-emerald-100 text-emerald-700 rounded px-0.5 font-medium">
+                                    {part.text}
+                                  </span>
+                                );
+                              }
+                              return <span key={idx}>{part.text}</span>;
+                            })}
+                          </span>
+                        ) : (
+                          displayTranscript || transcriptResult.transcript
+                        )}
                       </div>
                     </motion.div>
                   ) : transcriptResult && !transcriptResult.transcriptOk ? (

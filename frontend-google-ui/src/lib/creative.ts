@@ -335,6 +335,7 @@ export async function sendCreativeMessage(options: {
   media?: SelectedCreativeMedia | SelectedCreativeMedia[] | null;
   history: CreativeHistoryItem[];
   onDelta?: (text: string) => void;
+  model?: string;
 }) {
   const headers: Record<string, string> = {
     Accept: 'text/event-stream, application/json',
@@ -352,6 +353,9 @@ export async function sendCreativeMessage(options: {
     formData.append('question', options.question);
     formData.append('history', JSON.stringify(options.history));
     formData.append('stream', 'true');
+    if (options.model) {
+      formData.append('model', options.model);
+    }
     if (mediaArray.length === 1) {
       formData.append('media_kind', mediaArray[0].kind);
       formData.append('file', mediaArray[0].file, mediaArray[0].fileName);
@@ -370,6 +374,7 @@ export async function sendCreativeMessage(options: {
       question: options.question,
       history: options.history,
       stream: true,
+      ...(options.model ? { model: options.model } : {}),
     });
   }
 

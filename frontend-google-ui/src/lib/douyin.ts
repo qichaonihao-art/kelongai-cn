@@ -1,3 +1,5 @@
+import { sendCreativeMessage } from './creative';
+
 export interface DouyinDownloadCandidate {
   url: string;
   source?: string;
@@ -43,6 +45,7 @@ export interface DouyinConfigStatus {
   reachable: boolean;
   siliconFlowApiKey: boolean;
   tikhubApiToken: boolean;
+  arkApiKey: boolean;
 }
 
 function buildDownloadFileName(videoId: string) {
@@ -101,12 +104,14 @@ export async function getDouyinConfigStatus(): Promise<DouyinConfigStatus> {
       reachable: true,
       siliconFlowApiKey: !!json?.serverManaged?.siliconFlowApiKey,
       tikhubApiToken: !!json?.serverManaged?.tikhubApiToken,
+      arkApiKey: !!json?.serverManaged?.arkApiKey,
     };
   } catch {
     return {
       reachable: false,
       siliconFlowApiKey: false,
       tikhubApiToken: false,
+      arkApiKey: false,
     };
   }
 }
@@ -211,4 +216,32 @@ export async function downloadDouyinVideoFile(params: {
   anchor.click();
   anchor.remove();
   window.URL.revokeObjectURL(objectUrl);
+}
+
+export async function polishDouyinTranscript(options: {
+  originalTranscript: string;
+  onDelta?: (text: string) => void;
+}): Promise<string> {
+  const question = `你是一位专业的语音转文字校对专家。下面这段文案是通过 ASR（自动语音识别）从视频中提取的口播内容，极有可能存在以下问题：
+- 同音字错误（如"在"写成"再"，"做"写成"作"）
+- 近音字错误（如"这种"听成"种族"）
+- 漏字或多字
+- 口语化表达不够通顺
+- 标点符号使用不当
+
+请逐句仔细对照语义进行校对，输出最准确、流畅的修正版本。即使你觉得原文"看起来差不多"，也请重新组织输出一遍，确保每个字都准确无误。
+
+只输出修正后的完整文案，不要添加任何解释、说明、前言或格式标记。
+
+---
+
+原始文案：
+${options.originalTranscript}`;
+
+  const result = await sendCreativeMessage({
+    question,
+    history: [],
+    onDelta: options.onDelta,
+  });
+  return result;
 }
