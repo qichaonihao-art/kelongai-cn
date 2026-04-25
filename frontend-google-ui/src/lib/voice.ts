@@ -354,9 +354,9 @@ async function getAudioDurationLabel(audioUrl: string) {
       const minutes = Math.floor(totalSeconds / 60);
       const seconds = totalSeconds % 60;
       if (minutes > 0) {
-        finalize(`音频时长：${minutes}分${seconds}秒`);
+        finalize(`${minutes}分${seconds}秒`);
       } else {
-        finalize(`音频时长：${seconds}秒`);
+        finalize(`${seconds}秒`);
       }
     };
 
