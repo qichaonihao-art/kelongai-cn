@@ -1550,7 +1550,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider"
                           >{audio.providerLabel}</span>
                           <span className="text-[10px] font-mono text-slate-400"
-                          >{audio.timestamp}</span>
+                          >{audio.duration}</span>
                         </div>
                         <button
                           type="button"
