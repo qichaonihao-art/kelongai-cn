@@ -353,7 +353,11 @@ async function getAudioDurationLabel(audioUrl: string) {
       const totalSeconds = Math.max(1, Math.round(audio.duration));
       const minutes = Math.floor(totalSeconds / 60);
       const seconds = totalSeconds % 60;
-      finalize(`${minutes}:${String(seconds).padStart(2, '0')}`);
+      if (minutes > 0) {
+        finalize(`音频时长：${minutes}分${seconds}秒`);
+      } else {
+        finalize(`音频时长：${seconds}秒`);
+      }
     };
 
     audio.onerror = () => finalize('未知时长');
