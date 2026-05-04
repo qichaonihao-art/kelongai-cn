@@ -19,6 +19,7 @@ import {
   Copy,
   Check,
   Replace,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -36,6 +37,13 @@ import {
   type SelectedCreativeMedia,
 } from "@/src/lib/creative";
 import { motion, AnimatePresence } from "motion/react";
+import {
+  saveUploadHistory,
+  loadUploadHistory,
+  deleteUploadHistory,
+  blobToFile,
+  formatHistoryTime,
+} from "@/src/lib/uploadHistory";
 
 interface Message {
   id: string;
@@ -94,12 +102,22 @@ const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
 const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上七个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。';
-const VIDEO_REVERSE_PROMPT = (additionalChange?: string) => {
-  const base = `请把这个视频当作”待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。\n5. 目标不是”风格相似”，而是”尽量复刻接近原视频”。\n6. 对于画面中的挂画、海报、装饰画、屏幕显示内容等平面元素，必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换或修改后的元素在画面中的空间占比和边界框大小必须与原元素一致。\n7. 如果原视频中存在水印、平台标识、AI生成标记（如”豆包AI生成”等文字或Logo），必须在复刻时去除，不得保留任何水印信息。`;
+const VIDEO_REVERSE_PROMPT = (options?: { additionalChange?: string; includeSubtitles?: boolean }) => {
+  const additionalChange = options?.additionalChange;
+  const includeSubtitles = options?.includeSubtitles ?? false;
+  const subtitleClause = includeSubtitles
+    ? '8. 如果视频中有人物口播或旁白字幕，必须逐字提取并完整保留在最终提示词中，字幕内容不得遗漏、省略或改写。'
+    : '8. 视频中的字幕、文字叠加、人物口播字幕、旁白字幕等所有文字元素均不得保留，必须在复刻时彻底去除，确保输出画面不含任何字幕或文字叠加。';
+  const base = `请把这个视频当作”待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。\n5. 目标不是”风格相似”，而是”尽量复刻接近原视频”。\n6. 对于画面中的挂画、海报、装饰画、屏幕显示内容等平面元素，必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换或修改后的元素在画面中的空间占比和边界框大小必须与原元素一致。\n7. 如果原视频中存在水印、平台标识、AI生成标记（如”豆包AI生成”等文字或Logo），必须在复刻时去除，不得保留任何水印信息。\n${subtitleClause}`;
   if (!additionalChange?.trim()) return base;
   return `${base}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
 };
-const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, additionalChange?: string) => {
+const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, options?: { additionalChange?: string; includeSubtitles?: boolean }) => {
+  const additionalChange = options?.additionalChange;
+  const includeSubtitles = options?.includeSubtitles ?? false;
+  const subtitleClause = includeSubtitles
+    ? '8. 如果视频中有人物口播或旁白字幕，必须逐字提取并完整保留在最终提示词中，字幕内容不得遗漏、省略或改写。'
+    : '8. 视频中的字幕、文字叠加、人物口播字幕、旁白字幕等所有文字元素均不得保留，必须在复刻时彻底去除，确保输出画面不含任何字幕或文字叠加。';
   const base = `我上传了一个视频和一个参考图片。请你完成以下任务：
 
 1. 先像分析”待复刻样片”一样，完整分析这个视频，提取所有影响复刻结果的关键信息（主体、构图、镜头、动作、节奏、光影、氛围等）。
@@ -129,7 +147,8 @@ const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, additionalCha
 4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。
 5. 目标不是”风格相似”，而是”尽量复刻接近原视频，同时仅替换指定元素”。
 6. 被替换的元素（如挂画、海报、装饰画、屏幕显示内容等平面元素）必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换后的新元素在画面中的空间占比、边界框大小和透视关系必须与原元素完全一致。
-7. 如果原视频中存在水印、平台标识、AI生成标记（如"豆包AI生成"等文字或Logo），必须在复刻时去除，不得保留任何水印信息。`;
+7. 如果原视频中存在水印、平台标识、AI生成标记（如”豆包AI生成”等文字或Logo），必须在复刻时去除，不得保留任何水印信息。
+${subtitleClause}`;
   if (!additionalChange?.trim()) return base;
   return `${base}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
 };
@@ -672,6 +691,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [replaceTarget, setReplaceTarget] = useState('');
   const [replaceWith, setReplaceWith] = useState('');
   const [additionalChange, setAdditionalChange] = useState('');
+  const [includeSubtitles, setIncludeSubtitles] = useState(false);
+  const [videoHistory, setVideoHistory] = useState<Array<{ id: number; name: string; timestamp: number; previewUrl: string }>>([]);
+  const [imageHistory, setImageHistory] = useState<Array<{ id: number; name: string; timestamp: number; previewUrl: string }>>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -700,6 +722,41 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   useEffect(() => {
     scrollAnalysisToBottom();
   }, [messages.length]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadHistories() {
+      const [videos, images] = await Promise.all([
+        loadUploadHistory('video'),
+        loadUploadHistory('image'),
+      ]);
+      if (cancelled) return;
+
+      setVideoHistory(
+        videos.map((item) => ({
+          id: item.id,
+          name: item.name,
+          timestamp: item.timestamp,
+          previewUrl: URL.createObjectURL(item.blob),
+        }))
+      );
+      setImageHistory(
+        images.map((item) => ({
+          id: item.id,
+          name: item.name,
+          timestamp: item.timestamp,
+          previewUrl: URL.createObjectURL(item.blob),
+        }))
+      );
+    }
+
+    loadHistories();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1069,7 +1126,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
         setRequestError('请填写需要替换的元素和目标元素');
         return;
       }
-      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), additionalChange);
+      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { additionalChange, includeSubtitles });
       setInput(prompt);
       setRequestError("");
       requestAnimationFrame(() => {
@@ -1077,7 +1134,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
         textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
       });
     } else {
-      const prompt = VIDEO_REVERSE_PROMPT(additionalChange);
+      const prompt = VIDEO_REVERSE_PROMPT({ additionalChange, includeSubtitles });
       setInput(prompt);
       setRequestError("");
       requestAnimationFrame(() => {
@@ -1328,6 +1385,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
         previewUrl,
         fileName: nextFileName,
       });
+
+      void saveUploadHistory(file, kind);
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : '媒体文件读取失败，请换一个文件再试。');
     } finally {
@@ -1400,6 +1459,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
 
     if (nextReferences.length) {
       setSeedanceReferences((previous) => [...previous, ...nextReferences]);
+      for (const ref of nextReferences) {
+        void saveUploadHistory(ref.file, ref.kind);
+      }
     }
 
     if (seedanceFileInputRef.current) {
@@ -1450,6 +1512,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
         previewUrl,
         fileName: file.name,
       });
+
+      void saveUploadHistory(file, 'image');
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : '图片读取失败，请换一张再试。');
     } finally {
@@ -1468,6 +1532,100 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     if (replaceImageInputRef.current) {
       replaceImageInputRef.current.value = '';
     }
+  }
+
+  async function selectVideoFromHistory(item: { id: number; name: string; timestamp: number; previewUrl: string }) {
+    const histories = await loadUploadHistory('video');
+    const found = histories.find((h) => h.id === item.id);
+    if (!found) return;
+    const file = blobToFile(found);
+    const previewUrl = createMediaPreviewUrl(file);
+    if (selectedMedia) {
+      URL.revokeObjectURL(selectedMedia.previewUrl);
+    }
+    setSelectedMedia({ kind: 'video', file, previewUrl, fileName: file.name });
+  }
+
+  async function selectImageFromHistory(item: { id: number; name: string; timestamp: number; previewUrl: string }, forReplace: boolean) {
+    const histories = await loadUploadHistory('image');
+    const found = histories.find((h) => h.id === item.id);
+    if (!found) return;
+    const file = blobToFile(found);
+    const previewUrl = createMediaPreviewUrl(file);
+    if (forReplace) {
+      if (replaceImage) {
+        URL.revokeObjectURL(replaceImage.previewUrl);
+      }
+      setReplaceImage({ kind: 'image', file, previewUrl, fileName: file.name });
+    } else {
+      if (selectedMedia) {
+        URL.revokeObjectURL(selectedMedia.previewUrl);
+      }
+      setSelectedMedia({ kind: 'image', file, previewUrl, fileName: file.name });
+    }
+  }
+
+  async function handleDeleteVideoHistory(id: number) {
+    await deleteUploadHistory(id);
+    setVideoHistory((previous) => {
+      const item = previous.find((p) => p.id === id);
+      if (item) URL.revokeObjectURL(item.previewUrl);
+      return previous.filter((p) => p.id !== id);
+    });
+  }
+
+  async function handleDeleteImageHistory(id: number) {
+    await deleteUploadHistory(id);
+    setImageHistory((previous) => {
+      const item = previous.find((p) => p.id === id);
+      if (item) URL.revokeObjectURL(item.previewUrl);
+      return previous.filter((p) => p.id !== id);
+    });
+  }
+
+  async function selectSeedanceReferenceFromHistory(item: { id: number; name: string; timestamp: number; previewUrl: string }, kind: 'image' | 'video') {
+    const histories = await loadUploadHistory(kind);
+    const found = histories.find((h) => h.id === item.id);
+    if (!found) return;
+
+    const file = blobToFile(found);
+    const previewUrl = createMediaPreviewUrl(file);
+
+    setSeedanceReferences((previous) => {
+      const imageCount = previous.filter((r) => r.kind === 'image').length;
+      const videoCount = previous.filter((r) => r.kind === 'video').length;
+      const audioCount = previous.filter((r) => r.kind === 'audio').length;
+
+      if (kind === 'image' && imageCount >= 9) {
+        setSeedanceError('参考图片最多上传 9 张。');
+        return previous;
+      }
+      if (kind === 'video') {
+        if (!publicBaseUrlConfigured) {
+          setSeedanceError('视频参考功能仅线上环境可用，本地开发不支持上传视频参考素材。');
+          return previous;
+        }
+        if (videoCount >= 3) {
+          setSeedanceError('参考视频最多上传 3 个。');
+          return previous;
+        }
+        if (file.size > 50 * 1024 * 1024) {
+          setSeedanceError('参考视频单个文件不能超过 50MB。');
+          return previous;
+        }
+      }
+
+      return [
+        ...previous,
+        {
+          id: createMessageId('seedance_ref'),
+          kind,
+          file,
+          previewUrl,
+          fileName: file.name,
+        },
+      ];
+    });
   }
 
   async function copyMessageContent(id: string, content: string) {
@@ -1798,6 +1956,44 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                 )}
               </div>
 
+              {videoHistory.length > 0 && !selectedMedia && (
+                <div className="mt-2">
+                  <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    <History className="size-3" />
+                    最近上传的视频
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {videoHistory.map((item) => (
+                      <div
+                        key={item.id}
+                        className="group relative shrink-0 w-[120px] cursor-pointer rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm hover:shadow-md transition-all"
+                        onClick={() => void selectVideoFromHistory(item)}
+                      >
+                        <video
+                          src={item.previewUrl}
+                          className="aspect-video w-full rounded-lg bg-slate-950 object-cover"
+                          preload="metadata"
+                        />
+                        <div className="mt-1 truncate text-[10px] font-semibold text-slate-600">{item.name}</div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDeleteVideoHistory(item.id);
+                            }}
+                            className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 className="size-2.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {reverseMode === 'replace' && (
                 <div className="mt-3 space-y-3">
                   <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3">
@@ -1841,6 +2037,44 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                     )}
                   </div>
 
+                  {imageHistory.length > 0 && !replaceImage && (
+                    <div>
+                      <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        <History className="size-3" />
+                        最近上传的图片
+                      </div>
+                      <div className="flex gap-2 overflow-x-auto pb-1">
+                        {imageHistory.map((item) => (
+                          <div
+                            key={item.id}
+                            className="group relative shrink-0 w-[100px] cursor-pointer rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm hover:shadow-md transition-all"
+                            onClick={() => void selectImageFromHistory(item, true)}
+                          >
+                            <img
+                              src={item.previewUrl}
+                              alt={item.name}
+                              className="aspect-square w-full rounded-lg bg-slate-950 object-cover"
+                            />
+                            <div className="mt-1 truncate text-[10px] font-semibold text-slate-600">{item.name}</div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleDeleteImageHistory(item.id);
+                                }}
+                                className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+                              >
+                                <Trash2 className="size-2.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <label className="text-[11px] font-bold text-slate-600">替换目标</label>
@@ -1878,6 +2112,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   disabled={isLoading}
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
                 />
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  id="include-subtitles"
+                  type="checkbox"
+                  checked={includeSubtitles}
+                  onChange={(e) => setIncludeSubtitles(e.target.checked)}
+                  disabled={isLoading}
+                  className="size-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                />
+                <label htmlFor="include-subtitles" className="text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                  反推提示词包含字幕内容
+                </label>
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
@@ -2159,6 +2407,71 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                         </button>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {(imageHistory.length > 0 || videoHistory.length > 0) && (
+                  <div className="mt-3">
+                    <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                      <History className="size-3" />
+                      最近上传的素材
+                    </div>
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      {imageHistory.map((item) => (
+                        <div
+                          key={`img_${item.id}`}
+                          className="group relative shrink-0 w-[100px] cursor-pointer rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm hover:shadow-md transition-all"
+                          onClick={() => void selectSeedanceReferenceFromHistory(item, 'image')}
+                        >
+                          <img
+                            src={item.previewUrl}
+                            alt={item.name}
+                            className="aspect-square w-full rounded-lg bg-slate-950 object-cover"
+                          />
+                          <div className="mt-1 truncate text-[10px] font-semibold text-slate-600">{item.name}</div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeleteImageHistory(item.id);
+                              }}
+                              className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+                            >
+                              <Trash2 className="size-2.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      {videoHistory.map((item) => (
+                        <div
+                          key={`vid_${item.id}`}
+                          className="group relative shrink-0 w-[120px] cursor-pointer rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm hover:shadow-md transition-all"
+                          onClick={() => void selectSeedanceReferenceFromHistory(item, 'video')}
+                        >
+                          <video
+                            src={item.previewUrl}
+                            className="aspect-video w-full rounded-lg bg-slate-950 object-cover"
+                            preload="metadata"
+                          />
+                          <div className="mt-1 truncate text-[10px] font-semibold text-slate-600">{item.name}</div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeleteVideoHistory(item.id);
+                              }}
+                              className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+                            >
+                              <Trash2 className="size-2.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
