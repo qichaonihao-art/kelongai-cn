@@ -38,7 +38,7 @@ export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'a
   });
 
   const sameKind = all.filter((item) => item.kind === kind);
-  const maxCount = kind === 'video' ? 5 : 5;
+  const maxCount = 20;
   if (sameKind.length >= maxCount) {
     const sorted = sameKind.sort((a, b) => a.timestamp - b.timestamp);
     const toDelete = sorted.slice(0, sameKind.length - maxCount + 1);

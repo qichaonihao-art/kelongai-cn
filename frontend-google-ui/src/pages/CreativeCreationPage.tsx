@@ -101,6 +101,8 @@ const SEEDANCE_HISTORY_MAX_AGE_HOURS = 24;
 const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
+const ADDITIONAL_CHANGE_HISTORY_KEY = 'kelongai.additionalChangeHistory';
+const ADDITIONAL_CHANGE_HISTORY_MAX = 20;
 const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上七个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。';
 const VIDEO_REVERSE_PROMPT = (options?: { additionalChange?: string; includeSubtitles?: boolean }) => {
   const additionalChange = options?.additionalChange;
@@ -692,6 +694,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [replaceWith, setReplaceWith] = useState('');
   const [additionalChange, setAdditionalChange] = useState('');
   const [includeSubtitles, setIncludeSubtitles] = useState(false);
+  const [additionalChangeHistory, setAdditionalChangeHistory] = useState<string[]>([]);
+  const [showAdditionalHistory, setShowAdditionalHistory] = useState(false);
   const [videoHistory, setVideoHistory] = useState<Array<{ id: number; name: string; timestamp: number; previewUrl: string }>>([]);
   const [imageHistory, setImageHistory] = useState<Array<{ id: number; name: string; timestamp: number; previewUrl: string }>>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -732,6 +736,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
         loadUploadHistory('image'),
       ]);
       if (cancelled) return;
+
+      try {
+        const raw = window.localStorage.getItem(ADDITIONAL_CHANGE_HISTORY_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            setAdditionalChangeHistory(parsed.filter((item) => typeof item === 'string'));
+          }
+        }
+      } catch {
+        // ignore parse errors
+      }
 
       setVideoHistory(
         videos.map((item) => ({
@@ -1120,6 +1136,33 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     }
   }
 
+  function saveAdditionalChangeHistory(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setAdditionalChangeHistory((previous) => {
+      const filtered = previous.filter((item) => item !== trimmed);
+      const next = [trimmed, ...filtered].slice(0, ADDITIONAL_CHANGE_HISTORY_MAX);
+      try {
+        window.localStorage.setItem(ADDITIONAL_CHANGE_HISTORY_KEY, JSON.stringify(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  }
+
+  function deleteAdditionalChangeHistory(text: string) {
+    setAdditionalChangeHistory((previous) => {
+      const next = previous.filter((item) => item !== text);
+      try {
+        window.localStorage.setItem(ADDITIONAL_CHANGE_HISTORY_KEY, JSON.stringify(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  }
+
   function prepareVideoReversePrompt() {
     if (reverseMode === 'replace') {
       if (!replaceTarget.trim() || !replaceWith.trim()) {
@@ -1129,6 +1172,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
       const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { additionalChange, includeSubtitles });
       setInput(prompt);
       setRequestError("");
+      saveAdditionalChangeHistory(additionalChange);
       requestAnimationFrame(() => {
         textareaRef.current?.focus();
         textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
@@ -1137,6 +1181,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
       const prompt = VIDEO_REVERSE_PROMPT({ additionalChange, includeSubtitles });
       setInput(prompt);
       setRequestError("");
+      saveAdditionalChangeHistory(additionalChange);
       requestAnimationFrame(() => {
         textareaRef.current?.focus();
         textareaRef.current?.setSelectionRange(VIDEO_REVERSE_PROMPT.length, VIDEO_REVERSE_PROMPT.length);
@@ -1958,25 +2003,23 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
 
               {videoHistory.length > 0 && !selectedMedia && (
                 <div className="mt-2">
-                  <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                     <History className="size-3" />
                     最近上传的视频
                   </div>
-                  <div className="flex gap-2 overflow-x-auto pb-1">
+                  <div className="space-y-1">
                     {videoHistory.map((item) => (
                       <div
                         key={item.id}
-                        className="group relative shrink-0 w-[120px] cursor-pointer rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm hover:shadow-md transition-all"
+                        className="group flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm hover:border-indigo-200 hover:bg-indigo-50/40 transition-all"
                         onClick={() => void selectVideoFromHistory(item)}
                       >
-                        <video
-                          src={item.previewUrl}
-                          className="aspect-video w-full rounded-lg bg-slate-950 object-cover"
-                          preload="metadata"
-                        />
-                        <div className="mt-1 truncate text-[10px] font-semibold text-slate-600">{item.name}</div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-[9px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Film className="size-3.5 shrink-0 text-slate-400 group-hover:text-indigo-500" />
+                          <span className="truncate font-semibold text-slate-700 group-hover:text-indigo-700">{item.name}</span>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1985,7 +2028,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                             }}
                             className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
                           >
-                            <Trash2 className="size-2.5" />
+                            <Trash2 className="size-3" />
                           </button>
                         </div>
                       </div>
@@ -2039,25 +2082,23 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
 
                   {imageHistory.length > 0 && !replaceImage && (
                     <div>
-                      <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                         <History className="size-3" />
                         最近上传的图片
                       </div>
-                      <div className="flex gap-2 overflow-x-auto pb-1">
+                      <div className="space-y-1">
                         {imageHistory.map((item) => (
                           <div
                             key={item.id}
-                            className="group relative shrink-0 w-[100px] cursor-pointer rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm hover:shadow-md transition-all"
+                            className="group flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm hover:border-indigo-200 hover:bg-indigo-50/40 transition-all"
                             onClick={() => void selectImageFromHistory(item, true)}
                           >
-                            <img
-                              src={item.previewUrl}
-                              alt={item.name}
-                              className="aspect-square w-full rounded-lg bg-slate-950 object-cover"
-                            />
-                            <div className="mt-1 truncate text-[10px] font-semibold text-slate-600">{item.name}</div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-[9px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
+                            <div className="flex min-w-0 items-center gap-2">
+                              <ImageIcon className="size-3.5 shrink-0 text-slate-400 group-hover:text-indigo-500" />
+                              <span className="truncate font-semibold text-slate-700 group-hover:text-indigo-700">{item.name}</span>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <span className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -2066,7 +2107,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                                 }}
                                 className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
                               >
-                                <Trash2 className="size-2.5" />
+                                <Trash2 className="size-3" />
                               </button>
                             </div>
                           </div>
@@ -2112,6 +2153,49 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   disabled={isLoading}
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
                 />
+
+                {additionalChangeHistory.length > 0 && (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setShowAdditionalHistory((v) => !v)}
+                      className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <History className="size-3" />
+                        历史记录（{additionalChangeHistory.length}）
+                      </span>
+                      {showAdditionalHistory ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+                    </button>
+
+                    {showAdditionalHistory && (
+                      <div className="mt-1 space-y-1">
+                        {additionalChangeHistory.map((text, index) => (
+                          <div
+                            key={index}
+                            className="group flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm hover:border-indigo-200 hover:bg-indigo-50/40 transition-all"
+                            onClick={() => setAdditionalChange(text)}
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <Sparkles className="size-3.5 shrink-0 text-slate-400 group-hover:text-indigo-500" />
+                              <span className="truncate font-semibold text-slate-700 group-hover:text-indigo-700">{text}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteAdditionalChangeHistory(text);
+                              }}
+                              className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+                            >
+                              <Trash2 className="size-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="mt-3 flex items-center gap-2">
@@ -2411,67 +2495,77 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                 )}
 
                 {(imageHistory.length > 0 || videoHistory.length > 0) && (
-                  <div className="mt-3">
-                    <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                      <History className="size-3" />
-                      最近上传的素材
-                    </div>
-                    <div className="flex gap-2 overflow-x-auto pb-1">
-                      {imageHistory.map((item) => (
-                        <div
-                          key={`img_${item.id}`}
-                          className="group relative shrink-0 w-[100px] cursor-pointer rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm hover:shadow-md transition-all"
-                          onClick={() => void selectSeedanceReferenceFromHistory(item, 'image')}
-                        >
-                          <img
-                            src={item.previewUrl}
-                            alt={item.name}
-                            className="aspect-square w-full rounded-lg bg-slate-950 object-cover"
-                          />
-                          <div className="mt-1 truncate text-[10px] font-semibold text-slate-600">{item.name}</div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-[9px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void handleDeleteImageHistory(item.id);
-                              }}
-                              className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
-                            >
-                              <Trash2 className="size-2.5" />
-                            </button>
-                          </div>
+                  <div className="mt-3 space-y-2">
+                    {imageHistory.length > 0 && (
+                      <div>
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          <History className="size-3" />
+                          最近上传的图片
                         </div>
-                      ))}
-                      {videoHistory.map((item) => (
-                        <div
-                          key={`vid_${item.id}`}
-                          className="group relative shrink-0 w-[120px] cursor-pointer rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm hover:shadow-md transition-all"
-                          onClick={() => void selectSeedanceReferenceFromHistory(item, 'video')}
-                        >
-                          <video
-                            src={item.previewUrl}
-                            className="aspect-video w-full rounded-lg bg-slate-950 object-cover"
-                            preload="metadata"
-                          />
-                          <div className="mt-1 truncate text-[10px] font-semibold text-slate-600">{item.name}</div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-[9px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void handleDeleteVideoHistory(item.id);
-                              }}
-                              className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+                        <div className="space-y-1">
+                          {imageHistory.map((item) => (
+                            <div
+                              key={`img_${item.id}`}
+                              className="group flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm hover:border-violet-200 hover:bg-violet-50/40 transition-all"
+                              onClick={() => void selectSeedanceReferenceFromHistory(item, 'image')}
                             >
-                              <Trash2 className="size-2.5" />
-                            </button>
-                          </div>
+                              <div className="flex min-w-0 items-center gap-2">
+                                <ImageIcon className="size-3.5 shrink-0 text-slate-400 group-hover:text-violet-500" />
+                                <span className="truncate font-semibold text-slate-700 group-hover:text-violet-700">{item.name}</span>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <span className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleDeleteImageHistory(item.id);
+                                  }}
+                                  className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+                                >
+                                  <Trash2 className="size-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    )}
+                    {videoHistory.length > 0 && (
+                      <div>
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          <History className="size-3" />
+                          最近上传的视频
+                        </div>
+                        <div className="space-y-1">
+                          {videoHistory.map((item) => (
+                            <div
+                              key={`vid_${item.id}`}
+                              className="group flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm hover:border-violet-200 hover:bg-violet-50/40 transition-all"
+                              onClick={() => void selectSeedanceReferenceFromHistory(item, 'video')}
+                            >
+                              <div className="flex min-w-0 items-center gap-2">
+                                <Film className="size-3.5 shrink-0 text-slate-400 group-hover:text-violet-500" />
+                                <span className="truncate font-semibold text-slate-700 group-hover:text-violet-700">{item.name}</span>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <span className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleDeleteVideoHistory(item.id);
+                                  }}
+                                  className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+                                >
+                                  <Trash2 className="size-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
