@@ -101,8 +101,55 @@ const SEEDANCE_HISTORY_MAX_AGE_HOURS = 24;
 const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
+const SEEDANCE_COST_KEY = 'kelongai.seedanceCost';
 const ADDITIONAL_CHANGE_HISTORY_KEY = 'kelongai.additionalChangeHistory';
 const ADDITIONAL_CHANGE_HISTORY_MAX = 20;
+
+function getTodayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function getMonthKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getYearKey() {
+  return String(new Date().getFullYear());
+}
+
+function recordSeedanceCost(durationSeconds: number) {
+  const cost = Math.max(1, Math.round(durationSeconds));
+  const today = getTodayKey();
+  const month = getMonthKey();
+  const year = getYearKey();
+  try {
+    const raw = window.localStorage.getItem(SEEDANCE_COST_KEY);
+    const data: Record<string, number> = raw ? JSON.parse(raw) : {};
+    data[today] = (data[today] || 0) + cost;
+    data[month] = (data[month] || 0) + cost;
+    data[year] = (data[year] || 0) + cost;
+    window.localStorage.setItem(SEEDANCE_COST_KEY, JSON.stringify(data));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function getSeedanceCostStats(): { daily: number; monthly: number; yearly: number } {
+  try {
+    const raw = window.localStorage.getItem(SEEDANCE_COST_KEY);
+    const data: Record<string, number> = raw ? JSON.parse(raw) : {};
+    return {
+      daily: data[getTodayKey()] || 0,
+      monthly: data[getMonthKey()] || 0,
+      yearly: data[getYearKey()] || 0,
+    };
+  } catch {
+    return { daily: 0, monthly: 0, yearly: 0 };
+  }
+}
+
 const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上七个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。';
 const VIDEO_REVERSE_PROMPT = (options?: { additionalChange?: string; includeSubtitles?: boolean }) => {
   const additionalChange = options?.additionalChange;
@@ -702,6 +749,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance'>('video');
   const [hoverPreviewItem, setHoverPreviewItem] = useState<{ id: number; name: string; previewUrl: string; timestamp: number; kind: 'video' | 'image'; source: 'video' | 'image-creative' | 'image-seedance' } | null>(null);
   const hoverPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seedanceCostStats = getSeedanceCostStats();
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1320,6 +1368,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
           )
         )
       );
+      recordSeedanceCost(seedanceDuration);
     } catch (error) {
       setSeedanceError(error instanceof Error ? error.message : 'Seedance 创建任务失败');
     } finally {
@@ -2346,12 +2395,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   </div>
                   <h2 className="text-base font-black text-slate-900">Seedance 2.0 生成视频</h2>
                 </div>
-                <span className={cn(
-                  "rounded-full px-3 py-1 text-[10px] font-black tracking-wider",
-                  seedanceApiConfigured ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
-                )}>
-                  {seedanceApiConfigured ? '已接入 Seedance 2.0' : '待配置'}
-                </span>
+                <div className="flex flex-col items-end gap-1.5">
+                  <span className={cn(
+                    "rounded-full px-3 py-1 text-[10px] font-black tracking-wider",
+                    seedanceApiConfigured ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+                  )}>
+                    {seedanceApiConfigured ? '已接入 Seedance 2.0' : '待配置'}
+                  </span>
+                  <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[10px] font-semibold text-slate-500">
+                    今日 ¥{seedanceCostStats.daily} / 本月 ¥{seedanceCostStats.monthly} / 本年 ¥{seedanceCostStats.yearly}
+                  </span>
+                </div>
               </div>
 
               <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3 relative">
