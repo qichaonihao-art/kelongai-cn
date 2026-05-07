@@ -2195,26 +2195,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   <Sparkles className="size-3.5" />
                   {reverseMode === 'replace' ? '填入替换指令' : '填入反推指令'}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isLoading}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <Film className="size-3.5" />
-                  更换视频
-                </button>
-                {reverseMode === 'replace' && (
-                  <button
-                    type="button"
-                    onClick={() => replaceImageInputRef.current?.click()}
-                    disabled={isLoading}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <ImageIcon className="size-3.5" />
-                    更换参考图
-                  </button>
-                )}
               </div>
 
               <div className="mt-5 rounded-2xl border border-slate-300 bg-slate-100">
