@@ -700,6 +700,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [imageHistory, setImageHistory] = useState<Array<{ id: number; name: string; timestamp: number; previewUrl: string }>>([]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance'>('video');
+  const [hoverPreviewItem, setHoverPreviewItem] = useState<{ id: number; name: string; previewUrl: string; timestamp: number; kind: 'video' | 'image'; source: 'video' | 'image-creative' | 'image-seedance' } | null>(null);
+  const hoverPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -2017,13 +2019,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                     setHistoryModalKind('video');
                     setShowHistoryModal(true);
                   }}
-                  className="mt-2 flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
                 >
-                  <div className="flex items-center gap-2">
-                    <History className="size-3.5 text-slate-400" />
-                    <span className="font-semibold text-slate-600">最近上传的视频</span>
-                  </div>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{videoHistory.length}</span>
+                  <History className="size-3 text-slate-400" />
+                  <span>历史视频</span>
+                  <span className="rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">{videoHistory.length}</span>
                 </button>
               )}
 
@@ -2077,13 +2077,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                         setHistoryModalKind('image-creative');
                         setShowHistoryModal(true);
                       }}
-                      className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
                     >
-                      <div className="flex items-center gap-2">
-                        <History className="size-3.5 text-slate-400" />
-                        <span className="font-semibold text-slate-600">最近上传的图片</span>
-                      </div>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{imageHistory.length}</span>
+                      <History className="size-3 text-slate-400" />
+                      <span>历史图片</span>
+                      <span className="rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">{imageHistory.length}</span>
                     </button>
                   )}
 
@@ -2377,14 +2375,48 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
               </div>
 
               <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3 relative">
-                {/* 提示词输入框 */}
-                <textarea
-                  ref={seedancePromptRef}
-                  value={seedancePrompt}
-                  onChange={handleSeedancePromptChange}
-                  placeholder="等待模块一反推出视频提示词..."
-                  className="min-h-[280px] w-full resize-none rounded-xl border border-slate-300 bg-white p-4 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300 whitespace-pre-wrap"
-                />
+                {/* 提示词输入框 + 内部参考素材 */}
+                <div className="relative">
+                  <textarea
+                    ref={seedancePromptRef}
+                    value={seedancePrompt}
+                    onChange={handleSeedancePromptChange}
+                    placeholder="等待模块一反推出视频提示词..."
+                    className="min-h-[280px] w-full resize-none rounded-xl border border-slate-300 bg-white p-4 pb-20 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300 whitespace-pre-wrap"
+                  />
+
+                  {/* 已上传的参考素材列表（放在输入框底部内部） */}
+                  {seedanceReferences.length > 0 && (
+                    <div className="absolute bottom-2 left-2 right-2 flex flex-wrap gap-1.5">
+                      {seedanceReferences.map((reference) => (
+                        <div
+                          key={reference.id}
+                          className="group flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/90 px-2 py-1 shadow-sm backdrop-blur-sm transition-colors hover:border-violet-200"
+                          title={reference.fileName}
+                        >
+                          <div className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded bg-slate-100 text-slate-400">
+                            {reference.kind === 'image' && reference.previewUrl ? (
+                              <img src={reference.previewUrl} alt={reference.fileName} className="size-full object-cover" />
+                            ) : reference.kind === 'video' && reference.previewUrl ? (
+                              <video src={reference.previewUrl} className="size-full object-cover" muted />
+                            ) : (
+                              <Music className="size-3" />
+                            )}
+                          </div>
+                          <span className="max-w-[80px] truncate text-[10px] font-semibold text-slate-600">{reference.fileName}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeSeedanceReference(reference.id)}
+                            className="flex size-4 items-center justify-center rounded text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                            aria-label="移除参考素材"
+                          >
+                            <X className="size-2.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {/* @ 引用下拉菜单 */}
                 {showAtMenu && (
@@ -2432,39 +2464,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   </div>
                 )}
 
-                {/* 已上传的参考素材列表 */}
-                {seedanceReferences.length > 0 && (
-                  <div className="mt-3 grid gap-2">
-                    {seedanceReferences.map((reference) => (
-                      <div key={reference.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-2">
-                        <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-slate-400">
-                          {reference.kind === 'image' && reference.previewUrl ? (
-                            <img src={reference.previewUrl} alt={reference.fileName} className="size-full object-cover" />
-                          ) : reference.kind === 'video' && reference.previewUrl ? (
-                            <video src={reference.previewUrl} className="size-full object-cover" muted />
-                          ) : (
-                            <Music className="size-4" />
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-xs font-bold text-slate-700">{reference.fileName}</div>
-                          <div className="text-[11px] text-slate-400">
-                            {reference.kind === 'image' ? '参考图片' : reference.kind === 'video' ? '参考视频' : '参考音频'}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removeSeedanceReference(reference.id)}
-                          className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-red-500"
-                          aria-label="移除参考素材"
-                        >
-                          <X className="size-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
                 {imageHistory.length > 0 && (
                   <button
                     type="button"
@@ -2472,13 +2471,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                       setHistoryModalKind('image-seedance');
                       setShowHistoryModal(true);
                     }}
-                    className="mt-3 flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors hover:border-violet-200 hover:bg-violet-50/40"
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-violet-200 hover:bg-violet-50/40"
                   >
-                    <div className="flex items-center gap-2">
-                      <History className="size-3.5 text-slate-400" />
-                      <span className="font-semibold text-slate-600">最近上传的图片</span>
-                    </div>
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{imageHistory.length}</span>
+                    <History className="size-3 text-slate-400" />
+                    <span>历史图片</span>
+                    <span className="rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">{imageHistory.length}</span>
                   </button>
                 )}
 
@@ -3060,10 +3057,22 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                       {videoHistory.map((item) => (
                         <div
                           key={item.id}
-                          className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md"
+                          className="group relative cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md"
                           onClick={() => {
                             void selectVideoFromHistory(item);
                             setShowHistoryModal(false);
+                          }}
+                          onMouseEnter={() => {
+                            if (hoverPreviewTimerRef.current) {
+                              clearTimeout(hoverPreviewTimerRef.current);
+                              hoverPreviewTimerRef.current = null;
+                            }
+                            setHoverPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'video', source: 'video' });
+                          }}
+                          onMouseLeave={() => {
+                            hoverPreviewTimerRef.current = setTimeout(() => {
+                              setHoverPreviewItem(null);
+                            }, 80);
                           }}
                         >
                           <div className="relative overflow-hidden rounded-lg bg-slate-950">
@@ -3102,10 +3111,22 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                       {imageHistory.map((item) => (
                         <div
                           key={item.id}
-                          className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md"
+                          className="group relative cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md"
                           onClick={() => {
                             void selectImageFromHistory(item, true);
                             setShowHistoryModal(false);
+                          }}
+                          onMouseEnter={() => {
+                            if (hoverPreviewTimerRef.current) {
+                              clearTimeout(hoverPreviewTimerRef.current);
+                              hoverPreviewTimerRef.current = null;
+                            }
+                            setHoverPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'image', source: 'image-creative' });
+                          }}
+                          onMouseLeave={() => {
+                            hoverPreviewTimerRef.current = setTimeout(() => {
+                              setHoverPreviewItem(null);
+                            }, 80);
                           }}
                         >
                           <div className="relative overflow-hidden rounded-lg bg-slate-950">
@@ -3144,10 +3165,22 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                       {imageHistory.map((item) => (
                         <div
                           key={`img_${item.id}`}
-                          className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-violet-200 hover:shadow-md"
+                          className="group relative cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-violet-200 hover:shadow-md"
                           onClick={() => {
                             void selectSeedanceReferenceFromHistory(item, 'image');
                             setShowHistoryModal(false);
+                          }}
+                          onMouseEnter={() => {
+                            if (hoverPreviewTimerRef.current) {
+                              clearTimeout(hoverPreviewTimerRef.current);
+                              hoverPreviewTimerRef.current = null;
+                            }
+                            setHoverPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'image', source: 'image-seedance' });
+                          }}
+                          onMouseLeave={() => {
+                            hoverPreviewTimerRef.current = setTimeout(() => {
+                              setHoverPreviewItem(null);
+                            }, 80);
                           }}
                         >
                           <div className="relative overflow-hidden rounded-lg bg-slate-950">
@@ -3186,6 +3219,79 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
               >
                 关闭
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hover 大预览层（Quick Look 风格） */}
+      {hoverPreviewItem && (
+        <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center pointer-events-none">
+          {/* 背景遮罩 */}
+          <div className="absolute inset-0 bg-black/75" />
+          {/* 内容区域 - 接收鼠标事件 */}
+          <div
+            className="relative pointer-events-auto"
+            onMouseEnter={() => {
+              if (hoverPreviewTimerRef.current) {
+                clearTimeout(hoverPreviewTimerRef.current);
+                hoverPreviewTimerRef.current = null;
+              }
+            }}
+            onMouseLeave={() => {
+              setHoverPreviewItem(null);
+            }}
+            onDoubleClick={() => {
+              const item = { id: hoverPreviewItem.id, name: hoverPreviewItem.name, previewUrl: hoverPreviewItem.previewUrl, timestamp: hoverPreviewItem.timestamp };
+              if (hoverPreviewItem.source === 'video') {
+                void selectVideoFromHistory(item);
+              } else if (hoverPreviewItem.source === 'image-creative') {
+                void selectImageFromHistory(item, true);
+              } else {
+                void selectSeedanceReferenceFromHistory(item, 'image');
+              }
+              setShowHistoryModal(false);
+              setHoverPreviewItem(null);
+            }}
+          >
+            <div className="relative flex max-h-[82vh] max-w-[85vw] items-center justify-center">
+              {hoverPreviewItem.kind === 'video' ? (
+                <video
+                  src={hoverPreviewItem.previewUrl}
+                  className="max-h-[78vh] max-w-[82vw] rounded-xl object-contain shadow-2xl"
+                  autoPlay
+                  loop
+                  playsInline
+                />
+              ) : (
+                <img
+                  src={hoverPreviewItem.previewUrl}
+                  alt={hoverPreviewItem.name}
+                  className="max-h-[78vh] max-w-[82vw] rounded-xl object-contain shadow-2xl"
+                />
+              )}
+              {/* 删除按钮 */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (hoverPreviewItem.kind === 'video') {
+                    void handleDeleteVideoHistory(hoverPreviewItem.id);
+                  } else {
+                    void handleDeleteImageHistory(hoverPreviewItem.id);
+                  }
+                  setHoverPreviewItem(null);
+                }}
+                className="absolute -right-3 -top-3 flex size-7 items-center justify-center rounded-full bg-white text-slate-400 shadow-md transition-colors hover:bg-red-50 hover:text-red-500"
+                title="删除记录"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+            <div className="mt-4 text-center">
+              <span className="rounded-full bg-white/10 px-4 py-1.5 text-sm font-semibold text-white backdrop-blur-sm">
+                {hoverPreviewItem.name}
+              </span>
             </div>
           </div>
         </div>
