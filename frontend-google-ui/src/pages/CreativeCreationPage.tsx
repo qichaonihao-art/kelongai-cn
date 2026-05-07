@@ -698,6 +698,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [showAdditionalHistory, setShowAdditionalHistory] = useState(false);
   const [videoHistory, setVideoHistory] = useState<Array<{ id: number; name: string; timestamp: number; previewUrl: string }>>([]);
   const [imageHistory, setImageHistory] = useState<Array<{ id: number; name: string; timestamp: number; previewUrl: string }>>([]);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance'>('video');
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -727,14 +729,35 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     scrollAnalysisToBottom();
   }, [messages.length]);
 
+  async function refreshUploadHistories() {
+    const [videos, images] = await Promise.all([
+      loadUploadHistory('video'),
+      loadUploadHistory('image'),
+    ]);
+
+    setVideoHistory(
+      videos.map((item) => ({
+        id: item.id,
+        name: item.name,
+        timestamp: item.timestamp,
+        previewUrl: URL.createObjectURL(item.blob),
+      }))
+    );
+    setImageHistory(
+      images.map((item) => ({
+        id: item.id,
+        name: item.name,
+        timestamp: item.timestamp,
+        previewUrl: URL.createObjectURL(item.blob),
+      }))
+    );
+  }
+
   useEffect(() => {
     let cancelled = false;
 
-    async function loadHistories() {
-      const [videos, images] = await Promise.all([
-        loadUploadHistory('video'),
-        loadUploadHistory('image'),
-      ]);
+    async function loadAll() {
+      await refreshUploadHistories();
       if (cancelled) return;
 
       try {
@@ -748,26 +771,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
       } catch {
         // ignore parse errors
       }
-
-      setVideoHistory(
-        videos.map((item) => ({
-          id: item.id,
-          name: item.name,
-          timestamp: item.timestamp,
-          previewUrl: URL.createObjectURL(item.blob),
-        }))
-      );
-      setImageHistory(
-        images.map((item) => ({
-          id: item.id,
-          name: item.name,
-          timestamp: item.timestamp,
-          previewUrl: URL.createObjectURL(item.blob),
-        }))
-      );
     }
 
-    loadHistories();
+    loadAll();
 
     return () => {
       cancelled = true;
@@ -1431,7 +1437,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
         fileName: nextFileName,
       });
 
-      void saveUploadHistory(file, kind);
+      await saveUploadHistory(file, kind);
+      await refreshUploadHistories();
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : '媒体文件读取失败，请换一个文件再试。');
     } finally {
@@ -1441,7 +1448,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     }
   }
 
-  function handleSeedanceReferenceChange(files: FileList | null) {
+  async function handleSeedanceReferenceChange(files: FileList | null) {
     setSeedanceError("");
     if (!files?.length) return;
 
@@ -1505,8 +1512,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     if (nextReferences.length) {
       setSeedanceReferences((previous) => [...previous, ...nextReferences]);
       for (const ref of nextReferences) {
-        void saveUploadHistory(ref.file, ref.kind);
+        await saveUploadHistory(ref.file, ref.kind);
       }
+      await refreshUploadHistories();
     }
 
     if (seedanceFileInputRef.current) {
@@ -1558,7 +1566,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
         fileName: file.name,
       });
 
-      void saveUploadHistory(file, 'image');
+      await saveUploadHistory(file, 'image');
+      await refreshUploadHistories();
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : '图片读取失败，请换一张再试。');
     } finally {
@@ -2002,39 +2011,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
               </div>
 
               {videoHistory.length > 0 && !selectedMedia && (
-                <div className="mt-2">
-                  <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    <History className="size-3" />
-                    最近上传的视频
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHistoryModalKind('video');
+                    setShowHistoryModal(true);
+                  }}
+                  className="mt-2 flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
+                >
+                  <div className="flex items-center gap-2">
+                    <History className="size-3.5 text-slate-400" />
+                    <span className="font-semibold text-slate-600">最近上传的视频</span>
                   </div>
-                  <div className="space-y-1">
-                    {videoHistory.map((item) => (
-                      <div
-                        key={item.id}
-                        className="group flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm hover:border-indigo-200 hover:bg-indigo-50/40 transition-all"
-                        onClick={() => void selectVideoFromHistory(item)}
-                      >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <Film className="size-3.5 shrink-0 text-slate-400 group-hover:text-indigo-500" />
-                          <span className="truncate font-semibold text-slate-700 group-hover:text-indigo-700">{item.name}</span>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <span className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleDeleteVideoHistory(item.id);
-                            }}
-                            className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
-                          >
-                            <Trash2 className="size-3" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{videoHistory.length}</span>
+                </button>
               )}
 
               {reverseMode === 'replace' && (
@@ -2081,39 +2071,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   </div>
 
                   {imageHistory.length > 0 && !replaceImage && (
-                    <div>
-                      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        <History className="size-3" />
-                        最近上传的图片
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHistoryModalKind('image-creative');
+                        setShowHistoryModal(true);
+                      }}
+                      className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
+                    >
+                      <div className="flex items-center gap-2">
+                        <History className="size-3.5 text-slate-400" />
+                        <span className="font-semibold text-slate-600">最近上传的图片</span>
                       </div>
-                      <div className="space-y-1">
-                        {imageHistory.map((item) => (
-                          <div
-                            key={item.id}
-                            className="group flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm hover:border-indigo-200 hover:bg-indigo-50/40 transition-all"
-                            onClick={() => void selectImageFromHistory(item, true)}
-                          >
-                            <div className="flex min-w-0 items-center gap-2">
-                              <ImageIcon className="size-3.5 shrink-0 text-slate-400 group-hover:text-indigo-500" />
-                              <span className="truncate font-semibold text-slate-700 group-hover:text-indigo-700">{item.name}</span>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-2">
-                              <span className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void handleDeleteImageHistory(item.id);
-                                }}
-                                className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
-                              >
-                                <Trash2 className="size-3" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{imageHistory.length}</span>
+                    </button>
                   )}
 
                   <div className="grid grid-cols-2 gap-3">
@@ -2494,79 +2465,21 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   </div>
                 )}
 
-                {(imageHistory.length > 0 || videoHistory.length > 0) && (
-                  <div className="mt-3 space-y-2">
-                    {imageHistory.length > 0 && (
-                      <div>
-                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          <History className="size-3" />
-                          最近上传的图片
-                        </div>
-                        <div className="space-y-1">
-                          {imageHistory.map((item) => (
-                            <div
-                              key={`img_${item.id}`}
-                              className="group flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm hover:border-violet-200 hover:bg-violet-50/40 transition-all"
-                              onClick={() => void selectSeedanceReferenceFromHistory(item, 'image')}
-                            >
-                              <div className="flex min-w-0 items-center gap-2">
-                                <ImageIcon className="size-3.5 shrink-0 text-slate-400 group-hover:text-violet-500" />
-                                <span className="truncate font-semibold text-slate-700 group-hover:text-violet-700">{item.name}</span>
-                              </div>
-                              <div className="flex shrink-0 items-center gap-2">
-                                <span className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void handleDeleteImageHistory(item.id);
-                                  }}
-                                  className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
-                                >
-                                  <Trash2 className="size-3" />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {videoHistory.length > 0 && (
-                      <div>
-                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          <History className="size-3" />
-                          最近上传的视频
-                        </div>
-                        <div className="space-y-1">
-                          {videoHistory.map((item) => (
-                            <div
-                              key={`vid_${item.id}`}
-                              className="group flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm hover:border-violet-200 hover:bg-violet-50/40 transition-all"
-                              onClick={() => void selectSeedanceReferenceFromHistory(item, 'video')}
-                            >
-                              <div className="flex min-w-0 items-center gap-2">
-                                <Film className="size-3.5 shrink-0 text-slate-400 group-hover:text-violet-500" />
-                                <span className="truncate font-semibold text-slate-700 group-hover:text-violet-700">{item.name}</span>
-                              </div>
-                              <div className="flex shrink-0 items-center gap-2">
-                                <span className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</span>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void handleDeleteVideoHistory(item.id);
-                                  }}
-                                  className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
-                                >
-                                  <Trash2 className="size-3" />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                {imageHistory.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistoryModalKind('image-seedance');
+                      setShowHistoryModal(true);
+                    }}
+                    className="mt-3 flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors hover:border-violet-200 hover:bg-violet-50/40"
+                  >
+                    <div className="flex items-center gap-2">
+                      <History className="size-3.5 text-slate-400" />
+                      <span className="font-semibold text-slate-600">最近上传的图片</span>
+                    </div>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{imageHistory.length}</span>
+                  </button>
                 )}
 
                 {/* 底部工具栏：添加素材 + 设置 */}
@@ -3102,6 +3015,181 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 上传历史记录弹窗 */}
+      {showHistoryModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowHistoryModal(false)}
+        >
+          <div
+            className="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <div className="flex items-center gap-2">
+                <History className="size-4 text-slate-400" />
+                <h3 className="text-sm font-black text-slate-800">
+                  {historyModalKind === 'video'
+                    ? '最近上传的视频'
+                    : historyModalKind === 'image-creative'
+                      ? '最近上传的图片'
+                      : '最近上传的图片'}
+                </h3>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                  {historyModalKind === 'video'
+                    ? videoHistory.length
+                    : imageHistory.length}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHistoryModal(false)}
+                className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              {historyModalKind === 'video' && (
+                <>
+                  {videoHistory.length === 0 ? (
+                    <div className="py-12 text-center text-sm text-slate-400">暂无视频记录</div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      {videoHistory.map((item) => (
+                        <div
+                          key={item.id}
+                          className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md"
+                          onClick={() => {
+                            void selectVideoFromHistory(item);
+                            setShowHistoryModal(false);
+                          }}
+                        >
+                          <div className="relative overflow-hidden rounded-lg bg-slate-950">
+                            <video
+                              src={item.previewUrl}
+                              className="aspect-video w-full object-cover"
+                              preload="metadata"
+                            />
+                          </div>
+                          <div className="mt-2 flex items-center justify-between gap-1">
+                            <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-600">{item.name}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeleteVideoHistory(item.id);
+                              }}
+                              className="shrink-0 rounded p-0.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                            >
+                              <Trash2 className="size-3" />
+                            </button>
+                          </div>
+                          <div className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+              {historyModalKind === 'image-creative' && (
+                <>
+                  {imageHistory.length === 0 ? (
+                    <div className="py-12 text-center text-sm text-slate-400">暂无图片记录</div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+                      {imageHistory.map((item) => (
+                        <div
+                          key={item.id}
+                          className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md"
+                          onClick={() => {
+                            void selectImageFromHistory(item, true);
+                            setShowHistoryModal(false);
+                          }}
+                        >
+                          <div className="relative overflow-hidden rounded-lg bg-slate-950">
+                            <img
+                              src={item.previewUrl}
+                              alt={item.name}
+                              className="aspect-square w-full object-cover"
+                            />
+                          </div>
+                          <div className="mt-2 flex items-center justify-between gap-1">
+                            <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-600">{item.name}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeleteImageHistory(item.id);
+                              }}
+                              className="shrink-0 rounded p-0.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                            >
+                              <Trash2 className="size-3" />
+                            </button>
+                          </div>
+                          <div className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+              {historyModalKind === 'image-seedance' && (
+                <>
+                  {imageHistory.length === 0 ? (
+                    <div className="py-12 text-center text-sm text-slate-400">暂无图片记录</div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+                      {imageHistory.map((item) => (
+                        <div
+                          key={`img_${item.id}`}
+                          className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-violet-200 hover:shadow-md"
+                          onClick={() => {
+                            void selectSeedanceReferenceFromHistory(item, 'image');
+                            setShowHistoryModal(false);
+                          }}
+                        >
+                          <div className="relative overflow-hidden rounded-lg bg-slate-950">
+                            <img
+                              src={item.previewUrl}
+                              alt={item.name}
+                              className="aspect-square w-full object-cover"
+                            />
+                          </div>
+                          <div className="mt-2 flex items-center justify-between gap-1">
+                            <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-600">{item.name}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeleteImageHistory(item.id);
+                              }}
+                              className="shrink-0 rounded p-0.5 text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                            >
+                              <Trash2 className="size-3" />
+                            </button>
+                          </div>
+                          <div className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="border-t border-slate-100 px-5 py-3">
+              <button
+                type="button"
+                onClick={() => setShowHistoryModal(false)}
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
