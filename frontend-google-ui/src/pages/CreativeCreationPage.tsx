@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type KeyboardEvent } from "react";
 import {
   Send,
   Film,
@@ -20,6 +20,7 @@ import {
   Check,
   Replace,
   Trash2,
+  BookText,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -104,6 +105,33 @@ const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
 const SEEDANCE_COST_KEY = 'kelongai.seedanceCost';
 const ADDITIONAL_CHANGE_HISTORY_KEY = 'kelongai.additionalChangeHistory';
 const ADDITIONAL_CHANGE_HISTORY_MAX = 20;
+const NOTEBOOK_STORAGE_KEY = 'kelongai.notebook';
+
+interface NotebookItem {
+  id: string;
+  content: string;
+  createdAt: number;
+}
+
+function loadNotebookItems(): NotebookItem[] {
+  try {
+    const raw = window.localStorage.getItem(NOTEBOOK_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function saveNotebookItems(items: NotebookItem[]) {
+  try {
+    window.localStorage.setItem(NOTEBOOK_STORAGE_KEY, JSON.stringify(items));
+  } catch {
+    // ignore storage errors
+  }
+}
 
 function getTodayKey() {
   const d = new Date();
@@ -735,6 +763,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [seedanceModalItem, setSeedanceModalItem] = useState<SeedanceHistoryItem | null>(null);
   const [isHistoryFolded, setIsHistoryFolded] = useState(true);
   const [showAtMenu, setShowAtMenu] = useState(false);
+  const [atMenuFilter, setAtMenuFilter] = useState("");
+  const [atMenuSelectedIndex, setAtMenuSelectedIndex] = useState(0);
   const [reverseMode, setReverseMode] = useState<'direct' | 'replace'>('direct');
   const [replaceImage, setReplaceImage] = useState<SelectedCreativeMedia | null>(null);
   const [replaceTarget, setReplaceTarget] = useState('');
@@ -750,6 +780,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [hoverPreviewItem, setHoverPreviewItem] = useState<{ id: number; name: string; previewUrl: string; timestamp: number; kind: 'video' | 'image'; source: 'video' | 'image-creative' | 'image-seedance' } | null>(null);
   const hoverPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seedanceCostStats = getSeedanceCostStats();
+  const [notebookItems, setNotebookItems] = useState<NotebookItem[]>(loadNotebookItems);
+  const [isNotebookOpen, setIsNotebookOpen] = useState(false);
+  const [notebookDraft, setNotebookDraft] = useState("");
+  const [copiedNotebookId, setCopiedNotebookId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -758,6 +792,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const seedanceSettingsRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const seedancePromptRef = useRef<HTMLTextAreaElement>(null);
+  const notebookRef = useRef<HTMLDivElement>(null);
 
   function scrollAnalysisToBottom() {
     requestAnimationFrame(() => {
@@ -839,6 +874,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   }, [seedanceHistory]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    saveNotebookItems(notebookItems);
+  }, [notebookItems]);
+
+  useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (!showAtMenu) return;
       const target = event.target as HTMLElement;
@@ -850,6 +893,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showAtMenu]);
+
+  useEffect(() => {
+    function handleNotebookClickOutside(event: MouseEvent) {
+      if (!isNotebookOpen) return;
+      const target = event.target as HTMLElement;
+      if (notebookRef.current && notebookRef.current.contains(target)) return;
+      if (notebookDraft.trim()) {
+        addNotebookItem();
+      }
+      setIsNotebookOpen(false);
+    }
+    document.addEventListener('mousedown', handleNotebookClickOutside);
+    return () => document.removeEventListener('mousedown', handleNotebookClickOutside);
+  }, [isNotebookOpen, notebookDraft]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1265,7 +1322,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   }
 
   function getAtReferenceLabel(ref: SeedanceReferenceFile, index: number) {
-    const kindPrefix = ref.kind === 'image' ? 'img' : ref.kind === 'video' ? 'vid' : 'aud';
+    const kindPrefix = ref.kind === 'image' ? '图片' : ref.kind === 'video' ? '视频' : '音频';
     const kindIndex = seedanceReferences.filter((r, i) => r.kind === ref.kind && i <= index).length;
     return `@${kindPrefix}${kindIndex}`;
   }
@@ -1281,12 +1338,40 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     if (atIndex !== -1) {
       const textAfterAt = textBeforeCursor.slice(atIndex + 1);
       if (!textAfterAt.includes(' ') && !textAfterAt.includes('\n')) {
+        setAtMenuFilter(textAfterAt.toLowerCase());
+        setAtMenuSelectedIndex(0);
         setShowAtMenu(true);
         return;
       }
     }
 
     setShowAtMenu(false);
+    setAtMenuFilter("");
+    setAtMenuSelectedIndex(0);
+  }
+
+  function handleSeedanceKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!showAtMenu) return;
+
+    const filtered = seedanceReferences
+      .map((ref, i) => ({ ref, index: i, label: getAtReferenceLabel(ref, i) }))
+      .filter(({ label }) => label.toLowerCase().includes(atMenuFilter));
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setAtMenuSelectedIndex((prev) => (prev + 1) % filtered.length);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setAtMenuSelectedIndex((prev) => (prev - 1 + filtered.length) % filtered.length);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const item = filtered[atMenuSelectedIndex];
+      if (item) insertAtReference(item.index);
+    } else if (event.key === 'Escape') {
+      setShowAtMenu(false);
+      setAtMenuFilter("");
+      setAtMenuSelectedIndex(0);
+    }
   }
 
   function insertAtReference(index: number) {
@@ -1307,6 +1392,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
 
     setSeedancePrompt(newValue);
     setShowAtMenu(false);
+    setAtMenuFilter("");
+    setAtMenuSelectedIndex(0);
 
     requestAnimationFrame(() => {
       if (seedancePromptRef.current) {
@@ -1743,6 +1830,32 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     }
   }
 
+  function addNotebookItem() {
+    const content = notebookDraft.trim();
+    if (!content) return;
+    const newItem: NotebookItem = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      content,
+      createdAt: Date.now(),
+    };
+    setNotebookItems((prev) => [newItem, ...prev]);
+    setNotebookDraft("");
+  }
+
+  function deleteNotebookItem(id: string) {
+    setNotebookItems((prev) => prev.filter((item) => item.id !== id));
+  }
+
+  async function copyNotebookItem(item: NotebookItem) {
+    try {
+      await navigator.clipboard.writeText(item.content);
+      setCopiedNotebookId(item.id);
+      setTimeout(() => setCopiedNotebookId((current) => (current === item.id ? null : current)), 2000);
+    } catch {
+      // ignore
+    }
+  }
+
   async function handleSend() {
     if (!input.trim() || isLoading) return;
 
@@ -2061,20 +2174,127 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                 )}
               </div>
 
-              {videoHistory.length > 0 && !selectedMedia && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHistoryModalKind('video');
-                    setShowHistoryModal(true);
-                  }}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
-                >
-                  <History className="size-3 text-slate-400" />
-                  <span>历史视频</span>
-                  <span className="rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">{videoHistory.length}</span>
-                </button>
-              )}
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {videoHistory.length > 0 && !selectedMedia && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistoryModalKind('video');
+                      setShowHistoryModal(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
+                  >
+                    <History className="size-3 text-slate-400" />
+                    <span>历史视频</span>
+                    <span className="rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">{videoHistory.length}</span>
+                  </button>
+                )}
+                <div className="relative">
+                  {!isNotebookOpen && (
+                    <button
+                      type="button"
+                      onClick={() => setIsNotebookOpen(true)}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
+                    >
+                      <BookText className="size-3 text-slate-400" />
+                      <span>笔记本</span>
+                      {notebookItems.length > 0 && (
+                        <span className="rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">{notebookItems.length}</span>
+                      )}
+                    </button>
+                  )}
+                  {isNotebookOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-20 bg-slate-900/20 backdrop-blur-sm"
+                        onClick={() => {
+                          if (notebookDraft.trim()) {
+                            addNotebookItem();
+                          }
+                          setIsNotebookOpen(false);
+                        }}
+                      ></div>
+                      <div ref={notebookRef} className="fixed left-1/2 top-1/2 z-30 w-[520px] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 flex flex-col rounded-2xl border border-slate-200/60 bg-white/95 shadow-2xl">
+                      <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <BookText className="size-4 text-slate-500" />
+                          <div>
+                            <div className="text-xs font-black text-slate-900">笔记本</div>
+                            <div className="mt-0.5 text-[11px] text-slate-400">记录重要内容，随时粘贴和查阅</div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsNotebookOpen(false)}
+                          className="flex size-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
+                          aria-label="收起笔记本"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-3">
+                        <div className="mb-3">
+                          <textarea
+                            value={notebookDraft}
+                            onChange={(e) => setNotebookDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                addNotebookItem();
+                              }
+                            }}
+                            placeholder="粘贴或输入重要内容，回车保存..."
+                            className="min-h-[120px] w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-xs leading-6 text-slate-700 outline-none transition-colors focus:border-indigo-300"
+                          />
+                          <div className="mt-2 text-[10px] text-slate-400">
+                            点击空白处自动保存
+                          </div>
+                        </div>
+                        {notebookItems.length > 0 && (
+                          <div className="space-y-2">
+                            {notebookItems.map((item) => (
+                              <div
+                                key={item.id}
+                                className="group relative rounded-xl border border-slate-200/70 bg-white/80 p-3 shadow-sm"
+                              >
+                                <div className="whitespace-pre-wrap text-xs leading-5 text-slate-700 pr-6">
+                                  {item.content}
+                                </div>
+                                <div className="mt-1.5 flex items-center justify-between">
+                                  <span className="text-[10px] text-slate-400">
+                                    {new Date(item.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => copyNotebookItem(item)}
+                                      className="flex size-6 items-center justify-center rounded text-slate-300 transition-colors hover:bg-indigo-50 hover:text-indigo-500"
+                                      aria-label="复制笔记"
+                                      title="复制"
+                                    >
+                                      {copiedNotebookId === item.id ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => deleteNotebookItem(item.id)}
+                                      className="flex size-6 items-center justify-center rounded text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                                      aria-label="删除笔记"
+                                      title="删除"
+                                    >
+                                      <Trash2 className="size-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              </div>
 
               {reverseMode === 'replace' && (
                 <div className="mt-3 space-y-3">
@@ -2384,6 +2604,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   {requestError && <div>{requestError}</div>}
                 </div>
               )}
+
             </div>
 
             <div className="rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
@@ -2415,6 +2636,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                     ref={seedancePromptRef}
                     value={seedancePrompt}
                     onChange={handleSeedancePromptChange}
+                    onKeyDown={handleSeedanceKeyDown}
                     placeholder="等待模块一反推出视频提示词..."
                     className="min-h-[280px] w-full resize-none rounded-xl border border-slate-300 bg-white p-4 pb-20 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300 whitespace-pre-wrap"
                   />
@@ -2450,53 +2672,68 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                       ))}
                     </div>
                   )}
-                </div>
 
-                {/* @ 引用下拉菜单 */}
-                {showAtMenu && (
-                  <div data-at-menu className="absolute left-3 right-3 top-[calc(100%-8px)] z-10 rounded-xl border border-slate-200 bg-white shadow-lg overflow-hidden">
-                    {seedanceReferences.length === 0 ? (
-                      <div className="px-3 py-3 text-center text-xs text-slate-400">
-                        暂无参考素材，请先点击下方“添加参考素材”上传
-                      </div>
-                    ) : (
-                      <>
-                        <div className="px-3 py-2 text-[10px] font-bold text-slate-400 border-b border-slate-100">
-                          选择参考素材插入到提示词中
+                  {/* @ 引用下拉菜单 */}
+                  {showAtMenu && (
+                    <div data-at-menu className="absolute left-0 right-0 top-full z-20 mt-1 rounded-xl border border-slate-200 bg-white shadow-lg overflow-hidden max-h-56 overflow-y-auto">
+                      {seedanceReferences.length === 0 ? (
+                        <div className="px-3 py-3 text-center text-xs text-slate-400">
+                          暂无参考素材，请先点击下方“添加参考素材”上传
                         </div>
-                        {seedanceReferences.map((reference, index) => {
-                          const label = getAtReferenceLabel(reference, index);
+                      ) : (
+                        (() => {
+                          const filtered = seedanceReferences
+                            .map((ref, i) => ({ ref, index: i, label: getAtReferenceLabel(ref, i) }))
+                            .filter(({ label }) => label.toLowerCase().includes(atMenuFilter));
+                          if (filtered.length === 0) {
+                            return (
+                              <div className="px-3 py-3 text-center text-xs text-slate-400">
+                                未找到匹配的素材
+                              </div>
+                            );
+                          }
                           return (
-                            <button
-                              key={reference.id}
-                              type="button"
-                              onClick={() => insertAtReference(index)}
-                              className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-violet-50"
-                            >
-                              <div className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100 text-slate-400">
-                                {reference.kind === 'image' && reference.previewUrl ? (
-                                  <img src={reference.previewUrl} alt={reference.fileName} className="size-full object-cover" />
-                                ) : reference.kind === 'video' && reference.previewUrl ? (
-                                  <video src={reference.previewUrl} className="size-full object-cover" muted />
-                                ) : (
-                                  <Music className="size-3.5" />
-                                )}
+                            <>
+                              <div className="px-3 py-2 text-[10px] font-bold text-slate-400 border-b border-slate-100">
+                                选择参考素材插入到提示词中
                               </div>
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate text-xs font-bold text-slate-700">
-                                  {label} <span className="text-slate-400 font-medium">{reference.fileName}</span>
-                                </div>
-                                <div className="text-[10px] text-slate-400">
-                                  {reference.kind === 'image' ? '参考图片' : reference.kind === 'video' ? '参考视频' : '参考音频'}
-                                </div>
-                              </div>
-                            </button>
+                              {filtered.map((item, i) => (
+                                <button
+                                  key={item.ref.id}
+                                  type="button"
+                                  onClick={() => insertAtReference(item.index)}
+                                  onMouseEnter={() => setAtMenuSelectedIndex(i)}
+                                  className={cn(
+                                    "flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors",
+                                    i === atMenuSelectedIndex ? "bg-violet-50" : "hover:bg-violet-50"
+                                  )}
+                                >
+                                  <div className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100 text-slate-400">
+                                    {item.ref.kind === 'image' && item.ref.previewUrl ? (
+                                      <img src={item.ref.previewUrl} alt={item.ref.fileName} className="size-full object-cover" />
+                                    ) : item.ref.kind === 'video' && item.ref.previewUrl ? (
+                                      <video src={item.ref.previewUrl} className="size-full object-cover" muted />
+                                    ) : (
+                                      <Music className="size-3.5" />
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate text-xs font-bold text-slate-700">
+                                      {item.label} <span className="text-slate-400 font-medium">{item.ref.fileName}</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400">
+                                      {item.ref.kind === 'image' ? '参考图片' : item.ref.kind === 'video' ? '参考视频' : '参考音频'}
+                                    </div>
+                                  </div>
+                                </button>
+                              ))}
+                            </>
                           );
-                        })}
-                      </>
-                    )}
-                  </div>
-                )}
+                        })()
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {imageHistory.length > 0 && (
                   <button
