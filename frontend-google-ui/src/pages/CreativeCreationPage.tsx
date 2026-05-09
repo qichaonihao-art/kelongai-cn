@@ -772,7 +772,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [additionalChange, setAdditionalChange] = useState('');
   const [includeSubtitles, setIncludeSubtitles] = useState(false);
   const [additionalChangeHistory, setAdditionalChangeHistory] = useState<string[]>([]);
-  const [showAdditionalHistory, setShowAdditionalHistory] = useState(false);
   const [videoHistory, setVideoHistory] = useState<Array<{ id: number; name: string; timestamp: number; previewUrl: string }>>([]);
   const [imageHistory, setImageHistory] = useState<Array<{ id: number; name: string; timestamp: number; previewUrl: string }>>([]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -784,6 +783,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [isNotebookOpen, setIsNotebookOpen] = useState(false);
   const [notebookDraft, setNotebookDraft] = useState("");
   const [copiedNotebookId, setCopiedNotebookId] = useState<string | null>(null);
+  const [isAdditionalHistoryOpen, setIsAdditionalHistoryOpen] = useState(false);
+  const [copiedAdditionalId, setCopiedAdditionalId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -793,6 +794,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const seedancePromptRef = useRef<HTMLTextAreaElement>(null);
   const notebookRef = useRef<HTMLDivElement>(null);
+  const additionalHistoryRef = useRef<HTMLDivElement>(null);
 
   function scrollAnalysisToBottom() {
     requestAnimationFrame(() => {
@@ -907,6 +909,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     document.addEventListener('mousedown', handleNotebookClickOutside);
     return () => document.removeEventListener('mousedown', handleNotebookClickOutside);
   }, [isNotebookOpen, notebookDraft]);
+
+  useEffect(() => {
+    function handleAdditionalHistoryClickOutside(event: MouseEvent) {
+      if (!isAdditionalHistoryOpen) return;
+      const target = event.target as HTMLElement;
+      if (additionalHistoryRef.current && additionalHistoryRef.current.contains(target)) return;
+      setIsAdditionalHistoryOpen(false);
+    }
+    document.addEventListener('mousedown', handleAdditionalHistoryClickOutside);
+    return () => document.removeEventListener('mousedown', handleAdditionalHistoryClickOutside);
+  }, [isAdditionalHistoryOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1856,6 +1869,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     }
   }
 
+  async function copyAdditionalHistory(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedAdditionalId(text);
+      setTimeout(() => setCopiedAdditionalId((current) => (current === text ? null : current)), 2000);
+    } catch {
+      // ignore
+    }
+  }
+
   async function handleSend() {
     if (!input.trim() || isLoading) return;
 
@@ -2393,44 +2416,93 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                 />
 
                 {additionalChangeHistory.length > 0 && (
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => setShowAdditionalHistory((v) => !v)}
-                      className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100"
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <History className="size-3" />
-                        历史记录（{additionalChangeHistory.length}）
-                      </span>
-                      {showAdditionalHistory ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
-                    </button>
-
-                    {showAdditionalHistory && (
-                      <div className="mt-1 space-y-1">
-                        {additionalChangeHistory.map((text, index) => (
-                          <div
-                            key={index}
-                            className="group flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm hover:border-indigo-200 hover:bg-indigo-50/40 transition-all"
-                            onClick={() => setAdditionalChange(text)}
-                          >
-                            <div className="flex min-w-0 items-center gap-2">
-                              <Sparkles className="size-3.5 shrink-0 text-slate-400 group-hover:text-indigo-500" />
-                              <span className="truncate font-semibold text-slate-700 group-hover:text-indigo-700">{text}</span>
+                  <div className="relative">
+                    {!isAdditionalHistoryOpen && (
+                      <button
+                        type="button"
+                        onClick={() => setIsAdditionalHistoryOpen(true)}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
+                      >
+                        <History className="size-3 text-slate-400" />
+                        <span>历史记录</span>
+                        <span className="rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">{additionalChangeHistory.length}</span>
+                      </button>
+                    )}
+                    {isAdditionalHistoryOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-20 bg-slate-900/20 backdrop-blur-sm"
+                          onClick={() => setIsAdditionalHistoryOpen(false)}
+                        ></div>
+                        <div ref={additionalHistoryRef} className="fixed left-1/2 top-1/2 z-30 w-[480px] max-h-[70vh] -translate-x-1/2 -translate-y-1/2 flex flex-col rounded-2xl border border-slate-200/60 bg-white/95 shadow-2xl">
+                          <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <History className="size-4 text-slate-500" />
+                              <div>
+                                <div className="text-xs font-black text-slate-900">额外调整历史记录</div>
+                                <div className="mt-0.5 text-[11px] text-slate-400">点击记录可填充到输入框</div>
+                              </div>
                             </div>
                             <button
                               type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteAdditionalChangeHistory(text);
-                              }}
-                              className="rounded p-0.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+                              onClick={() => setIsAdditionalHistoryOpen(false)}
+                              className="flex size-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
+                              aria-label="收起"
                             >
-                              <Trash2 className="size-3" />
+                              <X className="size-3.5" />
                             </button>
                           </div>
-                        ))}
-                      </div>
+                          <div className="flex-1 overflow-y-auto p-3">
+                            <div className="space-y-2">
+                              {additionalChangeHistory.map((text, index) => (
+                                <div
+                                  key={index}
+                                  className="group relative rounded-xl border border-slate-200/70 bg-white/80 p-3 shadow-sm"
+                                >
+                                  <div className="whitespace-pre-wrap text-xs leading-5 text-slate-700 pr-6">
+                                    {text}
+                                  </div>
+                                  <div className="mt-1.5 flex items-center justify-between">
+                                    <span className="text-[10px] text-slate-400">第 {additionalChangeHistory.length - index} 条</span>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => copyAdditionalHistory(text)}
+                                        className="flex size-6 items-center justify-center rounded text-slate-300 transition-colors hover:bg-indigo-50 hover:text-indigo-500"
+                                        aria-label="复制"
+                                        title="复制"
+                                      >
+                                        {copiedAdditionalId === text ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setAdditionalChange(text);
+                                          setIsAdditionalHistoryOpen(false);
+                                        }}
+                                        className="flex size-6 items-center justify-center rounded text-slate-300 transition-colors hover:bg-indigo-50 hover:text-indigo-500"
+                                        aria-label="使用"
+                                        title="填充到输入框"
+                                      >
+                                        <Sparkles className="size-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => deleteAdditionalChangeHistory(text)}
+                                        className="flex size-6 items-center justify-center rounded text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                                        aria-label="删除"
+                                        title="删除"
+                                      >
+                                        <Trash2 className="size-3" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </>
                     )}
                   </div>
                 )}
