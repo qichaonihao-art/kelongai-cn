@@ -1,12 +1,15 @@
-import { Mic2, Wand2, Download } from 'lucide-react';
+import { Mic2, Wand2, Download, Database, Image, Crown } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 
-type ModuleId = 'voice' | 'creative' | 'douyin';
+type ModuleId = 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel';
 
 const MODULES: { id: ModuleId; label: string; icon: typeof Mic2; gradient: string }[] = [
   { id: 'voice', label: '声音克隆', icon: Mic2, gradient: 'from-indigo-500 to-violet-600' },
   { id: 'creative', label: '创意创作', icon: Wand2, gradient: 'from-emerald-500 to-teal-600' },
   { id: 'douyin', label: '视频解析', icon: Download, gradient: 'from-sky-500 to-blue-600' },
+  { id: 'collection', label: '数据采集', icon: Database, gradient: 'from-rose-500 to-pink-600' },
+  { id: 'image', label: '图片生成', icon: Image, gradient: 'from-amber-500 to-orange-600' },
+  { id: 'topmodel', label: '顶级模型', icon: Crown, gradient: 'from-fuchsia-500 to-purple-600' },
 ];
 
 interface ModuleQuickNavProps {

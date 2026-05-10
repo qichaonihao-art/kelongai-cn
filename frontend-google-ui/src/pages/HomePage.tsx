@@ -1,9 +1,9 @@
-import { Sparkles, Mic2, Wand2, LogOut, Download } from "lucide-react";
+import { Mic2, Wand2, LogOut, Download, Database, Image, Crown } from "lucide-react";
 import SiteFooter from "@/src/components/SiteFooter";
 import { motion } from "motion/react";
 
 interface HomePageProps {
-  onNavigate: (page: 'voice' | 'creative' | 'douyin') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
   onLogout: () => void;
 }
 
@@ -30,6 +30,16 @@ const modules = [
     borderHover: 'hover:border-emerald-300/60',
   },
   {
+    id: 'image' as const,
+    title: '图片生成',
+    desc: 'GPT Image-2 宇宙最强图片生成模型',
+    icon: Image,
+    color: 'amber',
+    gradient: 'from-amber-500 to-orange-600',
+    bgLight: 'bg-amber-50/50',
+    borderHover: 'hover:border-amber-300/60',
+  },
+  {
     id: 'douyin' as const,
     title: '视频解析',
     desc: '抖音无水印下载，自动提取口播文案',
@@ -39,11 +49,31 @@ const modules = [
     bgLight: 'bg-sky-50/50',
     borderHover: 'hover:border-sky-300/60',
   },
+  {
+    id: 'collection' as const,
+    title: '数据采集',
+    desc: '批量采集与管理数据，高效整合信息资源',
+    icon: Database,
+    color: 'rose',
+    gradient: 'from-rose-500 to-pink-600',
+    bgLight: 'bg-rose-50/50',
+    borderHover: 'hover:border-rose-300/60',
+  },
+  {
+    id: 'topmodel' as const,
+    title: '顶级模型',
+    desc: '汇聚顶尖 AI 大模型，一站式智能对话体验',
+    icon: Crown,
+    color: 'fuchsia',
+    gradient: 'from-fuchsia-500 to-purple-600',
+    bgLight: 'bg-fuchsia-50/50',
+    borderHover: 'hover:border-fuchsia-300/60',
+  },
 ];
 
 export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-start pt-10 p-6 relative">
+    <div className="min-h-screen bg-background flex flex-col items-center justify-start p-6 relative">
       <div className="absolute top-5 right-6 z-20">
         <button
           onClick={onLogout}
@@ -57,12 +87,8 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="text-center mb-12 relative"
+        className="text-center mb-8 relative mt-4"
       >
-        <div className="absolute -top-24 left-1/2 -translate-x-1/2 size-96 bg-indigo-500/10 rounded-full blur-[100px] -z-10" />
-        <div className="inline-flex items-center justify-center size-16 rounded-2xl bg-indigo-600 text-white mb-6 shadow-xl shadow-indigo-200">
-          <Sparkles className="size-8" />
-        </div>
         <h1 className="text-6xl md:text-7xl font-black tracking-tighter leading-tight flex flex-wrap justify-center gap-x-4">
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-slate-500 to-slate-900 animate-shimmer">欢迎来到</span>
             <span className="relative inline-block">
@@ -80,13 +106,13 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 1 }}
-          className="mt-5 text-slate-400 font-bold uppercase tracking-[0.3em] text-xs"
+          className="mt-4 text-slate-400 font-bold uppercase tracking-[0.3em] text-xs"
         >
           Professional AI Workspace • Unleash Your Imagination
         </motion.p>
       </motion.div>
 
-      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-6 w-full max-w-6xl">
+      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5 w-full max-w-[70rem] mt-8">
         {modules.map((module, index) => {
           const Icon = module.icon;
           return (
@@ -95,26 +121,26 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.15 + index * 0.1, duration: 0.5 }}
-              whileHover={{ y: -6, transition: { duration: 0.25 } }}
-              className={`group relative cursor-pointer rounded-[2rem] bg-white/60 backdrop-blur-xl border border-white/80 p-10 transition-all duration-500 ${module.borderHover} hover:shadow-[0_25px_60px_-15px_rgba(0,0,0,0.12)] hover:bg-white/80`}
+              whileHover={{ y: -4, transition: { duration: 0.25 } }}
+              className={`group relative cursor-pointer rounded-3xl bg-white/60 backdrop-blur-xl border border-white/80 p-8 transition-all duration-500 ${module.borderHover} hover:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] hover:bg-white/80`}
               onClick={() => onNavigate(module.id)}
             >
               <div className="flex flex-col items-center text-center">
                 {/* Icon with animated ring */}
-                <div className="relative mb-8">
-                  <div className={`absolute inset-0 rounded-3xl bg-gradient-to-br ${module.gradient} opacity-20 blur-xl scale-150 group-hover:scale-175 group-hover:opacity-30 transition-all duration-500`} />
-                  <div className={`relative inline-flex size-20 items-center justify-center rounded-3xl bg-gradient-to-br ${module.gradient} text-white shadow-lg transition-transform duration-500 group-hover:scale-110`}>
-                    <Icon className="size-10" />
+                <div className="relative mb-5">
+                  <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${module.gradient} opacity-20 blur-lg scale-150 group-hover:scale-175 group-hover:opacity-30 transition-all duration-500`} />
+                  <div className={`relative inline-flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br ${module.gradient} text-white shadow-md transition-transform duration-500 group-hover:scale-110`}>
+                    <Icon className="size-7" />
                   </div>
                 </div>
 
                 {/* Title with gradient on hover */}
-                <h3 className="text-2xl font-black text-slate-900 tracking-tight mb-3 transition-colors duration-300">
+                <h3 className="text-lg font-black text-slate-900 tracking-tight mb-2 transition-colors duration-300">
                   {module.title}
                 </h3>
 
                 {/* Description */}
-                <p className="text-sm leading-relaxed text-slate-500 mb-8 max-w-[240px]">
+                <p className="text-xs leading-relaxed text-slate-500 max-w-[200px]">
                   {module.desc}
                 </p>
 

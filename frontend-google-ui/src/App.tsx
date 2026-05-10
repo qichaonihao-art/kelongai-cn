@@ -9,9 +9,12 @@ import HomePage from './pages/HomePage';
 import VoiceCloningPage from './pages/VoiceCloningPage';
 import CreativeCreationPage from './pages/CreativeCreationPage';
 import DouyinDownloaderPage from './pages/DouyinDownloaderPage';
+import DataCollectionPage from './pages/DataCollectionPage';
+import ImageGenerationPage from './pages/ImageGenerationPage';
+import TopModelPage from './pages/TopModelPage';
 import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
 
-type Page = 'login' | 'home' | 'voice' | 'creative' | 'douyin';
+type Page = 'login' | 'home' | 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
@@ -48,7 +51,7 @@ export default function App() {
     return result;
   };
 
-  const handleNavigate = (page: 'voice' | 'creative' | 'douyin') => {
+  const handleNavigate = (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => {
     setCurrentPage(page);
   };
 
@@ -89,6 +92,27 @@ export default function App() {
       )}
       {currentPage === 'douyin' && (
         <DouyinDownloaderPage
+          onBack={handleBackToHome}
+          onNavigate={handleNavigate}
+          onLogout={handleLogout}
+        />
+      )}
+      {currentPage === 'collection' && (
+        <DataCollectionPage
+          onBack={handleBackToHome}
+          onNavigate={handleNavigate}
+          onLogout={handleLogout}
+        />
+      )}
+      {currentPage === 'image' && (
+        <ImageGenerationPage
+          onBack={handleBackToHome}
+          onNavigate={handleNavigate}
+          onLogout={handleLogout}
+        />
+      )}
+      {currentPage === 'topmodel' && (
+        <TopModelPage
           onBack={handleBackToHome}
           onNavigate={handleNavigate}
           onLogout={handleLogout}

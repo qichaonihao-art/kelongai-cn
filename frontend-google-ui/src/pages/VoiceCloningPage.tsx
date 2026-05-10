@@ -44,7 +44,7 @@ import { motion, AnimatePresence } from "motion/react";
 
 interface VoiceCloningPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
 }
 
 type VoicePlatformLabel = '智谱' | '阿里云' | '火山引擎' | 'SiliconFlow 声音克隆';

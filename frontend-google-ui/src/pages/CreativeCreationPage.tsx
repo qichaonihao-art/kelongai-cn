@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type KeyboardEvent } from "react";
+import { useState, useRef, useEffect, type KeyboardEvent, type RefObject } from "react";
 import {
   Send,
   Film,
@@ -60,7 +60,7 @@ interface Message {
 
 interface CreativeCreationPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
   onLogout: () => void;
 }
 
@@ -785,6 +785,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [copiedNotebookId, setCopiedNotebookId] = useState<string | null>(null);
   const [isAdditionalHistoryOpen, setIsAdditionalHistoryOpen] = useState(false);
   const [copiedAdditionalId, setCopiedAdditionalId] = useState<string | null>(null);
+  const [seedancePromptHighlight, setSeedancePromptHighlight] = useState(false);
+  const [isManualInputOpen, setIsManualInputOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -795,6 +797,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const seedancePromptRef = useRef<HTMLTextAreaElement>(null);
   const notebookRef = useRef<HTMLDivElement>(null);
   const additionalHistoryRef = useRef<HTMLDivElement>(null);
+  const autoSyncToSeedanceRef = useRef(false);
+
+  function scrollToRef(ref: RefObject<HTMLElement | null>) {
+    requestAnimationFrame(() => {
+      ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }
 
   function scrollAnalysisToBottom() {
     requestAnimationFrame(() => {
@@ -1223,6 +1232,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     .find((message) => message.id !== 'creative_welcome' && message.role === 'assistant' && message.type === 'text' && !message.pending && message.content.trim())
     ?.content.trim() || '';
 
+  useEffect(() => {
+    if (!isLoading && autoSyncToSeedanceRef.current && latestAssistantText) {
+      autoSyncToSeedanceRef.current = false;
+      syncLatestPromptToSeedance();
+      scrollToRef(seedancePromptRef);
+    }
+  }, [isLoading, latestAssistantText]);
+
   function updateSeedanceHistoryTask(task: SeedanceTaskResult) {
     if (!task.taskId) return;
     setSeedanceHistory((previous) =>
@@ -1299,19 +1316,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus();
-        textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
-      });
+      autoSyncToSeedanceRef.current = true;
+      scrollToRef(textareaRef);
+      handleSend(prompt);
     } else {
       const prompt = VIDEO_REVERSE_PROMPT({ additionalChange, includeSubtitles });
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus();
-        textareaRef.current?.setSelectionRange(VIDEO_REVERSE_PROMPT.length, VIDEO_REVERSE_PROMPT.length);
-      });
+      autoSyncToSeedanceRef.current = true;
+      scrollToRef(textareaRef);
+      handleSend(prompt);
     }
   }
 
@@ -1332,6 +1347,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
 
     setSeedancePrompt(formatted);
     setRequestError("");
+    setSeedancePromptHighlight(true);
+    setTimeout(() => setSeedancePromptHighlight(false), 2000);
   }
 
   function getAtReferenceLabel(ref: SeedanceReferenceFile, index: number) {
@@ -1879,10 +1896,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     }
   }
 
-  async function handleSend() {
-    if (!input.trim() || isLoading) return;
+  async function handleSend(forceQuestion?: string) {
+    const rawQuestion = forceQuestion?.trim() || input.trim();
+    if (!rawQuestion || isLoading) return;
 
-    const rawQuestion = input.trim();
     // If the user is sending the video reverse prompt, silently append format
     // instructions so Doubao returns each section on its own line without
     // cluttering the input box.
@@ -2629,44 +2646,68 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                 </div>
               </div>
 
-              <div className="mt-4 rounded-2xl border border-slate-300 bg-white p-3 shadow-sm focus-within:border-indigo-300">
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                  placeholder="填写反推提示词指令，或让豆包按你的要求分析视频..."
-                  className="min-h-[104px] w-full resize-none border-none bg-transparent p-1 pr-14 text-sm leading-7 text-slate-700 outline-none"
-                />
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isLoading}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <ImageIcon className="size-3.5" />
-                      上传图片
-                    </button>
-                    <span className="text-[11px] font-medium text-slate-300">|</span>
-                    <span className="text-[11px] font-medium text-slate-400">Enter 发送，Shift + Enter 换行</span>
-                  </div>
+              <div className="mt-4">
+                {!isManualInputOpen ? (
                   <button
                     type="button"
-                    onClick={handleSend}
-                    disabled={!input.trim() || isLoading}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => setIsManualInputOpen(true)}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 py-3 text-xs font-bold text-slate-500 transition-colors hover:border-slate-400 hover:bg-slate-50 hover:text-slate-700"
                   >
-                    {isLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-                    开始反推
+                    <ChevronDown className="size-3.5" />
+                    展开手动输入
                   </button>
-                </div>
+                ) : (
+                  <div className="rounded-2xl border border-slate-300 bg-white p-3 shadow-sm focus-within:border-indigo-300">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-500">手动输入</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsManualInputOpen(false)}
+                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                      >
+                        <ChevronUp className="size-3" />
+                        收起
+                      </button>
+                    </div>
+                    <textarea
+                      ref={textareaRef}
+                      value={input}
+                      onChange={(event) => setInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault();
+                          handleSend();
+                        }
+                      }}
+                      placeholder="填写反推提示词指令，或让豆包按你的要求分析视频..."
+                      className="min-h-[104px] w-full resize-none border-none bg-transparent p-1 pr-14 text-sm leading-7 text-slate-700 outline-none"
+                    />
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isLoading}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <ImageIcon className="size-3.5" />
+                          上传图片
+                        </button>
+                        <span className="text-[11px] font-medium text-slate-300">|</span>
+                        <span className="text-[11px] font-medium text-slate-400">Enter 发送，Shift + Enter 换行</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSend}
+                        disabled={!input.trim() || isLoading}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+                        开始反推
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {(requestError || !configReachable || !arkApiConfigured) && (
@@ -2710,7 +2751,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                     onChange={handleSeedancePromptChange}
                     onKeyDown={handleSeedanceKeyDown}
                     placeholder="等待模块一反推出视频提示词..."
-                    className="min-h-[280px] w-full resize-none rounded-xl border border-slate-300 bg-white p-4 pb-20 text-sm leading-7 text-slate-700 outline-none transition-colors focus:border-violet-300 whitespace-pre-wrap"
+                    className={cn(
+                      "min-h-[280px] w-full resize-none rounded-xl border bg-white p-4 pb-20 text-sm leading-7 text-slate-700 outline-none transition-all focus:border-violet-300 whitespace-pre-wrap",
+                      seedancePromptHighlight ? "border-violet-400 ring-2 ring-violet-300" : "border-slate-300"
+                    )}
                   />
 
                   {/* 已上传的参考素材列表（放在输入框底部内部） */}

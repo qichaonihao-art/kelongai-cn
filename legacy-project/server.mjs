@@ -6,6 +6,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,6 +31,7 @@ const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-lite-260215';
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.join(__dirname, '.runtime-state');
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
+const COLLECTION_DB_PATH = path.join(RUNTIME_STATE_DIR, 'collection.db');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
 const STARTUP_UPLOAD_TEMP_FILE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const ACTIVE_FRONTEND_DIR = SHOULD_USE_REACT_FRONTEND ? REACT_FRONTEND_DIR : LEGACY_FRONTEND_DIR;
@@ -53,7 +55,10 @@ const SERVER_CONFIG = {
   volcSpeakerId: process.env.VOLCENGINE_SPEAKER_ID || '',
   volcSpeakerIdPool: process.env.VOLCENGINE_SPEAKER_ID_POOL || '',
   tikhubApiToken: process.env.TIKHUB_API_TOKEN || '',
-  siliconFlowApiKey: process.env.SILICONFLOW_API_KEY || ''
+  siliconFlowApiKey: process.env.SILICONFLOW_API_KEY || '',
+  wechatApiToken: process.env.WECHAT_API_TOKEN || '',
+  douyinApiToken: process.env.DOUYIN_API_TOKEN || process.env.WECHAT_API_TOKEN || '',
+  gptImageApiKey: process.env.GPT_IMAGE_API_KEY || ''
 };
 
 const DOUYIN_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
@@ -129,6 +134,7 @@ const DOUYIN_DOWNLOAD_HOST_BASE_SCORES = new Map([
 const VOLC_SPEAKER_POOL_FULL_MESSAGE = '火山音色槽位已满，请删除旧音色或增加 speaker_id 池';
 let volcSpeakerOwnershipState = null;
 let volcSpeakerOwnershipQueue = Promise.resolve();
+let collectionDb = null;
 
 function readBooleanEnv(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -840,6 +846,9 @@ async function handleConfigStatus(req, res) {
       volcSpeakerSlotUsed: occupiedSpeakerIdCount,
       volcSpeakerSlotAvailable: availableSpeakerIdCount,
       tikhubApiToken: !!readValue(SERVER_CONFIG.tikhubApiToken),
+      wechatApiToken: !!readValue(SERVER_CONFIG.wechatApiToken),
+      douyinApiToken: !!readValue(SERVER_CONFIG.douyinApiToken),
+      gptImageApiKey: !!readValue(SERVER_CONFIG.gptImageApiKey),
       voiceCloneMockMode: VOICE_CLONE_MOCK_MODE,
       publicBaseUrl: !!publicBaseUrl
     },
@@ -870,6 +879,770 @@ function parseJsonString(value, fallback = null) {
     return JSON.parse(raw);
   } catch {
     return fallback;
+  }
+}
+
+// --- Collection Module Database ---
+
+function getCollectionDb() {
+  if (!collectionDb) {
+    collectionDb = new DatabaseSync(COLLECTION_DB_PATH);
+    collectionDb.exec(`
+      CREATE TABLE IF NOT EXISTS monitored_keywords (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        keyword TEXT NOT NULL UNIQUE,
+        platforms TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS collected_articles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        keyword_id INTEGER NOT NULL,
+        platform TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        url TEXT NOT NULL DEFAULT '',
+        short_link TEXT NOT NULL DEFAULT '',
+        author TEXT NOT NULL DEFAULT '',
+        avatar TEXT NOT NULL DEFAULT '',
+        read_count INTEGER NOT NULL DEFAULT 0,
+        praise_count INTEGER NOT NULL DEFAULT 0,
+        looking_count INTEGER NOT NULL DEFAULT 0,
+        publish_time INTEGER,
+        classify TEXT NOT NULL DEFAULT '',
+        is_original INTEGER NOT NULL DEFAULT 0,
+        ip_wording TEXT NOT NULL DEFAULT '',
+        raw_data TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        FOREIGN KEY (keyword_id) REFERENCES monitored_keywords(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_articles_keyword_id ON collected_articles(keyword_id);
+      CREATE INDEX IF NOT EXISTS idx_articles_platform ON collected_articles(platform);
+      CREATE INDEX IF NOT EXISTS idx_articles_publish_time ON collected_articles(publish_time);
+
+      CREATE TABLE IF NOT EXISTS image_generation_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        prompt TEXT NOT NULL,
+        size TEXT NOT NULL DEFAULT '1:1',
+        resolution TEXT NOT NULL DEFAULT '1k',
+        status TEXT NOT NULL DEFAULT 'submitted',
+        external_task_id TEXT,
+        result_urls TEXT NOT NULL DEFAULT '[]',
+        reference_images TEXT NOT NULL DEFAULT '[]',
+        error_message TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        completed_at INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_image_tasks_status ON image_generation_tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_image_tasks_created ON image_generation_tasks(created_at DESC);
+    `);
+
+    // Migration: add reference_images column if it doesn't exist (existing tables before this column was added)
+    try {
+      collectionDb.exec(`ALTER TABLE image_generation_tasks ADD COLUMN reference_images TEXT NOT NULL DEFAULT '[]'`);
+    } catch {
+      // Column already exists, ignore
+    }
+  }
+  return collectionDb;
+}
+
+function dbInsertKeyword(keyword, platforms) {
+  const db = getCollectionDb();
+  const stmt = db.prepare(
+    'INSERT INTO monitored_keywords (keyword, platforms, created_at, updated_at) VALUES (?, ?, unixepoch(), unixepoch())'
+  );
+  const result = stmt.run(keyword, JSON.stringify(platforms));
+  return { id: Number(result.lastInsertRowid), keyword, platforms };
+}
+
+function dbUpdateKeywordPlatforms(id, platforms) {
+  const db = getCollectionDb();
+  const stmt = db.prepare(
+    'UPDATE monitored_keywords SET platforms = ?, updated_at = unixepoch() WHERE id = ?'
+  );
+  stmt.run(JSON.stringify(platforms), id);
+}
+
+function dbDeleteKeyword(id) {
+  const db = getCollectionDb();
+  const stmt = db.prepare('DELETE FROM monitored_keywords WHERE id = ?');
+  stmt.run(id);
+}
+
+function dbGetAllKeywords() {
+  const db = getCollectionDb();
+  const stmt = db.prepare('SELECT * FROM monitored_keywords ORDER BY updated_at DESC');
+  const rows = stmt.all();
+  return rows.map((r) => ({ ...r, platforms: parseJsonString(r.platforms, []) }));
+}
+
+function dbGetKeywordById(id) {
+  const db = getCollectionDb();
+  const stmt = db.prepare('SELECT * FROM monitored_keywords WHERE id = ?');
+  const row = stmt.get(id);
+  if (!row) return null;
+  return { ...row, platforms: parseJsonString(row.platforms, []) };
+}
+
+function dbInsertArticle(article) {
+  const db = getCollectionDb();
+  const stmt = db.prepare(`
+    INSERT INTO collected_articles
+    (keyword_id, platform, title, content, url, short_link, author, avatar,
+     read_count, praise_count, looking_count, publish_time, classify,
+     is_original, ip_wording, raw_data, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
+  `);
+  const result = stmt.run(
+    article.keyword_id,
+    article.platform,
+    article.title,
+    article.content,
+    article.url,
+    article.short_link,
+    article.author,
+    article.avatar,
+    article.read_count,
+    article.praise_count,
+    article.looking_count,
+    article.publish_time,
+    article.classify,
+    article.is_original,
+    article.ip_wording,
+    JSON.stringify(article.raw_data)
+  );
+  return { id: Number(result.lastInsertRowid), ...article };
+}
+
+function dbGetArticles({ keywordId, platform, limit = 50, offset = 0 }) {
+  const db = getCollectionDb();
+  let sql = 'SELECT * FROM collected_articles WHERE 1=1';
+  const params = [];
+  if (keywordId) {
+    sql += ' AND keyword_id = ?';
+    params.push(keywordId);
+  }
+  if (platform) {
+    sql += ' AND platform = ?';
+    params.push(platform);
+  }
+  sql += ' ORDER BY publish_time DESC LIMIT ? OFFSET ?';
+  params.push(limit, offset);
+  const stmt = db.prepare(sql);
+  return stmt.all(...params);
+}
+
+function dbCountArticles({ keywordId, platform }) {
+  const db = getCollectionDb();
+  let sql = 'SELECT COUNT(*) as count FROM collected_articles WHERE 1=1';
+  const params = [];
+  if (keywordId) {
+    sql += ' AND keyword_id = ?';
+    params.push(keywordId);
+  }
+  if (platform) {
+    sql += ' AND platform = ?';
+    params.push(platform);
+  }
+  const stmt = db.prepare(sql);
+  const row = stmt.get(...params);
+  return row?.count || 0;
+}
+
+function dbArticleExists(keywordId, platform, url) {
+  const db = getCollectionDb();
+  const stmt = db.prepare(
+    'SELECT id FROM collected_articles WHERE keyword_id = ? AND platform = ? AND url = ? LIMIT 1'
+  );
+  const row = stmt.get(keywordId, platform, url);
+  return !!row;
+}
+
+// --- Image Generation Database ---
+
+function dbInsertImageTask({ prompt, size, resolution, externalTaskId, referenceImages }) {
+  const db = getCollectionDb();
+  const stmt = db.prepare(
+    'INSERT INTO image_generation_tasks (prompt, size, resolution, status, external_task_id, reference_images, created_at) VALUES (?, ?, ?, ?, ?, ?, unixepoch())'
+  );
+  const result = stmt.run(prompt, size, resolution, 'submitted', externalTaskId || '', JSON.stringify(referenceImages || []));
+  return { id: Number(result.lastInsertRowid), prompt, size, resolution, status: 'submitted', external_task_id: externalTaskId || '', reference_images: referenceImages || [] };
+}
+
+function dbUpdateImageTaskStatus(id, { status, externalTaskId, resultUrls, errorMessage, completedAt }) {
+  const db = getCollectionDb();
+  const fields = [];
+  const values = [];
+  if (status !== undefined) { fields.push('status = ?'); values.push(status); }
+  if (externalTaskId !== undefined) { fields.push('external_task_id = ?'); values.push(externalTaskId); }
+  if (resultUrls !== undefined) { fields.push('result_urls = ?'); values.push(JSON.stringify(resultUrls)); }
+  if (errorMessage !== undefined) { fields.push('error_message = ?'); values.push(errorMessage); }
+  if (completedAt !== undefined) { fields.push('completed_at = ?'); values.push(completedAt); }
+  if (fields.length === 0) return;
+  values.push(id);
+  const stmt = db.prepare(`UPDATE image_generation_tasks SET ${fields.join(', ')} WHERE id = ?`);
+  stmt.run(...values);
+}
+
+function dbGetImageTaskById(id) {
+  const db = getCollectionDb();
+  const stmt = db.prepare('SELECT * FROM image_generation_tasks WHERE id = ?');
+  const row = stmt.get(id);
+  if (!row) return null;
+  return { ...row, result_urls: parseJsonString(row.result_urls, []), reference_images: parseJsonString(row.reference_images, []) };
+}
+
+function dbGetImageTasks({ limit = 50, offset = 0 }) {
+  const db = getCollectionDb();
+  const stmt = db.prepare('SELECT * FROM image_generation_tasks ORDER BY created_at DESC LIMIT ? OFFSET ?');
+  const rows = stmt.all(limit, offset);
+  return rows.map((r) => ({ ...r, result_urls: parseJsonString(r.result_urls, []), reference_images: parseJsonString(r.reference_images, []) }));
+}
+
+function dbCountImageTasks() {
+  const db = getCollectionDb();
+  const stmt = db.prepare('SELECT COUNT(*) as count FROM image_generation_tasks');
+  const row = stmt.get();
+  return row?.count || 0;
+}
+
+function dbDeleteImageTask(id) {
+  const db = getCollectionDb();
+  const stmt = db.prepare('DELETE FROM image_generation_tasks WHERE id = ?');
+  stmt.run(id);
+}
+
+// --- Collection Module External APIs ---
+
+async function fetchWechatArticles(keyword, options = {}) {
+  const token = readValue(SERVER_CONFIG.wechatApiToken);
+  if (!token) {
+    throw new Error('未配置 WECHAT_API_TOKEN，请在 .env 中设置');
+  }
+
+  const body = {
+    kw: keyword,
+    sort_type: options.sort_type || 1,
+    mode: options.mode || 1,
+    period: options.period || 7,
+    page: options.page || 1,
+    any_kw: options.any_kw || '',
+    ex_kw: options.ex_kw || '',
+    verifycode: options.verifycode || '',
+    type: options.type || 1,
+  };
+
+  const response = await fetch('http://cn8n.com/p4/fbmain/monitor/v3/kw_search', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(`公众号 API 请求失败: HTTP ${response.status}`);
+  }
+
+  const json = await response.json();
+  if (json.code !== 0 && json.code !== 200) {
+    throw new Error(json.msg || `公众号 API 错误: code ${json.code}`);
+  }
+
+  return json.data || { data: [], total: 0, page: 1, total_page: 0 };
+}
+
+async function fetchXhsArticles(keyword, options = {}) {
+  throw new Error('小红书 API 尚未配置');
+}
+
+async function fetchDouyinArticles(keyword, options = {}) {
+  const token = readValue(SERVER_CONFIG.douyinApiToken);
+  if (!token) {
+    throw new Error('未配置 DOUYIN_API_TOKEN，请在 .env 中设置');
+  }
+
+  const body = {
+    keyword: keyword,
+    cursor: options.cursor || '',
+    log_id: options.log_id || '',
+    sort_type: String(options.sort_type || ''),
+    publish_time: String(options.publish_time || ''),
+    filter_duration: String(options.filter_duration || ''),
+    content_type: String(options.content_type || ''),
+  };
+
+  const response = await fetch('http://cn8n.com/p2/douyin/general_search', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(`抖音 API 请求失败: HTTP ${response.status}`);
+  }
+
+  const json = await response.json();
+  if (json.code !== 0 && json.code !== 200) {
+    throw new Error(json.msg || `抖音 API 错误: code ${json.code}`);
+  }
+
+  return json.data || { data: [], cost: 0, balance: 0, status_code: 0 };
+}
+
+// --- Collection Module Route Handlers ---
+
+async function handleGetKeywords(req, res) {
+  try {
+    const keywords = dbGetAllKeywords();
+    sendJson(res, 200, { ok: true, keywords });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '获取关键词列表失败' });
+  }
+}
+
+async function handleCreateKeyword(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const keyword = String(body.keyword || '').trim();
+    const platforms = Array.isArray(body.platforms) ? body.platforms : [];
+
+    if (!keyword) {
+      sendJson(res, 400, { error: '关键词不能为空' });
+      return;
+    }
+
+    const result = dbInsertKeyword(keyword, platforms);
+    sendJson(res, 200, { ok: true, keyword: result });
+  } catch (error) {
+    if (error.message?.includes('UNIQUE constraint failed')) {
+      sendJson(res, 409, { error: '该关键词已存在' });
+      return;
+    }
+    sendJson(res, 500, { error: error.message || '添加关键词失败' });
+  }
+}
+
+async function handleUpdateKeyword(req, res, id) {
+  try {
+    const body = await readRequestBody(req);
+    const platforms = Array.isArray(body.platforms) ? body.platforms : [];
+    const keyword = dbGetKeywordById(Number(id));
+
+    if (!keyword) {
+      sendJson(res, 404, { error: '关键词不存在' });
+      return;
+    }
+
+    dbUpdateKeywordPlatforms(Number(id), platforms);
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '更新关键词失败' });
+  }
+}
+
+async function handleDeleteKeyword(req, res, id) {
+  try {
+    dbDeleteKeyword(Number(id));
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '删除关键词失败' });
+  }
+}
+
+async function handleFetchKeyword(req, res, id) {
+  try {
+    const keyword = dbGetKeywordById(Number(id));
+    if (!keyword) {
+      sendJson(res, 404, { error: '关键词不存在' });
+      return;
+    }
+
+    const results = { wechat: null, xhs: null, douyin: null };
+    const errors = {};
+
+    for (const platform of keyword.platforms) {
+      if (platform === 'wechat') {
+        try {
+          const data = await fetchWechatArticles(keyword.keyword);
+          const articles = data.data || [];
+          let inserted = 0;
+          let skipped = 0;
+
+          for (const item of articles) {
+            const url = item.url || item.short_link || '';
+            if (!url) continue;
+
+            if (dbArticleExists(keyword.id, 'wechat', url)) {
+              skipped++;
+              continue;
+            }
+
+            dbInsertArticle({
+              keyword_id: keyword.id,
+              platform: 'wechat',
+              title: item.title || '',
+              content: item.content || '',
+              url: item.url || '',
+              short_link: item.short_link || '',
+              author: item.wx_name || '',
+              avatar: item.avatar || '',
+              read_count: Number(item.read) || 0,
+              praise_count: Number(item.praise) || 0,
+              looking_count: Number(item.looking) || 0,
+              publish_time: item.publish_time ? Number(item.publish_time) : null,
+              classify: item.classify || '',
+              is_original: item.is_original ? 1 : 0,
+              ip_wording: item.ip_wording || '',
+              raw_data: item,
+            });
+            inserted++;
+          }
+
+          results.wechat = { total: articles.length, inserted, skipped, page: data.page, total_page: data.total_page };
+        } catch (e) {
+          errors.wechat = e.message;
+        }
+      } else if (platform === 'xhs') {
+        try {
+          const data = await fetchXhsArticles(keyword.keyword);
+          results.xhs = data;
+        } catch (e) {
+          errors.xhs = e.message;
+        }
+      } else if (platform === 'douyin') {
+        try {
+          const data = await fetchDouyinArticles(keyword.keyword);
+          const items = data.data || [];
+          let inserted = 0;
+          let skipped = 0;
+
+          for (const item of items) {
+            const info = item.aweme_info || {};
+            const author = info.author || {};
+            const stats = info.statistics || {};
+            const video = info.video || {};
+            const coverObj = video.cover || {};
+            const coverUrls = coverObj.url_list || [];
+            const avatarObj = author.avatar_thumb || {};
+            const avatarUrls = avatarObj.url_list || [];
+            const awemeId = info.aweme_id || '';
+            const url = awemeId ? `https://www.douyin.com/video/${awemeId}` : '';
+            if (!url) continue;
+
+            if (dbArticleExists(keyword.id, 'douyin', url)) {
+              skipped++;
+              continue;
+            }
+
+            dbInsertArticle({
+              keyword_id: keyword.id,
+              platform: 'douyin',
+              title: info.desc || '',
+              content: info.desc || '',
+              url: url,
+              short_link: '',
+              author: author.nickname || '',
+              avatar: avatarUrls[0] || '',
+              read_count: Number(stats.comment_count) || 0,
+              praise_count: Number(stats.digg_count) || 0,
+              looking_count: Number(stats.collect_count) || 0,
+              publish_time: info.create_time ? Number(info.create_time) : null,
+              classify: author.enterprise_verify_reason || '',
+              is_original: 0,
+              ip_wording: author.custom_verify || '',
+              raw_data: info,
+            });
+            inserted++;
+          }
+
+          results.douyin = { total: items.length, inserted, skipped };
+        } catch (e) {
+          errors.douyin = e.message;
+        }
+      }
+    }
+
+    sendJson(res, 200, { ok: true, results, errors });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '采集失败' });
+  }
+}
+
+async function handleGetArticles(req, res) {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const keywordId = url.searchParams.get('keywordId');
+    const platform = url.searchParams.get('platform');
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 50)));
+    const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
+
+    const articles = dbGetArticles({ keywordId: keywordId ? Number(keywordId) : null, platform, limit, offset });
+    const total = dbCountArticles({ keywordId: keywordId ? Number(keywordId) : null, platform });
+
+    sendJson(res, 200, { ok: true, articles, total, limit, offset });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '获取文章列表失败' });
+  }
+}
+
+// --- Image Generation API Handlers ---
+
+async function handleCreateImageTask(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const prompt = String(body.prompt || '').trim();
+    const size = String(body.size || '1:1');
+    const resolution = String(body.resolution || '1k');
+
+    if (!prompt) {
+      sendJson(res, 400, { error: '提示词不能为空' });
+      return;
+    }
+
+    const token = readValue(SERVER_CONFIG.gptImageApiKey);
+    if (!token) {
+      sendJson(res, 500, { error: '未配置 GPT_IMAGE_API_KEY，请在 .env 中设置' });
+      return;
+    }
+
+    const apiBody = {
+      model: 'gpt-image-2',
+      prompt,
+      n: 1,
+      size,
+      resolution,
+    };
+
+    const imageUrls = Array.isArray(body.image_urls) ? body.image_urls : [];
+    if (imageUrls.length > 0) {
+      apiBody.image_urls = imageUrls.slice(0, 16);
+    }
+
+    const response = await fetch('https://api.apimart.ai/v1/images/generations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(apiBody),
+    });
+
+    const json = await response.json();
+    if (!response.ok) {
+      const msg = json?.error?.message || json?.message || `图片生成 API 错误: HTTP ${response.status}`;
+      sendJson(res, 500, { error: msg });
+      return;
+    }
+
+    const taskData = json.data?.[0];
+    if (!taskData || !taskData.task_id) {
+      sendJson(res, 500, { error: '图片生成 API 返回异常，未获取到任务 ID' });
+      return;
+    }
+
+    const task = dbInsertImageTask({
+      prompt,
+      size,
+      resolution,
+      externalTaskId: taskData.task_id,
+      referenceImages: imageUrls,
+    });
+
+    sendJson(res, 200, { ok: true, task });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '创建图片生成任务失败' });
+  }
+}
+
+async function handleGetImageTaskStatus(req, res, id) {
+  try {
+    const task = dbGetImageTaskById(Number(id));
+    if (!task) {
+      sendJson(res, 404, { error: '任务不存在' });
+      return;
+    }
+
+    // If already completed or failed locally, return cached result
+    if (task.status === 'completed' || task.status === 'failed') {
+      sendJson(res, 200, { ok: true, task });
+      return;
+    }
+
+    // Poll upstream API
+    const token = readValue(SERVER_CONFIG.gptImageApiKey);
+    if (!token) {
+      sendJson(res, 500, { error: '未配置 GPT_IMAGE_API_KEY' });
+      return;
+    }
+
+    const response = await fetch(`https://api.apimart.ai/v1/tasks/${task.external_task_id}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    const json = await response.json();
+    if (!response.ok) {
+      sendJson(res, 500, { error: json?.error?.message || '查询任务状态失败' });
+      return;
+    }
+
+    const upstreamTask = json.data;
+    if (!upstreamTask) {
+      sendJson(res, 200, { ok: true, task });
+      return;
+    }
+
+    const upstreamStatus = upstreamTask.status;
+    if (upstreamStatus === 'completed') {
+      const images = upstreamTask.result?.images || [];
+      const urls = images.flatMap((img) => img.url || []);
+      dbUpdateImageTaskStatus(task.id, {
+        status: 'completed',
+        resultUrls: urls,
+        completedAt: upstreamTask.completed || Math.floor(Date.now() / 1000),
+      });
+      task.status = 'completed';
+      task.result_urls = urls;
+      task.completed_at = upstreamTask.completed || Math.floor(Date.now() / 1000);
+    } else if (upstreamStatus === 'failed') {
+      dbUpdateImageTaskStatus(task.id, {
+        status: 'failed',
+        errorMessage: upstreamTask.error?.message || '任务失败',
+      });
+      task.status = 'failed';
+      task.error_message = upstreamTask.error?.message || '任务失败';
+    } else {
+      // processing or submitted - update status if changed
+      if (upstreamStatus !== task.status) {
+        dbUpdateImageTaskStatus(task.id, { status: upstreamStatus });
+        task.status = upstreamStatus;
+      }
+    }
+
+    sendJson(res, 200, { ok: true, task });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '查询任务状态失败' });
+  }
+}
+
+async function handleGetImageTasks(req, res) {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 50)));
+    const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
+
+    const tasks = dbGetImageTasks({ limit, offset });
+    const total = dbCountImageTasks();
+
+    sendJson(res, 200, { ok: true, tasks, total, limit, offset });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '获取任务列表失败' });
+  }
+}
+
+async function handleDeleteImageTask(req, res, id) {
+  try {
+    dbDeleteImageTask(Number(id));
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '删除任务失败' });
+  }
+}
+
+async function handleChatCompletions(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const messages = body.messages;
+    const model = String(body.model || 'claude-opus-4-7');
+    const stream = body.stream !== false;
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      sendJson(res, 400, { error: 'messages 不能为空' });
+      return;
+    }
+
+    const token = readValue(SERVER_CONFIG.gptImageApiKey);
+    if (!token) {
+      sendJson(res, 500, { error: '未配置 API Key' });
+      return;
+    }
+
+    const apiBody = {
+      model,
+      messages,
+      stream,
+    };
+
+    if (typeof body.temperature === 'number') apiBody.temperature = body.temperature;
+    if (typeof body.max_tokens === 'number') apiBody.max_tokens = body.max_tokens;
+    if (typeof body.top_p === 'number') apiBody.top_p = body.top_p;
+
+    const response = await fetch('https://api.apimart.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'Accept': stream ? 'text/event-stream' : 'application/json',
+      },
+      body: JSON.stringify(apiBody),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      let msg = `API 错误: HTTP ${response.status}`;
+      try {
+        const errJson = JSON.parse(text);
+        msg = errJson?.error?.message || errJson?.message || msg;
+      } catch {
+        msg = text || msg;
+      }
+      sendJson(res, 500, { error: msg });
+      return;
+    }
+
+    if (stream) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(decoder.decode(value, { stream: true }));
+          if (res.flush) res.flush();
+        }
+      } catch (err) {
+        console.error('[chat] stream error:', err.message);
+      } finally {
+        const remaining = decoder.decode();
+        if (remaining) res.write(remaining);
+        reader.releaseLock();
+        res.end();
+      }
+    } else {
+      const data = await response.text();
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(data);
+    }
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '对话请求失败' });
   }
 }
 
@@ -7189,6 +7962,69 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/douyin/download-video') {
     await handleDouyinDownloadVideo(req, res);
+    return;
+  }
+
+  // Collection module routes
+  if (req.method === 'GET' && url.pathname === '/api/collection/keywords') {
+    await handleGetKeywords(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/collection/keywords') {
+    await handleCreateKeyword(req, res);
+    return;
+  }
+
+  if (req.method === 'PUT' && url.pathname.startsWith('/api/collection/keywords/')) {
+    const id = url.pathname.replace(/^\/api\/collection\/keywords\//, '');
+    await handleUpdateKeyword(req, res, id);
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/collection/keywords/')) {
+    const id = url.pathname.replace(/^\/api\/collection\/keywords\//, '');
+    await handleDeleteKeyword(req, res, id);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname.startsWith('/api/collection/keywords/') && url.pathname.endsWith('/fetch')) {
+    const id = url.pathname.replace(/^\/api\/collection\/keywords\//, '').replace(/\/fetch$/, '');
+    await handleFetchKeyword(req, res, id);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/collection/articles') {
+    await handleGetArticles(req, res);
+    return;
+  }
+
+  // Image generation routes
+  if (req.method === 'POST' && url.pathname === '/api/image/tasks') {
+    await handleCreateImageTask(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/image/tasks') {
+    await handleGetImageTasks(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/api/image/tasks/')) {
+    const id = url.pathname.replace(/^\/api\/image\/tasks\//, '');
+    await handleGetImageTaskStatus(req, res, id);
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/image/tasks/')) {
+    const id = url.pathname.replace(/^\/api\/image\/tasks\//, '');
+    await handleDeleteImageTask(req, res, id);
+    return;
+  }
+
+  // Chat completions (top model) route
+  if (req.method === 'POST' && url.pathname === '/api/chat/completions') {
+    await handleChatCompletions(req, res);
     return;
   }
 

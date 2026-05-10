@@ -33,7 +33,7 @@ import {
 
 interface DouyinDownloaderPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
   onLogout: () => void;
 }
 
