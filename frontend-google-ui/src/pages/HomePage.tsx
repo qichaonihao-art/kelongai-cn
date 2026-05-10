@@ -62,7 +62,7 @@ const modules = [
   {
     id: 'topmodel' as const,
     title: '顶级模型',
-    desc: '汇聚顶尖 AI 大模型，一站式智能对话体验',
+    desc: 'Claude Opus 4.7 — Anthropic 最强推理模型',
     icon: Crown,
     color: 'fuchsia',
     gradient: 'from-fuchsia-500 to-purple-600',
