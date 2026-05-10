@@ -112,30 +112,57 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
         </motion.p>
       </motion.div>
 
-      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5 w-full max-w-[70rem] mt-8">
-        {modules.map((module, index) => {
+      <motion.div
+        className="grid md:grid-cols-2 xl:grid-cols-3 gap-5 w-full max-w-[70rem] mt-8"
+        initial="hidden"
+        animate="visible"
+        variants={{
+          hidden: { opacity: 0 },
+          visible: {
+            opacity: 1,
+            transition: { staggerChildren: 0.08, delayChildren: 0.15 },
+          },
+        }}
+      >
+        {modules.map((module) => {
           const Icon = module.icon;
           return (
             <motion.div
               key={module.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.15 + index * 0.1, duration: 0.5 }}
-              whileHover={{ y: -4, transition: { duration: 0.25 } }}
-              className={`group relative cursor-pointer rounded-3xl bg-white/60 backdrop-blur-xl border border-white/80 p-8 transition-all duration-500 ${module.borderHover} hover:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] hover:bg-white/80`}
+              layout
+              variants={{
+                hidden: { opacity: 0, y: 50, scale: 0.9, filter: 'blur(10px)' },
+                visible: {
+                  opacity: 1,
+                  y: 0,
+                  scale: 1,
+                  filter: 'blur(0px)',
+                  transition: { type: 'spring', stiffness: 100, damping: 18, mass: 0.8 },
+                },
+              }}
+              whileHover={{
+                y: -6,
+                scale: 1.02,
+                transition: { type: 'spring', stiffness: 300, damping: 20 },
+              }}
+              whileTap={{ scale: 0.96 }}
+              className={`group relative cursor-pointer rounded-3xl bg-white/60 backdrop-blur-xl border border-white/80 p-8 transition-colors duration-500 ${module.borderHover} hover:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] hover:bg-white/80`}
               onClick={() => onNavigate(module.id)}
             >
               <div className="flex flex-col items-center text-center">
                 {/* Icon with animated ring */}
                 <div className="relative mb-5">
                   <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${module.gradient} opacity-20 blur-lg scale-150 group-hover:scale-175 group-hover:opacity-30 transition-all duration-500`} />
-                  <div className={`relative inline-flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br ${module.gradient} text-white shadow-md transition-transform duration-500 group-hover:scale-110`}>
+                  <motion.div
+                    layout
+                    className={`relative inline-flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br ${module.gradient} text-white shadow-md`}
+                  >
                     <Icon className="size-7" />
-                  </div>
+                  </motion.div>
                 </div>
 
-                {/* Title with gradient on hover */}
-                <h3 className="text-lg font-black text-slate-900 tracking-tight mb-2 transition-colors duration-300">
+                {/* Title */}
+                <h3 className="text-lg font-black text-slate-900 tracking-tight mb-2">
                   {module.title}
                 </h3>
 
@@ -143,12 +170,11 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
                 <p className="text-xs leading-relaxed text-slate-500 max-w-[200px]">
                   {module.desc}
                 </p>
-
               </div>
             </motion.div>
           );
         })}
-      </div>
+      </motion.div>
 
       <SiteFooter className="mt-auto pt-10" />
     </div>

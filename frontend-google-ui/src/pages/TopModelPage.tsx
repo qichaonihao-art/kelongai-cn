@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ChangeEvent } from "react";
+import { flushSync } from "react-dom";
 import {
   ArrowLeft,
   LogOut,
@@ -92,8 +93,6 @@ export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelP
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const streamBufferRef = useRef('');
-  const rafRef = useRef<number | null>(null);
 
   const currentModel = AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0];
 
@@ -162,26 +161,18 @@ export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelP
       for await (const chunk of streamChatCompletion(newMessages, { model: selectedModel })) {
         if (!hasAddedAssistant) {
           hasAddedAssistant = true;
-          setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
-        }
-        streamBufferRef.current += chunk;
-        if (!rafRef.current) {
-          rafRef.current = requestAnimationFrame(() => {
-            const text = streamBufferRef.current;
-            streamBufferRef.current = '';
-            rafRef.current = null;
-            if (text) {
-              setMessages((prev) => {
-                const last = prev[prev.length - 1];
-                if (!last || last.role !== 'assistant') return prev;
-                return [
-                  ...prev.slice(0, -1),
-                  { ...last, content: last.content + text },
-                ];
-              });
-            }
+          flushSync(() => {
+            setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
           });
         }
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (!last || last.role !== 'assistant') return prev;
+          return [
+            ...prev.slice(0, -1),
+            { ...last, content: last.content + chunk },
+          ];
+        });
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : '请求失败');
@@ -189,24 +180,6 @@ export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelP
         setMessages((prev) => prev.slice(0, -1));
       }
     } finally {
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      if (streamBufferRef.current) {
-        const text = streamBufferRef.current;
-        streamBufferRef.current = '';
-        if (hasAddedAssistant) {
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (!last || last.role !== 'assistant') return prev;
-            return [
-              ...prev.slice(0, -1),
-              { ...last, content: last.content + text },
-            ];
-          });
-        }
-      }
       setIsLoading(false);
     }
   }
@@ -236,9 +209,12 @@ export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelP
         <div className="flex items-center gap-3">
           <button
             onClick={onBack}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-slate-600 transition-colors hover:bg-slate-100"
+            className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
           >
-            <ArrowLeft className="size-4" />
+            <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
+              <ArrowLeft className="size-3.5" />
+            </div>
+            <span className="text-xs font-bold text-slate-700">返回</span>
           </button>
           <div className="flex items-center gap-2">
             <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-fuchsia-500 to-purple-600 text-white">
