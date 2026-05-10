@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
