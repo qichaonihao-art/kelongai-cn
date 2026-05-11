@@ -17,6 +17,25 @@ export interface ImageConfigStatus {
   gptImageApiKey: boolean;
 }
 
+const IMAGE_TASKS_KEY = 'image_generation_tasks';
+
+function loadTasks(): ImageTask[] {
+  try {
+    const raw = localStorage.getItem(IMAGE_TASKS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTasks(tasks: ImageTask[]) {
+  try {
+    localStorage.setItem(IMAGE_TASKS_KEY, JSON.stringify(tasks));
+  } catch {
+    // ignore quota exceeded
+  }
+}
+
 async function parseJsonSafely(response: Response) {
   try {
     return await response.json();
@@ -70,7 +89,12 @@ export async function createImageTask(
   if (!response.ok) {
     throw new Error(buildErrorMessage(json, '创建图片生成任务失败'));
   }
-  return json?.task;
+  const task = json?.task;
+  if (task) {
+    const tasks = loadTasks();
+    saveTasks([task, ...tasks]);
+  }
+  return task;
 }
 
 export async function getImageTaskStatus(id: number): Promise<ImageTask> {
@@ -81,39 +105,39 @@ export async function getImageTaskStatus(id: number): Promise<ImageTask> {
   if (!response.ok) {
     throw new Error(buildErrorMessage(json, '查询任务状态失败'));
   }
-  return json?.task;
+  const task = json?.task;
+  if (task) {
+    const tasks = loadTasks();
+    const updated = tasks.map((t) => (t.id === task.id ? task : t));
+    saveTasks(updated);
+  }
+  return task;
 }
 
 export async function getImageTasks(params?: {
   limit?: number;
   offset?: number;
 }): Promise<{ tasks: ImageTask[]; total: number; limit: number; offset: number }> {
-  const searchParams = new URLSearchParams();
-  if (params?.limit) searchParams.set('limit', String(params.limit));
-  if (params?.offset) searchParams.set('offset', String(params.offset));
-
-  const response = await fetch(`/api/image/tasks?${searchParams.toString()}`, {
-    credentials: 'include',
-  });
-  const json = await parseJsonSafely(response);
-  if (!response.ok) {
-    throw new Error(buildErrorMessage(json, '获取任务列表失败'));
-  }
+  const tasks = loadTasks();
+  const offset = params?.offset || 0;
+  const limit = params?.limit || 50;
   return {
-    tasks: json?.tasks || [],
-    total: json?.total || 0,
-    limit: json?.limit || 50,
-    offset: json?.offset || 0,
+    tasks: tasks.slice(offset, offset + limit),
+    total: tasks.length,
+    limit,
+    offset,
   };
 }
 
 export async function deleteImageTask(id: number): Promise<void> {
-  const response = await fetch(`/api/image/tasks/${id}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-  const json = await parseJsonSafely(response);
-  if (!response.ok) {
-    throw new Error(buildErrorMessage(json, '删除任务失败'));
+  try {
+    await fetch(`/api/image/tasks/${id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+  } catch {
+    // ignore backend delete errors
   }
+  const tasks = loadTasks();
+  saveTasks(tasks.filter((t) => t.id !== id));
 }

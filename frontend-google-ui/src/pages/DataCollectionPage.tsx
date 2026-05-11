@@ -200,9 +200,12 @@ export default function DataCollectionPage({ onBack, onNavigate, onLogout }: Dat
           <div className="flex items-center gap-3">
             <button
               onClick={onBack}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition-colors hover:bg-slate-200"
+              className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
             >
-              <ArrowLeft className="size-4" />
+              <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
+                <ArrowLeft className="size-3.5" />
+              </div>
+              <span className="text-xs font-bold text-slate-700">返回</span>
             </button>
             <div className="flex items-center gap-2.5">
               <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-rose-500 to-pink-600 text-white shadow-sm">

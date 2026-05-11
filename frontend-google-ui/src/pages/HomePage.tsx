@@ -124,7 +124,7 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
           },
         }}
       >
-        {modules.map((module) => {
+        {modules.map((module, index) => {
           const Icon = module.icon;
           return (
             <motion.div

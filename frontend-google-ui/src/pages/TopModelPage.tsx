@@ -31,6 +31,7 @@ import ModuleQuickNav from "@/src/components/ModuleQuickNav";
 import { cn } from "@/src/lib/utils";
 import { streamChatCompletion, type ChatMessage, AVAILABLE_MODELS } from "@/src/lib/topmodel";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface TopModelPageProps {
   onBack: () => void;
@@ -338,7 +339,18 @@ export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelP
                 >
                   {msg.role === 'assistant' ? (
                     <div className="markdown-body">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          table: ({ children }) => (
+                            <div className="overflow-x-auto rounded-lg border border-slate-200 my-3">
+                              <table className="w-full text-xs border-collapse">{children}</table>
+                            </div>
+                          ),
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
                       {isLoading && idx === messages.length - 1 && (
                         <span className="ml-0.5 inline-block h-3.5 w-0.5 translate-y-0.5 bg-slate-800 animate-pulse" />
                       )}

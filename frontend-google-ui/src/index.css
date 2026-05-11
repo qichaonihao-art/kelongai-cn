@@ -155,7 +155,6 @@
   100% { background-position: -200% center; }
 }
 
-
 @layer base {
   * {
     @apply border-border;
@@ -227,13 +226,37 @@
   .markdown-body a {
     @apply text-fuchsia-600 underline underline-offset-2 hover:text-fuchsia-700;
   }
-  .markdown-body table {
-    @apply w-full my-2 text-xs border-collapse;
+  .markdown-body .overflow-x-auto table {
+    @apply w-full text-xs border-collapse;
+    border-spacing: 0;
+  }
+  .markdown-body thead {
+    @apply bg-slate-100;
   }
   .markdown-body th {
-    @apply px-2 py-1.5 bg-slate-100 text-slate-900 font-bold text-left border border-slate-200;
+    @apply px-3 py-2 text-slate-900 font-bold text-left border border-slate-200 whitespace-nowrap;
+    background-color: #f1f5f9;
+  }
+  .markdown-body th:first-child {
+    border-top-left-radius: 8px;
+  }
+  .markdown-body th:last-child {
+    border-top-right-radius: 8px;
   }
   .markdown-body td {
-    @apply px-2 py-1.5 border border-slate-200 text-slate-700;
+    @apply px-3 py-2 border border-slate-200 text-slate-700;
+    white-space: nowrap;
+  }
+  .markdown-body tbody tr:nth-child(even) {
+    background-color: #f8fafc;
+  }
+  .markdown-body tbody tr:hover {
+    background-color: #f1f5f9;
+  }
+  .markdown-body tbody tr:last-child td:first-child {
+    border-bottom-left-radius: 8px;
+  }
+  .markdown-body tbody tr:last-child td:last-child {
+    border-bottom-right-radius: 8px;
   }
 }
