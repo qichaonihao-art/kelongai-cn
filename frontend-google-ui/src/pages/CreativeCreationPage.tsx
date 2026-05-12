@@ -21,6 +21,7 @@ import {
   Replace,
   Trash2,
   BookText,
+  Search,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -787,6 +788,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [copiedAdditionalId, setCopiedAdditionalId] = useState<string | null>(null);
   const [seedancePromptHighlight, setSeedancePromptHighlight] = useState(false);
   const [isManualInputOpen, setIsManualInputOpen] = useState(false);
+  const [showSearchReplaceModal, setShowSearchReplaceModal] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
+  const [replaceResult, setReplaceResult] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1378,6 +1383,26 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     setShowAtMenu(false);
     setAtMenuFilter("");
     setAtMenuSelectedIndex(0);
+  }
+
+  function handleSearchReplace() {
+    if (!searchText) return;
+    const count = (seedancePrompt.match(new RegExp(searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+    if (count === 0) {
+      setReplaceResult(`未找到 "${searchText}"`);
+      setTimeout(() => {
+        setReplaceResult(null);
+        setShowSearchReplaceModal(false);
+      }, 1200);
+      return;
+    }
+    const newText = seedancePrompt.replaceAll(searchText, replaceText);
+    setSeedancePrompt(newText);
+    setReplaceResult(`成功替换 ${count} 处`);
+    setTimeout(() => {
+      setReplaceResult(null);
+      setShowSearchReplaceModal(false);
+    }, 1200);
   }
 
   function handleSeedanceKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -2866,6 +2891,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   </button>
                 )}
 
+                {/* 搜索替换按钮 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchText('');
+                    setReplaceText('');
+                    setShowSearchReplaceModal(true);
+                  }}
+                  className="mt-3 ml-2 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-violet-200 hover:bg-violet-50/40"
+                >
+                  <Search className="size-3 text-slate-400" />
+                  <span>搜索替换</span>
+                </button>
+
                 {/* 底部工具栏：添加素材 + 设置 */}
                 <div className="mt-3 flex items-center gap-2">
                   <button
@@ -3605,6 +3644,78 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                 className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50"
               >
                 关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 搜索替换弹窗 */}
+      {showSearchReplaceModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => { setReplaceResult(null); setShowSearchReplaceModal(false); }}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <div className="flex items-center gap-2">
+                <Search className="size-4 text-slate-400" />
+                <h3 className="text-sm font-black text-slate-800">搜索替换</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setReplaceResult(null); setShowSearchReplaceModal(false); }}
+                className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="flex flex-col gap-4 p-5">
+              <div>
+                <label className="mb-1.5 block text-xs font-bold text-slate-700">查找目标</label>
+                <input
+                  type="text"
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  placeholder="输入要查找的文本..."
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition-colors focus:border-violet-300 focus:ring-2 focus:ring-violet-100"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-bold text-slate-700">替换为</label>
+                <input
+                  type="text"
+                  value={replaceText}
+                  onChange={(e) => setReplaceText(e.target.value)}
+                  placeholder="输入替换后的文本..."
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition-colors focus:border-violet-300 focus:ring-2 focus:ring-violet-100"
+                />
+              </div>
+              {replaceResult && (
+                <div className="rounded-lg bg-emerald-50 px-3 py-2 text-center text-xs font-bold text-emerald-600">
+                  {replaceResult}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2 border-t border-slate-100 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => { setReplaceResult(null); setShowSearchReplaceModal(false); }}
+                className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSearchReplace}
+                disabled={!searchText || !!replaceResult}
+                className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                替换
               </button>
             </div>
           </div>
