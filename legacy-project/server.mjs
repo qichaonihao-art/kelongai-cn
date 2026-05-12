@@ -7729,6 +7729,152 @@ async function handleDouyinExtractTranscript(req, res) {
   }
 }
 
+async function handleDouyinExtractLocalTranscript(req, res) {
+  const requestId = createRequestId('dy_local_asr');
+  const startedAt = Date.now();
+  const transcriptDeadlineAt = startedAt + DOUYIN_TRANSCRIPT_TOTAL_TIMEOUT_MS;
+  const tempFiles = [];
+  let videoPath = '';
+  let audioPath = '';
+  let audioSegments = [];
+
+  try {
+    const form = await readMultipartFormBody(req);
+    const file = form.file;
+
+    if (!file || !(file instanceof File) || file.size === 0) {
+      sendJson(res, 400, {
+        ok: false,
+        transcriptOk: false,
+        error: '请上传视频文件'
+      });
+      return;
+    }
+
+    await ensureUploadTempDir();
+    const ext = path.extname(file.name || '.mp4') || '.mp4';
+    videoPath = path.join(UPLOAD_TEMP_DIR, `${requestId}_local${ext}`);
+    await writeFile(videoPath, Buffer.from(await file.arrayBuffer()));
+    tempFiles.push(videoPath);
+
+    const extractStageDeadlineAt = createStageDeadlineAt({
+      stageStartedAt: Date.now(),
+      stageTimeoutMs: DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS,
+      parentDeadlineAt: transcriptDeadlineAt
+    });
+    audioPath = await extractAudioFromDouyinVideo({
+      inputPath: videoPath,
+      requestId,
+      parentDeadlineAt: extractStageDeadlineAt,
+      sourceHost: 'local_upload'
+    });
+    tempFiles.push(audioPath);
+
+    audioSegments = await splitAudioForDouyinAsr({
+      audioPath,
+      requestId,
+      parentDeadlineAt: extractStageDeadlineAt,
+      sourceHost: 'local_upload'
+    });
+    for (const segmentPath of audioSegments) {
+      if (segmentPath !== audioPath) {
+        tempFiles.push(segmentPath);
+      }
+    }
+
+    const transcriptSegments = await Promise.all(
+      audioSegments.map((segmentAudioPath, index) => {
+        const asrStageDeadlineAt = createStageDeadlineAt({
+          stageStartedAt: Date.now(),
+          stageTimeoutMs: DOUYIN_ASR_TIMEOUT_MS,
+          parentDeadlineAt: transcriptDeadlineAt
+        });
+        return transcribeAudioWithSiliconFlow({
+          audioPath: segmentAudioPath,
+          requestId,
+          segmentIndex: index,
+          parentDeadlineAt: asrStageDeadlineAt
+        }).then((text) => text.trim());
+      })
+    );
+
+    const transcript = transcriptSegments.filter(Boolean).join('\n\n').trim();
+    const finalAudioSize = audioSegments.length
+      ? (await Promise.all(audioSegments.map((segmentPath) => getFileSizeIfExists(segmentPath))))
+        .reduce((sum, size) => sum + size, 0)
+      : await getFileSizeIfExists(audioPath);
+
+    logDouyinTranscriptEvent({
+      event: 'transcript_succeeded',
+      requestId,
+      startedAt,
+      timeoutMs: DOUYIN_TRANSCRIPT_TOTAL_TIMEOUT_MS,
+      targetPath: audioPath || videoPath,
+      finalFileSize: finalAudioSize,
+      host: getHostnameFromUrl(SILICONFLOW_API_BASE_URL) || 'local_upload',
+      upstreamStatus: 200,
+      videoId: 'local',
+      segmentCount: audioSegments.length
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      transcriptOk: true,
+      videoId: 'local',
+      title: file.name || '本地视频',
+      downloadUrl: '',
+      downloadUrlCandidates: [],
+      authorName: '',
+      normalizedUrl: '',
+      sourceType: 'local_upload',
+      transcript,
+      transcriptSegments: audioSegments.length,
+      transcriptError: '',
+      fallbackCaption: '',
+      fallbackCaptionSource: 'none',
+      resolveStrategy: 'local_upload'
+    });
+  } catch (error) {
+    const failureTargetPath = error?.targetPath || audioPath || videoPath || '';
+    const failureFileSize = failureTargetPath.startsWith('/')
+      ? await getFileSizeIfExists(failureTargetPath)
+      : 0;
+    logDouyinTranscriptEvent({
+      level: 'error',
+      event: 'transcript_failed',
+      requestId,
+      startedAt,
+      timeoutMs: error?.timeoutMs || DOUYIN_TRANSCRIPT_TOTAL_TIMEOUT_MS,
+      targetPath: failureTargetPath,
+      finalFileSize: failureFileSize,
+      host: error?.host || 'local_upload',
+      upstreamStatus: error?.upstreamStatus || 0,
+      failedStage: getDouyinTranscriptFailedStage(error),
+      stage: error?.stage || '',
+      curlCode: error?.curlCode || 0,
+      curlHttpStatus: error?.curlHttpStatus || 0,
+      curlStderr: error?.curlStderr || '',
+      effectiveUrl: error?.effectiveUrl || '',
+      firstSelectedHost: error?.firstSelectedHost || '',
+      retrySwitchedHost: error?.retrySwitchedHost || '',
+      message: error?.message || '',
+      detail: error?.detail || ''
+    });
+
+    sendJson(res, error?.statusCode || 500, {
+      ok: false,
+      transcriptOk: false,
+      error: getDouyinTranscriptErrorMessage(error),
+      detail: error?.detail || ''
+    });
+  } finally {
+    await cleanupRequestScopedUploadTempFiles({
+      requestId,
+      filePaths: tempFiles
+    });
+  }
+}
+
 async function handleDouyinDownloadVideo(req, res) {
   const requestId = createRequestId('dy_download');
   const startedAt = Date.now();
@@ -7809,6 +7955,68 @@ async function handleDouyinDownloadVideo(req, res) {
       requestId,
       filePaths: tempFiles
     });
+  }
+}
+
+async function handleDouyinVideoStream(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const downloadUrl = url.searchParams.get('downloadUrl');
+  const videoId = url.searchParams.get('videoId') || '';
+
+  if (!downloadUrl) {
+    sendJson(res, 400, { error: '缺少 downloadUrl 参数' });
+    return;
+  }
+
+  const requestId = createRequestId('dy_preview');
+  console.log('[douyin preview] stream_started', { requestId, videoId, targetPath: downloadUrl });
+
+  try {
+    const upstreamRes = await fetch(downloadUrl, {
+      headers: {
+        'Referer': 'https://www.douyin.com/',
+        'User-Agent': DOUYIN_USER_AGENT,
+        'Accept': '*/*',
+      },
+    });
+
+    if (!upstreamRes.ok) {
+      console.log('[douyin preview] upstream_failed', { requestId, upstreamStatus: upstreamRes.status });
+      sendJson(res, 502, { error: '上游视频请求失败', detail: `HTTP ${upstreamRes.status}` });
+      return;
+    }
+
+    const contentType = upstreamRes.headers.get('content-type') || 'video/mp4';
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Cache-Control': 'no-store',
+    });
+
+    if (!upstreamRes.body) {
+      res.end();
+      return;
+    }
+
+    const reader = upstreamRes.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+        if (res.flush) res.flush();
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    res.end();
+    console.log('[douyin preview] stream_finished', { requestId });
+  } catch (error) {
+    console.error('[douyin preview] stream_error', { requestId, message: error?.message });
+    if (!res.headersSent) {
+      sendJson(res, 500, { error: '视频流代理失败', detail: error?.message || '未知错误' });
+    } else {
+      try { res.destroy(); } catch {}
+    }
   }
 }
 
@@ -7963,6 +8171,16 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/douyin/download-video') {
     await handleDouyinDownloadVideo(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/douyin/extract-local-transcript') {
+    await handleDouyinExtractLocalTranscript(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/douyin/video-stream') {
+    await handleDouyinVideoStream(req, res);
     return;
   }
 

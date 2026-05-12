@@ -183,6 +183,40 @@ export async function extractDouyinTranscript(input: string): Promise<DouyinTran
   };
 }
 
+export async function extractLocalVideoTranscript(file: File): Promise<DouyinTranscriptResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch('/api/douyin/extract-local-transcript', {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  });
+
+  const json = await parseJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(buildErrorMessage(json, '本地视频文案提取失败'));
+  }
+
+  return {
+    ok: json?.ok !== false,
+    transcriptOk: json?.transcriptOk === true,
+    videoId: String(json?.videoId || ''),
+    title: typeof json?.title === 'string' ? json.title : '',
+    downloadUrl: String(json?.downloadUrl || ''),
+    downloadUrlCandidates: readDownloadUrlCandidates(json?.downloadUrlCandidates),
+    authorName: typeof json?.authorName === 'string' ? json.authorName : '',
+    normalizedUrl: typeof json?.normalizedUrl === 'string' ? json.normalizedUrl : '',
+    sourceType: 'local_upload',
+    transcript: typeof json?.transcript === 'string' ? json.transcript : '',
+    transcriptError: typeof json?.transcriptError === 'string' ? json.transcriptError : '',
+    transcriptSegments: Number.isFinite(json?.transcriptSegments) ? Number(json.transcriptSegments) : 0,
+    fallbackCaption: typeof json?.fallbackCaption === 'string' ? json.fallbackCaption : '',
+    fallbackCaptionSource: json?.fallbackCaptionSource === 'tikhub_caption' ? 'tikhub_caption' : 'none',
+    resolveStrategy: typeof json?.resolveStrategy === 'string' ? json.resolveStrategy : '',
+  };
+}
+
 export async function downloadDouyinVideoFile(params: {
   videoId: string;
   downloadUrl: string;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Download,
@@ -16,6 +16,8 @@ import {
   User,
   Clock,
   Settings2,
+  X,
+  Upload,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -23,6 +25,7 @@ import SiteFooter from "@/src/components/SiteFooter";
 import {
   downloadDouyinVideoFile,
   extractDouyinTranscript,
+  extractLocalVideoTranscript,
   getDouyinConfigStatus,
   polishDouyinTranscript,
   resolveDouyinDownload,
@@ -112,6 +115,20 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
   const [displayTranscript, setDisplayTranscript] = useState('');
   const [originalTranscript, setOriginalTranscript] = useState('');
   const [showDiff, setShowDiff] = useState(true);
+  const [showVideoPreview, setShowVideoPreview] = useState(false);
+  const [isLocalTranscriptLoading, setIsLocalTranscriptLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'link' | 'local'>('link');
+  const [localVideoUrl, setLocalVideoUrl] = useState<string>('');
+  const resultRef = useRef<HTMLDivElement>(null);
+  const localVideoInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    return () => {
+      if (localVideoUrl) {
+        URL.revokeObjectURL(localVideoUrl);
+      }
+    };
+  }, [localVideoUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,6 +165,9 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
     try {
       const response = await resolveDouyinDownload(nextInput);
       setResult(response);
+      setTimeout(() => {
+        resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 300);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : '抖音视频解析失败，请稍后重试。');
     } finally {
@@ -205,6 +225,56 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
       setError(submitError instanceof Error ? submitError.message : '视频文案提取失败，请稍后重试。');
     } finally {
       setIsTranscriptLoading(false);
+    }
+  }
+
+  async function handleExtractLocalTranscript(file: File) {
+    setIsLocalTranscriptLoading(true);
+    setError('');
+    setTranscriptResult(null);
+    setCopyStatus('idle');
+    setDisplayTranscript('');
+    setOriginalTranscript('');
+    setIsPolishing(false);
+    setShowDiff(true);
+
+    try {
+      const response = await extractLocalVideoTranscript(file);
+      const normalizedTranscriptResult: DouyinTranscriptResult = response.transcriptOk
+        ? response
+        : {
+            ...response,
+            transcriptError: response.transcriptError?.trim() || '本地视频文案提取失败，请稍后重试。',
+          };
+
+      setTranscriptResult(normalizedTranscriptResult);
+      setDisplayTranscript(normalizedTranscriptResult.transcript);
+      setOriginalTranscript(normalizedTranscriptResult.transcript);
+      setTimeout(() => {
+        resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 300);
+    } catch (submitError) {
+      setTranscriptResult(null);
+      setDisplayTranscript('');
+      setOriginalTranscript('');
+      setError(submitError instanceof Error ? submitError.message : '本地视频文案提取失败，请稍后重试。');
+    } finally {
+      setIsLocalTranscriptLoading(false);
+    }
+  }
+
+  function handleLocalVideoSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('video/')) {
+      setError('请选择视频文件');
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setLocalVideoUrl(url);
+    void handleExtractLocalTranscript(file);
+    if (localVideoInputRef.current) {
+      localVideoInputRef.current.value = '';
     }
   }
 
@@ -285,6 +355,16 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
     setOriginalTranscript('');
     setIsPolishing(false);
     setShowDiff(true);
+    if (localVideoUrl) {
+      URL.revokeObjectURL(localVideoUrl);
+      setLocalVideoUrl('');
+    }
+  }
+
+  function switchTab(tab: 'link' | 'local') {
+    if (tab === activeTab) return;
+    setActiveTab(tab);
+    resetAll();
   }
 
   const fallbackCaption = transcriptResult?.fallbackCaption || result?.fallbackCaption || '';
@@ -318,7 +398,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
         </button>
       </header>
 
-      <main className="flex-1 max-w-3xl mx-auto w-full p-6 space-y-6 pb-24">
+      <main className="flex-1 max-w-3xl mx-auto w-full p-6 space-y-4 pb-24">
         {/* Title Section */}
         <motion.section
           initial={{ opacity: 0, y: 12 }}
@@ -332,7 +412,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
             </div>
             <div>
               <h1 className="text-xl font-black tracking-tight text-slate-900">抖音视频解析</h1>
-              <p className="text-xs text-slate-500 mt-0.5 font-medium">粘贴链接，一键解析下载视频与提取文案</p>
+              <p className="text-xs text-slate-500 mt-0.5 font-medium">链接解析下载视频，或上传本地视频提取口播文案</p>
             </div>
           </div>
 
@@ -376,90 +456,170 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
           </div>
         </motion.section>
 
-        {/* Input Section */}
-        <motion.section
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.1 }}
-          className="glass-card rounded-3xl border-white/80 p-6 shadow-glass space-y-5"
-        >
-          <div className="flex items-center gap-2">
-            <div className="size-6 rounded-lg bg-indigo-50 flex items-center justify-center">
-              <Link2 className="size-3.5 text-indigo-600" />
-            </div>
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">粘贴链接</span>
-          </div>
-
-          <div className="relative">
-            <textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder="请输入抖音链接或分享文案..."
-              className="w-full h-32 rounded-2xl border border-slate-200 bg-white/60 p-4 text-sm outline-none transition-all resize-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-300 placeholder:text-slate-400"
-            />
-            {input && (
-              <button
-                onClick={() => setInput('')}
-                className="absolute top-3 right-3 size-6 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors"
-              >
-                <Trash2 className="size-3 text-slate-400" />
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3">
+        {/* 工作区 */}
+        <div className="glass-card rounded-3xl border-white/80 shadow-glass overflow-hidden max-w-3xl mx-auto">
+          {/* Tab栏 */}
+          <div className="flex gap-2 p-3">
             <button
-              disabled={isResolving}
-              onClick={handleResolve}
-              className="flex-1 h-10 rounded-full text-sm font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/20 transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              onClick={() => switchTab('link')}
+              className={`flex-1 flex items-center justify-center gap-2 h-10 rounded-xl text-xs font-bold transition-all ${
+                activeTab === 'link'
+                  ? 'bg-white text-indigo-400 shadow-sm shadow-indigo-100 ring-2 ring-indigo-200'
+                  : 'text-slate-400 hover:text-slate-500'
+              }`}
             >
-              {isResolving ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  解析中...
-                </>
-              ) : (
-                <>
-                  <Play className="size-4" />
-                  解析视频
-                </>
-              )}
+              <Link2 className="size-3.5" />
+              链接解析视频
             </button>
-
             <button
-              onClick={resetAll}
-              disabled={isResolving || isTranscriptLoading}
-              className="h-10 rounded-full px-5 text-sm font-bold text-slate-600 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all disabled:opacity-50"
+              onClick={() => switchTab('local')}
+              className={`flex-1 flex items-center justify-center gap-2 h-10 rounded-xl text-xs font-bold transition-all ${
+                activeTab === 'local'
+                  ? 'bg-white text-emerald-400 shadow-sm shadow-emerald-100 ring-2 ring-emerald-200'
+                  : 'text-slate-400 hover:text-slate-500'
+              }`}
             >
-              清空
+              <Upload className="size-3.5" />
+              本地视频提取逐字稿
             </button>
           </div>
 
-          <AnimatePresence>
-            {error && (
+          {/* 内容区 */}
+          <AnimatePresence mode="wait">
+            {activeTab === 'link' ? (
               <motion.div
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                className="rounded-xl border border-red-100 bg-red-50/80 px-4 py-3 text-xs text-red-600 font-medium flex items-center gap-2"
+                key="link"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="p-6 space-y-5"
               >
-                <AlertCircle className="size-4 shrink-0" />
-                {error}
+                <div className="relative">
+                  <textarea
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    placeholder="请输入抖音链接或分享文案..."
+                    className="w-full h-32 rounded-2xl border border-slate-200 bg-white/60 p-4 text-sm outline-none transition-all resize-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-300 placeholder:text-slate-400"
+                  />
+                  {input && (
+                    <button
+                      onClick={() => setInput('')}
+                      className="absolute top-3 right-3 size-6 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors"
+                    >
+                      <Trash2 className="size-3 text-slate-400" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    disabled={isResolving}
+                    onClick={handleResolve}
+                    className="flex-1 h-10 rounded-full text-sm font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/20 transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isResolving ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" />
+                        解析中...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="size-4" />
+                        解析视频
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={resetAll}
+                    disabled={isResolving || isTranscriptLoading}
+                    className="h-10 rounded-full px-5 text-sm font-bold text-slate-600 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all disabled:opacity-50"
+                  >
+                    清空
+                  </button>
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="local"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="p-6 space-y-5"
+              >
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white/40 p-6 text-center space-y-3">
+                  <div className="inline-flex size-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                    <Upload className="size-6" />
+                  </div>
+                  <p className="text-xs text-slate-400">支持 MP4、MOV 等常见视频格式</p>
+                  <input
+                    ref={localVideoInputRef}
+                    type="file"
+                    accept="video/*"
+                    onChange={handleLocalVideoSelect}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={isLocalTranscriptLoading}
+                    onClick={() => localVideoInputRef.current?.click()}
+                    className="h-10 rounded-full px-6 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/20 transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 mx-auto"
+                  >
+                    {isLocalTranscriptLoading ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" />
+                        提取逐字稿中...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="size-4" />
+                        选择视频文件
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {localVideoUrl && (
+                  <video
+                    src={localVideoUrl}
+                    controls
+                    className="w-full max-h-40 rounded-2xl bg-slate-900 object-contain"
+                    playsInline
+                  />
+                )}
               </motion.div>
             )}
           </AnimatePresence>
-        </motion.section>
+        </div>
+
+        {/* 错误提示 */}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="rounded-xl border border-red-100 bg-red-50/80 px-4 py-3 text-xs text-red-600 font-medium flex items-center gap-2"
+            >
+              <AlertCircle className="size-4 shrink-0" />
+              {error}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Result Section */}
         <AnimatePresence>
           {(hasResult || isTranscriptLoading) && (
             <motion.section
+              ref={resultRef}
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4 }}
               className="space-y-4"
             >
-              {/* Video Info Card */}
+              {activeTab === 'link' && (
               <div className="glass-card rounded-3xl border-white/80 p-6 shadow-glass space-y-5">
                 <div className="flex items-center gap-3">
                   <div className="inline-flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-500/20">
@@ -521,6 +681,14 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                       </button>
 
                       <button
+                        onClick={() => setShowVideoPreview(true)}
+                        className="flex-1 h-10 rounded-full text-sm font-bold text-slate-700 bg-white/70 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2"
+                      >
+                        <Play className="size-4" />
+                        预览视频
+                      </button>
+
+                      <button
                         onClick={handleExtractTranscript}
                         disabled={isTranscriptLoading}
                         className="flex-1 h-10 rounded-full text-sm font-bold text-slate-700 bg-white/70 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2"
@@ -546,6 +714,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                   </div>
                 )}
               </div>
+              )}
 
               {/* Transcript Card */}
               <div className="glass-card rounded-3xl border-white/80 p-6 shadow-glass space-y-5">
@@ -714,6 +883,38 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
           )}
         </AnimatePresence>
       </main>
+
+      {/* 视频预览弹窗 */}
+      {showVideoPreview && result?.downloadUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setShowVideoPreview(false)}
+        >
+          <div
+            className="relative max-h-[90vh] w-fit rounded-2xl shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setShowVideoPreview(false)}
+              className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-full bg-black/40 text-white/80 backdrop-blur-sm transition-colors hover:bg-black/60 hover:text-white"
+            >
+              <X className="size-4" />
+            </button>
+            <video
+              src={`/api/douyin/video-stream?downloadUrl=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId)}`}
+              controls
+              autoPlay
+              className="max-h-[90vh] w-auto"
+              playsInline
+              onError={() => {
+                alert('视频加载失败，可能是链接已过期，请重新解析后再试');
+                setShowVideoPreview(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       <SiteFooter className="px-6 pb-6 pt-2" />
     </div>
