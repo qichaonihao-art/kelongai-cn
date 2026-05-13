@@ -3393,7 +3393,7 @@ async function extractAudioFromDouyinVideo({ inputPath, requestId, parentDeadlin
       '-vn',
       '-ac', '1',
       '-ar', '16000',
-      '-b:a', '32k',
+      '-b:a', '64k',
       audioPath
     ], {
       timeout: timeoutMs,
@@ -3620,6 +3620,7 @@ async function transcribeAudioWithSiliconFlow({ audioPath, requestId, segmentInd
     '--header', `Authorization: Bearer ${apiKey}`,
     '--form', `file=@${audioPath};type=${mimeType}`,
     '--form', `model=${SILICONFLOW_ASR_MODEL}`,
+    '--form', 'response_format=json',
     '--connect-timeout', String(DOUYIN_ASR_CONNECT_TIMEOUT_SECONDS),
     '--max-time', String(Math.ceil(timeoutMs / 1000)),
     '--write-out', '\n__CURL_HTTP_STATUS__:%{http_code}'
@@ -3749,7 +3750,22 @@ async function transcribeAudioWithSiliconFlow({ audioPath, requestId, segmentInd
     });
   }
 
-  const transcriptText = readValue(json?.text, json?.result, json?.transcript);
+  function extractTranscriptText(value) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (Array.isArray(value) && value.length > 0) {
+      const first = value[0];
+      if (typeof first === 'string' && first.trim()) return first.trim();
+      if (first && typeof first === 'object') {
+        return extractTranscriptText(first.text ?? first.result ?? first.transcript);
+      }
+    }
+    if (value && typeof value === 'object') {
+      return extractTranscriptText(value.text ?? value.result ?? value.transcript);
+    }
+    return '';
+  }
+
+  const transcriptText = extractTranscriptText(json?.text ?? json?.result ?? json?.transcript ?? json?.data);
   if (!transcriptText) {
     logDouyinTranscriptEvent({
       level: 'error',

@@ -98,14 +98,14 @@ interface SeedanceHistoryItem {
 
 const MAX_VIDEO_SIZE_BYTES = 150 * 1024 * 1024;
 const MAX_SAVED_CREATIVE_SESSIONS = 8;
-const MAX_SEEDANCE_HISTORY_ITEMS = 20;
+const MAX_SEEDANCE_HISTORY_ITEMS = 30;
 const SEEDANCE_HISTORY_MAX_AGE_HOURS = 24;
 const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
 const SEEDANCE_COST_KEY = 'kelongai.seedanceCost';
 const ADDITIONAL_CHANGE_HISTORY_KEY = 'kelongai.additionalChangeHistory';
-const ADDITIONAL_CHANGE_HISTORY_MAX = 20;
+const ADDITIONAL_CHANGE_HISTORY_MAX = 30;
 const NOTEBOOK_STORAGE_KEY = 'kelongai.notebook';
 
 interface NotebookItem {
@@ -1288,8 +1288,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
     const trimmed = text.trim();
     if (!trimmed) return;
     setAdditionalChangeHistory((previous) => {
-      const filtered = previous.filter((item) => item !== trimmed);
-      const next = [trimmed, ...filtered].slice(0, ADDITIONAL_CHANGE_HISTORY_MAX);
+      if (previous.includes(trimmed)) {
+        return previous;
+      }
+      const next = [trimmed, ...previous].slice(0, ADDITIONAL_CHANGE_HISTORY_MAX);
       try {
         window.localStorage.setItem(ADDITIONAL_CHANGE_HISTORY_KEY, JSON.stringify(next));
       } catch {
