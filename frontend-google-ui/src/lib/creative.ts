@@ -23,6 +23,7 @@ interface CreativeConfigStatus {
   arkApiKey: boolean;
   seedanceApiKey: boolean;
   publicBaseUrl: boolean;
+  doubaoMultimodalModel?: string;
 }
 
 export interface SeedanceTaskResult {
@@ -319,6 +320,7 @@ export async function getCreativeConfigStatus(): Promise<CreativeConfigStatus> {
       arkApiKey: !!json?.serverManaged?.arkApiKey,
       seedanceApiKey: !!json?.serverManaged?.seedanceApiKey,
       publicBaseUrl: !!json?.serverManaged?.publicBaseUrl,
+      doubaoMultimodalModel: json?.serverManaged?.doubaoMultimodalModel || '',
     };
   } catch {
     return {

@@ -17,6 +17,7 @@ export interface DouyinResolveResult {
   fallbackCaption?: string;
   fallbackCaptionSource?: 'none' | 'tikhub_caption';
   authorName?: string;
+  duration?: number;
   videoData?: Record<string, unknown> | null;
   normalizedUrl?: string;
   sourceType: 'web_url' | 'short_share_text';
@@ -46,6 +47,7 @@ export interface DouyinConfigStatus {
   siliconFlowApiKey: boolean;
   tikhubApiToken: boolean;
   arkApiKey: boolean;
+  dashscopeApiKey: boolean;
 }
 
 function buildDownloadFileName(videoId: string) {
@@ -105,6 +107,7 @@ export async function getDouyinConfigStatus(): Promise<DouyinConfigStatus> {
       siliconFlowApiKey: !!json?.serverManaged?.siliconFlowApiKey,
       tikhubApiToken: !!json?.serverManaged?.tikhubApiToken,
       arkApiKey: !!json?.serverManaged?.arkApiKey,
+      dashscopeApiKey: !!json?.serverManaged?.dashscopeApiKey,
     };
   } catch {
     return {
@@ -112,6 +115,7 @@ export async function getDouyinConfigStatus(): Promise<DouyinConfigStatus> {
       siliconFlowApiKey: false,
       tikhubApiToken: false,
       arkApiKey: false,
+      dashscopeApiKey: false,
     };
   }
 }

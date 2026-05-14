@@ -168,8 +168,14 @@ function migrateOldHistory(conversations: ConversationsMap, model: string): Conv
 
 function normalizeMarkdown(text: string): string {
   if (!text) return text;
+  // Protect valid bold markers first: **text** → placeholder
+  let result = text.replace(/\*\*([^*]+?)\*\*/g, 'B$1B');
+  // Remove remaining stray ** and *
+  result = result.replace(/\*\*/g, '');
+  // Restore valid bold markers
+  result = result.replace(/B/g, '**');
   return (
-    text
+    result
       // Fix headings: ###Title → ### Title (after whitespace/punctuation or start)
       .replace(/([\s:：,，;；]|^)(#{1,6})([^#\s])/g, '$1$2 $3')
       // Fix ordered lists: 1.Content → 1. Content (single digit only, to avoid dates/percentages)
@@ -178,6 +184,8 @@ function normalizeMarkdown(text: string): string {
       .replace(/([\s]|^)([-*+])([^\s\n])/g, '$1$2 $3')
       // Fix strikethrough: 25~32℃ → 25-32℃ (numbers with tilde are ranges, not strikethrough)
       .replace(/(\d)~+(\d)/g, '$1-$2')
+      // Remove spurious italics: *text* → text (but preserve **bold** and * list)
+      .replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '$1')
   );
 }
 
@@ -271,7 +279,7 @@ export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelP
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
+    el.style.height = `${Math.max(84, el.scrollHeight)}px`;
   }, [input]);
 
   useEffect(() => {
@@ -895,8 +903,8 @@ export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelP
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={`向 ${currentModel.name} 提问...`}
-              rows={1}
-              className="min-h-[40px] max-h-32 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2.5 text-sm leading-5 text-slate-700 outline-none placeholder:text-slate-400"
+              rows={3}
+              className="min-h-[84px] max-h-48 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2.5 text-sm leading-6 text-slate-700 outline-none placeholder:text-slate-400"
             />
             <button
               onClick={handleSubmit}

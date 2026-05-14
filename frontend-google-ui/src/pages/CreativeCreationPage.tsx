@@ -746,6 +746,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
   const [arkApiConfigured, setArkApiConfigured] = useState(true);
   const [seedanceApiConfigured, setSeedanceApiConfigured] = useState(true);
   const [publicBaseUrlConfigured, setPublicBaseUrlConfigured] = useState(false);
+  const [doubaoMultimodalModel, setDoubaoMultimodalModel] = useState('');
   const [selectedMedia, setSelectedMedia] = useState<SelectedCreativeMedia | null>(null);
   const [seedancePrompt, setSeedancePrompt] = useState("");
   const [seedanceRatio, setSeedanceRatio] = useState("9:16");
@@ -945,6 +946,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
       setArkApiConfigured(status.arkApiKey);
       setSeedanceApiConfigured(status.seedanceApiKey);
       setPublicBaseUrlConfigured(status.publicBaseUrl);
+      setDoubaoMultimodalModel(status.doubaoMultimodalModel || '');
     }
 
     loadConfig();
@@ -2150,7 +2152,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
                   <h2 className="text-base font-black text-slate-900">视频反推提示词</h2>
                 </div>
                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black tracking-wider text-emerald-600">
-                  已接入豆包多模态
+                  已接入豆包多模态 {doubaoMultimodalModel.includes('pro') ? 'Pro' : doubaoMultimodalModel.includes('lite') ? 'Lite' : ''}
                 </span>
               </div>
 

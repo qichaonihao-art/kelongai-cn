@@ -101,6 +101,16 @@ function computeTextDiff(oldText: string, newText: string): DiffPart[] {
   return merged;
 }
 
+function formatDuration(seconds: number): string {
+  if (!seconds || seconds <= 0) return '';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  if (m > 0) {
+    return `${m}分${s > 0 ? `${s}秒` : ''}`;
+  }
+  return `${s}秒`;
+}
+
 export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
   const [isResolving, setIsResolving] = useState(false);
@@ -118,7 +128,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
   const [showVideoPreview, setShowVideoPreview] = useState(false);
   const [isLocalTranscriptLoading, setIsLocalTranscriptLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'link' | 'local'>('link');
-  const [asrEngine, setAsrEngine] = useState<'siliconflow' | 'doubao'>('siliconflow');
+  const [asrEngine, setAsrEngine] = useState<'siliconflow' | 'qwen'>('qwen');
   const [localVideoUrl, setLocalVideoUrl] = useState<string>('');
   const resultRef = useRef<HTMLDivElement>(null);
   const localVideoInputRef = useRef<HTMLInputElement>(null);
@@ -373,6 +383,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
   const siliconFlowConfigured = configStatus?.siliconFlowApiKey === true;
   const tikhubConfigured = configStatus?.tikhubApiToken === true;
   const arkApiKeyConfigured = configStatus?.arkApiKey === true;
+  const dashscopeConfigured = configStatus?.dashscopeApiKey === true;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -442,12 +453,12 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
             </span>
             <span
               className={`rounded-full border px-3 py-1 text-[11px] font-bold ${
-                arkApiKeyConfigured
+                dashscopeConfigured
                   ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
                   : 'border-amber-100 bg-amber-50 text-amber-700'
               }`}
             >
-              豆包多模态：{arkApiKeyConfigured ? '已配置' : '未配置'}
+              千问 ASR：{dashscopeConfigured ? '已配置' : '未配置'}
             </span>
             {configStatus && !configStatus.reachable && (
               <span className="rounded-full border border-red-100 bg-red-50 px-3 py-1 text-[11px] font-bold text-red-600">
@@ -496,6 +507,16 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
               <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5"
               >
                 <button
+                  onClick={() => setAsrEngine('qwen')}
+                  className={`h-6 rounded-md px-2 text-[10px] font-bold transition-all ${
+                    asrEngine === 'qwen'
+                      ? 'bg-white text-blue-600 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  千问 ASR
+                </button>
+                <button
                   onClick={() => setAsrEngine('siliconflow')}
                   className={`h-6 rounded-md px-2 text-[10px] font-bold transition-all ${
                     asrEngine === 'siliconflow'
@@ -504,16 +525,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                   }`}
                 >
                   SenseVoice（免费）
-                </button>
-                <button
-                  onClick={() => setAsrEngine('doubao')}
-                  className={`h-6 rounded-md px-2 text-[10px] font-bold transition-all ${
-                    asrEngine === 'doubao'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-slate-400 hover:text-slate-600'
-                  }`}
-                >
-                  豆包 ASR
                 </button>
               </div>
             </div>
@@ -656,13 +667,21 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
             >
               {activeTab === 'link' && (
               <div className="glass-card rounded-3xl border-white/80 p-6 shadow-glass space-y-5">
-                <div className="flex items-center gap-3">
-                  <div className="inline-flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-500/20">
-                    <Download className="size-4" />
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="inline-flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-500/20">
+                      <Download className="size-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">视频信息</div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">视频信息</div>
-                  </div>
+                  {(result?.duration || 0) > 0 && (
+                    <div className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1.5 border border-indigo-100">
+                      <Clock className="size-3 text-indigo-500" />
+                      <span className="text-[11px] font-bold text-indigo-600">{formatDuration(result.duration)}</span>
+                    </div>
+                  )}
                 </div>
 
                 {result ? (
@@ -691,6 +710,18 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                           </div>
                           <div className="text-xs font-semibold text-slate-700">
                             {result.authorName.trim()}
+                          </div>
+                        </div>
+                      )}
+
+                      {(result.duration || 0) > 0 && (
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                            <Clock className="size-3" />
+                            视频时长
+                          </div>
+                          <div className="text-xs font-semibold text-slate-700">
+                            {formatDuration(result.duration!)}
                           </div>
                         </div>
                       )}
