@@ -196,7 +196,62 @@ server {
 - `proxy_buffering off` 对 SSE 流式返回尤其重要，否则浏览器可能一直收不到增量数据
 - `client_max_body_size` 需要大于你允许上传的视频大小
 
-## 六、回滚方式
+## 六、抖音视频下载网络诊断
+
+如果线上服务器下载视频明显比本地慢，请按以下步骤诊断：
+
+### 1. 服务器直接测速（对比本地 curl）
+
+```bash
+# 替换为实际的抖音视频直链 URL
+curl -L -s -o /tmp/test_douyin.mp4 \
+  -w '\nHTTP=%{http_code}\nSIZE=%{size_download}\nDNS=%{time_namelookup}\nCONNECT=%{time_connect}\nTTFB=%{time_starttransfer}\nTOTAL=%{time_total}\nSPEED=%{speed_download}\n' \
+  --connect-timeout 10 --max-time 60 \
+  -H 'Referer: https://www.douyin.com/' \
+  -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36' \
+  "URL_HERE"
+```
+
+对比本地执行同一命令的结果。关注 `TTFB` 和 `SPEED` 差异。
+
+### 2. 诊断指标阈值
+
+| 指标 | 阈值 | 含义 | 建议 |
+|------|------|------|------|
+| DNS > 500ms | 警告 | DNS 解析慢 | 检查 `/etc/resolv.conf`，换 223.5.5.5 或 8.8.8.8 |
+| CONNECT - DNS > 1s | 警告 | TCP 握手延迟高 | 服务器到 CDN 路由差，考虑换地域 |
+| TTFB - PRETRANSFER > 3s | 严重 | CDN 边缘节点响应慢 | CDN 限流或节点过载，自适应冷却会自动处理 |
+| TOTAL - TTFB > 30s | 警告 | 数据传输慢 | 带宽不足或被限速 |
+| speed_download < 500KB/s | 严重 | 公网带宽瓶颈 | 升级服务器带宽或换实例 |
+
+### 3. 服务器公网带宽测试
+
+```bash
+curl -s https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py | python3 - --simple
+```
+
+### 4. 查看 Nginx 超时日志
+
+```bash
+sudo tail -100 /var/log/nginx/error.log | grep -E '(504|502|upstream timed out)'
+```
+
+### 5. 实时查看 host 自适应排名
+
+```bash
+curl -s http://localhost:3000/api/douyin/host-stats | python3 -m json.tool
+```
+
+### 6. 路由延迟探测
+
+```bash
+# 查看服务器到抖音 CDN 的延迟
+ping -c 5 -W 3 v9-dy-o-abtest.zjcdn.com
+# 查看路由路径
+traceroute v9-dy-o-abtest.zjcdn.com
+```
+
+## 七、回滚方式
 
 如果新前端上线后要临时回滚：
 

@@ -100,6 +100,10 @@ const DOUYIN_VIDEO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = Math.min(
   Math.max(6, Math.floor(DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS / 1000 / 3))
 );
 const DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS = [0, 800, 1500];
+const DOUYIN_HOST_STATS_MAX_SAMPLES = 20;
+const DOUYIN_HOST_COOLDOWN_BASE_MS = 30 * 1000;
+const DOUYIN_HOST_COOLDOWN_MAX_MS = 5 * 60 * 1000;
+const DOUYIN_HOST_CONSECUTIVE_FAILURE_THRESHOLD = 3;
 const DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS = readTimeoutMs(
   process.env.DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS,
   DEFAULT_DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS,
@@ -2646,16 +2650,46 @@ function scoreDouyinDownloadCandidate(candidate) {
   score += Math.round(successRate * 60);
   score -= Math.round(timeoutRate * 80);
 
+  // Real-world timing-based scoring
+  const ttfbTiming = getDouyinDownloadHostRollingAverage(host, 'ttfb');
+  const durationTiming = getDouyinDownloadHostRollingAverage(host, 'totalDuration');
+
+  if (ttfbTiming.isReliable) {
+    const ttfbAvg = ttfbTiming.avgMs;
+    if (ttfbAvg < 500) score += 25;
+    else if (ttfbAvg < 1500) score += 12;
+    else if (ttfbAvg < 3000) score += 0;
+    else if (ttfbAvg < 6000) score -= 20;
+    else score -= 45;
+  }
+
+  if (durationTiming.isReliable) {
+    const durationAvg = durationTiming.avgMs;
+    if (durationAvg > 30000) score -= 30;
+    else if (durationAvg > 15000) score -= 15;
+  }
+
+  // Cooldown penalty - extremely strong
+  if (isDouyinDownloadHostInCooldown(host).inCooldown) {
+    score -= 500;
+  }
+
+  // Consecutive failure penalty
+  if (hostStats.consecutiveFailures > 0) {
+    score -= hostStats.consecutiveFailures * 15;
+  }
+
   return score;
 }
 
 function rankDouyinDownloadCandidates(candidates, options = {}) {
   const {
     attemptedHosts = new Set(),
-    avoidHosts = new Set()
+    avoidHosts = new Set(),
+    respectCooldown = true
   } = options;
 
-  return [...candidates]
+  const scored = [...candidates]
     .filter((candidate) => candidate?.url)
     .map((candidate) => {
       const host = String(candidate?.host || '');
@@ -2672,8 +2706,16 @@ function rankDouyinDownloadCandidates(candidates, options = {}) {
     })
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
+      const leftTtfb = getDouyinDownloadHostRollingAverage(left.host, 'ttfb').avgMs || Infinity;
+      const rightTtfb = getDouyinDownloadHostRollingAverage(right.host, 'ttfb').avgMs || Infinity;
+      if (leftTtfb !== rightTtfb) return leftTtfb - rightTtfb;
       return String(left.host || '').localeCompare(String(right.host || ''));
     });
+
+  if (!respectCooldown) return scored;
+
+  const active = scored.filter((c) => !isDouyinDownloadHostInCooldown(c.host).inCooldown);
+  return active.length > 0 ? active : scored;
 }
 
 function pickBestDouyinDownloadCandidate(candidates, options = {}) {
@@ -3178,9 +3220,9 @@ function getHostnameFromUrl(rawUrl) {
   }
 }
 
-function updateDouyinDownloadHostStats(host, outcome = 'selected') {
+function getDouyinDownloadHostStatsWithTiming(host) {
   const normalizedHost = String(host || 'unknown').trim() || 'unknown';
-  const current = douyinDownloadHostStats.get(normalizedHost) || {
+  return douyinDownloadHostStats.get(normalizedHost) || {
     selected: 0,
     attempts: 0,
     success: 0,
@@ -3190,11 +3232,96 @@ function updateDouyinDownloadHostStats(host, outcome = 'selected') {
     http5xx: 0,
     empty: 0,
     invalid: 0,
-    network: 0
+    network: 0,
+    ttfbSamples: [],
+    totalDurationSamples: [],
+    consecutiveFailures: 0,
+    cooldownUntil: 0,
+    lastOutcome: '',
+    lastAttemptAt: 0
   };
+}
+
+function recordDouyinDownloadHostTtfb(host, ttfbMs) {
+  const stats = getDouyinDownloadHostStatsWithTiming(host);
+  stats.ttfbSamples.push({ ttfbMs, timestamp: Date.now() });
+  if (stats.ttfbSamples.length > DOUYIN_HOST_STATS_MAX_SAMPLES) {
+    stats.ttfbSamples.shift();
+  }
+  douyinDownloadHostStats.set(stats.host || host, stats);
+}
+
+function recordDouyinDownloadHostTotalDuration(host, durationMs) {
+  const stats = getDouyinDownloadHostStatsWithTiming(host);
+  stats.totalDurationSamples.push({ durationMs, timestamp: Date.now() });
+  if (stats.totalDurationSamples.length > DOUYIN_HOST_STATS_MAX_SAMPLES) {
+    stats.totalDurationSamples.shift();
+  }
+  douyinDownloadHostStats.set(stats.host || host, stats);
+}
+
+function getDouyinDownloadHostRollingAverage(host, field) {
+  const stats = getDouyinDownloadHostStatsWithTiming(host);
+  const samples = field === 'ttfb' ? stats.ttfbSamples : stats.totalDurationSamples;
+  if (!samples || samples.length === 0) {
+    return { avgMs: 0, sampleCount: 0, isReliable: false };
+  }
+  const sum = samples.reduce((acc, s) => acc + (s.ttfbMs || s.durationMs || 0), 0);
+  const avgMs = Math.round(sum / samples.length);
+  return { avgMs, sampleCount: samples.length, isReliable: samples.length >= 3 };
+}
+
+function isDouyinDownloadHostInCooldown(host) {
+  const stats = getDouyinDownloadHostStatsWithTiming(host);
+  const remainingMs = Math.max(0, (stats.cooldownUntil || 0) - Date.now());
+  return { inCooldown: remainingMs > 0, remainingMs };
+}
+
+function incrementDouyinDownloadHostConsecutiveFailures(host) {
+  const stats = getDouyinDownloadHostStatsWithTiming(host);
+  stats.consecutiveFailures += 1;
+  stats.lastOutcome = 'failure';
+  stats.lastAttemptAt = Date.now();
+
+  if (stats.consecutiveFailures >= DOUYIN_HOST_CONSECUTIVE_FAILURE_THRESHOLD) {
+    const exponent = stats.consecutiveFailures - DOUYIN_HOST_CONSECUTIVE_FAILURE_THRESHOLD;
+    const cooldownMs = Math.min(
+      DOUYIN_HOST_COOLDOWN_BASE_MS * Math.pow(2, exponent),
+      DOUYIN_HOST_COOLDOWN_MAX_MS
+    );
+    stats.cooldownUntil = Date.now() + cooldownMs;
+  }
+
+  douyinDownloadHostStats.set(stats.host || host, stats);
+}
+
+function resetDouyinDownloadHostConsecutiveFailures(host) {
+  const stats = getDouyinDownloadHostStatsWithTiming(host);
+  stats.consecutiveFailures = 0;
+  stats.cooldownUntil = 0;
+  stats.lastOutcome = 'success';
+  stats.lastAttemptAt = Date.now();
+  douyinDownloadHostStats.set(stats.host || host, stats);
+}
+
+function updateDouyinDownloadHostStats(host, outcome = 'selected', timing = null) {
+  const normalizedHost = String(host || 'unknown').trim() || 'unknown';
+  const current = getDouyinDownloadHostStatsWithTiming(normalizedHost);
 
   if (Object.prototype.hasOwnProperty.call(current, outcome)) {
     current[outcome] += 1;
+  }
+
+  if (outcome === 'success') {
+    resetDouyinDownloadHostConsecutiveFailures(normalizedHost);
+    if (timing?.ttfbMs && Number.isFinite(timing.ttfbMs)) {
+      recordDouyinDownloadHostTtfb(normalizedHost, timing.ttfbMs);
+    }
+    if (timing?.totalDurationMs && Number.isFinite(timing.totalDurationMs)) {
+      recordDouyinDownloadHostTotalDuration(normalizedHost, timing.totalDurationMs);
+    }
+  } else if (['failure', 'timeout', 'http4xx', 'http5xx', 'empty', 'invalid', 'network'].includes(outcome)) {
+    incrementDouyinDownloadHostConsecutiveFailures(normalizedHost);
   }
 
   douyinDownloadHostStats.set(normalizedHost, current);
@@ -3237,6 +3364,39 @@ function getDouyinDownloadHostBaseScore(host) {
   if (/zjcdn\.com$/i.test(normalizedHost)) score += 35;
   if (/abtest/i.test(normalizedHost)) score -= 90;
   return score;
+}
+
+function diagnoseCurlTimingBreakdown(timing) {
+  const {
+    time_namelookup = 0,
+    time_connect = 0,
+    time_appconnect = 0,
+    time_pretransfer = 0,
+    time_starttransfer = 0,
+    time_total = 0
+  } = timing || {};
+
+  const dnsMs = Math.round(time_namelookup * 1000);
+  const tcpMs = Math.round((time_connect - time_namelookup) * 1000);
+  const tlsMs = Math.round((time_appconnect - time_connect) * 1000);
+  const serverWaitMs = Math.round((time_starttransfer - time_pretransfer) * 1000);
+  const transferMs = Math.round((time_total - time_starttransfer) * 1000);
+
+  const issues = [];
+  if (dnsMs > 500) issues.push({ type: 'dns_slow', detail: `DNS took ${dnsMs}ms`, severity: 'warning' });
+  if (tcpMs > 1000) issues.push({ type: 'tcp_latency', detail: `TCP handshake took ${tcpMs}ms`, severity: 'warning' });
+  if (tlsMs > 1000) issues.push({ type: 'tls_slow', detail: `TLS handshake took ${tlsMs}ms`, severity: 'info' });
+  if (serverWaitMs > 3000) issues.push({ type: 'cdn_slow_ttfb', detail: `Server wait (TTFB after ready) took ${serverWaitMs}ms`, severity: 'critical' });
+  if (transferMs > 30000) issues.push({ type: 'transfer_slow', detail: `Data transfer took ${transferMs}ms`, severity: 'warning' });
+
+  return {
+    breakdown: { dnsMs, tcpMs, tlsMs, serverWaitMs, transferMs, totalMs: Math.round(time_total * 1000) },
+    issues,
+    bottleneck: issues.length > 0 ? issues.sort((a, b) => {
+      const sev = { critical: 3, warning: 2, info: 1 };
+      return sev[b.severity] - sev[a.severity];
+    })[0].type : 'none'
+  };
 }
 
 function shouldRetryDouyinVideoDownloadError(error) {
@@ -3329,7 +3489,7 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
       '--header', 'Accept: */*',
       '--connect-timeout', String(DOUYIN_VIDEO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS),
       '--max-time', String(Math.ceil(timeoutMs / 1000)),
-      '--write-out', '\n__CURL_HTTP_STATUS__:%{http_code}\n__CURL_SIZE_DOWNLOAD__:%{size_download}\n__CURL_EFFECTIVE_URL__:%{url_effective}'
+      '--write-out', '\n__CURL_TIMING__:%{time_namelookup},%{time_connect},%{time_appconnect},%{time_pretransfer},%{time_starttransfer},%{time_total}\n__CURL_HTTP_STATUS__:%{http_code}\n__CURL_SIZE_DOWNLOAD__:%{size_download}\n__CURL_EFFECTIVE_URL__:%{url_effective}'
     ];
     const hostStats = updateDouyinDownloadHostStats(downloadHost, 'attempts');
 
@@ -3366,6 +3526,7 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
 
       const stdoutText = String(stdout || '');
       const stderrText = String(stderr || '');
+      const timingMatch = stdoutText.match(/__CURL_TIMING__:([\d.]+),([\d.]+),([\d.]+),([\d.]+),([\d.]+),([\d.]+)/);
       const httpStatusMatch = stdoutText.match(/__CURL_HTTP_STATUS__:(\d+)/);
       const sizeDownloadMatch = stdoutText.match(/__CURL_SIZE_DOWNLOAD__:(\d+(?:\.\d+)?)/);
       const effectiveUrlMatch = stdoutText.match(/__CURL_EFFECTIVE_URL__:(.+)$/m);
@@ -3373,6 +3534,17 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
       const reportedSize = Number.parseFloat(sizeDownloadMatch?.[1] || '0');
       const effectiveUrl = String(effectiveUrlMatch?.[1] || '').trim();
       const stderrSummary = summarizeUpstreamBody(stderrText);
+
+      const curlTiming = {
+        time_namelookup: Number.parseFloat(timingMatch?.[1] || '0'),
+        time_connect: Number.parseFloat(timingMatch?.[2] || '0'),
+        time_appconnect: Number.parseFloat(timingMatch?.[3] || '0'),
+        time_pretransfer: Number.parseFloat(timingMatch?.[4] || '0'),
+        time_starttransfer: Number.parseFloat(timingMatch?.[5] || '0'),
+        time_total: Number.parseFloat(timingMatch?.[6] || '0'),
+      };
+      const ttfbMs = Math.round(curlTiming.time_starttransfer * 1000);
+      const totalDurationMs = Math.round(curlTiming.time_total * 1000);
 
       if (!httpStatus || httpStatus >= 400) {
         await unlink(videoPath).catch(() => {});
@@ -3490,7 +3662,7 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
         });
       }
 
-      const successHostStats = updateDouyinDownloadHostStats(downloadHost, 'success');
+      const successHostStats = updateDouyinDownloadHostStats(downloadHost, 'success', { ttfbMs, totalDurationMs });
 
       logDouyinTranscriptEvent({
         event: 'video_download_finished',
@@ -3520,7 +3692,16 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
           source: candidate.source || '',
           score: candidate.score
         })),
-        hostStats: successHostStats
+        hostStats: successHostStats,
+        curlTiming: {
+          dnsMs: Math.round(curlTiming.time_namelookup * 1000),
+          tcpMs: Math.round((curlTiming.time_connect - curlTiming.time_namelookup) * 1000),
+          tlsMs: Math.round((curlTiming.time_appconnect - curlTiming.time_connect) * 1000),
+          serverWaitMs: Math.round((curlTiming.time_starttransfer - curlTiming.time_pretransfer) * 1000),
+          transferMs: Math.round((curlTiming.time_total - curlTiming.time_starttransfer) * 1000),
+          totalMs: totalDurationMs
+        },
+        networkDiagnosis: diagnoseCurlTimingBreakdown(curlTiming)
       });
 
       previousAttemptHost = downloadHost;
@@ -8413,6 +8594,7 @@ async function raceDouyinDownloadCandidates(candidates, options) {
       return { ok: upstreamRes.ok, res: upstreamRes, candidate, ttfbMs, fetchStartAt };
     } catch (error) {
       clearTimeout(timeoutId);
+      updateDouyinDownloadHostStats(candidate.host, 'failure');
       logDownload('upstream_fetch_failed', {
         host: candidate.host,
         parallelIndex: 0,
@@ -8455,6 +8637,7 @@ async function raceDouyinDownloadCandidates(candidates, options) {
       return { index, ok: res.ok, res, candidate, ttfbMs, fetchStartAt, controller };
     }).catch(err => {
       clearTimeout(timeoutId);
+      updateDouyinDownloadHostStats(candidate.host, 'failure');
       logDownload('upstream_fetch_failed', {
         host: candidate.host,
         parallelIndex: index,
@@ -8528,11 +8711,12 @@ async function handleDouyinDownloadVideo(req, res) {
 
     const fileName = buildDouyinVideoDownloadFileName(videoId);
     const normalizedCandidates = normalizeDouyinDownloadCandidates(downloadUrlCandidates, downloadUrl);
-    const rankedCandidates = rankDouyinDownloadCandidates(normalizedCandidates);
+    const rankedCandidates = rankDouyinDownloadCandidates(normalizedCandidates, { respectCooldown: true });
 
     logDownload('request_received', {
       videoId,
       candidateCount: rankedCandidates.length,
+      candidateHosts: rankedCandidates.slice(0, 3).map(c => c.host),
       method: req.method
     });
 
@@ -8546,8 +8730,13 @@ async function handleDouyinDownloadVideo(req, res) {
 
     if (!winner || !winner.ok) {
       logDownload('all_candidates_failed', {
-        attemptedCount: parallelCandidates.length
+        attemptedCount: parallelCandidates.length,
+        candidateHosts: parallelCandidates.map(c => c.host)
       });
+
+      for (const c of parallelCandidates) {
+        updateDouyinDownloadHostStats(c.host, 'failure');
+      }
 
       if (!res.headersSent) {
         sendJson(res, 502, {
@@ -8559,6 +8748,7 @@ async function handleDouyinDownloadVideo(req, res) {
     }
 
     const { res: upstreamRes, candidate, ttfbMs, fetchStartAt } = winner;
+    updateDouyinDownloadHostStats(candidate.host, 'selected');
 
     res.writeHead(200, {
       'Content-Type': 'video/mp4',
@@ -8568,7 +8758,7 @@ async function handleDouyinDownloadVideo(req, res) {
 
     const clientStartAt = Date.now();
     logDownload('client_stream_start', {
-      host: candidate.host,
+      selectedHost: candidate.host,
       ttfbMs,
       headToClientMs: clientStartAt - startedAt
     });
@@ -8594,13 +8784,27 @@ async function handleDouyinDownloadVideo(req, res) {
 
     const totalMs = Date.now() - startedAt;
     const upstreamMs = Date.now() - fetchStartAt;
+    const totalDurationMs = upstreamMs;
+    updateDouyinDownloadHostStats(candidate.host, 'success', { ttfbMs, totalDurationMs });
+
+    const rollingTtfb = getDouyinDownloadHostRollingAverage(candidate.host, 'ttfb');
+    const rollingDuration = getDouyinDownloadHostRollingAverage(candidate.host, 'totalDuration');
+    const cooldownStatus = isDouyinDownloadHostInCooldown(candidate.host);
+    const hostStats = getDouyinDownloadHostStatsWithTiming(candidate.host);
+
     logDownload('stream_finished', {
-      host: candidate.host,
+      winner: candidate.host,
       videoId,
       bytesStreamed,
       ttfbMs,
       upstreamDurationMs: upstreamMs,
-      totalDurationMs: totalMs
+      totalDurationMs: totalMs,
+      rollingTtfbAvg: rollingTtfb.avgMs,
+      rollingTtfbSamples: rollingTtfb.sampleCount,
+      rollingDurationAvg: rollingDuration.avgMs,
+      rollingDurationSamples: rollingDuration.sampleCount,
+      consecutiveFailures: hostStats.consecutiveFailures,
+      inCooldown: cooldownStatus.inCooldown
     });
   } catch (error) {
     if (!res.headersSent) {
@@ -8679,6 +8883,51 @@ async function handleDouyinVideoStream(req, res) {
   }
 }
 
+async function handleDouyinDownloadHostStats(req, res) {
+  const entries = Array.from(douyinDownloadHostStats.entries());
+  const summary = entries.map(([host, stats]) => ({
+    host,
+    selected: stats.selected,
+    attempts: stats.attempts,
+    success: stats.success,
+    failure: stats.failure,
+    timeout: stats.timeout,
+    http4xx: stats.http4xx,
+    http5xx: stats.http5xx,
+    empty: stats.empty,
+    invalid: stats.invalid,
+    network: stats.network,
+    successRate: stats.attempts > 0 ? Number((stats.success / stats.attempts).toFixed(3)) : null,
+    rollingTtfbAvgMs: getDouyinDownloadHostRollingAverage(host, 'ttfb').avgMs,
+    rollingTtfbSampleCount: getDouyinDownloadHostRollingAverage(host, 'ttfb').sampleCount,
+    rollingDurationAvgMs: getDouyinDownloadHostRollingAverage(host, 'totalDuration').avgMs,
+    rollingDurationSampleCount: getDouyinDownloadHostRollingAverage(host, 'totalDuration').sampleCount,
+    consecutiveFailures: stats.consecutiveFailures,
+    inCooldown: isDouyinDownloadHostInCooldown(host).inCooldown,
+    cooldownRemainingMs: isDouyinDownloadHostInCooldown(host).remainingMs,
+    lastOutcome: stats.lastOutcome,
+    lastAttemptAt: stats.lastAttemptAt ? new Date(stats.lastAttemptAt).toISOString() : null
+  }));
+
+  summary.sort((a, b) => {
+    if ((b.successRate || 0) !== (a.successRate || 0)) {
+      return (b.successRate || 0) - (a.successRate || 0);
+    }
+    return (a.rollingTtfbAvgMs || Infinity) - (b.rollingTtfbAvgMs || Infinity);
+  });
+
+  sendJson(res, 200, {
+    hostCount: entries.length,
+    config: {
+      maxSamples: DOUYIN_HOST_STATS_MAX_SAMPLES,
+      cooldownBaseMs: DOUYIN_HOST_COOLDOWN_BASE_MS,
+      cooldownMaxMs: DOUYIN_HOST_COOLDOWN_MAX_MS,
+      consecutiveFailureThreshold: DOUYIN_HOST_CONSECUTIVE_FAILURE_THRESHOLD
+    },
+    hosts: summary
+  });
+}
+
 async function serveStatic(req, res, pathname) {
   let targetPath = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.normalize(path.join(RESOLVED_FRONTEND_DIR, targetPath));
@@ -8721,7 +8970,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const isAuthRoute = url.pathname === '/api/auth/login' || url.pathname === '/api/auth/status' || url.pathname === '/api/auth/logout';
+  const isAuthRoute = url.pathname === '/api/auth/login' || url.pathname === '/api/auth/status' || url.pathname === '/api/auth/logout' || url.pathname === '/api/douyin/host-stats';
   if (req.method === 'POST' && url.pathname === '/api/auth/login') {
     await handleAuthLogin(req, res);
     return;
@@ -8840,6 +9089,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/douyin/video-stream') {
     await handleDouyinVideoStream(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/douyin/host-stats') {
+    await handleDouyinDownloadHostStats(req, res);
     return;
   }
 
