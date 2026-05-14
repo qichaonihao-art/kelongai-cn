@@ -8374,6 +8374,116 @@ async function handleDouyinExtractLocalTranscript(req, res) {
   }
 }
 
+async function raceDouyinDownloadCandidates(candidates, options) {
+  const { logDownload, timeoutMs } = options;
+
+  if (candidates.length === 0) return { ok: false };
+
+  if (candidates.length === 1) {
+    const candidate = candidates[0];
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const fetchStartAt = Date.now();
+
+    logDownload('upstream_fetch_start', {
+      host: candidate.host,
+      parallelIndex: 0,
+      url: candidate.url,
+      mode: 'single'
+    });
+
+    try {
+      const upstreamRes = await fetch(candidate.url, {
+        signal: controller.signal,
+        headers: {
+          'Referer': 'https://www.douyin.com/',
+          'User-Agent': DOUYIN_USER_AGENT,
+          'Accept': '*/*',
+        },
+      });
+      clearTimeout(timeoutId);
+      const ttfbMs = Date.now() - fetchStartAt;
+      logDownload('upstream_headers_received', {
+        host: candidate.host,
+        parallelIndex: 0,
+        status: upstreamRes.status,
+        contentLength: upstreamRes.headers.get('content-length') || 'unknown',
+        ttfbMs
+      });
+      return { ok: upstreamRes.ok, res: upstreamRes, candidate, ttfbMs, fetchStartAt };
+    } catch (error) {
+      clearTimeout(timeoutId);
+      logDownload('upstream_fetch_failed', {
+        host: candidate.host,
+        parallelIndex: 0,
+        error: error?.message || '',
+        mode: 'single'
+      });
+      return { ok: false, error, candidate };
+    }
+  }
+
+  const tasks = candidates.map((candidate, index) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const fetchStartAt = Date.now();
+
+    logDownload('upstream_fetch_start', {
+      host: candidate.host,
+      parallelIndex: index,
+      url: candidate.url,
+      mode: 'parallel'
+    });
+
+    const promise = fetch(candidate.url, {
+      signal: controller.signal,
+      headers: {
+        'Referer': 'https://www.douyin.com/',
+        'User-Agent': DOUYIN_USER_AGENT,
+        'Accept': '*/*',
+      },
+    }).then(res => {
+      clearTimeout(timeoutId);
+      const ttfbMs = Date.now() - fetchStartAt;
+      logDownload('upstream_headers_received', {
+        host: candidate.host,
+        parallelIndex: index,
+        status: res.status,
+        contentLength: res.headers.get('content-length') || 'unknown',
+        ttfbMs
+      });
+      return { index, ok: res.ok, res, candidate, ttfbMs, fetchStartAt, controller };
+    }).catch(err => {
+      clearTimeout(timeoutId);
+      logDownload('upstream_fetch_failed', {
+        host: candidate.host,
+        parallelIndex: index,
+        error: err?.message || '',
+        mode: 'parallel'
+      });
+      return { index, ok: false, error: err, candidate, controller };
+    });
+
+    return { promise, controller, index };
+  });
+
+  let remaining = [...tasks];
+
+  while (remaining.length > 0) {
+    const result = await Promise.race(remaining.map(t => t.promise));
+
+    const idx = remaining.findIndex(t => t.index === result.index);
+    if (idx >= 0) remaining.splice(idx, 1);
+
+    if (result.ok) {
+      remaining.forEach(t => t.controller.abort());
+      return { ok: true, res: result.res, candidate: result.candidate, ttfbMs: result.ttfbMs, fetchStartAt: result.fetchStartAt };
+    }
+  }
+
+  return { ok: false };
+}
+
 async function handleDouyinDownloadVideo(req, res) {
   const requestId = createRequestId('dy_download');
   const startedAt = Date.now();
@@ -8426,128 +8536,72 @@ async function handleDouyinDownloadVideo(req, res) {
       method: req.method
     });
 
-    const attemptedHosts = new Set();
-    let lastError = null;
+    const MAX_PARALLEL = 3;
+    const parallelCandidates = rankedCandidates.slice(0, MAX_PARALLEL);
 
-    for (let attempt = 0; attempt < Math.min(rankedCandidates.length, DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS.length); attempt += 1) {
-      if (attempt > 0) {
-        await sleep(DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS[attempt]);
-      }
+    const winner = await raceDouyinDownloadCandidates(parallelCandidates, {
+      logDownload,
+      timeoutMs: DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS
+    });
 
-      const shouldSwitchHost = attempt > 0 && shouldRetryDouyinVideoDownloadError(lastError);
-      const currentCandidates = rankDouyinDownloadCandidates(normalizedCandidates, {
-        attemptedHosts: shouldSwitchHost ? attemptedHosts : new Set()
+    if (!winner || !winner.ok) {
+      logDownload('all_candidates_failed', {
+        attemptedCount: parallelCandidates.length
       });
-      const candidate = currentCandidates[0] || rankedCandidates[attempt];
-      if (!candidate) continue;
 
-      const host = candidate.host || getHostnameFromUrl(candidate.url);
-      attemptedHosts.add(host);
-
-      const controller = new AbortController();
-      const timeoutMs = Math.min(DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS, DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS);
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const attemptStartedAt = Date.now();
-
-      try {
-        logDownload('upstream_fetch_start', {
-          host,
-          attempt: attempt + 1,
-          url: candidate.url
+      if (!res.headersSent) {
+        sendJson(res, 502, {
+          error: '视频下载失败',
+          detail: '所有下载源均不可用，请稍后重试。'
         });
-
-        const upstreamRes = await fetch(candidate.url, {
-          signal: controller.signal,
-          headers: {
-            'Referer': 'https://www.douyin.com/',
-            'User-Agent': DOUYIN_USER_AGENT,
-            'Accept': '*/*',
-          },
-        });
-
-        clearTimeout(timeoutId);
-
-        const ttfbMs = Date.now() - attemptStartedAt;
-        logDownload('upstream_headers_received', {
-          host,
-          attempt: attempt + 1,
-          status: upstreamRes.status,
-          contentLength: upstreamRes.headers.get('content-length') || 'unknown',
-          ttfbMs
-        });
-
-        if (!upstreamRes.ok) {
-          lastError = { stage: upstreamRes.status >= 500 ? 'douyin_video_download_http_5xx' : 'douyin_video_download_http_4xx' };
-          continue;
-        }
-
-        // Stream directly to client — no temp file, no readFile
-        res.writeHead(200, {
-          'Content-Type': 'video/mp4',
-          'Content-Disposition': `attachment; filename="${fileName}"`,
-          'Cache-Control': 'no-store',
-        });
-
-        const clientStartAt = Date.now();
-        logDownload('client_stream_start', {
-          host,
-          attempt: attempt + 1,
-          headToClientMs: clientStartAt - attemptStartedAt
-        });
-
-        if (!upstreamRes.body) {
-          res.end();
-          return;
-        }
-
-        let bytesStreamed = 0;
-        const reader = upstreamRes.body.getReader();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            res.write(value);
-            bytesStreamed += value?.byteLength || 0;
-          }
-        } finally {
-          reader.releaseLock();
-        }
-        res.end();
-
-        const totalMs = Date.now() - startedAt;
-        const upstreamMs = Date.now() - attemptStartedAt;
-        logDownload('stream_finished', {
-          host,
-          videoId,
-          attempt: attempt + 1,
-          bytesStreamed,
-          ttfbMs,
-          upstreamDurationMs: upstreamMs,
-          totalDurationMs: totalMs
-        });
-        return;
-
-      } catch (error) {
-        clearTimeout(timeoutId);
-        lastError = { stage: error?.name === 'AbortError' ? 'douyin_video_download_timeout' : 'douyin_video_download_network_error' };
-        logDownload('upstream_fetch_failed', {
-          host,
-          attempt: attempt + 1,
-          stage: lastError.stage,
-          error: error?.message || ''
-        });
-        continue;
       }
+      return;
     }
 
-    // All candidates failed
-    if (!res.headersSent) {
-      sendJson(res, 502, {
-        error: '视频下载失败',
-        detail: '所有下载源均不可用，请稍后重试。'
-      });
+    const { res: upstreamRes, candidate, ttfbMs, fetchStartAt } = winner;
+
+    res.writeHead(200, {
+      'Content-Type': 'video/mp4',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+      'Cache-Control': 'no-store',
+    });
+
+    const clientStartAt = Date.now();
+    logDownload('client_stream_start', {
+      host: candidate.host,
+      ttfbMs,
+      headToClientMs: clientStartAt - startedAt
+    });
+
+    if (!upstreamRes.body) {
+      res.end();
+      return;
     }
+
+    let bytesStreamed = 0;
+    const reader = upstreamRes.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
+        bytesStreamed += value?.byteLength || 0;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    res.end();
+
+    const totalMs = Date.now() - startedAt;
+    const upstreamMs = Date.now() - fetchStartAt;
+    logDownload('stream_finished', {
+      host: candidate.host,
+      videoId,
+      bytesStreamed,
+      ttfbMs,
+      upstreamDurationMs: upstreamMs,
+      totalDurationMs: totalMs
+    });
   } catch (error) {
     if (!res.headersSent) {
       sendJson(res, error?.statusCode || 500, {
