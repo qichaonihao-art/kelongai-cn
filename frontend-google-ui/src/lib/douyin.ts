@@ -229,34 +229,18 @@ export async function downloadDouyinVideoFile(params: {
   downloadUrl: string;
   downloadUrlCandidates?: DouyinDownloadCandidate[];
 }) {
-  const response = await fetch('/api/douyin/download-video', {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      videoId: params.videoId,
-      downloadUrl: params.downloadUrl,
-      downloadUrlCandidates: params.downloadUrlCandidates || [],
-    }),
-  });
-
-  if (!response.ok) {
-    const json = await parseJsonSafely(response);
-    throw new Error(buildErrorMessage(json, '视频下载失败'));
+  const query = new URLSearchParams();
+  query.set('videoId', params.videoId);
+  query.set('downloadUrl', params.downloadUrl);
+  if (params.downloadUrlCandidates && params.downloadUrlCandidates.length > 0) {
+    query.set('candidates', JSON.stringify(params.downloadUrlCandidates));
   }
 
-  const blob = await response.blob();
-  const objectUrl = window.URL.createObjectURL(blob);
+  const url = `/api/douyin/download-video?${query.toString()}`;
   const anchor = document.createElement('a');
-  anchor.href = objectUrl;
+  anchor.href = url;
   anchor.download = buildDownloadFileName(params.videoId);
-  anchor.style.display = 'none';
-  document.body.appendChild(anchor);
   anchor.click();
-  anchor.remove();
-  window.URL.revokeObjectURL(objectUrl);
 }
 
 export async function polishDouyinTranscript(options: {

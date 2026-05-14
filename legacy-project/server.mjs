@@ -8378,11 +8378,38 @@ async function handleDouyinDownloadVideo(req, res) {
   const requestId = createRequestId('dy_download');
   const startedAt = Date.now();
 
+  function logDownload(stage, extra = {}) {
+    console.log(`[douyin download] ${stage}`, {
+      requestId,
+      elapsedMs: Date.now() - startedAt,
+      ...extra
+    });
+  }
+
   try {
-    const body = await readRequestBody(req);
-    const downloadUrl = readValue(body?.downloadUrl);
-    const downloadUrlCandidates = Array.isArray(body?.downloadUrlCandidates) ? body.downloadUrlCandidates : [];
-    const videoId = readValue(body?.videoId);
+    let downloadUrl = '';
+    let downloadUrlCandidates = [];
+    let videoId = '';
+
+    const parsedUrl = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+    if (req.method === 'GET') {
+      downloadUrl = readValue(parsedUrl.searchParams.get('downloadUrl'));
+      videoId = readValue(parsedUrl.searchParams.get('videoId'));
+      const candidatesParam = parsedUrl.searchParams.get('candidates');
+      if (candidatesParam) {
+        try {
+          const parsed = JSON.parse(candidatesParam);
+          if (Array.isArray(parsed)) downloadUrlCandidates = parsed;
+        } catch {
+          downloadUrlCandidates = [];
+        }
+      }
+    } else {
+      const body = await readRequestBody(req);
+      downloadUrl = readValue(body?.downloadUrl);
+      downloadUrlCandidates = Array.isArray(body?.downloadUrlCandidates) ? body.downloadUrlCandidates : [];
+      videoId = readValue(body?.videoId);
+    }
 
     if (!downloadUrl) {
       sendJson(res, 400, { error: '缺少 downloadUrl' });
@@ -8393,11 +8420,10 @@ async function handleDouyinDownloadVideo(req, res) {
     const normalizedCandidates = normalizeDouyinDownloadCandidates(downloadUrlCandidates, downloadUrl);
     const rankedCandidates = rankDouyinDownloadCandidates(normalizedCandidates);
 
-    console.log('[douyin download] stream_started', {
-      requestId,
-      elapsedMs: Date.now() - startedAt,
+    logDownload('request_received', {
+      videoId,
       candidateCount: rankedCandidates.length,
-      videoId
+      method: req.method
     });
 
     const attemptedHosts = new Set();
@@ -8422,7 +8448,15 @@ async function handleDouyinDownloadVideo(req, res) {
       const timeoutMs = Math.min(DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS, DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS);
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
+      const attemptStartedAt = Date.now();
+
       try {
+        logDownload('upstream_fetch_start', {
+          host,
+          attempt: attempt + 1,
+          url: candidate.url
+        });
+
         const upstreamRes = await fetch(candidate.url, {
           signal: controller.signal,
           headers: {
@@ -8433,6 +8467,15 @@ async function handleDouyinDownloadVideo(req, res) {
         });
 
         clearTimeout(timeoutId);
+
+        const ttfbMs = Date.now() - attemptStartedAt;
+        logDownload('upstream_headers_received', {
+          host,
+          attempt: attempt + 1,
+          status: upstreamRes.status,
+          contentLength: upstreamRes.headers.get('content-length') || 'unknown',
+          ttfbMs
+        });
 
         if (!upstreamRes.ok) {
           lastError = { stage: upstreamRes.status >= 500 ? 'douyin_video_download_http_5xx' : 'douyin_video_download_http_4xx' };
@@ -8446,35 +8489,54 @@ async function handleDouyinDownloadVideo(req, res) {
           'Cache-Control': 'no-store',
         });
 
+        const clientStartAt = Date.now();
+        logDownload('client_stream_start', {
+          host,
+          attempt: attempt + 1,
+          headToClientMs: clientStartAt - attemptStartedAt
+        });
+
         if (!upstreamRes.body) {
           res.end();
           return;
         }
 
+        let bytesStreamed = 0;
         const reader = upstreamRes.body.getReader();
         try {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             res.write(value);
+            bytesStreamed += value?.byteLength || 0;
           }
         } finally {
           reader.releaseLock();
         }
         res.end();
 
-        console.log('[douyin download] stream_finished', {
-          requestId,
-          elapsedMs: Date.now() - startedAt,
+        const totalMs = Date.now() - startedAt;
+        const upstreamMs = Date.now() - attemptStartedAt;
+        logDownload('stream_finished', {
           host,
           videoId,
-          attempt: attempt + 1
+          attempt: attempt + 1,
+          bytesStreamed,
+          ttfbMs,
+          upstreamDurationMs: upstreamMs,
+          totalDurationMs: totalMs
         });
         return;
 
       } catch (error) {
         clearTimeout(timeoutId);
         lastError = { stage: error?.name === 'AbortError' ? 'douyin_video_download_timeout' : 'douyin_video_download_network_error' };
+        logDownload('upstream_fetch_failed', {
+          host,
+          attempt: attempt + 1,
+          stage: lastError.stage,
+          error: error?.message || ''
+        });
         continue;
       }
     }
@@ -8493,6 +8555,9 @@ async function handleDouyinDownloadVideo(req, res) {
         detail: error?.detail || error?.message || '下载代理失败'
       });
     } else {
+      logDownload('fatal_error_after_headers_sent', {
+        error: error?.message || ''
+      });
       try { res.destroy(); } catch {}
     }
   }
@@ -8709,7 +8774,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'POST' && url.pathname === '/api/douyin/download-video') {
+  if ((req.method === 'POST' || req.method === 'GET') && url.pathname === '/api/douyin/download-video') {
     await handleDouyinDownloadVideo(req, res);
     return;
   }
