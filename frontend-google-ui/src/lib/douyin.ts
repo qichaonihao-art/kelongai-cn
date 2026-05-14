@@ -249,27 +249,77 @@ export async function downloadDouyinVideoFile(params: {
   document.body.removeChild(anchor);
 }
 
-export function directDownloadDouyinVideoFile(params: {
+export async function directDownloadDouyinVideoFile(params: {
   videoId: string;
   downloadUrl: string;
+  onProgress?: (loaded: number, total: number) => void;
 }) {
   const url = String(params?.downloadUrl || '').trim();
   if (!url) {
     throw new Error('缺少 downloadUrl');
   }
   // eslint-disable-next-line no-console
-  console.log('[douyin download] triggering direct source download:', { videoId: params.videoId, url });
+  console.log('[douyin download] direct fetch start:', { videoId: params.videoId, url });
 
-  // 跨域场景下 a.download 可能不生效，先尝试 a 标签 + download
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = buildDownloadFileName(params.videoId);
-  anchor.target = '_blank';
-  anchor.rel = 'noopener noreferrer';
-  anchor.style.display = 'none';
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Referer': 'https://www.douyin.com/',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`直链请求失败: HTTP ${response.status}`);
+    }
+
+    const contentLength = Number(response.headers.get('content-length') || '0');
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('无法读取响应流');
+    }
+
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        received += value.byteLength;
+        params.onProgress?.(received, contentLength);
+      }
+    }
+
+    // 合并 chunks
+    const blob = new Blob(chunks);
+    const blobUrl = URL.createObjectURL(blob);
+
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = buildDownloadFileName(params.videoId);
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+
+    URL.revokeObjectURL(blobUrl);
+    // eslint-disable-next-line no-console
+    console.log('[douyin download] direct fetch done:', { size: blob.size, received });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn('[douyin download] direct fetch failed, falling back to anchor open:', error);
+    // 降级：a 标签打开（可能触发下载或播放，取决于浏览器和跨域策略）
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = buildDownloadFileName(params.videoId);
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+  }
 }
 
 export async function polishDouyinTranscript(options: {

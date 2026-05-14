@@ -117,6 +117,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
   const [input, setInput] = useState("");
   const [isResolving, setIsResolving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isDirectDownloading, setIsDirectDownloading] = useState(false);
   const [isTranscriptLoading, setIsTranscriptLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<DouyinResolveResult | null>(null);
@@ -351,11 +352,14 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
     }
   }
 
-  function handleDirectDownloadVideo() {
+  async function handleDirectDownloadVideo() {
     if (!result?.downloadUrl) {
       setError('当前没有可下载的视频地址，请先解析视频。');
       return;
     }
+
+    setIsDirectDownloading(true);
+    setError('');
 
     // eslint-disable-next-line no-console
     console.log('[douyin download] handleDirectDownloadVideo called', {
@@ -364,7 +368,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
     });
 
     try {
-      directDownloadDouyinVideoFile({
+      await directDownloadDouyinVideoFile({
         videoId: result.videoId,
         downloadUrl: result.downloadUrl,
       });
@@ -372,6 +376,8 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
       // eslint-disable-next-line no-console
       console.error('[douyin download] handleDirectDownloadVideo error:', downloadError);
       setError(downloadError instanceof Error ? downloadError.message : '极速下载失败，请尝试兼容下载。');
+    } finally {
+      setIsDirectDownloading(false);
     }
   }
 
@@ -766,10 +772,20 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                       <div className="flex flex-col sm:flex-row gap-3">
                         <button
                           onClick={handleDirectDownloadVideo}
-                          className="flex-1 h-10 rounded-full text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                          disabled={isDirectDownloading}
+                          className="flex-1 h-10 rounded-full text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-500/20 transition-all active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2"
                         >
-                          <Zap className="size-4" />
-                          极速下载
+                          {isDirectDownloading ? (
+                            <>
+                              <Loader2 className="size-4 animate-spin" />
+                              下载中...
+                            </>
+                          ) : (
+                            <>
+                              <Zap className="size-4" />
+                              极速下载
+                            </>
+                          )}
                         </button>
 
                         <button
