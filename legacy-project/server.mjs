@@ -8750,15 +8750,24 @@ async function handleDouyinDownloadVideo(req, res) {
     const { res: upstreamRes, candidate, ttfbMs, fetchStartAt } = winner;
     updateDouyinDownloadHostStats(candidate.host, 'selected');
 
-    res.writeHead(200, {
+    const responseHeaders = {
       'Content-Type': 'video/mp4',
       'Content-Disposition': `attachment; filename="${fileName}"`,
       'Cache-Control': 'no-store',
-    });
+    };
+
+    const upstreamContentLength = upstreamRes.headers.get('content-length');
+    if (upstreamContentLength) {
+      responseHeaders['Content-Length'] = upstreamContentLength;
+    }
+
+    res.writeHead(200, responseHeaders);
 
     const clientStartAt = Date.now();
     logDownload('client_stream_start', {
       selectedHost: candidate.host,
+      selectedSource: candidate.source || '',
+      selectedDownloadUrl: candidate.url || '',
       ttfbMs,
       headToClientMs: clientStartAt - startedAt
     });

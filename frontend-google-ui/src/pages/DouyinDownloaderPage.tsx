@@ -327,6 +327,13 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
     setIsDownloading(true);
     setError('');
 
+    // eslint-disable-next-line no-console
+    console.log('[douyin download] handleDownloadVideo called', {
+      videoId: result.videoId,
+      downloadUrl: result.downloadUrl,
+      candidateCount: result.downloadUrlCandidates?.length || 0,
+    });
+
     try {
       await downloadDouyinVideoFile({
         videoId: result.videoId,
@@ -334,6 +341,8 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
         downloadUrlCandidates: result.downloadUrlCandidates,
       });
     } catch (downloadError) {
+      // eslint-disable-next-line no-console
+      console.error('[douyin download] handleDownloadVideo error:', downloadError);
       setError(downloadError instanceof Error ? downloadError.message : '视频下载失败，请稍后重试。');
     } finally {
       setIsDownloading(false);

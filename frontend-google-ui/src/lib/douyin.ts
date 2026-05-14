@@ -237,10 +237,16 @@ export async function downloadDouyinVideoFile(params: {
   }
 
   const url = `/api/douyin/download-video?${query.toString()}`;
+  // eslint-disable-next-line no-console
+  console.log('[douyin download] triggering backend download:', url);
+
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = buildDownloadFileName(params.videoId);
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
   anchor.click();
+  document.body.removeChild(anchor);
 }
 
 export async function polishDouyinTranscript(options: {

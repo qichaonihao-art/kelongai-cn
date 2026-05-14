@@ -165,7 +165,9 @@ npm start
 pm2 start "npm start" --name kelongai-cn
 ```
 
-## 五、Nginx 示例
+## 五、Nginx 配置（生产环境）
+
+### 5.1 完整优化配置
 
 ```nginx
 server {
@@ -174,6 +176,38 @@ server {
 
     client_max_body_size 200m;
 
+    # 全局 TCP 优化
+    tcp_nopush on;
+    tcp_nodelay on;
+
+    # === 视频下载接口：零缓冲、零压缩、直接透传 ===
+    location ~ ^/api/douyin/(download-video|video-stream)$ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+
+        # 核心：关闭一切缓冲和压缩
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        gzip off;
+
+        # 告诉 Nginx 不要 buffering（对 Safari/Chrome 都有效）
+        add_header X-Accel-Buffering no;
+
+        # 支持分块传输（流式响应）
+        chunked_transfer_encoding on;
+
+        # 超长超时（视频下载可能很慢）
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        send_timeout 600s;
+    }
+
+    # === 其他 API 和前端：保留 SSE 所需的 buffering off ===
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
@@ -190,11 +224,64 @@ server {
 }
 ```
 
-说明：
+### 5.2 关键配置说明
 
-- 创意创作的视频分析建议保留较长超时，否则很容易在 Nginx 层先收到 `504 Gateway Timeout`
-- `proxy_buffering off` 对 SSE 流式返回尤其重要，否则浏览器可能一直收不到增量数据
-- `client_max_body_size` 需要大于你允许上传的视频大小
+| 配置项 | 作用 | 对下载的影响 |
+|--------|------|-------------|
+| `proxy_buffering off` | Nginx 不缓存上游响应，收到即转发 | **必须**，否则 Nginx 会等缓冲满才发给浏览器 |
+| `proxy_request_buffering off` | Nginx 不缓存客户端请求体 | 对下载影响小，但 SSE/上传需要 |
+| `proxy_cache off` | 关闭 Nginx 缓存层 | **必须**，防止视频被错误缓存 |
+| `gzip off` | 关闭 gzip 压缩 | **必须**，视频已经是压缩格式，gzip 只会浪费 CPU |
+| `add_header X-Accel-Buffering no` | 显式告诉 Nginx 不要缓冲 | **推荐**，某些 Nginx 版本需要这个 header 才生效 |
+| `chunked_transfer_encoding on` | 启用 HTTP chunked 传输 | 对流式响应必要，Node 没有 Content-Length 时需要 |
+| `tcp_nopush on; tcp_nodelay on` | 优化 TCP 包发送策略 | 减少小包延迟，提高吞吐量 |
+
+### 5.3 验证 Nginx 配置是否生效
+
+**步骤 1：检查 Nginx 配置语法**
+```bash
+sudo nginx -t
+sudo nginx -s reload
+```
+
+**步骤 2：确认 buffering 已关闭**
+```bash
+# 在服务器上测试下载接口的响应头
+curl -I "https://your-domain.com/api/douyin/download-video?downloadUrl=...&videoId=..."
+```
+
+**预期看到的响应头：**
+```
+HTTP/2 200
+content-type: video/mp4
+content-disposition: attachment; filename="douyin_xxx.mp4"
+content-length: 14567890    ← 如果有这个，浏览器会立即显示文件大小
+x-accel-buffering: no       ← 证明 Nginx 没有缓冲
+transfer-encoding: chunked  ← 如果没有 content-length，会用 chunked
+```
+
+**步骤 3：抓包确认 Nginx 是否在缓冲**
+```bash
+# 在服务器上同时看 Nginx access log 和 Node log
+tail -f /var/log/nginx/access.log | grep download-video &
+tail -f /path/to/your/server.log | grep 'stream_finished'
+```
+
+如果 Nginx 在缓冲：
+- Node 日志显示 `stream_finished`（已完成推流）
+- 但浏览器还要等几秒才收到文件
+- Nginx access log 的响应时间比 Node 的 `totalDurationMs` 长很多
+
+**步骤 4：直接绕过 Nginx 测试**
+```bash
+# 在本地直接连 Node 端口（绕过 Nginx）
+curl -L -o /tmp/test_direct.mp4 \
+  -w 'direct ttfb=%{time_starttransfer} total=%{time_total}\n' \
+  "http://服务器IP:3000/api/douyin/download-video?downloadUrl=...&videoId=..."
+
+# 对比通过 Nginx 的
+# 如果 direct 明显更快，确认瓶颈在 Nginx
+```
 
 ## 六、抖音视频下载网络诊断
 
