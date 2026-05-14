@@ -8892,6 +8892,79 @@ async function handleDouyinVideoStream(req, res) {
   }
 }
 
+const DEBUG_DOWNLOAD_CHUNK_SIZE = 64 * 1024; // 64KB per write
+const DEBUG_DOWNLOAD_BUFFER = Buffer.alloc(DEBUG_DOWNLOAD_CHUNK_SIZE, 0xAB); // fixed pattern
+
+async function handleDebugDownloadTest(req, res) {
+  const requestId = createRequestId('debug_dl');
+  const startedAt = Date.now();
+
+  function logDebug(stage, extra = {}) {
+    console.log(`[debug download] ${stage}`, {
+      requestId,
+      elapsedMs: Date.now() - startedAt,
+      ...extra
+    });
+  }
+
+  try {
+    const parsedUrl = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+    const sizeParam = parsedUrl.searchParams.get('size');
+    const sizeMb = Math.max(1, Math.min(100, Number.parseInt(sizeParam || '20', 10)));
+    const totalBytes = sizeMb * 1024 * 1024;
+
+    logDebug('request_received', {
+      requestedSizeMb: sizeMb,
+      totalBytes,
+      clientIp: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || ''
+    });
+
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(totalBytes),
+      'Content-Disposition': `attachment; filename="debug_${sizeMb}mb.bin"`,
+      'Cache-Control': 'no-store',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const streamStartAt = Date.now();
+    logDebug('client_stream_start', {
+      totalBytes
+    });
+
+    let bytesStreamed = 0;
+    while (bytesStreamed < totalBytes) {
+      const remaining = totalBytes - bytesStreamed;
+      const chunkSize = Math.min(DEBUG_DOWNLOAD_CHUNK_SIZE, remaining);
+      const chunk = chunkSize === DEBUG_DOWNLOAD_CHUNK_SIZE
+        ? DEBUG_DOWNLOAD_BUFFER
+        : DEBUG_DOWNLOAD_BUFFER.subarray(0, chunkSize);
+      res.write(chunk);
+      bytesStreamed += chunkSize;
+    }
+    res.end();
+
+    const totalMs = Date.now() - startedAt;
+    const streamMs = Date.now() - streamStartAt;
+    const throughputBps = streamMs > 0 ? Math.round((bytesStreamed / streamMs) * 1000) : 0;
+
+    logDebug('stream_finished', {
+      bytesStreamed,
+      totalDurationMs: totalMs,
+      streamDurationMs: streamMs,
+      throughputBps,
+      throughputMbps: (throughputBps * 8 / 1000 / 1000).toFixed(2)
+    });
+  } catch (error) {
+    console.error('[debug download] fatal_error', { requestId, error: error?.message });
+    if (!res.headersSent) {
+      sendJson(res, 500, { error: '调试下载失败', detail: error?.message || '' });
+    } else {
+      try { res.destroy(); } catch {}
+    }
+  }
+}
+
 async function handleDouyinDownloadHostStats(req, res) {
   const entries = Array.from(douyinDownloadHostStats.entries());
   const summary = entries.map(([host, stats]) => ({
@@ -8979,7 +9052,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const isAuthRoute = url.pathname === '/api/auth/login' || url.pathname === '/api/auth/status' || url.pathname === '/api/auth/logout' || url.pathname === '/api/douyin/host-stats';
+  const isAuthRoute = url.pathname === '/api/auth/login' || url.pathname === '/api/auth/status' || url.pathname === '/api/auth/logout' || url.pathname === '/api/douyin/host-stats' || url.pathname === '/api/debug/download-test';
   if (req.method === 'POST' && url.pathname === '/api/auth/login') {
     await handleAuthLogin(req, res);
     return;
@@ -9106,6 +9179,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/douyin/host-stats') {
     await handleDouyinDownloadHostStats(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/debug/download-test') {
+    await handleDebugDownloadTest(req, res);
     return;
   }
 

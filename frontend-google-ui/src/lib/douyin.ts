@@ -249,6 +249,29 @@ export async function downloadDouyinVideoFile(params: {
   document.body.removeChild(anchor);
 }
 
+export function directDownloadDouyinVideoFile(params: {
+  videoId: string;
+  downloadUrl: string;
+}) {
+  const url = String(params?.downloadUrl || '').trim();
+  if (!url) {
+    throw new Error('缺少 downloadUrl');
+  }
+  // eslint-disable-next-line no-console
+  console.log('[douyin download] triggering direct source download:', { videoId: params.videoId, url });
+
+  // 跨域场景下 a.download 可能不生效，先尝试 a 标签 + download
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = buildDownloadFileName(params.videoId);
+  anchor.target = '_blank';
+  anchor.rel = 'noopener noreferrer';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+}
+
 export async function polishDouyinTranscript(options: {
   originalTranscript: string;
   onDelta?: (text: string) => void;
