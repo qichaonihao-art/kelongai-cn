@@ -118,6 +118,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
   const [showVideoPreview, setShowVideoPreview] = useState(false);
   const [isLocalTranscriptLoading, setIsLocalTranscriptLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'link' | 'local'>('link');
+  const [asrEngine, setAsrEngine] = useState<'siliconflow' | 'doubao'>('siliconflow');
   const [localVideoUrl, setLocalVideoUrl] = useState<string>('');
   const resultRef = useRef<HTMLDivElement>(null);
   const localVideoInputRef = useRef<HTMLInputElement>(null);
@@ -188,7 +189,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
     setCopyStatus('idle');
 
     try {
-      const response = await extractDouyinTranscript(nextInput);
+      const response = await extractDouyinTranscript(nextInput, asrEngine);
       const normalizedTranscriptResult: DouyinTranscriptResult = response.transcriptOk
         ? response
         : {
@@ -239,7 +240,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
     setShowDiff(true);
 
     try {
-      const response = await extractLocalVideoTranscript(file);
+      const response = await extractLocalVideoTranscript(file, asrEngine);
       const normalizedTranscriptResult: DouyinTranscriptResult = response.transcriptOk
         ? response
         : {
@@ -482,6 +483,40 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
               <Upload className="size-3.5" />
               本地视频提取逐字稿
             </button>
+          </div>
+
+          {/* ASR 引擎选择 */}
+          <div className="px-6 pt-2 pb-0"
+          >
+            <div className="flex items-center justify-between"
+            >
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider"
+              >ASR 引擎</span
+              >
+              <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5"
+              >
+                <button
+                  onClick={() => setAsrEngine('siliconflow')}
+                  className={`h-6 rounded-md px-2 text-[10px] font-bold transition-all ${
+                    asrEngine === 'siliconflow'
+                      ? 'bg-white text-slate-700 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  SenseVoice（免费）
+                </button>
+                <button
+                  onClick={() => setAsrEngine('doubao')}
+                  className={`h-6 rounded-md px-2 text-[10px] font-bold transition-all ${
+                    asrEngine === 'doubao'
+                      ? 'bg-white text-blue-600 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  豆包 ASR
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* 内容区 */}

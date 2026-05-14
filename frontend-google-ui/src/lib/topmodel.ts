@@ -2,16 +2,20 @@ export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
   images?: string[];
+  videos?: string[];
 }
 
 export interface ModelOption {
   id: string;
   name: string;
   description: string;
+  supportsMultimodal?: boolean;
+  supportsWebSearch?: boolean;
 }
 
 export const AVAILABLE_MODELS: ModelOption[] = [
   { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', description: 'Anthropic 最强推理模型' },
+  { id: 'doubao-seed-2-0-pro-260215', name: 'Doubao Seed 2.0 Pro', description: '字节跳动多模态大模型', supportsMultimodal: true, supportsWebSearch: true },
 ];
 
 function toApiMessages(messages: ChatMessage[]) {
@@ -36,20 +40,32 @@ export async function* streamChatCompletion(
     temperature?: number;
     maxTokens?: number;
     topP?: number;
+    tools?: Array<{ type: string }>;
   }
 ): AsyncGenerator<string, void, unknown> {
-  const response = await fetch('/api/chat/completions', {
+  const model = options?.model || 'claude-opus-4-7';
+  const isDoubao = model === 'doubao-seed-2-0-pro-260215';
+  const endpoint = isDoubao ? '/api/chat/doubao' : '/api/chat/completions';
+
+  const body: Record<string, unknown> = { model, stream: true };
+
+  if (isDoubao) {
+    body.messages = messages;
+    if (options?.tools && options.tools.length > 0) {
+      body.tools = options.tools;
+    }
+  } else {
+    body.messages = toApiMessages(messages);
+    if (typeof options?.temperature === 'number') body.temperature = options.temperature;
+    if (typeof options?.maxTokens === 'number') body.max_tokens = options.maxTokens;
+    if (typeof options?.topP === 'number') body.top_p = options.topP;
+  }
+
+  const response = await fetch(endpoint, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: options?.model || 'claude-opus-4-7',
-      messages: toApiMessages(messages),
-      stream: true,
-      temperature: options?.temperature,
-      max_tokens: options?.maxTokens,
-      top_p: options?.topP,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {

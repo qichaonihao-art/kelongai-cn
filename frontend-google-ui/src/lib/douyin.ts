@@ -149,14 +149,14 @@ export async function resolveDouyinDownload(input: string): Promise<DouyinResolv
   };
 }
 
-export async function extractDouyinTranscript(input: string): Promise<DouyinTranscriptResult> {
+export async function extractDouyinTranscript(input: string, asrEngine?: string): Promise<DouyinTranscriptResult> {
   const response = await fetch('/api/douyin/extract-transcript', {
     method: 'POST',
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ input }),
+    body: JSON.stringify({ input, asrEngine }),
   });
 
   const json = await parseJsonSafely(response);
@@ -183,9 +183,12 @@ export async function extractDouyinTranscript(input: string): Promise<DouyinTran
   };
 }
 
-export async function extractLocalVideoTranscript(file: File): Promise<DouyinTranscriptResult> {
+export async function extractLocalVideoTranscript(file: File, asrEngine?: string): Promise<DouyinTranscriptResult> {
   const formData = new FormData();
   formData.append('file', file);
+  if (asrEngine) {
+    formData.append('asrEngine', asrEngine);
+  }
 
   const response = await fetch('/api/douyin/extract-local-transcript', {
     method: 'POST',

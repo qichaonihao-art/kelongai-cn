@@ -59,7 +59,9 @@ const SERVER_CONFIG = {
   siliconFlowApiKey: process.env.SILICONFLOW_API_KEY || '',
   wechatApiToken: process.env.WECHAT_API_TOKEN || '',
   douyinApiToken: process.env.DOUYIN_API_TOKEN || process.env.WECHAT_API_TOKEN || '',
-  gptImageApiKey: process.env.GPT_IMAGE_API_KEY || ''
+  gptImageApiKey: process.env.GPT_IMAGE_API_KEY || '',
+  doubaoTopmodelApiKey: process.env.DOUBAO_TOPMODEL_API_KEY || '',
+  webSearchApiKey: process.env.WEB_SEARCH_API_KEY || ''
 };
 
 const DOUYIN_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
@@ -276,6 +278,9 @@ function translateUpstreamError(rawError, fallback = '请求失败，请稍后�
   }
   if (/quota|额度|余额不足|insufficient|credit|billing/i.test(raw)) {
     return '账户额度不足，请检查方舟平台余额或配额。';
+  }
+  if (/toolnotopen|not activated|activate it|未开通|未激活|content_plugin/i.test(raw)) {
+    return '该功能（联网搜索/插件）尚未在方舟平台开通，请前往控制台开通后再试。';
   }
   if (/not found|404|task not found|task_id|任务不存在/i.test(raw)) {
     return '任务不存在或已过期，请确认任务 ID 是否正确。';
@@ -1641,6 +1646,208 @@ async function handleChatCompletions(req, res) {
       const data = await response.text();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(data);
+    }
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '对话请求失败' });
+  }
+}
+
+async function callWebSearchApi(query) {
+  const apiKey = readValue(SERVER_CONFIG.webSearchApiKey);
+  if (!apiKey) return null;
+  try {
+    const res = await fetch('https://open.feedcoopapi.com/search_api/web_search', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        Query: query,
+        SearchType: 'web_summary',
+        Count: 5,
+        NeedSummary: true,
+      }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function formatWebSearchResults(searchData) {
+  const results = searchData?.Result?.WebResults || [];
+  if (results.length === 0) return '';
+  const lines = ['【联网搜索结果】'];
+  for (const item of results) {
+    lines.push(`\n标题：${item.Title || ''}`);
+    if (item.Summary) lines.push(`摘要：${item.Summary}`);
+    else if (item.Snippet) lines.push(`摘要：${item.Snippet}`);
+    if (item.Url) lines.push(`链接：${item.Url}`);
+  }
+  return lines.join('\n');
+}
+
+async function handleDoubaoChatCompletions(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const messages = body.messages;
+    const tools = body.tools;
+    const stream = body.stream !== false;
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      sendJson(res, 400, { error: 'messages 不能为空' });
+      return;
+    }
+
+    const apiKey = readValue(SERVER_CONFIG.doubaoTopmodelApiKey) || readValue(SERVER_CONFIG.seedanceApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '未配置 Doubao API Key' });
+      return;
+    }
+
+    const hasWebSearch = Array.isArray(tools) && tools.some((t) => t.type === 'web_search');
+    console.log('[doubao-chat] hasWebSearch:', hasWebSearch, 'tools:', JSON.stringify(tools));
+
+    const input = [];
+    for (const msg of messages) {
+      const role = String(msg.role || '');
+      if (role === 'system') {
+        input.push({ role: 'developer', content: msg.content });
+        continue;
+      }
+      if (role === 'assistant') {
+        input.push({ role: 'assistant', content: msg.content });
+        continue;
+      }
+
+      const content = [];
+      if (Array.isArray(msg.images) && msg.images.length > 0) {
+        for (const img of msg.images) {
+          content.push({ type: 'input_image', image_url: img });
+        }
+      }
+      if (Array.isArray(msg.videos) && msg.videos.length > 0) {
+        for (const video of msg.videos) {
+          content.push({ type: 'input_video', video_url: video });
+        }
+      }
+      content.push({ type: 'input_text', text: String(msg.content || '') });
+      input.push({ role: 'user', content });
+    }
+
+    const requestPayload = {
+      model: 'doubao-seed-2-0-pro-260215',
+      stream,
+      input,
+    };
+
+    if (hasWebSearch) {
+      requestPayload.tools = [{ type: 'web_search', max_keyword: 3 }];
+    }
+
+    const upstreamRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/responses', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': stream ? 'text/event-stream' : 'application/json',
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    if (!upstreamRes.ok) {
+      const text = await upstreamRes.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch {}
+      const rawError = json?.error?.message || json?.message || json?.code || text;
+      const zhError = translateUpstreamError(rawError, `方舟 API 请求失败（状态码 ${upstreamRes.status}）`);
+      sendJson(res, upstreamRes.status, { error: zhError, upstream: json || text });
+      return;
+    }
+
+    if (stream) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+
+      const reader = upstreamRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split(/\n\n/);
+          buffer = blocks.pop() || '';
+
+          for (const block of blocks) {
+            const parsed = parseDoubaoSseBlock(block);
+            if (!parsed) continue;
+            if (parsed.done) continue;
+            if (!isDoubaoDeltaEvent(parsed.event)) continue;
+
+            const delta = extractVisibleDoubaoDelta(parsed.payload, parsed.event);
+            if (delta) {
+              const openaiChunk = JSON.stringify({
+                choices: [{ delta: { content: delta } }]
+              });
+              res.write(`data: ${openaiChunk}\n\n`);
+              if (res.flush) res.flush();
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[doubao-chat] stream error:', err.message);
+      } finally {
+        const tail = decoder.decode();
+        if (tail) {
+          buffer += tail;
+          if (buffer.trim()) {
+            const parsed = parseDoubaoSseBlock(buffer);
+            if (parsed && !parsed.done && isDoubaoDeltaEvent(parsed.event)) {
+              const delta = extractVisibleDoubaoDelta(parsed.payload, parsed.event);
+              if (delta) {
+                const openaiChunk = JSON.stringify({
+                  choices: [{ delta: { content: delta } }]
+                });
+                res.write(`data: ${openaiChunk}\n\n`);
+              }
+            }
+          }
+        }
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }
+    } else {
+      const text = await upstreamRes.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch {}
+
+      let content = '';
+      if (json?.output) {
+        for (const item of json.output) {
+          if (item.role === 'assistant' && Array.isArray(item.content)) {
+            for (const c of item.content) {
+              if (c.type === 'output_text' && c.text) {
+                content += c.text;
+              }
+            }
+          }
+        }
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({
+        choices: [{ message: { role: 'assistant', content } }]
+      }));
     }
   } catch (error) {
     sendJson(res, 500, { error: error.message || '对话请求失败' });
@@ -3801,6 +4008,193 @@ async function transcribeAudioWithSiliconFlow({ audioPath, requestId, segmentInd
   return transcriptText;
 }
 
+async function transcribeAudioWithDoubao({ audioPath, requestId, segmentIndex = 0, parentDeadlineAt = 0 }) {
+  const apiKey = readValue(SERVER_CONFIG.doubaoTopmodelApiKey) || readValue(SERVER_CONFIG.seedanceApiKey);
+  if (!apiKey) {
+    throw annotateDouyinError(createDouyinResolveError({
+      stage: 'doubao_asr_api_key_missing',
+      statusCode: 500,
+      message: 'ASR 请求失败',
+      detail: '服务端未配置 Doubao API Key'
+    }), {
+      failedStage: 'doubao_asr_request',
+      timeoutMs: 0,
+      targetPath: audioPath,
+      host: 'ark.cn-beijing.volces.com'
+    });
+  }
+
+  const stageStartedAt = Date.now();
+  const audioInfo = await stat(audioPath);
+  const mimeType = getMimeTypeFromFilePath(audioPath);
+  const audioFormat = mimeType.replace('audio/', '') || 'mp3';
+  const host = 'ark.cn-beijing.volces.com';
+
+  const { timeoutMs } = getStageTimeoutContext({
+    parentDeadlineAt,
+    stageStartedAt,
+    stageTimeoutMs: DOUYIN_ASR_TIMEOUT_MS,
+    timeoutStage: 'douyin_transcript_total_timeout',
+    failedStage: 'doubao_asr_request',
+    timeoutMessage: '文案提取失败',
+    timeoutDetail: '整条转写链路总超时，未能开始 Doubao ASR 请求。',
+    targetPath: audioPath,
+    host
+  });
+
+  logDouyinTranscriptEvent({
+    event: 'doubao_asr_request_started',
+    requestId,
+    startedAt: stageStartedAt,
+    timeoutMs,
+    targetPath: audioPath,
+    finalFileSize: audioInfo.size,
+    host,
+    upstreamStatus: 0,
+    segmentIndex,
+    url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+    model: 'doubao-seed-2-0-lite-260428',
+    mimeType,
+    requestType: 'json',
+    authConfigured: true
+  });
+
+  let responseJson = null;
+  try {
+    const audioBuffer = await readFile(audioPath);
+    const base64Audio = audioBuffer.toString('base64');
+    const dataUrl = `data:${mimeType};base64,${base64Audio}`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    const response = await fetch('https://ark.cn-beijing.volces.com/api/v3/chat/completions', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'doubao-seed-2-0-lite-260428',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_audio',
+                input_audio: {
+                  data: dataUrl,
+                  format: audioFormat
+                }
+              },
+              {
+                type: 'text',
+                text: '请准确转写这段音频的全部内容，保留说话人的原始语句，不要添加任何解释或总结。'
+              }
+            ]
+          }
+        ]
+      })
+    });
+
+    clearTimeout(timeoutId);
+
+    const responseText = await response.text();
+    try {
+      responseJson = JSON.parse(responseText);
+    } catch {
+      responseJson = null;
+    }
+
+    logDouyinTranscriptEvent({
+      event: 'doubao_asr_response_received',
+      requestId,
+      startedAt: stageStartedAt,
+      timeoutMs,
+      targetPath: audioPath,
+      finalFileSize: audioInfo.size,
+      host,
+      upstreamStatus: response.status,
+      segmentIndex,
+      body: summarizeUpstreamBody(responseText)
+    });
+
+    if (!response.ok) {
+      const errorMsg = responseJson?.error?.message || responseJson?.message || `HTTP ${response.status}`;
+      throw annotateDouyinError(createDouyinResolveError({
+        stage: 'douyin_asr_request_failed',
+        statusCode: response.status >= 500 ? 502 : 400,
+        upstreamStatus: response.status,
+        upstreamBodySummary: summarizeUpstreamBody(responseText),
+        message: 'ASR 请求失败',
+        detail: `Doubao ASR 返回错误：${errorMsg}`
+      }), {
+        failedStage: 'doubao_asr_request',
+        timeoutMs,
+        targetPath: audioPath,
+        host
+      });
+    }
+
+    const transcriptText = responseJson?.choices?.[0]?.message?.content;
+    if (!transcriptText || !transcriptText.trim()) {
+      throw annotateDouyinError(createDouyinResolveError({
+        stage: 'douyin_asr_empty_result',
+        statusCode: 502,
+        message: 'ASR 请求失败',
+        detail: 'Doubao ASR 返回成功，但未给出可用转写文本。'
+      }), {
+        failedStage: 'doubao_asr_request',
+        timeoutMs,
+        targetPath: audioPath,
+        host
+      });
+    }
+
+    return transcriptText.trim();
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      logDouyinTranscriptEvent({
+        level: 'error',
+        event: 'doubao_asr_request_timeout',
+        requestId,
+        startedAt: stageStartedAt,
+        timeoutMs,
+        targetPath: audioPath,
+        finalFileSize: audioInfo.size,
+        host,
+        upstreamStatus: 0,
+        segmentIndex,
+        message: '请求超时'
+      });
+      throw annotateDouyinError(createDouyinResolveError({
+        stage: 'douyin_asr_request_timeout',
+        statusCode: 504,
+        message: 'ASR 请求失败',
+        detail: 'Doubao ASR 请求超时，请稍后重试。'
+      }), {
+        failedStage: 'doubao_asr_request',
+        timeoutMs,
+        targetPath: audioPath,
+        host
+      });
+    }
+    if (error?.stage) throw error;
+    throw annotateDouyinError(createDouyinResolveError({
+      stage: 'douyin_asr_request_failed',
+      statusCode: 502,
+      message: 'ASR 请求失败',
+      detail: error?.message || 'Doubao ASR 网络请求失败'
+    }), {
+      failedStage: 'doubao_asr_request',
+      timeoutMs,
+      targetPath: audioPath,
+      host
+    });
+  }
+}
+
 async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeId, requestId, deadlineAt = 0 }) {
   try {
     return await resolveDouyinVideoByHtml({
@@ -4724,19 +5118,19 @@ function extractVisibleDoubaoDelta(payload, eventName) {
   ].filter(Boolean);
 
   for (const item of deltaCandidates) {
-    if (typeof item === 'string' && item.trim() && !isDoubaoReasoningType(resolvedEvent)) {
+    if (typeof item === 'string' && item.length > 0 && !isDoubaoReasoningType(resolvedEvent)) {
       return item;
     }
     if (!item || typeof item !== 'object') continue;
     if (isDoubaoReasoningType(item.type)) continue;
-    if (typeof item.text === 'string' && item.text.trim()) return item.text;
-    if (typeof item.delta === 'string' && item.delta.trim()) return item.delta;
-    if (item.delta && typeof item.delta.text === 'string' && item.delta.text.trim()) return item.delta.text;
+    if (typeof item.text === 'string' && item.text.length > 0) return item.text;
+    if (typeof item.delta === 'string' && item.delta.length > 0) return item.delta;
+    if (item.delta && typeof item.delta.text === 'string' && item.delta.text.length > 0) return item.delta.text;
     if (Array.isArray(item.content)) {
       for (const contentItem of item.content) {
         if (!contentItem || typeof contentItem !== 'object') continue;
         if (isDoubaoReasoningType(contentItem.type)) continue;
-        if (typeof contentItem.text === 'string' && contentItem.text.trim()) {
+        if (typeof contentItem.text === 'string' && contentItem.text.length > 0) {
           return contentItem.text;
         }
       }
@@ -7605,6 +7999,9 @@ async function handleDouyinExtractTranscript(req, res) {
         }
       }
 
+      const bodyJson = await readRequestBody(req);
+      const asrEngine = readValue(bodyJson?.asrEngine) || 'siliconflow';
+
       const transcriptSegments = await Promise.all(
         audioSegments.map((segmentAudioPath, index) => {
           const asrStageDeadlineAt = createStageDeadlineAt({
@@ -7612,6 +8009,14 @@ async function handleDouyinExtractTranscript(req, res) {
             stageTimeoutMs: DOUYIN_ASR_TIMEOUT_MS,
             parentDeadlineAt: transcriptDeadlineAt
           });
+          if (asrEngine === 'doubao') {
+            return transcribeAudioWithDoubao({
+              audioPath: segmentAudioPath,
+              requestId,
+              segmentIndex: index,
+              parentDeadlineAt: asrStageDeadlineAt
+            }).then((text) => text.trim());
+          }
           return transcribeAudioWithSiliconFlow({
             audioPath: segmentAudioPath,
             requestId,
@@ -7798,6 +8203,7 @@ async function handleDouyinExtractLocalTranscript(req, res) {
       }
     }
 
+    const asrEngine = readValue(form.asrEngine) || 'siliconflow';
     const transcriptSegments = await Promise.all(
       audioSegments.map((segmentAudioPath, index) => {
         const asrStageDeadlineAt = createStageDeadlineAt({
@@ -7805,6 +8211,14 @@ async function handleDouyinExtractLocalTranscript(req, res) {
           stageTimeoutMs: DOUYIN_ASR_TIMEOUT_MS,
           parentDeadlineAt: transcriptDeadlineAt
         });
+        if (asrEngine === 'doubao') {
+          return transcribeAudioWithDoubao({
+            audioPath: segmentAudioPath,
+            requestId,
+            segmentIndex: index,
+            parentDeadlineAt: asrStageDeadlineAt
+          }).then((text) => text.trim());
+        }
         return transcribeAudioWithSiliconFlow({
           audioPath: segmentAudioPath,
           requestId,
@@ -8258,6 +8672,11 @@ const server = createServer(async (req, res) => {
   }
 
   // Chat completions (top model) route
+  if (req.method === 'POST' && url.pathname === '/api/chat/doubao') {
+    await handleDoubaoChatCompletions(req, res);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/chat/completions') {
     await handleChatCompletions(req, res);
     return;
