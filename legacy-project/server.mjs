@@ -9005,7 +9005,10 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname.startsWith('/api/') && !isAuthRoute && !isAuthenticated(req)) {
+  const isDebugDownloadBypass = String(process.env.DOWNLOAD_DEBUG_BYPASS_AUTH || '').trim().toLowerCase() === 'true';
+  const isDownloadDebugRoute = url.pathname === '/api/douyin/download-video' || url.pathname === '/api/douyin/video-stream';
+
+  if (url.pathname.startsWith('/api/') && !isAuthRoute && !isAuthenticated(req) && !(isDebugDownloadBypass && isDownloadDebugRoute)) {
     sendJson(res, 401, { error: '未登录或登录已失效' });
     return;
   }
