@@ -76,11 +76,87 @@ function loadConversations(): ConversationsMap {
   }
 }
 
+const MAX_CONVERSATIONS_PER_MODEL = 30;
+const MAX_MESSAGES_PER_CONVERSATION = 200;
+const LOCAL_STORAGE_SIZE_LIMIT = 4.5 * 1024 * 1024; // 4.5MB safety limit
+
+function estimateSize(str: string): number {
+  // UTF-8 approximate byte count
+  let size = 0;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code <= 0x7f) size += 1;
+    else if (code <= 0x7ff) size += 2;
+    else size += 3;
+  }
+  return size;
+}
+
+function trimConversations(map: ConversationsMap): ConversationsMap {
+  const trimmed: ConversationsMap = {};
+  for (const [model, convs] of Object.entries(map)) {
+    // Sort by updatedAt desc, keep most recent MAX_CONVERSATIONS_PER_MODEL
+    const sorted = [...convs].sort((a, b) => b.updatedAt - a.updatedAt);
+    const kept = sorted.slice(0, MAX_CONVERSATIONS_PER_MODEL).map((conv) => {
+      if (conv.messages.length > MAX_MESSAGES_PER_CONVERSATION) {
+        // Keep first message (usually system/user context) and last N-1 messages
+        return {
+          ...conv,
+          messages: conv.messages.slice(0, 1).concat(
+            conv.messages.slice(-(MAX_MESSAGES_PER_CONVERSATION - 1))
+          ),
+        };
+      }
+      return conv;
+    });
+    // Restore original order (by createdAt asc) for display
+    trimmed[model] = kept.sort((a, b) => a.createdAt - b.createdAt);
+  }
+  return trimmed;
+}
+
 function saveConversations(map: ConversationsMap) {
   try {
-    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(map));
-  } catch {
-    // ignore
+    let trimmed = trimConversations(map);
+    let json = JSON.stringify(trimmed);
+    // If still too large, progressively trim more aggressively
+    while (estimateSize(json) > LOCAL_STORAGE_SIZE_LIMIT) {
+      const allConvs = Object.values(trimmed).flat();
+      if (allConvs.length === 0) break;
+      // Find model with most conversations and remove oldest one
+      let maxModel = '';
+      let maxCount = 0;
+      for (const [model, convs] of Object.entries(trimmed)) {
+        if (convs.length > maxCount) {
+          maxCount = convs.length;
+          maxModel = model;
+        }
+      }
+      if (maxModel && trimmed[maxModel].length > 1) {
+        const sorted = [...trimmed[maxModel]].sort((a, b) => b.updatedAt - a.updatedAt);
+        trimmed = {
+          ...trimmed,
+          [maxModel]: sorted.slice(0, -1).sort((a, b) => a.createdAt - b.createdAt),
+        };
+      } else if (maxModel && trimmed[maxModel].length === 1) {
+        // Only one conversation left, trim its messages
+        const conv = trimmed[maxModel][0];
+        const half = Math.max(10, Math.floor(conv.messages.length / 2));
+        trimmed = {
+          ...trimmed,
+          [maxModel]: [{
+            ...conv,
+            messages: conv.messages.slice(0, 1).concat(conv.messages.slice(-half)),
+          }],
+        };
+      } else {
+        break;
+      }
+      json = JSON.stringify(trimmed);
+    }
+    localStorage.setItem(CONVERSATIONS_KEY, json);
+  } catch (err) {
+    console.error('[TopModel] Failed to save conversations:', err);
   }
 }
 
@@ -257,23 +333,14 @@ export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelP
     saveModel(selectedModel);
   }, [selectedModel]);
 
+  // Save before page unload to prevent data loss
   useEffect(() => {
-    if (!activeConversationId) return;
-    const nextConversations: ConversationsMap = { ...conversations };
-    const modelConvs = [...(nextConversations[selectedModel] || [])];
-    const idx = modelConvs.findIndex((c) => c.id === activeConversationId);
-    if (idx !== -1) {
-      const updated = {
-        ...modelConvs[idx],
-        messages,
-        updatedAt: Date.now(),
-        title: modelConvs[idx].title === '新对话' && messages.length > 0 ? getConversationTitle(messages) : modelConvs[idx].title,
-      };
-      modelConvs[idx] = updated;
-      nextConversations[selectedModel] = modelConvs;
-      saveConversations(nextConversations);
+    function handleBeforeUnload() {
+      saveConversations(conversations);
     }
-  }, [messages, activeConversationId, selectedModel]);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [conversations]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -318,8 +385,13 @@ export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelP
   function handleVideoSelect(e: ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
     if (!files) return;
+    const MAX_VIDEO_SIZE_MB = 8;
     Array.from(files).forEach((file: File) => {
       if (!file.type.startsWith('video/')) return;
+      if (file.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
+        setError(`视频过大：${(file.size / 1024 / 1024).toFixed(1)}MB，超过 ${MAX_VIDEO_SIZE_MB}MB 限制。请压缩后重试，或使用公网视频链接。`);
+        return;
+      }
       const reader = new FileReader();
       reader.onload = () => {
         const result = reader.result as string;
@@ -381,7 +453,7 @@ export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelP
 
     try {
       const options: { model: string; tools?: Array<{ type: string }> } = { model: selectedModel };
-      if (selectedModel === 'doubao-seed-2-0-pro-260215') {
+      if (selectedModel === 'doubao-seed-2-0-pro-260215' || selectedModel === 'qwen3.6-plus') {
         options.tools = [{ type: 'web_search' }];
       }
       for await (const chunk of streamChatCompletion(newMessages, options)) {

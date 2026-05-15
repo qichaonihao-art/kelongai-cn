@@ -1861,6 +1861,288 @@ async function handleDoubaoChatCompletions(req, res) {
   }
 }
 
+async function handleQwenChatCompletions(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const messages = body.messages;
+    const tools = body.tools;
+    const stream = body.stream !== false;
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      sendJson(res, 400, { error: 'messages 不能为空' });
+      return;
+    }
+
+    const apiKey = readValue(SERVER_CONFIG.dashscopeApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '未配置 DashScope API Key' });
+      return;
+    }
+
+    let hasVideo = false;
+    for (const msg of messages) {
+      if (Array.isArray(msg.content)) {
+        for (const item of msg.content) {
+          if (item.type === 'video') {
+            hasVideo = true;
+            break;
+          }
+        }
+      }
+      if (hasVideo) break;
+    }
+
+    const hasWebSearch = Array.isArray(tools) && tools.some((t) => t.type === 'web_search');
+    console.log('[qwen-chat] hasVideo:', hasVideo, 'hasWebSearch:', hasWebSearch);
+
+    if (hasVideo) {
+      const transformedMessages = messages.map((msg) => {
+        if (msg.role !== 'user' || !Array.isArray(msg.content)) return msg;
+        const newContent = msg.content.map((item) => {
+          if (item.type === 'video' && item.video?.url) {
+            return { type: 'video_url', video_url: { url: item.video.url }, fps: 2 };
+          }
+          return item;
+        });
+        return { ...msg, content: newContent };
+      });
+
+      const apiBody = {
+        model: 'qwen3.6-plus',
+        messages: transformedMessages,
+        stream,
+        extra_body: { enable_thinking: true },
+      };
+
+      if (typeof body.temperature === 'number') apiBody.temperature = body.temperature;
+      if (typeof body.max_tokens === 'number') apiBody.max_tokens = body.max_tokens;
+      if (typeof body.top_p === 'number') apiBody.top_p = body.top_p;
+
+      const response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': stream ? 'text/event-stream' : 'application/json',
+        },
+        body: JSON.stringify(apiBody),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        let msg = `API 错误: HTTP ${response.status}`;
+        try {
+          const errJson = JSON.parse(text);
+          msg = errJson?.error?.message || errJson?.message || msg;
+        } catch {
+          msg = text || msg;
+        }
+        sendJson(res, 500, { error: msg });
+        return;
+      }
+
+      if (stream) {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(decoder.decode(value, { stream: true }));
+            if (res.flush) res.flush();
+          }
+        } catch (err) {
+          console.error('[qwen-chat] stream error:', err.message);
+        } finally {
+          const remaining = decoder.decode();
+          if (remaining) res.write(remaining);
+          reader.releaseLock();
+          res.end();
+        }
+      } else {
+        const data = await response.text();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(data);
+      }
+    } else {
+      const input = [];
+      for (const msg of messages) {
+        const role = String(msg.role || '');
+        if (role === 'system') {
+          input.push({ role: 'system', content: msg.content });
+          continue;
+        }
+        if (role === 'assistant') {
+          input.push({ role: 'assistant', content: msg.content });
+          continue;
+        }
+
+        const content = [];
+        if (Array.isArray(msg.content)) {
+          for (const item of msg.content) {
+            if (item.type === 'text') {
+              content.push({ type: 'input_text', text: String(item.text || '') });
+            } else if (item.type === 'image_url') {
+              const imgUrl = typeof item.image_url === 'string' ? item.image_url : (item.image_url?.url || '');
+              if (imgUrl) {
+                content.push({ type: 'input_image', image_url: imgUrl });
+              }
+            }
+          }
+        } else {
+          content.push({ type: 'input_text', text: String(msg.content || '') });
+        }
+        input.push({ role: 'user', content });
+      }
+
+      const requestPayload = {
+        model: 'qwen3.6-plus',
+        stream,
+        input,
+        enable_thinking: true,
+      };
+
+      if (hasWebSearch) {
+        requestPayload.tools = [{ type: 'web_search' }];
+      }
+
+      const upstreamRes = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/responses', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': stream ? 'text/event-stream' : 'application/json',
+        },
+        body: JSON.stringify(requestPayload),
+      });
+
+      if (!upstreamRes.ok) {
+        const text = await upstreamRes.text();
+        let json = null;
+        try { json = JSON.parse(text); } catch {}
+        const msg = json?.error?.message || json?.message || text || `API 错误: HTTP ${upstreamRes.status}`;
+        sendJson(res, upstreamRes.status, { error: msg, upstream: json || text });
+        return;
+      }
+
+      if (stream) {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+
+        const reader = upstreamRes.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.replace(/\r$/, '').trim();
+              if (!trimmed) continue;
+              if (!trimmed.startsWith('data:')) continue;
+              const dataStr = trimmed.slice(5).trim();
+              if (!dataStr) continue;
+              if (dataStr === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(dataStr);
+                let delta = '';
+                if (parsed?.type === 'response.output_text.delta') {
+                  delta = parsed.delta || '';
+                } else if (parsed?.choices?.[0]?.delta?.content) {
+                  delta = parsed.choices[0].delta.content;
+                }
+                if (delta) {
+                  const openaiChunk = JSON.stringify({
+                    choices: [{ delta: { content: delta } }]
+                  });
+                  res.write(`data: ${openaiChunk}\n\n`);
+                  if (res.flush) res.flush();
+                }
+              } catch {
+                // ignore malformed SSE
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[qwen-chat] responses stream error:', err.message);
+        } finally {
+          const tail = decoder.decode();
+          if (tail) {
+            buffer += tail;
+            const lines = buffer.split('\n');
+            for (const line of lines) {
+              const trimmed = line.replace(/\r$/, '').trim();
+              if (!trimmed || !trimmed.startsWith('data:')) continue;
+              const dataStr = trimmed.slice(5).trim();
+              if (!dataStr || dataStr === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(dataStr);
+                let delta = '';
+                if (parsed?.type === 'response.output_text.delta') {
+                  delta = parsed.delta || '';
+                } else if (parsed?.choices?.[0]?.delta?.content) {
+                  delta = parsed.choices[0].delta.content;
+                }
+                if (delta) {
+                  const openaiChunk = JSON.stringify({
+                    choices: [{ delta: { content: delta } }]
+                  });
+                  res.write(`data: ${openaiChunk}\n\n`);
+                }
+              } catch {}
+            }
+          }
+          res.write('data: [DONE]\n\n');
+          res.end();
+        }
+      } else {
+        const text = await upstreamRes.text();
+        let json = null;
+        try { json = JSON.parse(text); } catch {}
+
+        let content = '';
+        if (json?.output) {
+          for (const item of json.output) {
+            if (item.role === 'assistant' && Array.isArray(item.content)) {
+              for (const c of item.content) {
+                if (c.type === 'output_text' && c.text) {
+                  content += c.text;
+                }
+              }
+            }
+          }
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({
+          choices: [{ message: { role: 'assistant', content } }]
+        }));
+      }
+    }
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '对话请求失败' });
+  }
+}
+
 function createRequestId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${randomBytes(4).toString('hex')}`;
 }
@@ -9247,6 +9529,11 @@ const server = createServer(async (req, res) => {
   // Chat completions (top model) route
   if (req.method === 'POST' && url.pathname === '/api/chat/doubao') {
     await handleDoubaoChatCompletions(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/chat/qwen') {
+    await handleQwenChatCompletions(req, res);
     return;
   }
 

@@ -770,52 +770,53 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
 
                     <div className="flex flex-col gap-3">
                       <div className="flex flex-col sm:flex-row gap-3">
-                        <button
-                          onClick={handleDirectDownloadVideo}
-                          disabled={isDirectDownloading}
-                          className="flex-1 h-10 rounded-full text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-500/20 transition-all active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2"
-                        >
-                          {isDirectDownloading ? (
-                            <>
-                              <Loader2 className="size-4 animate-spin" />
-                              下载中...
-                            </>
-                          ) : (
-                            <>
-                              <Zap className="size-4" />
-                              极速下载
-                            </>
-                          )}
-                        </button>
+                        <div className="flex-1 flex flex-col gap-1">
+                          <button
+                            onClick={handleDirectDownloadVideo}
+                            disabled={isDirectDownloading}
+                            className="h-10 w-full rounded-full text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-500/20 transition-all active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2"
+                          >
+                            {isDirectDownloading ? (
+                              <>
+                                <Loader2 className="size-4 animate-spin" />
+                                下载中...
+                              </>
+                            ) : (
+                              <>
+                                <Zap className="size-4" />
+                                极速下载
+                              </>
+                            )}
+                          </button>
+                          <span className="text-[10px] text-slate-400 flex items-center gap-1 px-1">
+                            <Zap className="size-3 text-amber-500" />
+                            速度更快，少数视频可能失败
+                          </span>
+                        </div>
 
-                        <button
-                          onClick={handleDownloadVideo}
-                          disabled={isDownloading}
-                          className="flex-1 h-10 rounded-full text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2"
-                        >
-                          {isDownloading ? (
-                            <>
-                              <Loader2 className="size-4 animate-spin" />
-                              正在下载...
-                            </>
-                          ) : (
-                            <>
-                              <Download className="size-4" />
-                              兼容下载
-                            </>
-                          )}
-                        </button>
-                      </div>
-
-                      <div className="flex gap-4 text-[10px] text-slate-400 px-1">
-                        <span className="flex items-center gap-1">
-                          <Zap className="size-3 text-amber-500" />
-                          速度更快，少数视频可能失败
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Download className="size-3 text-indigo-500" />
-                          成功率更高，但速度可能较慢
-                        </span>
+                        <div className="flex-1 flex flex-col gap-1">
+                          <button
+                            onClick={handleDownloadVideo}
+                            disabled={isDownloading}
+                            className="h-10 w-full rounded-full text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2"
+                          >
+                            {isDownloading ? (
+                              <>
+                                <Loader2 className="size-4 animate-spin" />
+                                正在下载...
+                              </>
+                            ) : (
+                              <>
+                                <Download className="size-4" />
+                                兼容下载
+                              </>
+                            )}
+                          </button>
+                          <span className="text-[10px] text-slate-400 flex items-center gap-1 px-1">
+                            <Download className="size-3 text-indigo-500" />
+                            成功率更高，但速度可能较慢
+                          </span>
+                        </div>
                       </div>
 
                       <button

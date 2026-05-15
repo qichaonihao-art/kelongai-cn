@@ -16,18 +16,22 @@ export interface ModelOption {
 export const AVAILABLE_MODELS: ModelOption[] = [
   { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', description: 'Anthropic 最强推理模型' },
   { id: 'doubao-seed-2-0-pro-260215', name: 'Doubao Seed 2.0 Pro', description: '字节跳动多模态大模型', supportsMultimodal: true, supportsWebSearch: true },
+  { id: 'qwen3.6-plus', name: '千问 3.6-Plus', description: '阿里云百炼深度思考模型', supportsMultimodal: true, supportsWebSearch: true },
 ];
 
 function toApiMessages(messages: ChatMessage[]) {
   return messages.map((msg) => {
-    if (msg.role === 'user' && msg.images && msg.images.length > 0) {
-      return {
-        role: msg.role,
-        content: [
-          { type: 'text', text: msg.content },
-          ...msg.images.map((url) => ({ type: 'image_url', image_url: { url } })),
-        ],
-      };
+    if (msg.role === 'user' && ((msg.images && msg.images.length > 0) || (msg.videos && msg.videos.length > 0))) {
+      const content: Array<{ type: string; text?: string; image_url?: { url: string }; video?: { url: string } }> = [
+        { type: 'text', text: msg.content },
+      ];
+      if (msg.images && msg.images.length > 0) {
+        content.push(...msg.images.map((url) => ({ type: 'image_url', image_url: { url } })));
+      }
+      if (msg.videos && msg.videos.length > 0) {
+        content.push(...msg.videos.map((url) => ({ type: 'video', video: { url } })));
+      }
+      return { role: msg.role, content };
     }
     return { role: msg.role, content: msg.content };
   });
@@ -45,7 +49,8 @@ export async function* streamChatCompletion(
 ): AsyncGenerator<string, void, unknown> {
   const model = options?.model || 'claude-opus-4-7';
   const isDoubao = model === 'doubao-seed-2-0-pro-260215';
-  const endpoint = isDoubao ? '/api/chat/doubao' : '/api/chat/completions';
+  const isQwen = model === 'qwen3.6-plus';
+  const endpoint = isDoubao ? '/api/chat/doubao' : isQwen ? '/api/chat/qwen' : '/api/chat/completions';
 
   const body: Record<string, unknown> = { model, stream: true };
 
@@ -54,6 +59,14 @@ export async function* streamChatCompletion(
     if (options?.tools && options.tools.length > 0) {
       body.tools = options.tools;
     }
+  } else if (isQwen) {
+    body.messages = toApiMessages(messages);
+    if (options?.tools && options.tools.length > 0) {
+      body.tools = options.tools;
+    }
+    if (typeof options?.temperature === 'number') body.temperature = options.temperature;
+    if (typeof options?.maxTokens === 'number') body.max_tokens = options.maxTokens;
+    if (typeof options?.topP === 'number') body.top_p = options.topP;
   } else {
     body.messages = toApiMessages(messages);
     if (typeof options?.temperature === 'number') body.temperature = options.temperature;
@@ -102,7 +115,13 @@ export async function* streamChatCompletion(
 
         try {
           const parsed = JSON.parse(data);
-          const delta = parsed?.choices?.[0]?.delta?.content;
+          // Support both Chat Completions and Responses API formats
+          let delta: string | undefined;
+          if (parsed?.type === 'response.output_text.delta') {
+            delta = parsed.delta;
+          } else {
+            delta = parsed?.choices?.[0]?.delta?.content;
+          }
           if (typeof delta === 'string' && delta.length > 0) {
             yield delta;
           }
