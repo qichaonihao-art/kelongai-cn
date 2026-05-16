@@ -1,4 +1,4 @@
-(node:11563) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(node:28092) ExperimentalWarning: SQLite is an experimental feature and might change at any time
 (Use `node --trace-warnings ...` to show where the warning was created)
 [frontend] requested mode: legacy
 [frontend] requested dir: /Users/qichao/Documents/kelongai-cn/legacy-project/ai
@@ -15,241 +15,88 @@ Server running at http://0.0.0.0:3000
   failedCount: 0,
   maxAgeMs: 7200000
 }
-[qwen-chat] hasVideo: true hasWebSearch: true
-[qwen-chat] hasVideo: true hasWebSearch: true
-[qwen-chat] hasVideo: true hasWebSearch: true
-[douyin resolve] request received {
-  requestId: 'douyin_mp71xhmx_9a03216d',
-  originalInput: '6.69 复制打开抖音，看看【蓝战非（在路上）的作品】蓝战非问萝卜乔乔在英国的学费与花销 # 蓝战非 #... https://v.douyin.com/ypu0cStarnU/ CuF:/ 04/13 :6pm G@i.cA',
-  originalUrl: '',
-  normalizedUrl: '',
-  finalUrl: '',
-  extractedAwemeId: '',
-  finalResolvePath: 'failed',
-  upstreamStatus: 0,
-  upstreamBodySummary: '',
-  inputLength: 113,
-  requestedMode: 'stable'
-}
-[douyin resolve] parsed original url {
-  requestId: 'douyin_mp71xhmx_9a03216d',
-  originalInput: '6.69 复制打开抖音，看看【蓝战非（在路上）的作品】蓝战非问萝卜乔乔在英国的学费与花销 # 蓝战非 #... https://v.douyin.com/ypu0cStarnU/ CuF:/ 04/13 :6pm G@i.cA',
-  originalUrl: 'https://v.douyin.com/ypu0cStarnU/',
-  normalizedUrl: '',
-  finalUrl: '',
-  extractedAwemeId: '',
-  finalResolvePath: 'failed',
-  upstreamStatus: 0,
-  upstreamBodySummary: '',
-  sourceType: 'short_share_text'
-}
-[douyin resolve] expanded share_url prepared {
-  requestId: 'douyin_mp71xhmx_9a03216d',
-  originalInput: '6.69 复制打开抖音，看看【蓝战非（在路上）的作品】蓝战非问萝卜乔乔在英国的学费与花销 # 蓝战非 #... https://v.douyin.com/ypu0cStarnU/ CuF:/ 04/13 :6pm G@i.cA',
-  originalUrl: 'https://v.douyin.com/ypu0cStarnU/',
-  normalizedUrl: 'https://www.douyin.com/video/7639991513732222250?previous_page=app_code_link',
-  finalUrl: 'https://www.douyin.com/video/7639991513732222250?previous_page=app_code_link',
-  extractedAwemeId: '7639991513732222250',
-  finalResolvePath: 'failed',
-  upstreamStatus: 0,
-  upstreamBodySummary: '',
-  contentType: 'text/html'
-}
-[douyin resolve] direct html strategy failed {
-  requestId: 'douyin_mp71xhmx_9a03216d',
-  stage: 'douyin_download_link_missing',
-  message: '下载链接获取失败'
-}
-[douyin resolve] direct html strategy failed {
-  requestId: 'douyin_mp71xhmx_9a03216d',
-  stage: 'douyin_download_link_missing',
-  message: '下载链接获取失败'
-}
-[douyin resolve] direct html strategy failed {
-  requestId: 'douyin_mp71xhmx_9a03216d',
-  stage: 'douyin_download_link_missing',
-  message: '下载链接获取失败'
-}
-[douyin resolve] switching to TikHub fallback {
-  requestId: 'douyin_mp71xhmx_9a03216d',
-  stage: 'douyin_download_link_missing',
-  message: '下载链接获取失败'
-}
-[douyin duration] found duration candidates: [
-  { path: 'aweme_detail.video.duration', value: 68544 },
-  { path: 'aweme_detail.video.big_thumbs.0.duration', value: 68 },
-  { path: 'aweme_detail.music.duration', value: 68 },
-  { path: 'aweme_detail.duration', value: 68544 }
+[universal-extract] url: 6.43 复制打开抖音，看看【奔跑的椰子的作品】鸡腿神仙吃法，最简单做法之一！！！嫩滑入味姜葱味浓... https://v.douyin.com/spj08AA2cfA/ 03/04 W@m.DU :3pm VLJ:/
+[universal-extract] matched endpoints: [
+  '/api/v1/douyin/web/fetch_one_video_by_share_url',
+  '/api/v1/douyin/app/v3/fetch_one_video_by_share_url'
 ]
-[douyin resolve] TikHub fallback selected download candidate {
-  requestId: 'douyin_mp71xhmx_9a03216d',
-  candidateCount: 9,
-  selectedSource: 'aweme_detail.video.play_addr_h264',
-  selectedHost: 'v5-hl-zenl-ov.zjcdn.com',
-  candidateRank: [
-    {
-      rank: 1,
-      host: 'v5-hl-zenl-ov.zjcdn.com',
-      source: 'aweme_detail.video.play_addr_h264',
-      score: 265
-    },
-    {
-      rank: 2,
-      host: 'api-play-hl.amemv.com',
-      source: 'aweme_detail.video.play_addr_h264',
-      score: 230
-    },
-    {
-      rank: 3,
-      host: 'api-hl.amemv.com',
-      source: 'aweme_detail.video.play_addr_h264',
-      score: 220
-    },
-    {
-      rank: 4,
-      host: 'v5-hl-zenl-ov.zjcdn.com',
-      source: 'tikhub.original_video_url',
-      score: 160
-    },
-    {
-      rank: 5,
-      host: 'v5-hl-zenl-ov.zjcdn.com',
-      source: 'aweme_detail.video.download_addr',
-      score: 140
-    },
-    {
-      rank: 6,
-      host: 'api-play-hl.amemv.com',
-      source: 'aweme_detail.video.download_addr',
-      score: 105
-    },
-    {
-      rank: 7,
-      host: 'api-hl.amemv.com',
-      source: 'aweme_detail.video.download_addr',
-      score: 95
-    },
-    {
-      rank: 8,
-      host: 'v5-dy-o-abtest.zjcdn.com',
-      source: 'aweme_detail.video.play_addr_h264',
-      score: 5
-    }
-  ],
-  candidateHosts: [
-    'v5-dy-o-abtest.zjcdn.com',
-    'v5-hl-zenl-ov.zjcdn.com',
-    'api-play-hl.amemv.com',
-    'api-hl.amemv.com'
-  ],
-  candidateSources: [
-    'aweme_detail.video.play_addr_h264:v5-dy-o-abtest.zjcdn.com',
-    'aweme_detail.video.play_addr_h264:v5-hl-zenl-ov.zjcdn.com',
-    'aweme_detail.video.play_addr_h264:api-play-hl.amemv.com',
-    'aweme_detail.video.play_addr_h264:api-hl.amemv.com',
-    'aweme_detail.video.download_addr:v5-dy-o-abtest.zjcdn.com',
-    'aweme_detail.video.download_addr:v5-hl-zenl-ov.zjcdn.com',
-    'aweme_detail.video.download_addr:api-play-hl.amemv.com',
-    'aweme_detail.video.download_addr:api-hl.amemv.com'
-  ]
-}
-[douyin resolve] resolved successfully {
-  requestId: 'douyin_mp71xhmx_9a03216d',
-  originalInput: '6.69 复制打开抖音，看看【蓝战非（在路上）的作品】蓝战非问萝卜乔乔在英国的学费与花销 # 蓝战非 #... https://v.douyin.com/ypu0cStarnU/ CuF:/ 04/13 :6pm G@i.cA',
-  originalUrl: 'https://v.douyin.com/ypu0cStarnU/',
-  normalizedUrl: 'https://www.douyin.com/video/7639991513732222250?previous_page=app_code_link',
-  finalUrl: 'https://www.douyin.com/video/7639991513732222250?previous_page=app_code_link',
-  extractedAwemeId: '7639991513732222250',
-  finalResolvePath: 'tikhub_fallback',
-  upstreamStatus: 0,
-  upstreamBodySummary: '',
-  videoId: '7639991513732222250',
-  elapsedMs: 7066,
-  resolveStrategy: 'tikhub_fallback'
-}
-[douyin download] request_received {
-  requestId: 'dy_download_mp71xv52_ab3a5b6b',
-  elapsedMs: 1,
-  videoId: '7639991513732222250',
-  candidateCount: 9,
-  candidateHosts: [
-    'v5-hl-zenl-ov.zjcdn.com',
-    'api-play-hl.amemv.com',
-    'api-hl.amemv.com'
-  ],
-  method: 'GET'
-}
-[douyin download] upstream_fetch_start {
-  requestId: 'dy_download_mp71xv52_ab3a5b6b',
-  elapsedMs: 2,
-  host: 'v5-hl-zenl-ov.zjcdn.com',
-  parallelIndex: 0,
-  url: 'https://v5-hl-zenl-ov.zjcdn.com/adce3a90c9b6f4fa1c99a2fd3b1eca2e/6a074520/video/tos/cn/tos-cn-ve-15/okTfEXMZ7BBLpEhRHGQIRRCAxQhAFqQfDU8eEs/?a=1128&ch=26&cr=13&dr=0&lr=all&cd=0%7C0%7C0%7C&cv=1&br=1975&bt=1975&cs=0&ds=6&ft=r0yIZ26Td95~~iSYsiI9B4yoFIKrHgSFS4uB9dOCnzqK43DdxRyqkZ&mime_type=video_mp4&qs=0&rc=ZjZpOjo5PGQ1ZTY5ZWlkZ0BpMzV5d3c5cmQ8OzMzNGkzM0AyMF5fNmAvX2ExYy1iMDY0YSNjLjBfMmQ0aDBhLS1kLS9zcw%3D%3D&btag=80010e000a8008&cdn_type=1&cquery=103Y_100b_104i_103Q_103W&dy_q=1778857676&feature_id=f0150a16a324336cda5d6dd0b69ed299&l=202605152307568283A9FB9A9D982A0049&pdp=online_xy&pwid=1&req_cdn_type=r',
-  mode: 'parallel'
-}
-[douyin download] upstream_fetch_start {
-  requestId: 'dy_download_mp71xv52_ab3a5b6b',
-  elapsedMs: 4,
-  host: 'api-play-hl.amemv.com',
-  parallelIndex: 1,
-  url: 'https://api-play-hl.amemv.com/aweme/v1/play/?video_id=v0200fg10000d839ka7og65tbt3v12f0&line=0&file_id=7d9a3feb06f34bd2ba29c697b7af335c&sign=5ca1e8f024425d75def7177b1238a20f&is_play_url=1&source=PackSourceEnum_AWEME_DETAIL',
-  mode: 'parallel'
-}
-[douyin download] upstream_fetch_start {
-  requestId: 'dy_download_mp71xv52_ab3a5b6b',
-  elapsedMs: 5,
-  host: 'api-hl.amemv.com',
-  parallelIndex: 2,
-  url: 'https://api-hl.amemv.com/aweme/v1/play/?video_id=v0200fg10000d839ka7og65tbt3v12f0&line=1&file_id=7d9a3feb06f34bd2ba29c697b7af335c&sign=5ca1e8f024425d75def7177b1238a20f&is_play_url=1&source=PackSourceEnum_AWEME_DETAIL',
-  mode: 'parallel'
-}
-[douyin download] upstream_headers_received {
-  requestId: 'dy_download_mp71xv52_ab3a5b6b',
-  elapsedMs: 381,
-  host: 'api-play-hl.amemv.com',
-  parallelIndex: 1,
-  status: 200,
-  contentLength: '17329628',
-  ttfbMs: 376
-}
-[douyin download] client_stream_start {
-  requestId: 'dy_download_mp71xv52_ab3a5b6b',
-  elapsedMs: 383,
-  selectedHost: 'api-play-hl.amemv.com',
-  selectedSource: 'aweme_detail.video.play_addr_h264',
-  selectedDownloadUrl: 'https://api-play-hl.amemv.com/aweme/v1/play/?video_id=v0200fg10000d839ka7og65tbt3v12f0&line=0&file_id=7d9a3feb06f34bd2ba29c697b7af335c&sign=5ca1e8f024425d75def7177b1238a20f&is_play_url=1&source=PackSourceEnum_AWEME_DETAIL',
-  ttfbMs: 376,
-  headToClientMs: 383
-}
-[douyin download] upstream_fetch_failed {
-  requestId: 'dy_download_mp71xv52_ab3a5b6b',
-  elapsedMs: 384,
-  host: 'v5-hl-zenl-ov.zjcdn.com',
-  parallelIndex: 0,
-  error: 'This operation was aborted',
-  mode: 'parallel'
-}
-[douyin download] upstream_fetch_failed {
-  requestId: 'dy_download_mp71xv52_ab3a5b6b',
-  elapsedMs: 384,
-  host: 'api-hl.amemv.com',
-  parallelIndex: 2,
-  error: 'This operation was aborted',
-  mode: 'parallel'
-}
-[douyin download] stream_finished {
-  requestId: 'dy_download_mp71xv52_ab3a5b6b',
-  elapsedMs: 7438,
-  winner: 'api-play-hl.amemv.com',
-  videoId: '7639991513732222250',
-  bytesStreamed: 17329628,
-  ttfbMs: 376,
-  upstreamDurationMs: 7433,
-  totalDurationMs: 7437,
-  rollingTtfbAvg: 376,
-  rollingTtfbSamples: 1,
-  rollingDurationAvg: 7433,
-  rollingDurationSamples: 1,
-  consecutiveFailures: 0,
-  inCooldown: false
-}
+[universal-extract] trying endpoint: /api/v1/douyin/web/fetch_one_video_by_share_url, params: {"share_url":"6.43 复制打开抖音，看看【奔跑的椰子的作品】鸡腿神仙吃法，最简单做法之一！！！嫩滑入味姜葱味浓... https://v.douyin.com/spj08AA2cfA/ 03/04 W@m.DU :3pm VLJ:/"}
+[universal-extract] endpoint /api/v1/douyin/web/fetch_one_video_by_share_url response status: 200, hasData: true, code: 200, status_code: undefined
+[universal-extract] success via: /api/v1/douyin/web/fetch_one_video_by_share_url
+[proxy-download] depth=0 target: https://v5-dy-o-abtest.zjcdn.com/11b47aeab07b83cc856b61a425f0c871/6a08a5e8/video/tos/cn/tos-cn-ve-15/ogI2VIoAW6PHefcQGCQ
+[proxy-download] upstream status: 206 content-type: video/mp4
+[proxy-download] depth=0 target: https://v5-dy-o-abtest.zjcdn.com/11b47aeab07b83cc856b61a425f0c871/6a08a5e8/video/tos/cn/tos-cn-ve-15/ogI2VIoAW6PHefcQGCQ
+[proxy-download] upstream status: 200 content-type: video/mp4
+[proxy-download] depth=0 target: https://v3-dy-o.zjcdn.com/97a8d3cf6057081f41bf46d6927d68bd/6a08a5e8/video/tos/cn/tos-cn-ve-15/ogI2VIoAW6PHefcQGCQYBILg1o
+[proxy-download] upstream status: 200 content-type: video/mp4
+[universal-extract] url: https://v.kuaishou.com/7FdyY4W1 瓜哥坦言要来看蝴蝶梦跟发小老王不一样 "夜深人静 "倪海杉 该作品在快手被播放过10.8万次，点击链接，打开【快手】直接观看！
+[universal-extract] matched endpoints: [
+  '/api/v1/kuaishou/app/fetch_one_video_by_url',
+  '/api/v1/kuaishou/web/fetch_one_video_by_url'
+]
+[universal-extract] trying endpoint: /api/v1/kuaishou/app/fetch_one_video_by_url, params: {"share_text":"https://v.kuaishou.com/7FdyY4W1 瓜哥坦言要来看蝴蝶梦跟发小老王不一样 \"夜深人静 \"倪海杉 该作品在快手被播放过10.8万次，点击链接，打开【快手】直接观看！"}
+[universal-extract] endpoint /api/v1/kuaishou/app/fetch_one_video_by_url response status: 400, hasData: false, code: undefined, status_code: undefined
+[universal-extract] failed: /api/v1/kuaishou/app/fetch_one_video_by_url - TikHub 请求失败（HTTP 400）
+[universal-extract] trying endpoint: /api/v1/kuaishou/web/fetch_one_video_by_url, params: {"url":"https://v.kuaishou.com/7FdyY4W1 瓜哥坦言要来看蝴蝶梦跟发小老王不一样 \"夜深人静 \"倪海杉 该作品在快手被播放过10.8万次，点击链接，打开【快手】直接观看！"}
+[universal-extract] endpoint /api/v1/kuaishou/web/fetch_one_video_by_url response status: 200, hasData: true, code: 200, status_code: undefined
+[universal-extract] success via: /api/v1/kuaishou/web/fetch_one_video_by_url
+[universal-extract] url: 6.43 复制打开抖音，看看【奔跑的椰子的作品】鸡腿神仙吃法，最简单做法之一！！！嫩滑入味姜葱味浓... https://v.douyin.com/spj08AA2cfA/ 03/04 W@m.DU :3pm VLJ:/
+[universal-extract] matched endpoints: [
+  '/api/v1/douyin/web/fetch_one_video_by_share_url',
+  '/api/v1/douyin/app/v3/fetch_one_video_by_share_url'
+]
+[universal-extract] trying endpoint: /api/v1/douyin/web/fetch_one_video_by_share_url, params: {"share_url":"6.43 复制打开抖音，看看【奔跑的椰子的作品】鸡腿神仙吃法，最简单做法之一！！！嫩滑入味姜葱味浓... https://v.douyin.com/spj08AA2cfA/ 03/04 W@m.DU :3pm VLJ:/"}
+[universal-extract] endpoint /api/v1/douyin/web/fetch_one_video_by_share_url response status: 200, hasData: true, code: 200, status_code: undefined
+[universal-extract] success via: /api/v1/douyin/web/fetch_one_video_by_share_url
+[universal-extract] url: 6.43 复制打开抖音，看看【奔跑的椰子的作品】鸡腿神仙吃法，最简单做法之一！！！嫩滑入味姜葱味浓... https://v.douyin.com/spj08AA2cfA/ 03/04 W@m.DU :3pm VLJ:/
+[universal-extract] matched endpoints: [
+  '/api/v1/douyin/web/fetch_one_video_by_share_url',
+  '/api/v1/douyin/app/v3/fetch_one_video_by_share_url'
+]
+[universal-extract] trying endpoint: /api/v1/douyin/web/fetch_one_video_by_share_url, params: {"share_url":"6.43 复制打开抖音，看看【奔跑的椰子的作品】鸡腿神仙吃法，最简单做法之一！！！嫩滑入味姜葱味浓... https://v.douyin.com/spj08AA2cfA/ 03/04 W@m.DU :3pm VLJ:/"}
+[universal-extract] endpoint /api/v1/douyin/web/fetch_one_video_by_share_url response status: 200, hasData: true, code: 200, status_code: undefined
+[universal-extract] success via: /api/v1/douyin/web/fetch_one_video_by_share_url
+[universal-extract] url: https://v.kuaishou.com/7FdyY4W1 瓜哥坦言要来看蝴蝶梦跟发小老王不一样 夜深人静 倪海杉 该作品在快手被播放过10.8万次，点击链接，打开【快手】直接观看！
+[universal-extract] matched endpoints: [
+  '/api/v1/kuaishou/app/fetch_one_video_by_url',
+  '/api/v1/kuaishou/web/fetch_one_video_by_url'
+]
+[universal-extract] trying endpoint: /api/v1/kuaishou/app/fetch_one_video_by_url, params: {"share_text":"https://v.kuaishou.com/7FdyY4W1 瓜哥坦言要来看蝴蝶梦跟发小老王不一样 夜深人静 倪海杉 该作品在快手被播放过10.8万次，点击链接，打开【快手】直接观看！"}
+[universal-extract] endpoint /api/v1/kuaishou/app/fetch_one_video_by_url response status: 400, hasData: false, code: undefined, status_code: undefined
+[universal-extract] failed: /api/v1/kuaishou/app/fetch_one_video_by_url - TikHub 请求失败（HTTP 400）
+[universal-extract] trying endpoint: /api/v1/kuaishou/web/fetch_one_video_by_url, params: {"url":"https://v.kuaishou.com/7FdyY4W1 瓜哥坦言要来看蝴蝶梦跟发小老王不一样 夜深人静 倪海杉 该作品在快手被播放过10.8万次，点击链接，打开【快手】直接观看！"}
+[universal-extract] endpoint /api/v1/kuaishou/web/fetch_one_video_by_url response status: 200, hasData: true, code: 200, status_code: undefined
+[universal-extract] success via: /api/v1/kuaishou/web/fetch_one_video_by_url
+[universal-extract] url: https://v.kuaishou.com/7FdyY4W1 瓜哥坦言要来看蝴蝶梦跟发小老王不一样 夜深人静 倪海杉 该作品在快手被播放过10.8万次，点击链接，打开【快手】直接观看！
+[universal-extract] matched endpoints: [
+  '/api/v1/kuaishou/app/fetch_one_video_by_url',
+  '/api/v1/kuaishou/web/fetch_one_video_by_url'
+]
+[universal-extract] trying endpoint: /api/v1/kuaishou/app/fetch_one_video_by_url, params: {"share_text":"https://v.kuaishou.com/7FdyY4W1 瓜哥坦言要来看蝴蝶梦跟发小老王不一样 夜深人静 倪海杉 该作品在快手被播放过10.8万次，点击链接，打开【快手】直接观看！"}
+[universal-extract] endpoint /api/v1/kuaishou/app/fetch_one_video_by_url response status: 400, hasData: false, code: undefined, status_code: undefined
+[universal-extract] failed: /api/v1/kuaishou/app/fetch_one_video_by_url - TikHub 请求失败（HTTP 400）
+[universal-extract] trying endpoint: /api/v1/kuaishou/web/fetch_one_video_by_url, params: {"url":"https://v.kuaishou.com/7FdyY4W1 瓜哥坦言要来看蝴蝶梦跟发小老王不一样 夜深人静 倪海杉 该作品在快手被播放过10.8万次，点击链接，打开【快手】直接观看！"}
+[universal-extract] endpoint /api/v1/kuaishou/web/fetch_one_video_by_url response status: 200, hasData: true, code: 200, status_code: undefined
+[universal-extract] success via: /api/v1/kuaishou/web/fetch_one_video_by_url
+[universal-extract] url: https://v.kuaishou.com/7FdyY4W1
+[universal-extract] matched endpoints: [
+  '/api/v1/kuaishou/app/fetch_one_video_by_url',
+  '/api/v1/kuaishou/web/fetch_one_video_by_url'
+]
+[universal-extract] trying endpoint: /api/v1/kuaishou/app/fetch_one_video_by_url, params: {"share_text":"https://v.kuaishou.com/7FdyY4W1"}
+[universal-extract] endpoint /api/v1/kuaishou/app/fetch_one_video_by_url response status: 400, hasData: false, code: undefined, status_code: undefined
+[universal-extract] failed: /api/v1/kuaishou/app/fetch_one_video_by_url - TikHub 请求失败（HTTP 400）
+[universal-extract] trying endpoint: /api/v1/kuaishou/web/fetch_one_video_by_url, params: {"url":"https://v.kuaishou.com/7FdyY4W1"}
+[universal-extract] endpoint /api/v1/kuaishou/web/fetch_one_video_by_url response status: 200, hasData: true, code: 200, status_code: undefined
+[universal-extract] success via: /api/v1/kuaishou/web/fetch_one_video_by_url
+[universal-extract] url: https://v.kuaishou.com/7FdyY4W1
+[universal-extract] matched endpoints: [
+  '/api/v1/kuaishou/app/fetch_one_video_by_url',
+  '/api/v1/kuaishou/web/fetch_one_video_by_url'
+]
+[universal-extract] trying endpoint: /api/v1/kuaishou/app/fetch_one_video_by_url, params: {"share_text":"https://v.kuaishou.com/7FdyY4W1"}
+[universal-extract] endpoint /api/v1/kuaishou/app/fetch_one_video_by_url response status: 400, hasData: false, code: undefined, status_code: undefined
+[universal-extract] failed: /api/v1/kuaishou/app/fetch_one_video_by_url - TikHub 请求失败（HTTP 400）
+[universal-extract] trying endpoint: /api/v1/kuaishou/web/fetch_one_video_by_url, params: {"url":"https://v.kuaishou.com/7FdyY4W1"}
+[universal-extract] endpoint /api/v1/kuaishou/web/fetch_one_video_by_url response status: 200, hasData: true, code: 200, status_code: undefined
+[universal-extract] success via: /api/v1/kuaishou/web/fetch_one_video_by_url

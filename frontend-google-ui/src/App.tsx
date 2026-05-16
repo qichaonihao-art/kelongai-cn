@@ -12,9 +12,10 @@ import DouyinDownloaderPage from './pages/DouyinDownloaderPage';
 import DataCollectionPage from './pages/DataCollectionPage';
 import ImageGenerationPage from './pages/ImageGenerationPage';
 import TopModelPage from './pages/TopModelPage';
+import UniversalExtractorPage from './pages/UniversalExtractorPage';
 import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
 
-type Page = 'login' | 'home' | 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel';
+type Page = 'login' | 'home' | 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
@@ -51,12 +52,16 @@ export default function App() {
     return result;
   };
 
-  const handleNavigate = (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => {
+  const handleNavigate = (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal') => {
     setCurrentPage(page);
   };
 
   const handleBackToHome = () => {
     setCurrentPage('home');
+  };
+
+  const handleBackToDouyin = () => {
+    setCurrentPage('douyin');
   };
 
   const handleLogout = async () => {
@@ -114,6 +119,13 @@ export default function App() {
       {currentPage === 'topmodel' && (
         <TopModelPage
           onBack={handleBackToHome}
+          onNavigate={handleNavigate}
+          onLogout={handleLogout}
+        />
+      )}
+      {currentPage === 'universal' && (
+        <UniversalExtractorPage
+          onBack={handleBackToDouyin}
           onNavigate={handleNavigate}
           onLogout={handleLogout}
         />

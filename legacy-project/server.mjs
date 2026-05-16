@@ -5,6 +5,8 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
@@ -3704,7 +3706,7 @@ function shouldRetryDouyinVideoDownloadError(error) {
   return [5, 6, 7, 18, 28, 52, 55, 56].includes(curlCode);
 }
 
-async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = [], requestId, parentDeadlineAt = 0 }) {
+async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = [], requestId, parentDeadlineAt = 0, referer = '' }) {
   await ensureUploadTempDir();
   const normalizedCandidates = normalizeDouyinDownloadCandidates(downloadUrlCandidates, downloadUrl);
   const fallbackCandidate = normalizedCandidates[0] || {
@@ -3767,7 +3769,7 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
       '--request', 'GET',
       '--url', currentDownloadUrl,
       '--user-agent', DOUYIN_USER_AGENT,
-      '--header', 'Referer: https://www.douyin.com/',
+      '--header', `Referer: ${referer || 'https://www.douyin.com/'}`,
       '--header', 'Accept: */*',
       '--connect-timeout', String(DOUYIN_VIDEO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS),
       '--max-time', String(Math.ceil(timeoutMs / 1000)),
@@ -5327,6 +5329,861 @@ async function callTikHubVideoDetailByAwemeId({ awemeId, requestId, deadlineAt =
     requestId,
     deadlineAt
   });
+}
+
+/* ------------------------------------------------------------------ */
+/*  Universal Multi-Platform Extract (ported from CopyPilot)          */
+/* ------------------------------------------------------------------ */
+
+const UNIVERSAL_ENDPOINTS = [
+  { path: '/api/v1/douyin/web/fetch_one_video_by_share_url', param: 'share_url' },
+  { path: '/api/v1/douyin/app/v3/fetch_one_video_by_share_url', param: 'share_url' },
+  { path: '/api/v1/tiktok/app/v3/fetch_one_video_by_share_url', param: 'share_url' },
+  { path: '/api/v1/kuaishou/app/fetch_one_video_by_url', param: 'share_text' },
+  { path: '/api/v1/kuaishou/web/fetch_one_video_by_url', param: 'url' },
+  { path: '/api/v1/bilibili/web/fetch_one_video_v3', param: 'url' },
+  { path: '/api/v1/instagram/v1/fetch_post_by_url_v2', param: 'post_url' },
+  { path: '/api/v1/instagram/v1/fetch_post_by_url', param: 'post_url' },
+  { path: '/api/v1/wechat_mp/web/fetch_mp_article_detail_json', param: 'url' }
+];
+
+const XIAOHONGSHU_ENDPOINTS = [
+  { path: '/api/v1/xiaohongshu/web/get_note_info_v7', param: 'share_text' },
+  { path: '/api/v1/xiaohongshu/web/get_note_info_v5', param: 'share_text' },
+  { path: '/api/v1/xiaohongshu/web/get_note_info_v4', param: 'share_text' },
+  { path: '/api/v1/xiaohongshu/app_v2/get_image_note_detail', param: 'share_text' },
+  { path: '/api/v1/xiaohongshu/app_v2/get_video_note_detail', param: 'share_text' },
+  { path: '/api/v1/xiaohongshu/web_v2/fetch_feed_notes_v5', param: 'short_url' },
+  { path: '/api/v1/xiaohongshu/web_v2/fetch_feed_notes_v4', param: 'short_url' },
+  { path: '/api/v1/xiaohongshu/web_v2/fetch_feed_notes_v3', param: 'short_url' }
+];
+
+function isXiaohongshuUrl(url) {
+  const lower = String(url || '').toLowerCase();
+  return lower.includes('xiaohongshu') || lower.includes('xhslink');
+}
+
+function parseXiaohongshuUrl(url) {
+  const parsed = { noteId: '', xsecToken: '' };
+  const text = String(url || '');
+  const noteMatch = text.match(/\/(?:discovery\/item|explore)\/([0-9a-f]{20,32})/i);
+  if (noteMatch) parsed.noteId = noteMatch[1];
+  try {
+    const target = new URL(text);
+    parsed.xsecToken = target.searchParams.get('xsec_token') || '';
+  } catch {
+    const tokenMatch = text.match(/[?&]xsec_token=([^&#\s]+)/i);
+    if (tokenMatch) parsed.xsecToken = decodeURIComponent(tokenMatch[1]);
+  }
+  return parsed;
+}
+
+function extractYoutubeId(url) {
+  try {
+    const target = new URL(url);
+    if (target.hostname.includes('youtu.be')) return target.pathname.split('/').filter(Boolean)[0] || '';
+    return target.searchParams.get('v') || target.pathname.match(/\/shorts\/([^/?#]+)/)?.[1] || '';
+  } catch {
+    return '';
+  }
+}
+
+function extractBilibiliBvId(url) {
+  return String(url || '').match(/BV[a-zA-Z0-9]+/)?.[0] || '';
+}
+
+function extractLastNumericId(url) {
+  return String(url || '').match(/(\d{6,})(?!.*\d)/)?.[1] || '';
+}
+
+function extractLastPathId(url) {
+  try {
+    const target = new URL(url);
+    return target.pathname.split('/').filter(Boolean).pop() || extractLastNumericId(url);
+  } catch {
+    return extractLastNumericId(url);
+  }
+}
+
+function extractThreadsId(url) {
+  try {
+    const target = new URL(url);
+    const parts = target.pathname.split('/').filter(Boolean);
+    return parts[parts.length - 1] || '';
+  } catch {
+    return '';
+  }
+}
+
+function extractRedditPostId(url) {
+  try {
+    const target = new URL(url);
+    const parts = target.pathname.split('/').filter(Boolean);
+    const commentsIndex = parts.indexOf('comments');
+    if (commentsIndex >= 0) return parts[commentsIndex + 1] || '';
+    return parts[parts.length - 1] || '';
+  } catch {
+    return '';
+  }
+}
+
+function rankUniversalEndpoints(url) {
+  const lower = url.toLowerCase();
+  const platformRoutes = [
+    {
+      test: /tiktok\.com|vm\.tiktok\.com/i,
+      endpoints: [
+        { path: '/api/v1/tiktok/app/v3/fetch_one_video_by_share_url_v2', param: 'share_url' },
+        { path: '/api/v1/tiktok/app/v3/fetch_one_video_by_share_url', param: 'share_url' }
+      ]
+    },
+    {
+      test: /douyin\.com|iesdouyin\.com/i,
+      endpoints: UNIVERSAL_ENDPOINTS.slice(0, 2)
+    },
+    {
+      test: /kuaishou\.com|gifshow\.com|v\.kuaishou\.com/i,
+      endpoints: [
+        { path: '/api/v1/kuaishou/web/fetch_one_video_by_url', param: 'url' },
+        { path: '/api/v1/kuaishou/app/fetch_one_video_by_url', param: 'share_text' }
+      ]
+    },
+    {
+      test: /bilibili\.com|b23\.tv/i,
+      endpoints: [
+        { path: '/api/v1/bilibili/web/fetch_one_video_v3', param: 'url' },
+        { path: '/api/v1/bilibili/web/fetch_one_video', param: 'bv_id', derive: extractBilibiliBvId }
+      ]
+    },
+    {
+      test: /instagram\.com/i,
+      endpoints: UNIVERSAL_ENDPOINTS.slice(6, 8)
+    },
+    {
+      test: /mp\.weixin\.qq\.com|weixin\.qq\.com/i,
+      endpoints: [UNIVERSAL_ENDPOINTS[8]]
+    },
+    {
+      test: /youtube\.com|youtu\.be/i,
+      endpoints: [{ path: '/api/v1/youtube/web/get_video_info', param: 'video_id', derive: extractYoutubeId }]
+    },
+    {
+      test: /twitter\.com|x\.com/i,
+      endpoints: [{ path: '/api/v1/twitter/web/fetch_tweet_detail', param: 'tweet_id', derive: extractLastNumericId }]
+    },
+    {
+      test: /threads\.net/i,
+      endpoints: [{ path: '/api/v1/threads/web/fetch_post_detail', param: 'post_id', derive: extractThreadsId }]
+    },
+    {
+      test: /reddit\.com/i,
+      endpoints: [{ path: '/api/v1/reddit/app/fetch_post_details', param: 'post_id', derive: extractRedditPostId, extra: { need_format: 'true' } }]
+    },
+    {
+      test: /weibo\.com/i,
+      endpoints: [
+        { path: '/api/v1/weibo/web_v2/fetch_post_detail', param: 'id', derive: extractLastPathId, extra: { is_get_long_text: 'true' } },
+        { path: '/api/v1/weibo/app/fetch_status_detail', param: 'status_id', derive: extractLastPathId }
+      ]
+    },
+    {
+      test: /lemon8-app\.com|lemon8\.com/i,
+      endpoints: [{ path: '/api/v1/lemon8/app/fetch_post_detail', param: 'item_id', derive: extractLastNumericId }]
+    },
+    {
+      test: /pipix\.com|pipixia\.com/i,
+      endpoints: [{ path: '/api/v1/pipixia/app/fetch_post_detail', param: 'cell_id', derive: extractLastNumericId }]
+    },
+    {
+      test: /zhihu\.com/i,
+      endpoints: [{ path: '/api/v1/zhihu/web/fetch_column_article_detail', param: 'article_id', derive: extractLastNumericId }]
+    }
+  ];
+
+  const route = platformRoutes.find((item) => item.test.test(lower));
+  if (route) return route.endpoints;
+  return UNIVERSAL_ENDPOINTS;
+}
+
+function getUniversalEndpointParams(endpoint, url) {
+  const normalizedInput = normalizeDouyinInput(url);
+  const primaryUrl = extractUrlsFromText(normalizedInput)[0] || normalizedInput;
+  const value = endpoint.derive
+    ? endpoint.derive(primaryUrl)
+    : endpoint.param === 'share_text' && !endpoint.path.includes('/kuaishou/')
+      ? normalizedInput
+      : primaryUrl;
+  if (!value) return null;
+  return { [endpoint.param]: value, ...(endpoint.extra || {}) };
+}
+
+function isEmptyUniversalPayload(value) {
+  if (value === undefined || value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') return Object.keys(value).length === 0;
+  return false;
+}
+
+async function requestTikhubUniversal({ apiKey, baseUrl, endpoint, params, logPrefix = '' }) {
+  const target = new URL(`${baseUrl}${endpoint.path}`);
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value !== undefined && value !== null && value !== '') target.searchParams.set(key, value);
+  }
+
+  console.log(`${logPrefix} trying endpoint: ${endpoint.path}, params:`, JSON.stringify(params).slice(0, 200));
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+
+  let response;
+  try {
+    response = await fetch(target.toString(), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: controller.signal
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    if (error.name === 'AbortError') {
+      console.log(`${logPrefix} timeout: ${endpoint.path}`);
+      throw new Error('TikHub 接口响应超时，请稍后重试。');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const text = await response.text();
+  let payload;
+  try { payload = JSON.parse(text); } catch { payload = { raw: text }; }
+
+  console.log(`${logPrefix} endpoint ${endpoint.path} response status: ${response.status}, hasData: ${!!(payload?.data)}, code: ${payload?.code}, status_code: ${payload?.status_code}`);
+
+  if (response.ok && isTikhubSuccessPayload(payload)) {
+    const data = payload.data !== undefined ? payload.data : payload;
+    if (!isEmptyUniversalPayload(data)) {
+      return data;
+    }
+    throw new Error('TikHub 返回了空数据，继续尝试其他解析接口。');
+  }
+
+  throw new Error(readTikhubErrorMessage(payload, response.status, endpoint.path));
+}
+
+function isTikhubSuccessPayload(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  // Direct data presence
+  if (payload.data !== undefined && payload.data !== null) return true;
+  // Various success code formats used by TikHub
+  const code = payload.code;
+  if (code === 200 || code === 0 || code === 20000 || code === '200' || code === '0') return true;
+  const statusCode = payload.status_code;
+  if (statusCode === 200 || statusCode === 0 || statusCode === 20000) return true;
+  if (payload.status === 'success' || payload.status === 'ok') return true;
+  // Some endpoints return data directly without wrapper
+  if (payload.aweme_detail || payload.itemInfo || payload.note || payload.video || payload.title || payload.desc) return true;
+  return false;
+}
+
+function readTikhubErrorMessage(payload, status, path) {
+  const message = payload?.message_zh || payload?.message || payload?.msg || payload?.detail || payload?.error?.message || payload?.raw || '';
+  if (typeof message === 'string' && message.trim()) return message.trim();
+  if (status === 400 && path.includes('/xiaohongshu/')) {
+    return 'TikHub 返回 400：小红书链接参数不完整、作品不可访问，或该接口不支持这类笔记。';
+  }
+  return `TikHub 请求失败（HTTP ${status}）`;
+}
+
+function firstReadableError(errors) {
+  return errors.find((item) => item && !/^\d+$/.test(item));
+}
+
+function findFirstValue(input, keys) {
+  const queue = [input];
+  const seen = new Set();
+  while (queue.length) {
+    const item = queue.shift();
+    if (!item || typeof item !== 'object' || seen.has(item)) continue;
+    seen.add(item);
+    for (const key of keys) {
+      if (typeof item[key] === 'string' && item[key]) return item[key];
+    }
+    for (const value of Object.values(item)) {
+      if (value && typeof value === 'object') queue.push(value);
+    }
+  }
+  return '';
+}
+
+function normalizeUniversalUrlList(value) {
+  const urls = [];
+  const add = (item) => {
+    const url = extractFirstUrl(item);
+    if (url) urls.push(url);
+  };
+
+  if (Array.isArray(value)) {
+    for (const item of value) add(item);
+  } else {
+    add(value);
+  }
+
+  return urls;
+}
+
+function looksLikeUniversalVideoUrl(url) {
+  const text = String(url || '').trim();
+  if (!/^https?:\/\//i.test(text)) return false;
+  const lower = text.toLowerCase();
+  return (
+    /\.(mp4|webm|mov|m3u8|mpd)(?:[?#]|$)/.test(lower) ||
+    /video\/tos|douyinvod|googlevideo\.com\/videoplayback|mime=video/.test(lower) ||
+    /kwaicdn|yximgs|ndcimgs|ksapis|ksosvideo/.test(lower) ||
+    /tiktokcdn|tiktokv|hdslb/.test(lower)
+  );
+}
+
+function scoreUniversalVideoCandidate(candidate, platform = '') {
+  const url = String(candidate?.url || '');
+  const source = String(candidate?.source || '');
+  const host = String(candidate?.host || '');
+  const lower = url.toLowerCase();
+  let score = 0;
+
+  if (platform === 'douyin') score += scoreDouyinDownloadCandidate(candidate);
+  if (platform === 'kuaishou') {
+    if (/kwaicdn|yximgs|ndcimgs/.test(host)) score += 90;
+    if (/backup/i.test(source)) score += 15;
+    if (/mainMvUrls/i.test(source)) score += 35;
+    if (/manifest/i.test(source)) score += 45;
+  }
+
+  if (/\.(mp4|webm|mov)(?:[?#]|$)/.test(lower)) score += 60;
+  if (/m3u8|mpd/.test(lower)) score += 20;
+  if (/watermark=1|playwm|logo_name=/i.test(url)) score -= 80;
+  if (/avatar|cover|image|pic|jpg|jpeg|png|webp/i.test(lower)) score -= 120;
+
+  return score;
+}
+
+function collectKuaishouVideoCandidates(data) {
+  const photo = data?.photo || data?.data?.photo || data || {};
+  const candidates = [];
+
+  const add = (rawUrl, source) => {
+    const url = String(rawUrl || '').trim();
+    if (!looksLikeUniversalVideoUrl(url)) return;
+    candidates.push({ url, source, host: getHostnameFromUrl(url) });
+  };
+
+  for (const url of normalizeUniversalUrlList(photo.mainMvUrls)) add(url, 'kuaishou.photo.mainMvUrls');
+  for (const adaptationSet of photo.manifest?.adaptationSet || []) {
+    for (const representation of adaptationSet?.representation || []) {
+      add(representation?.url, 'kuaishou.photo.manifest.representation.url');
+      for (const backupUrl of representation?.backupUrl || []) {
+        add(backupUrl, 'kuaishou.photo.manifest.representation.backupUrl');
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function collectUniversalVideoCandidates(data, platform = '') {
+  const candidates = [];
+  const seen = new Set();
+
+  const add = (rawUrl, source) => {
+    const normalizedUrl = platform === 'douyin'
+      ? stripDouyinWatermark(String(rawUrl || '').trim())
+      : String(rawUrl || '').trim();
+    if (!looksLikeUniversalVideoUrl(normalizedUrl) || seen.has(normalizedUrl)) return;
+    seen.add(normalizedUrl);
+    candidates.push({
+      url: normalizedUrl,
+      source,
+      host: getHostnameFromUrl(normalizedUrl)
+    });
+  };
+
+  if (platform === 'douyin') {
+    for (const candidate of collectDownloadUrlCandidates(data)) {
+      add(candidate.url, candidate.source);
+    }
+  }
+
+  if (platform === 'kuaishou') {
+    for (const candidate of collectKuaishouVideoCandidates(data)) {
+      add(candidate.url, candidate.source);
+    }
+  }
+
+  const queue = [data];
+  const visited = new Set();
+  while (queue.length) {
+    const item = queue.shift();
+    if (!item || visited.has(item)) continue;
+    if (typeof item === 'string') {
+      add(item, 'deep_search');
+      continue;
+    }
+    if (typeof item !== 'object') continue;
+    visited.add(item);
+    for (const value of Object.values(item)) queue.push(value);
+  }
+
+  return candidates
+    .map((candidate) => ({
+      ...candidate,
+      score: scoreUniversalVideoCandidate(candidate, platform)
+    }))
+    .sort((left, right) => right.score - left.score)
+    .filter((candidate) => candidate.score > -80)
+    .slice(0, 12)
+    .map(({ score, ...candidate }) => candidate);
+}
+
+function looksLikeUniversalImageUrl(url) {
+  const text = String(url || '').trim();
+  if (!/^https?:\/\//i.test(text)) return false;
+  const lower = text.toLowerCase();
+  return (
+    /\.(jpg|jpeg|png|webp|gif|bmp)(?:[?#]|$)/.test(lower) ||
+    /douyinpic|yximgs|xhscdn|fbcdn|image|img|cover/.test(lower)
+  );
+}
+
+function collectUniversalImages(data, platform = '') {
+  const urls = [];
+  const seen = new Set();
+
+  const add = (rawUrl) => {
+    const url = extractFirstUrl(rawUrl);
+    if (!looksLikeUniversalImageUrl(url) || seen.has(url)) return;
+    seen.add(url);
+    urls.push(url);
+  };
+
+  const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data?.note || data?.photo || data || {};
+  for (const value of [
+    detail.cover?.url_list,
+    detail.origin_cover?.url_list,
+    detail.dynamic_cover?.url_list,
+    detail.coverUrls,
+    detail.webpCoverUrls,
+    detail.headUrls,
+    detail.images,
+    detail.image_list,
+    detail.noteCard?.imageList,
+    data?.images
+  ]) {
+    for (const url of normalizeUniversalUrlList(value)) add(url);
+  }
+
+  const queue = [detail];
+  const visited = new Set();
+  while (queue.length && urls.length < 30) {
+    const item = queue.shift();
+    if (!item || visited.has(item)) continue;
+    if (typeof item === 'string') {
+      add(item);
+      continue;
+    }
+    if (typeof item !== 'object') continue;
+    visited.add(item);
+    for (const value of Object.values(item)) queue.push(value);
+  }
+
+  return urls.slice(0, 20);
+}
+
+function collectUniversalTags(data) {
+  const tags = [];
+  const add = (value) => {
+    const tag = String(value || '').replace(/^#/, '').replace(/\[话题\]$/g, '').trim();
+    if (tag) tags.push(tag);
+  };
+  const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data?.note || data?.photo || data || {};
+
+  for (const item of [
+    ...(detail.video_tag || []),
+    ...(detail.text_extra || []),
+    ...(detail.tagList || []),
+    ...(detail.tags || []),
+    ...(data?.tags || [])
+  ]) {
+    add(item?.tag_name || item?.hashtag_name || item?.name || item?.title || item);
+  }
+
+  const text = readValue(detail.desc, detail.caption, detail.title, data?.desc, data?.caption, data?.title);
+  for (const match of text.match(/#[^\s#，,。；;！!？?]+/g) || []) add(match);
+
+  return [...new Set(tags)].slice(0, 20);
+}
+
+function detectUniversalPlatform(data, sourceUrl = '', endpointPath = '') {
+  const text = `${sourceUrl} ${endpointPath}`.toLowerCase();
+  if (data?.aweme_detail || /douyin|iesdouyin/.test(text)) return 'douyin';
+  if (data?.photo || /kuaishou|gifshow|v\.kuaishou/.test(text)) return 'kuaishou';
+  if (data?.note || data?.noteCard || /xiaohongshu|xhslink/.test(text)) return 'xiaohongshu';
+  if (data?.itemInfo?.itemStruct || /tiktok/.test(text)) return 'tiktok';
+  if (data?.bvid || /bilibili|b23\.tv/.test(text)) return 'bilibili';
+  if (/youtube|youtu\.be/.test(text)) return 'youtube';
+  if (/instagram/.test(text)) return 'instagram';
+  if (/weibo/.test(text)) return 'weibo';
+  if (/zhihu/.test(text)) return 'zhihu';
+  if (/wechat|weixin|mp\.weixin/.test(text)) return 'wechat';
+  return '';
+}
+
+function normalizeUniversalExtractResult(data, { sourceUrl = '', endpointPath = '' } = {}) {
+  const platform = detectUniversalPlatform(data, sourceUrl, endpointPath);
+  const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data?.note || data?.noteCard || data?.article || data?.mp_article || data?.photo || data || {};
+  const videoUrlCandidates = collectUniversalVideoCandidates(data, platform);
+  const images = collectUniversalImages(data, platform);
+  const title = readValue(
+    data?.title,
+    detail?.title,
+    detail?.msg_title,
+    detail?.appmsg_title,
+    detail?.article_title,
+    detail?.desc,
+    detail?.caption,
+    detail?.share_info?.share_title
+  );
+  const desc = readValue(
+    detail?.desc,
+    detail?.caption,
+    detail?.text,
+    detail?.description,
+    detail?.content,
+    data?.desc,
+    data?.caption,
+    data?.text
+  );
+  const authorName = readValue(
+    detail?.author?.nickname,
+    detail?.author?.name,
+    detail?.user?.nickname,
+    detail?.user?.name,
+    detail?.userName,
+    data?.author?.nickname,
+    data?.user?.name
+  );
+
+  return {
+    platform,
+    title,
+    desc,
+    authorName,
+    duration: Number(detail?.duration || detail?.video?.duration || data?.duration || 0),
+    videoUrls: videoUrlCandidates.map((candidate) => candidate.url),
+    videoUrlCandidates,
+    images,
+    tags: collectUniversalTags(data),
+    sourceUrl: extractUrlsFromText(sourceUrl)[0] || sourceUrl,
+    sourceEndpoint: endpointPath,
+    raw: data
+  };
+}
+
+async function extractXiaohongshuUniversal({ apiKey, baseUrl, url }) {
+  const errors = [];
+  const parsed = parseXiaohongshuUrl(url);
+  const isShortLink = /xhslink\.com/i.test(url);
+
+  if (isShortLink) {
+    const shortLinkEndpoints = XIAOHONGSHU_ENDPOINTS.filter((ep) => ep.path.includes('/web_v2/fetch_feed_notes'));
+    for (const endpoint of shortLinkEndpoints) {
+      try {
+        return await requestTikhubUniversal({ apiKey, baseUrl, endpoint, params: { [endpoint.param]: url } });
+      } catch (error) { errors.push(error.message); }
+    }
+  }
+
+  if (parsed.noteId && parsed.xsecToken) {
+    try {
+      return await requestTikhubUniversal({
+        apiKey, baseUrl,
+        endpoint: { path: '/api/v1/xiaohongshu/web_v3/fetch_note_detail' },
+        params: { note_id: parsed.noteId, xsec_token: parsed.xsecToken }
+      });
+    } catch (error) { errors.push(error.message); }
+  }
+
+  try {
+    const shareInfo = await requestTikhubUniversal({
+      apiKey, baseUrl,
+      endpoint: { path: '/api/v1/xiaohongshu/web/get_note_id_and_xsec_token' },
+      params: { share_text: url }
+    });
+    const noteId = findFirstValue(shareInfo, ['note_id', 'noteId', 'id']) || parsed.noteId;
+    const xsecToken = findFirstValue(shareInfo, ['xsec_token', 'xsecToken']) || parsed.xsecToken;
+    if (noteId && xsecToken) {
+      return await requestTikhubUniversal({
+        apiKey, baseUrl,
+        endpoint: { path: '/api/v1/xiaohongshu/web_v3/fetch_note_detail' },
+        params: { note_id: noteId, xsec_token: xsecToken }
+      });
+    }
+  } catch (error) { errors.push(error.message); }
+
+  if (parsed.noteId && !parsed.xsecToken) {
+    throw new Error('小红书电脑版分享链接缺少 xsec_token，TikHub 目前无法稳定解析这类图文笔记。请用手机小红书 App 点"分享-复制链接"，再粘贴完整链接重试。');
+  }
+
+  for (const endpoint of XIAOHONGSHU_ENDPOINTS) {
+    try {
+      return await requestTikhubUniversal({ apiKey, baseUrl, endpoint, params: { [endpoint.param]: url } });
+    } catch (error) { errors.push(error.message); }
+  }
+
+  throw new Error(firstReadableError(errors) || '小红书图文解析失败，请确认作品公开且链接未过期。');
+}
+
+async function extractByUrlUniversal({ apiKey, baseUrl, url }) {
+  console.log('[universal-extract] url:', url.slice(0, 120));
+
+  if (isXiaohongshuUrl(url)) {
+    return extractXiaohongshuUniversal({ apiKey, baseUrl, url });
+  }
+
+  const endpoints = rankUniversalEndpoints(url);
+  console.log('[universal-extract] matched endpoints:', endpoints.map(e => e.path));
+
+  const errors = [];
+
+  for (const endpoint of endpoints) {
+    try {
+      const params = getUniversalEndpointParams(endpoint, url);
+      if (!params) {
+        console.log('[universal-extract] skip endpoint (no params):', endpoint.path);
+        continue;
+      }
+      const result = await requestTikhubUniversal({ apiKey, baseUrl, endpoint, params, logPrefix: '[universal-extract]' });
+      console.log('[universal-extract] success via:', endpoint.path);
+      return normalizeUniversalExtractResult(result, { sourceUrl: url, endpointPath: endpoint.path });
+    } catch (error) {
+      console.log('[universal-extract] failed:', endpoint.path, '-', error.message);
+      errors.push(`${endpoint.path}: ${error.message}`);
+    }
+  }
+
+  console.error('[universal-extract] all endpoints failed:', errors);
+  throw new Error(firstReadableError(errors) || '解析失败，请确认链接有效且作品公开。');
+}
+
+function getUniversalTitle(data) {
+  return data?.title || data?.desc || data?.aweme_detail?.desc || data?.itemInfo?.itemStruct?.desc || data?.note?.title || data?.caption || data?.text || null;
+}
+
+async function handleUniversalExtract(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const url = String(body.url || '').trim();
+
+    if (!url) {
+      sendJson(res, 400, { ok: false, message: '缺少作品链接。' });
+      return;
+    }
+
+    const apiKey = readValue(SERVER_CONFIG.tikhubApiToken);
+    if (!apiKey) {
+      sendJson(res, 500, { ok: false, message: '服务端未配置 TikHub API Token。' });
+      return;
+    }
+
+    const data = await extractByUrlUniversal({ apiKey, baseUrl: TIKHUB_API_BASE_URL, url });
+    const title = getUniversalTitle(data);
+
+    sendJson(res, 200, { ok: true, data, title });
+  } catch (error) {
+    console.error('[universal-extract] error:', error.message);
+    sendJson(res, 502, { ok: false, message: error.message || '解析失败' });
+  }
+}
+
+function resolveProxyReferer(targetUrl) {
+  try {
+    const lower = targetUrl.toLowerCase();
+    if (lower.includes('douyin') || lower.includes('zjcdn') || lower.includes('bytegecko') || lower.includes('douyinvod') || lower.includes('pstatp') || lower.includes('snssdk') || lower.includes('ixigua') || lower.includes('bytedance') || lower.includes('iesdouyin')) {
+      return 'https://www.douyin.com/';
+    }
+    if (lower.includes('tiktok') || lower.includes('tiktokv') || lower.includes('tiktokcdn') || lower.includes('musical')) {
+      return 'https://www.tiktok.com/';
+    }
+    if (lower.includes('kuaishou') || lower.includes('yximgs') || lower.includes('ksapis') || lower.includes('ksosvideo')) {
+      return 'https://www.kuaishou.com/';
+    }
+    if (lower.includes('bilibili') || lower.includes('hdslb') || lower.includes('b23.tv')) {
+      return 'https://www.bilibili.com/';
+    }
+    if (lower.includes('xiaohongshu') || lower.includes('xhscdn') || lower.includes('xhslink')) {
+      return 'https://www.xiaohongshu.com/';
+    }
+    if (lower.includes('instagram') || lower.includes('fbcdn')) {
+      return 'https://www.instagram.com/';
+    }
+    if (lower.includes('youtube') || lower.includes('youtu.be') || lower.includes('googlevideo')) {
+      return 'https://www.youtube.com/';
+    }
+    return new URL(targetUrl).origin + '/';
+  } catch {
+    return 'https://www.douyin.com/';
+  }
+}
+
+function looksLikeVideoUrlForProxy(url) {
+  const u = String(url || '').toLowerCase();
+  return /\.(mp4|webm|mov|m3u8|mpd)(?:[?#]|$)/.test(u) || /video\/tos|douyinvod|googlevideo\.com\/videoplayback|mime=video/.test(u);
+}
+
+async function extractVideoUrlFromJsonOrHtml({ bodyText, contentType, originalUrl, referer }) {
+  // Try JSON
+  if (contentType.includes('json') || bodyText.trim().startsWith('{')) {
+    try {
+      const json = JSON.parse(bodyText);
+      const queue = [json];
+      const seen = new Set();
+      const urls = [];
+      while (queue.length) {
+        const item = queue.shift();
+        if (!item || seen.has(item)) continue;
+        if (typeof item === 'string') {
+          if (looksLikeVideoUrlForProxy(item)) urls.push(item);
+          continue;
+        }
+        if (typeof item !== 'object') continue;
+        seen.add(item);
+        const directUrl = item.url || item.play_url || item.download_url || item.video_url || item.src;
+        if (directUrl && looksLikeVideoUrlForProxy(directUrl)) urls.push(directUrl);
+        for (const v of Object.values(item)) queue.push(v);
+      }
+      if (urls.length) return urls[0];
+    } catch {}
+  }
+
+  // Try HTML
+  if (contentType.includes('html')) {
+    const matches = bodyText.match(/https?:\/\/[^\s"'<>]+\.(?:mp4|webm|mov)(?:\?[^\s"'<>]*)?/gi);
+    if (matches && matches.length) return matches[0];
+  }
+
+  return null;
+}
+
+async function proxyVideoStream({ targetUrl, req, res, depth = 0 }) {
+  if (depth > 2) {
+    sendJson(res, 502, { error: '无法解析视频下载地址，链接可能已过期或需要登录。' });
+    return;
+  }
+
+  const rangeHeader = req.headers['range'];
+  const referer = resolveProxyReferer(targetUrl);
+
+  console.log(`[proxy-download] depth=${depth} target:`, targetUrl.slice(0, 120));
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000);
+
+  let response;
+  try {
+    response = await fetch(targetUrl, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': referer,
+        ...(rangeHeader ? { Range: rangeHeader } : {}),
+      },
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    if (error.name === 'AbortError') {
+      sendJson(res, 504, { error: '下载超时，请稍后重试。' });
+      return;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  console.log('[proxy-download] upstream status:', response.status, 'content-type:', contentType);
+
+  if (!response.ok && response.status !== 206) {
+    const body = await response.text().catch(() => '');
+    console.error('[proxy-download] upstream error body:', body.slice(0, 500));
+    sendJson(res, 502, { error: `源站返回 HTTP ${response.status}` });
+    return;
+  }
+
+  // If it's a real video stream, proxy it directly
+  if (contentType.includes('video/') || contentType.includes('audio/') || contentType.includes('application/octet-stream')) {
+    const contentLength = response.headers.get('content-length');
+    const acceptRanges = response.headers.get('accept-ranges');
+    const contentRange = response.headers.get('content-range');
+    const headers = {
+      'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=3600',
+    };
+    if (contentLength) headers['Content-Length'] = contentLength;
+    headers['Accept-Ranges'] = acceptRanges || 'bytes';
+    if (contentRange) headers['Content-Range'] = contentRange;
+
+    let filename = 'video.mp4';
+    try {
+      const pathname = new URL(targetUrl).pathname;
+      const match = pathname.match(/\/([^\/]+\.[a-zA-Z0-9]{2,4})(?:[?#]|$)/);
+      if (match) filename = match[1];
+    } catch {}
+    headers['Content-Disposition'] = `inline; filename="${filename}"`;
+
+    res.writeHead(response.status, headers);
+    if (response.body) {
+      await pipeline(Readable.fromWeb(response.body), res);
+    } else {
+      res.end();
+    }
+    return;
+  }
+
+  // If it's JSON or HTML, try to extract the real video URL
+  const bodyText = await response.text().catch(() => '');
+  const extractedUrl = await extractVideoUrlFromJsonOrHtml({ bodyText, contentType, originalUrl: targetUrl, referer });
+
+  if (extractedUrl) {
+    console.log('[proxy-download] extracted real video url:', extractedUrl.slice(0, 120));
+    return proxyVideoStream({ targetUrl: extractedUrl, req, res, depth: depth + 1 });
+  }
+
+  console.error('[proxy-download] cannot extract video url from content-type:', contentType, 'body:', bodyText.slice(0, 500));
+  sendJson(res, 502, { error: '无法从返回内容中提取视频地址，链接可能已过期。' });
+}
+
+async function handleProxyDownload(req, res, urlObj) {
+  try {
+    const targetUrl = String(urlObj.searchParams.get('url') || '').trim();
+    if (!targetUrl) {
+      sendJson(res, 400, { error: '缺少下载地址。' });
+      return;
+    }
+    if (!targetUrl.startsWith('http')) {
+      sendJson(res, 400, { error: '无效的下载地址。' });
+      return;
+    }
+
+    await proxyVideoStream({ targetUrl, req, res });
+  } catch (error) {
+    console.error('[proxy-download] error:', error.message);
+    if (!res.headersSent) {
+      sendJson(res, 500, { error: error.message || '代理下载失败' });
+    } else {
+      res.end();
+    }
+  }
 }
 
 function isMultipartFormRequest(req) {
@@ -8837,6 +9694,187 @@ async function handleDouyinExtractLocalTranscript(req, res) {
   }
 }
 
+async function handleUniversalExtractTranscript(req, res) {
+  const requestId = createRequestId('univ_asr');
+  const startedAt = Date.now();
+  const transcriptDeadlineAt = startedAt + DOUYIN_TRANSCRIPT_TOTAL_TIMEOUT_MS;
+  const tempFiles = [];
+  let videoPath = '';
+  let audioPath = '';
+  let audioSegments = [];
+  let videoUrl = '';
+  let title = '';
+  let platform = '';
+
+  try {
+    const body = await readRequestBody(req);
+    videoUrl = readValue(body?.videoUrl);
+    title = readValue(body?.title);
+    platform = readValue(body?.platform);
+
+    if (!videoUrl || !/^https?:\/\//i.test(videoUrl)) {
+      sendJson(res, 400, {
+        ok: false,
+        transcriptOk: false,
+        error: '请先解析到可用视频后再提取逐字稿。'
+      });
+      return;
+    }
+
+    const rawCandidates = Array.isArray(body?.videoUrlCandidates) ? body.videoUrlCandidates : [];
+    const downloadUrlCandidates = serializeDouyinDownloadCandidates(rawCandidates, videoUrl);
+    const downloadStageDeadlineAt = createStageDeadlineAt({
+      stageStartedAt: Date.now(),
+      stageTimeoutMs: DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS,
+      parentDeadlineAt: transcriptDeadlineAt
+    });
+
+    const downloaded = await downloadDouyinVideoToTemp({
+      downloadUrl: videoUrl,
+      downloadUrlCandidates,
+      requestId,
+      parentDeadlineAt: downloadStageDeadlineAt,
+      referer: resolveProxyReferer(videoUrl)
+    });
+    videoPath = downloaded.videoPath;
+    tempFiles.push(videoPath);
+
+    const extractStageDeadlineAt = createStageDeadlineAt({
+      stageStartedAt: Date.now(),
+      stageTimeoutMs: DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS,
+      parentDeadlineAt: transcriptDeadlineAt
+    });
+    audioPath = await extractAudioFromDouyinVideo({
+      inputPath: videoPath,
+      requestId,
+      parentDeadlineAt: extractStageDeadlineAt,
+      sourceHost: getHostnameFromUrl(videoUrl) || platform || 'universal'
+    });
+    tempFiles.push(audioPath);
+
+    audioSegments = await splitAudioForDouyinAsr({
+      audioPath,
+      requestId,
+      parentDeadlineAt: extractStageDeadlineAt,
+      sourceHost: getHostnameFromUrl(videoUrl) || platform || 'universal'
+    });
+    for (const segmentPath of audioSegments) {
+      if (segmentPath !== audioPath) {
+        tempFiles.push(segmentPath);
+      }
+    }
+
+    const asrEngine = readValue(body?.asrEngine) || 'qwen';
+    const transcriptSegments = await Promise.all(
+      audioSegments.map((segmentAudioPath, index) => {
+        const asrStageDeadlineAt = createStageDeadlineAt({
+          stageStartedAt: Date.now(),
+          stageTimeoutMs: DOUYIN_ASR_TIMEOUT_MS,
+          parentDeadlineAt: transcriptDeadlineAt
+        });
+        if (asrEngine === 'siliconflow') {
+          return transcribeAudioWithSiliconFlow({
+            audioPath: segmentAudioPath,
+            requestId,
+            segmentIndex: index,
+            parentDeadlineAt: asrStageDeadlineAt
+          }).then((text) => text.trim());
+        }
+        return transcribeAudioWithQwen({
+          audioPath: segmentAudioPath,
+          requestId,
+          segmentIndex: index,
+          parentDeadlineAt: asrStageDeadlineAt
+        }).then((text) => text.trim());
+      })
+    );
+
+    const transcript = transcriptSegments.filter(Boolean).join('\n\n').trim();
+    const finalAudioSize = audioSegments.length
+      ? (await Promise.all(audioSegments.map((segmentPath) => getFileSizeIfExists(segmentPath))))
+        .reduce((sum, size) => sum + size, 0)
+      : await getFileSizeIfExists(audioPath);
+
+    logDouyinTranscriptEvent({
+      event: 'transcript_succeeded',
+      requestId,
+      startedAt,
+      timeoutMs: DOUYIN_TRANSCRIPT_TOTAL_TIMEOUT_MS,
+      targetPath: audioPath || videoPath || videoUrl,
+      finalFileSize: finalAudioSize,
+      host: getHostnameFromUrl(videoUrl) || platform || 'universal',
+      upstreamStatus: 200,
+      videoId: 'universal',
+      segmentCount: audioSegments.length
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      transcriptOk: true,
+      videoId: 'universal',
+      title,
+      downloadUrl: videoUrl,
+      downloadUrlCandidates,
+      authorName: '',
+      normalizedUrl: videoUrl,
+      sourceType: platform || 'universal',
+      transcript,
+      transcriptSegments: audioSegments.length,
+      transcriptError: '',
+      fallbackCaption: '',
+      fallbackCaptionSource: 'none',
+      resolveStrategy: 'universal_video_url'
+    });
+  } catch (error) {
+    const failureTargetPath = error?.targetPath || audioPath || videoPath || videoUrl || '';
+    const failureFileSize = failureTargetPath.startsWith('/')
+      ? await getFileSizeIfExists(failureTargetPath)
+      : 0;
+    logDouyinTranscriptEvent({
+      level: 'error',
+      event: 'transcript_failed',
+      requestId,
+      startedAt,
+      timeoutMs: error?.timeoutMs || DOUYIN_TRANSCRIPT_TOTAL_TIMEOUT_MS,
+      targetPath: failureTargetPath,
+      finalFileSize: failureFileSize,
+      host: error?.host || getHostnameFromUrl(videoUrl) || platform || 'universal',
+      upstreamStatus: error?.upstreamStatus || 0,
+      failedStage: getDouyinTranscriptFailedStage(error),
+      stage: error?.stage || '',
+      curlCode: error?.curlCode || 0,
+      curlHttpStatus: error?.curlHttpStatus || 0,
+      curlStderr: error?.curlStderr || '',
+      effectiveUrl: error?.effectiveUrl || '',
+      firstSelectedHost: error?.firstSelectedHost || '',
+      retrySwitchedHost: error?.retrySwitchedHost || '',
+      message: error?.message || '',
+      detail: error?.detail || ''
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      transcriptOk: false,
+      videoId: 'universal',
+      title,
+      downloadUrl: videoUrl,
+      authorName: '',
+      normalizedUrl: videoUrl,
+      sourceType: platform || 'universal',
+      transcript: '',
+      transcriptError: getDouyinTranscriptErrorMessage(error),
+      fallbackCaption: '',
+      fallbackCaptionSource: 'none',
+      resolveStrategy: 'universal_video_url'
+    });
+  } finally {
+    await cleanupRequestScopedUploadTempFiles({
+      requestId,
+      filePaths: tempFiles
+    });
+  }
+}
+
 async function raceDouyinDownloadCandidates(candidates, options) {
   const { logDownload, timeoutMs } = options;
 
@@ -9368,6 +10406,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/proxy/download') {
+    await handleProxyDownload(req, res, url);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/tts/aliyun') {
     await handleAliyunTts(req, res);
     return;
@@ -9534,6 +10577,16 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/chat/qwen') {
     await handleQwenChatCompletions(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/extract/universal') {
+    await handleUniversalExtract(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/extract/universal-transcript') {
+    await handleUniversalExtractTranscript(req, res);
     return;
   }
 

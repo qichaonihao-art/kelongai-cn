@@ -19,6 +19,7 @@ import {
   Settings2,
   X,
   Upload,
+  Globe,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -38,7 +39,7 @@ import {
 
 interface DouyinDownloaderPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal') => void;
   onLogout: () => void;
 }
 
@@ -467,6 +468,13 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
               <h1 className="text-xl font-black tracking-tight text-slate-900">抖音视频解析</h1>
               <p className="text-xs text-slate-500 mt-0.5 font-medium">链接解析下载视频，或上传本地视频提取口播文案</p>
             </div>
+            <button
+              onClick={() => onNavigate('universal')}
+              className="ml-auto flex items-center gap-1.5 h-9 rounded-full px-4 text-[11px] font-bold text-white bg-gradient-to-r from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600 shadow-md shadow-indigo-200 hover:shadow-lg transition-all"
+            >
+              <Globe className="size-3.5" />
+              全网其他平台点这里
+            </button>
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-2">
@@ -1030,7 +1038,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
           onClick={() => setShowVideoPreview(false)}
         >
           <div
-            className="relative max-h-[90vh] w-fit rounded-2xl shadow-2xl overflow-hidden"
+            className="relative max-h-[35vh] w-fit rounded-2xl shadow-2xl overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -1044,7 +1052,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
               src={`/api/douyin/video-stream?downloadUrl=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId)}`}
               controls
               autoPlay
-              className="max-h-[90vh] w-auto"
+              className="max-h-[35vh] w-auto"
               playsInline
               onError={() => {
                 alert('视频加载失败，可能是链接已过期，请重新解析后再试');
