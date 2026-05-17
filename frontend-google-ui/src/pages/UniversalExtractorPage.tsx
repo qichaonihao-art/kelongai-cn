@@ -43,6 +43,7 @@ export default function UniversalExtractorPage({ onBack, onNavigate }: Universal
   const [transcriptError, setTranscriptError] = useState('');
   const [transcriptSegments, setTranscriptSegments] = useState(0);
   const [asrEngine, setAsrEngine] = useState<'qwen' | 'siliconflow'>('qwen');
+  const [detectedPlatform, setDetectedPlatform] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   function adjustTextareaHeight() {
@@ -76,6 +77,7 @@ export default function UniversalExtractorPage({ onBack, onNavigate }: Universal
         throw new Error(json.message || '解析失败');
       }
       setResult(json.data);
+      setDetectedPlatform(detectPlatform(json.data));
     } catch (e) {
       setError(e instanceof Error ? e.message : '请求失败');
     } finally {
@@ -96,6 +98,7 @@ export default function UniversalExtractorPage({ onBack, onNavigate }: Universal
     setResult(null);
     setCopiedField('');
     setShowImages(false);
+    setDetectedPlatform('');
     resetTranscript();
   }
 
@@ -196,11 +199,21 @@ export default function UniversalExtractorPage({ onBack, onNavigate }: Universal
 
           {/* Platform tags */}
           <div className="mt-4 flex flex-wrap gap-1.5">
-            {PLATFORMS.map((p) => (
-              <span key={p} className="rounded-md border border-slate-200 bg-white/50 px-2 py-0.5 text-[10px] font-bold text-slate-400">
-                {p}
-              </span>
-            ))}
+            {PLATFORMS.map((p) => {
+              const isActive = detectedPlatform === p;
+              return (
+                <span
+                  key={p}
+                  className={`rounded-md border px-2 py-0.5 text-[10px] font-bold transition-all duration-300 ${
+                    isActive
+                      ? 'border-indigo-400 bg-indigo-500 text-white shadow-sm shadow-indigo-200'
+                      : 'border-slate-200 bg-white/50 text-slate-400'
+                  }`}
+                >
+                  {p}
+                </span>
+              );
+            })}
           </div>
         </motion.section>
 
