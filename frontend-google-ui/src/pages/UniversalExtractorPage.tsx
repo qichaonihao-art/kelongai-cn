@@ -12,7 +12,6 @@ import {
   FileText,
   Tag,
   User,
-  LogOut,
   AlertCircle,
   Sparkles,
   ChevronDown,
@@ -24,7 +23,6 @@ import SiteFooter from "@/src/components/SiteFooter";
 interface UniversalExtractorPageProps {
   onBack: () => void;
   onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal') => void;
-  onLogout: () => void;
 }
 
 const PLATFORMS = [
@@ -33,7 +31,7 @@ const PLATFORMS = [
   "微博", "知乎", "皮皮虾", "Lemon8", "Reddit", "公众号",
 ];
 
-export default function UniversalExtractorPage({ onBack, onNavigate, onLogout }: UniversalExtractorPageProps) {
+export default function UniversalExtractorPage({ onBack, onNavigate }: UniversalExtractorPageProps) {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -149,23 +147,20 @@ export default function UniversalExtractorPage({ onBack, onNavigate, onLogout }:
 
   return (
     <div className="min-h-screen bg-[#F3F5F9] flex flex-col">
-      <header className="sticky top-0 z-50 glass-card border-b border-white/60 shadow-sm">
-        <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-4">
+      <header className="sticky top-0 z-50 glass-card border-b border-white/60 px-4 shadow-sm">
+        <div className="flex h-16 items-center">
+          <div className="flex min-w-0 items-center gap-8">
           <button
             onClick={onBack}
-            className="flex items-center gap-2 h-9 rounded-full px-4 text-xs font-bold text-slate-600 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300"
+            className="group flex h-9 items-center gap-2.5 rounded-full border border-slate-200/80 bg-white/60 pl-1 pr-4 shadow-sm transition-all duration-300 hover:bg-white hover:shadow-md"
           >
-            <ArrowLeft className="size-3.5" />
-            返回
+            <div className="flex size-7 items-center justify-center rounded-full bg-slate-900 text-white transition-transform group-hover:scale-105">
+              <ArrowLeft className="size-3.5" />
+            </div>
+            <span className="text-xs font-bold text-slate-700">返回</span>
           </button>
           <ModuleQuickNav current="douyin" onNavigate={onNavigate} />
-          <button
-            onClick={onLogout}
-            className="flex items-center gap-2 h-9 rounded-full px-4 text-xs font-bold text-slate-600 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300"
-          >
-            <LogOut className="size-3.5" />
-            退出登录
-          </button>
+          </div>
         </div>
       </header>
 

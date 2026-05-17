@@ -146,6 +146,7 @@ export async function resolveDouyinDownload(input: string): Promise<DouyinResolv
     fallbackCaption: typeof json?.fallbackCaption === 'string' ? json.fallbackCaption : '',
     fallbackCaptionSource: json?.fallbackCaptionSource === 'tikhub_caption' ? 'tikhub_caption' : 'none',
     authorName: typeof json?.authorName === 'string' ? json.authorName : '',
+    duration: Number.isFinite(Number(json?.duration)) ? Number(json.duration) : 0,
     videoData: json?.videoData && typeof json.videoData === 'object' ? json.videoData as Record<string, unknown> : null,
     normalizedUrl: typeof json?.normalizedUrl === 'string' ? json.normalizedUrl : '',
     sourceType: json?.sourceType === 'web_url' ? 'web_url' : 'short_share_text',

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ChangeEvent } fro
 import { flushSync } from "react-dom";
 import {
   ArrowLeft,
-  LogOut,
   Crown,
   Send,
   Loader2,
@@ -45,7 +44,6 @@ import remarkGfm from "remark-gfm";
 interface TopModelPageProps {
   onBack: () => void;
   onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
-  onLogout: () => void;
 }
 
 const STORAGE_KEY = 'topmodel_chat_history';
@@ -272,7 +270,7 @@ const WELCOME_SUGGESTIONS = [
   '给我讲一个关于程序员笑话',
 ];
 
-export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelPageProps) {
+export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) {
   const initialModel = loadModel();
   const [conversations, setConversations] = useState<ConversationsMap>(() => {
     const map = loadConversations();
@@ -682,14 +680,6 @@ export default function TopModelPage({ onBack, onNavigate, onLogout }: TopModelP
           <div className="hidden sm:flex">
             <ModuleQuickNav current="topmodel" onNavigate={onNavigate} />
           </div>
-          <div className="mx-1 hidden h-5 w-px bg-slate-200 sm:block" />
-          <button
-            onClick={onLogout}
-            className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-100 hover:text-red-500"
-          >
-            <LogOut className="size-3.5" />
-            <span className="hidden sm:inline">退出</span>
-          </button>
         </div>
       </header>
 

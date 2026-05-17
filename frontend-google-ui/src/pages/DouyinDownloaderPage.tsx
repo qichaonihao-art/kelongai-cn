@@ -4,7 +4,6 @@ import {
   Download,
   Loader2,
   Zap,
-  LogOut,
   CheckCircle2,
   Copy,
   AudioLines,
@@ -16,7 +15,6 @@ import {
   Play,
   User,
   Clock,
-  Settings2,
   X,
   Upload,
   Globe,
@@ -40,7 +38,6 @@ import {
 interface DouyinDownloaderPageProps {
   onBack: () => void;
   onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal') => void;
-  onLogout: () => void;
 }
 
 interface DiffPart {
@@ -114,7 +111,7 @@ function formatDuration(seconds: number): string {
   return `${s}秒`;
 }
 
-export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: DouyinDownloaderPageProps) {
+export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
   const [isResolving, setIsResolving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -136,6 +133,10 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
   const [localVideoUrl, setLocalVideoUrl] = useState<string>('');
   const resultRef = useRef<HTMLDivElement>(null);
   const localVideoInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 });
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -428,62 +429,68 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
   const dashscopeConfigured = configStatus?.dashscopeApiKey === true;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="relative isolate min-h-screen overflow-x-hidden bg-[#F3F5F9] flex flex-col text-slate-900">
+      <div className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute left-[-120px] top-[-120px] size-80 rounded-full bg-indigo-200/35 blur-3xl" />
+        <div className="absolute right-[-140px] top-40 size-96 rounded-full bg-sky-200/30 blur-3xl" />
+        <div className="absolute bottom-[-180px] left-1/2 size-[420px] -translate-x-1/2 rounded-full bg-amber-100/40 blur-3xl" />
+      </div>
       {/* Header */}
-      <header className="h-16 border-b border-slate-200/60 bg-white/50 backdrop-blur-xl flex items-center justify-between px-6 sticky top-0 z-30">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
-          >
-            <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
-              <ArrowLeft className="size-3.5" />
-            </div>
-            <span className="text-xs font-bold text-slate-700">返回</span>
-          </button>
-          <ModuleQuickNav current="douyin" onNavigate={onNavigate} />
+      <header className="sticky top-0 z-30 border-b border-white/60 bg-white/60 px-4 backdrop-blur-2xl shadow-sm">
+        <div className="flex h-16 items-center">
+          <div className="flex min-w-0 items-center gap-8">
+            <button
+              onClick={onBack}
+              className="group flex h-9 items-center gap-2.5 rounded-full border border-slate-200/80 bg-white/70 pl-1 pr-4 shadow-sm transition-all duration-300 hover:bg-white hover:shadow-md"
+            >
+              <div className="flex size-7 items-center justify-center rounded-full bg-slate-900 text-white transition-transform group-hover:scale-105">
+                <ArrowLeft className="size-3.5" />
+              </div>
+              <span className="text-xs font-bold text-slate-700">返回</span>
+            </button>
+            <ModuleQuickNav current="douyin" onNavigate={onNavigate} />
+          </div>
         </div>
-        <button
-          onClick={onLogout}
-          className="flex items-center gap-2 h-9 rounded-full px-4 text-xs font-bold text-slate-600 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300"
-        >
-          <LogOut className="size-3.5" />
-          退出登录
-        </button>
       </header>
 
-      <main className="flex-1 max-w-3xl mx-auto w-full p-6 space-y-4 pb-24">
+      <main className="relative z-10 flex-1 max-w-3xl mx-auto w-full p-6 space-y-5 pb-24">
         {/* Title Section */}
         <motion.section
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4 }}
-          className="glass-card rounded-3xl border-white/80 p-6 shadow-glass"
+          className="glass-card relative overflow-hidden rounded-3xl border-white/80 p-6 shadow-glass"
         >
-          <div className="flex items-center gap-4">
-            <div className="inline-flex size-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-900 to-slate-700 text-white shadow-lg shadow-slate-900/20">
-              <Sparkles className="size-5" />
-            </div>
-            <div>
-              <h1 className="text-xl font-black tracking-tight text-slate-900">抖音视频解析</h1>
-              <p className="text-xs text-slate-500 mt-0.5 font-medium">链接解析下载视频，或上传本地视频提取口播文案</p>
+          <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-r from-slate-900/5 via-indigo-500/10 to-sky-400/10" />
+          <div className="absolute -right-10 -top-10 size-36 rounded-full bg-white/60 blur-2xl" />
+          <div className="relative flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-4">
+              <div className="inline-flex size-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-950 via-slate-800 to-indigo-700 text-white shadow-lg shadow-slate-900/20">
+                <Sparkles className="size-5" />
+              </div>
+              <div>
+                <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-white/70 bg-white/70 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                  <span className="relative flex size-1.5">
+                    <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                    <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+                  </span>
+                  Douyin Toolkit
+                </div>
+                <h1 className="text-2xl font-black tracking-tight text-slate-950">抖音视频解析</h1>
+              </div>
             </div>
             <button
               onClick={() => onNavigate('universal')}
-              className="ml-auto flex items-center gap-1.5 h-9 rounded-full px-4 text-[11px] font-bold text-white bg-gradient-to-r from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600 shadow-md shadow-indigo-200 hover:shadow-lg transition-all"
+              className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 text-[11px] font-bold text-white shadow-md shadow-indigo-200 transition-all hover:from-indigo-600 hover:to-violet-600 hover:shadow-lg"
             >
               <Globe className="size-3.5" />
               全网其他平台点这里
             </button>
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400">
-              <Settings2 className="size-3.5" />
-              本地配置
-            </div>
+          <div className="relative mt-5 grid gap-2 sm:grid-cols-3">
             <span
-              className={`rounded-full border px-3 py-1 text-[11px] font-bold ${
+              className={`rounded-2xl border px-3 py-2 text-[11px] font-bold ${
                 siliconFlowConfigured
                   ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
                   : 'border-amber-100 bg-amber-50 text-amber-700'
@@ -492,7 +499,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
               SiliconFlow：{siliconFlowConfigured ? '已配置' : '未配置'}
             </span>
             <span
-              className={`rounded-full border px-3 py-1 text-[11px] font-bold ${
+              className={`rounded-2xl border px-3 py-2 text-[11px] font-bold ${
                 tikhubConfigured
                   ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
                   : 'border-slate-200 bg-white/60 text-slate-500'
@@ -501,7 +508,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
               TikHub：{tikhubConfigured ? '已配置' : '可选'}
             </span>
             <span
-              className={`rounded-full border px-3 py-1 text-[11px] font-bold ${
+              className={`rounded-2xl border px-3 py-2 text-[11px] font-bold ${
                 dashscopeConfigured
                   ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
                   : 'border-amber-100 bg-amber-50 text-amber-700'
@@ -510,23 +517,24 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
               千问 ASR：{dashscopeConfigured ? '已配置' : '未配置'}
             </span>
             {configStatus && !configStatus.reachable && (
-              <span className="rounded-full border border-red-100 bg-red-50 px-3 py-1 text-[11px] font-bold text-red-600">
+              <span className="rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-bold text-red-600 sm:col-span-3">
                 配置读取失败
               </span>
             )}
           </div>
+
         </motion.section>
 
         {/* 工作区 */}
         <div className="glass-card rounded-3xl border-white/80 shadow-glass overflow-hidden max-w-3xl mx-auto">
           {/* Tab栏 */}
-          <div className="flex gap-2 p-3">
+          <div className="flex gap-2 bg-white/35 p-3">
             <button
               onClick={() => switchTab('link')}
-              className={`flex-1 flex items-center justify-center gap-2 h-10 rounded-xl text-xs font-bold transition-all ${
+              className={`flex-1 flex items-center justify-center gap-2 h-11 rounded-2xl text-xs font-bold transition-all ${
                 activeTab === 'link'
-                  ? 'bg-white text-indigo-400 shadow-sm shadow-indigo-100 ring-2 ring-indigo-200'
-                  : 'text-slate-400 hover:text-slate-500'
+                  ? 'bg-slate-950 text-white shadow-lg shadow-slate-900/15'
+                  : 'text-slate-500 hover:bg-white/60 hover:text-slate-700'
               }`}
             >
               <Link2 className="size-3.5" />
@@ -534,10 +542,10 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
             </button>
             <button
               onClick={() => switchTab('local')}
-              className={`flex-1 flex items-center justify-center gap-2 h-10 rounded-xl text-xs font-bold transition-all ${
+              className={`flex-1 flex items-center justify-center gap-2 h-11 rounded-2xl text-xs font-bold transition-all ${
                 activeTab === 'local'
-                  ? 'bg-white text-emerald-400 shadow-sm shadow-emerald-100 ring-2 ring-emerald-200'
-                  : 'text-slate-400 hover:text-slate-500'
+                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/15'
+                  : 'text-slate-500 hover:bg-white/60 hover:text-slate-700'
               }`}
             >
               <Upload className="size-3.5" />
@@ -546,18 +554,12 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
           </div>
 
           {/* ASR 引擎选择 */}
-          <div className="px-6 pt-2 pb-0"
-          >
-            <div className="flex items-center justify-between"
-            >
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider"
-              >ASR 引擎</span
-              >
-              <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5"
-              >
+          <div className="px-6 pt-2 pb-0">
+            <div className="flex justify-end">
+              <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => setAsrEngine('qwen')}
-                  className={`h-6 rounded-md px-2 text-[10px] font-bold transition-all ${
+                  className={`h-7 rounded-lg px-3 text-[10px] font-bold transition-all ${
                     asrEngine === 'qwen'
                       ? 'bg-white text-blue-600 shadow-sm'
                       : 'text-slate-400 hover:text-slate-600'
@@ -567,7 +569,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                 </button>
                 <button
                   onClick={() => setAsrEngine('siliconflow')}
-                  className={`h-6 rounded-md px-2 text-[10px] font-bold transition-all ${
+                  className={`h-7 rounded-lg px-3 text-[10px] font-bold transition-all ${
                     asrEngine === 'siliconflow'
                       ? 'bg-white text-slate-700 shadow-sm'
                       : 'text-slate-400 hover:text-slate-600'
@@ -588,30 +590,35 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.2 }}
-                className="p-6 space-y-5"
+                className="px-6 pb-6 pt-3 space-y-5"
               >
-                <div className="relative">
+                <div className="relative rounded-3xl border border-indigo-200 bg-white/75 p-3 shadow-inner shadow-indigo-100/60 ring-4 ring-indigo-100/45 transition-all focus-within:bg-white/90 focus-within:ring-indigo-100/70">
                   <textarea
                     value={input}
                     onChange={(event) => setInput(event.target.value)}
                     placeholder="请输入抖音链接或分享文案..."
-                    className="w-full h-32 rounded-2xl border border-slate-200 bg-white/60 p-4 text-sm outline-none transition-all resize-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-300 placeholder:text-slate-400"
+                    className="h-32 w-full resize-none rounded-2xl border-0 bg-transparent p-3 pr-10 text-sm font-medium leading-6 text-slate-700 outline-none placeholder:text-slate-400"
                   />
                   {input && (
                     <button
                       onClick={() => setInput('')}
-                      className="absolute top-3 right-3 size-6 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors"
+                      className="absolute right-5 top-5 flex size-7 items-center justify-center rounded-full bg-slate-100 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
+                      title="清空输入"
                     >
                       <Trash2 className="size-3 text-slate-400" />
                     </button>
                   )}
+                  <div className="flex items-center justify-between border-t border-slate-100 px-3 pt-2">
+                    <span className="text-[11px] font-medium text-slate-400">支持短链、整段分享文案，解析成功后可直接下载或转写。</span>
+                    <span className="text-[10px] font-bold text-slate-300">{input.trim().length} 字</span>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-3">
                   <button
                     disabled={isResolving}
                     onClick={handleResolve}
-                    className="flex-1 h-10 rounded-full text-sm font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/20 transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    className="flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-slate-950 text-sm font-bold text-white shadow-lg shadow-slate-900/20 transition-all hover:bg-slate-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isResolving ? (
                       <>
@@ -629,7 +636,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                   <button
                     onClick={resetAll}
                     disabled={isResolving || isTranscriptLoading}
-                    className="h-10 rounded-full px-5 text-sm font-bold text-slate-600 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all disabled:opacity-50"
+                    className="h-11 rounded-2xl border border-slate-200/80 bg-white/70 px-5 text-sm font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md disabled:opacity-50"
                   >
                     清空
                   </button>
@@ -642,13 +649,16 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.2 }}
-                className="p-6 space-y-5"
+                className="px-6 pb-6 pt-3 space-y-5"
               >
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-white/40 p-6 text-center space-y-3">
-                  <div className="inline-flex size-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                <div className="rounded-3xl border border-dashed border-emerald-200 bg-gradient-to-br from-white/70 to-emerald-50/60 p-7 text-center space-y-3">
+                  <div className="inline-flex size-14 items-center justify-center rounded-2xl bg-white text-emerald-500 shadow-sm">
                     <Upload className="size-6" />
                   </div>
-                  <p className="text-xs text-slate-400">支持 MP4、MOV 等常见视频格式</p>
+                  <div>
+                    <p className="text-sm font-black text-slate-800">上传本地视频提取逐字稿</p>
+                    <p className="mt-1 text-xs text-slate-400">支持 MP4、MOV 等常见视频格式</p>
+                  </div>
                   <input
                     ref={localVideoInputRef}
                     type="file"
@@ -660,7 +670,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                     type="button"
                     disabled={isLocalTranscriptLoading}
                     onClick={() => localVideoInputRef.current?.click()}
-                    className="h-10 rounded-full px-6 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/20 transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 mx-auto"
+                    className="mx-auto flex h-11 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-6 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 transition-all hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50"
                   >
                     {isLocalTranscriptLoading ? (
                       <>
@@ -680,7 +690,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                   <video
                     src={localVideoUrl}
                     controls
-                    className="w-full max-h-40 rounded-2xl bg-slate-900 object-contain"
+                    className="w-full max-h-44 rounded-3xl bg-slate-900 object-contain shadow-lg shadow-slate-900/10"
                     playsInline
                   />
                 )}
@@ -715,44 +725,45 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
               className="space-y-4"
             >
               {activeTab === 'link' && (
-              <div className="glass-card rounded-3xl border-white/80 p-6 shadow-glass space-y-5">
-                <div className="flex items-center justify-between gap-3">
+              <div className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-100/80 bg-white/35 px-6 py-4">
                   <div className="flex items-center gap-3">
-                    <div className="inline-flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-500/20">
+                    <div className="inline-flex size-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-500/20">
                       <Download className="size-4" />
                     </div>
                     <div>
-                      <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">视频信息</div>
+                      <div className="text-xs font-black text-slate-500 uppercase tracking-wider">视频信息</div>
+                      <p className="mt-0.5 text-[11px] font-medium text-slate-400">解析结果、下载入口和视频预览</p>
                     </div>
                   </div>
-                  {(result?.duration || 0) > 0 && (
-                    <div className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1.5 border border-indigo-100">
-                      <Clock className="size-3 text-indigo-500" />
-                      <span className="text-[11px] font-bold text-indigo-600">{formatDuration(result.duration)}</span>
-                    </div>
-                  )}
                 </div>
-
+                <div className="p-6 space-y-5">
                 {result ? (
                   <div className="space-y-4">
-                    <div className="flex items-center gap-2 text-xs text-emerald-600 font-bold bg-emerald-50/80 px-3 py-2 rounded-lg border border-emerald-100/80 w-fit">
-                      <CheckCircle2 className="size-3.5" />
-                      视频解析成功
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex w-fit items-center gap-2 rounded-full border border-emerald-100/80 bg-emerald-50/80 px-3 py-2 text-xs font-bold text-emerald-600">
+                        <CheckCircle2 className="size-3.5" />
+                        视频解析成功
+                      </div>
+                      <div className="flex w-fit items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50/80 px-3 py-2 text-xs font-bold text-indigo-600">
+                        <Clock className="size-3.5" />
+                        视频时长：{(result.duration || 0) > 0 ? formatDuration(result.duration!) : '暂未获取'}
+                      </div>
                     </div>
 
-                    <div className="bg-white/50 rounded-2xl p-4 space-y-3 border border-slate-100">
+                    <div className="rounded-3xl border border-slate-100 bg-white/65 p-4 shadow-inner shadow-slate-100/60 space-y-3">
                       <div className="space-y-1">
                         <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                           <FileText className="size-3" />
                           视频标题
                         </div>
-                        <div className="text-sm font-semibold text-slate-800 leading-relaxed">
+                        <div className="text-base font-black text-slate-900 leading-relaxed">
                           {result.title?.trim() || result.caption?.trim() || '未提取到标题'}
                         </div>
                       </div>
 
                       {result.authorName?.trim() && (
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-slate-50/80 px-3 py-2">
                           <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                             <User className="size-3" />
                             作者
@@ -763,26 +774,15 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                         </div>
                       )}
 
-                      {(result.duration || 0) > 0 && (
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                            <Clock className="size-3" />
-                            视频时长
-                          </div>
-                          <div className="text-xs font-semibold text-slate-700">
-                            {formatDuration(result.duration!)}
-                          </div>
-                        </div>
-                      )}
                     </div>
 
                     <div className="flex flex-col gap-3">
-                      <div className="flex flex-col sm:flex-row gap-3">
-                        <div className="flex-1 flex flex-col gap-1">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="flex flex-col gap-1 rounded-3xl border border-amber-100 bg-amber-50/65 p-3">
                           <button
                             onClick={handleDirectDownloadVideo}
                             disabled={isDirectDownloading}
-                            className="h-10 w-full rounded-full text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-500/20 transition-all active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2"
+                            className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-amber-500 text-sm font-bold text-white shadow-lg shadow-amber-500/20 transition-all hover:bg-amber-600 active:scale-[0.98] disabled:opacity-60"
                           >
                             {isDirectDownloading ? (
                               <>
@@ -796,17 +796,17 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                               </>
                             )}
                           </button>
-                          <span className="text-[10px] text-slate-400 flex items-center gap-1 px-1">
+                          <span className="flex items-center gap-1 px-1 text-[10px] text-amber-700/70">
                             <Zap className="size-3 text-amber-500" />
                             速度更快，少数视频可能失败
                           </span>
                         </div>
 
-                        <div className="flex-1 flex flex-col gap-1">
+                        <div className="flex flex-col gap-1 rounded-3xl border border-indigo-100 bg-indigo-50/65 p-3">
                           <button
                             onClick={handleDownloadVideo}
                             disabled={isDownloading}
-                            className="h-10 w-full rounded-full text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2"
+                            className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 text-sm font-bold text-white shadow-lg shadow-indigo-600/20 transition-all hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-60"
                           >
                             {isDownloading ? (
                               <>
@@ -820,59 +820,66 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                               </>
                             )}
                           </button>
-                          <span className="text-[10px] text-slate-400 flex items-center gap-1 px-1">
+                          <span className="flex items-center gap-1 px-1 text-[10px] text-indigo-700/70">
                             <Download className="size-3 text-indigo-500" />
                             成功率更高，但速度可能较慢
                           </span>
                         </div>
                       </div>
 
-                      <button
-                        onClick={() => setShowVideoPreview(true)}
-                        className="h-10 rounded-full text-sm font-bold text-slate-700 bg-white/70 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2"
-                      >
-                        <Play className="size-4" />
-                        预览视频
-                      </button>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <button
+                          onClick={() => setShowVideoPreview(true)}
+                          className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200/80 bg-white/75 text-sm font-bold text-slate-700 shadow-sm transition-all hover:bg-white hover:shadow-md"
+                        >
+                          <Play className="size-4" />
+                          预览视频
+                        </button>
 
-                      <button
-                        onClick={handleExtractTranscript}
-                        disabled={isTranscriptLoading}
-                        className="flex-1 h-10 rounded-full text-sm font-bold text-slate-700 bg-white/70 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        {isTranscriptLoading ? (
-                          <>
-                            <Loader2 className="size-4 animate-spin" />
-                            提取中...
-                          </>
-                        ) : (
-                          <>
-                            <AudioLines className="size-4" />
-                            提取视频文案
-                          </>
-                        )}
-                      </button>
+                        <button
+                          onClick={handleExtractTranscript}
+                          disabled={isTranscriptLoading}
+                          className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200/80 bg-white/75 text-sm font-bold text-slate-700 shadow-sm transition-all hover:bg-white hover:shadow-md disabled:opacity-50"
+                        >
+                          {isTranscriptLoading ? (
+                            <>
+                              <Loader2 className="size-4 animate-spin" />
+                              提取中...
+                            </>
+                          ) : (
+                            <>
+                              <AudioLines className="size-4" />
+                              提取视频文案
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
 
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-slate-100 bg-white/40 px-4 py-6 text-sm text-slate-400 text-center">
+                  <div className="rounded-3xl border border-slate-100 bg-white/50 px-4 py-8 text-center text-sm text-slate-400">
                     解析成功后，这里会显示视频信息。
                   </div>
                 )}
+                </div>
               </div>
               )}
 
               {/* Transcript Card */}
-              <div className="glass-card rounded-3xl border-white/80 p-6 shadow-glass space-y-5">
-                <div className="flex items-center gap-3">
-                  <div className="inline-flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-md shadow-amber-500/20">
+              <div className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-100/80 bg-white/35 px-6 py-4">
+                  <div className="flex items-center gap-3">
+                  <div className="inline-flex size-10 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-md shadow-amber-500/20">
                     <AudioLines className="size-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">视频文案</div>
+                    <div className="text-xs font-black text-slate-500 uppercase tracking-wider">视频文案</div>
+                    <p className="mt-0.5 text-[11px] font-medium text-slate-400">ASR 转写、复制和 AI 校对</p>
+                  </div>
                   </div>
                 </div>
+                <div className="p-6 space-y-5">
 
                 <AnimatePresence mode="wait">
                   {isTranscriptLoading ? (
@@ -881,7 +888,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-4"
+                      className="rounded-3xl border border-indigo-100 bg-indigo-50/70 px-4 py-4"
                     >
                       <div className="flex items-center gap-3 text-sm text-indigo-700 font-semibold">
                         <Loader2 className="size-4 animate-spin" />
@@ -897,9 +904,9 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                       exit={{ opacity: 0 }}
                       className="space-y-4"
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-2 text-xs text-emerald-600 font-bold bg-emerald-50/80 px-3 py-2 rounded-lg border border-emerald-100/80">
+                          <div className="flex items-center gap-2 rounded-full border border-emerald-100/80 bg-emerald-50/80 px-3 py-2 text-xs font-bold text-emerald-600">
                             <CheckCircle2 className="size-3.5" />
                             文案提取成功
                           </div>
@@ -910,7 +917,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           {transcriptResult.transcriptSegments && transcriptResult.transcriptSegments > 1 && (
                             <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
                               <Clock className="size-3" />
@@ -920,7 +927,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                           {displayTranscript !== originalTranscript && originalTranscript && (
                             <button
                               onClick={() => setShowDiff((v) => !v)}
-                              className="h-8 rounded-full px-3 text-xs font-bold text-slate-500 bg-white/70 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all flex items-center gap-1.5"
+                              className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/70 px-3 text-xs font-bold text-slate-500 shadow-sm transition-all hover:bg-white hover:shadow-md"
                             >
                               {showDiff ? '显示完整' : '显示修改'}
                             </button>
@@ -928,7 +935,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                           {displayTranscript !== originalTranscript && originalTranscript && (
                             <button
                               onClick={handleRestoreOriginal}
-                              className="h-8 rounded-full px-3 text-xs font-bold text-slate-500 bg-white/70 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all flex items-center gap-1.5"
+                              className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/70 px-3 text-xs font-bold text-slate-500 shadow-sm transition-all hover:bg-white hover:shadow-md"
                             >
                               <ArrowLeft className="size-3" />
                               恢复原始
@@ -942,7 +949,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                           ) : (
                             <button
                               onClick={handlePolishTranscript}
-                              className="h-8 rounded-full px-3 text-xs font-bold text-indigo-600 bg-indigo-50/80 hover:bg-indigo-50 border border-indigo-100/80 shadow-sm hover:shadow-md transition-all flex items-center gap-1.5"
+                              className="flex h-8 items-center gap-1.5 rounded-full border border-indigo-100/80 bg-indigo-50/80 px-3 text-xs font-bold text-indigo-600 shadow-sm transition-all hover:bg-indigo-50 hover:shadow-md"
                             >
                               <Sparkles className="size-3" />
                               AI 校对
@@ -950,7 +957,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                           )}
                           <button
                             onClick={handleCopyTranscript}
-                            className="h-8 rounded-full px-4 text-xs font-bold text-slate-600 bg-white/70 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all flex items-center gap-1.5"
+                            className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/70 px-4 text-xs font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md"
                           >
                             <Copy className="size-3" />
                             {copyStatus === 'done' ? '已复制' : '复制文案'}
@@ -958,7 +965,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-slate-100 bg-white/60 p-4 text-sm leading-7 text-slate-700 whitespace-pre-wrap break-words max-h-96 overflow-y-auto">
+                      <div className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words rounded-3xl border border-slate-100 bg-white/70 p-5 text-sm leading-7 text-slate-700 shadow-inner shadow-slate-100/70">
                         {showDiff && !isPolishing && displayTranscript !== originalTranscript && originalTranscript ? (
                           <span className="leading-7">
                             {computeTextDiff(originalTranscript, displayTranscript).map((part, idx) => {
@@ -992,7 +999,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                       exit={{ opacity: 0 }}
                       className="space-y-4"
                     >
-                      <div className="rounded-xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-sm text-amber-700">
+                      <div className="rounded-3xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-sm text-amber-700">
                         <div className="flex items-center gap-2 font-semibold">
                           <AlertCircle className="size-4" />
                           文案提取失败
@@ -1001,7 +1008,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                       </div>
 
                       {fallbackCaption && (
-                        <div className="rounded-2xl border border-slate-100 bg-white/50 p-4 text-sm text-slate-600 space-y-2">
+                        <div className="rounded-3xl border border-slate-100 bg-white/60 p-4 text-sm text-slate-600 space-y-2">
                           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                             弱兜底文案
                           </div>
@@ -1015,7 +1022,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      className="rounded-xl border border-slate-100 bg-white/40 px-4 py-6 text-sm text-slate-400 text-center"
+                      className="rounded-3xl border border-slate-100 bg-white/50 px-4 py-8 text-center text-sm text-slate-400"
                     >
                       解析视频后，可提取视频音频里的口播文案。
                     </motion.div>
@@ -1025,6 +1032,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
                 {copyStatus === 'error' && (
                   <div className="text-xs text-red-500">当前没有可复制的文案。</div>
                 )}
+                </div>
               </div>
             </motion.section>
           )}
@@ -1038,7 +1046,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
           onClick={() => setShowVideoPreview(false)}
         >
           <div
-            className="relative max-h-[35vh] w-fit rounded-2xl shadow-2xl overflow-hidden"
+            className="relative max-h-[78vh] max-w-[92vw] overflow-hidden rounded-3xl shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -1052,7 +1060,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate, onLogout }: D
               src={`/api/douyin/video-stream?downloadUrl=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId)}`}
               controls
               autoPlay
-              className="max-h-[35vh] w-auto"
+              className="max-h-[78vh] max-w-[92vw] bg-black"
               playsInline
               onError={() => {
                 alert('视频加载失败，可能是链接已过期，请重新解析后再试');

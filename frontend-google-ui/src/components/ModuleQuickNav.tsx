@@ -20,18 +20,41 @@ interface ModuleQuickNavProps {
 export default function ModuleQuickNav({ current, onNavigate }: ModuleQuickNavProps) {
   return (
     <div className="flex items-center gap-2">
-      {MODULES.filter((m) => m.id !== current).map((m) => {
+      {MODULES.map((m) => {
         const Icon = m.icon;
+        const isActive = m.id === current;
         return (
           <button
             key={m.id}
-            onClick={() => onNavigate(m.id)}
-            className="flex items-center gap-1.5 h-9 px-2 hover:opacity-70 transition-opacity duration-200"
+            onClick={() => {
+              if (!isActive) onNavigate(m.id);
+            }}
+            aria-current={isActive ? 'page' : undefined}
+            className={cn(
+              'flex h-9 shrink-0 items-center gap-1.5 rounded-full px-2 transition-all duration-200',
+              isActive
+                ? 'cursor-default'
+                : 'hover:bg-white/50'
+            )}
           >
-            <div className={cn('size-5 rounded-md bg-gradient-to-br flex items-center justify-center text-white', m.gradient)}>
+            <div
+              className={cn(
+                'flex size-5 items-center justify-center rounded-md transition-all',
+                isActive
+                  ? `bg-gradient-to-br text-white shadow-sm ${m.gradient}`
+                  : 'bg-slate-100 text-slate-400'
+              )}
+            >
               <Icon className="size-3" />
             </div>
-            <span className="hidden md:inline text-[11px] font-bold text-slate-700">{m.label}</span>
+            <span
+              className={cn(
+                'hidden whitespace-nowrap text-[11px] font-bold md:inline',
+                isActive ? 'text-slate-900' : 'text-slate-500'
+              )}
+            >
+              {m.label}
+            </span>
           </button>
         );
       })}

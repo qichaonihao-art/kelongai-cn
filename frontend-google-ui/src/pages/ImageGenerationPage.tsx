@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent } from "
 import {
   ArrowLeft,
   Loader2,
-  LogOut,
   Trash2,
   Download,
   AlertCircle,
@@ -36,7 +35,6 @@ import {
 interface ImageGenerationPageProps {
   onBack: () => void;
   onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
-  onLogout: () => void;
 }
 
 const SIZE_OPTIONS = [
@@ -73,7 +71,7 @@ const STATUS_META: Record<string, { label: string; color: string; icon: typeof L
   failed: { label: '失败', color: 'text-red-500', icon: AlertCircle },
 };
 
-export default function ImageGenerationPage({ onBack, onNavigate, onLogout }: ImageGenerationPageProps) {
+export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerationPageProps) {
   const [prompt, setPrompt] = useState('');
   const [size, setSize] = useState('1:1');
   const [resolution, setResolution] = useState('1k');
@@ -720,14 +718,6 @@ export default function ImageGenerationPage({ onBack, onNavigate, onLogout }: Im
           <div className="hidden sm:flex">
             <ModuleQuickNav current="image" onNavigate={onNavigate} />
           </div>
-          <div className="mx-1 hidden h-5 w-px bg-slate-200 sm:block" />
-          <button
-            onClick={onLogout}
-            className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-100 hover:text-red-500"
-          >
-            <LogOut className="size-3.5" />
-            <span className="hidden sm:inline">退出</span>
-          </button>
         </div>
       </header>
 

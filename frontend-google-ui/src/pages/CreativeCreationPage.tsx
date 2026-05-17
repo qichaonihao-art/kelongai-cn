@@ -5,7 +5,6 @@ import {
   Sparkles,
   ArrowLeft,
   Loader2,
-  LogOut,
   X,
   History,
   Plus,
@@ -62,7 +61,6 @@ interface Message {
 interface CreativeCreationPageProps {
   onBack: () => void;
   onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
-  onLogout: () => void;
 }
 
 interface PersistedCreativeMessage {
@@ -729,7 +727,7 @@ function renderAssistantMessageContent(content: string) {
   );
 }
 
-export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: CreativeCreationPageProps) {
+export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCreationPageProps) {
   const [savedSessions, setSavedSessions] = useState<SavedCreativeSession[]>(loadSavedCreativeSessions);
   const [activeSessionId, setActiveSessionId] = useState<string>(() => loadSavedCreativeSessions()[0]?.id || createSessionId());
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -2124,15 +2122,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onLogout }: C
               {configReachable && arkApiConfigured ? 'AI 在线' : '待配置'}
             </span>
           </div>
-          <div className="w-px h-4 bg-slate-300 mx-2" />
-          <button
-            type="button"
-            onClick={onLogout}
-            className="inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-xs font-bold text-slate-500 transition-colors hover:bg-red-50 hover:text-red-500"
-          >
-            <LogOut className="size-3.5" />
-            退出登录
-          </button>
         </div>
       </header>
 

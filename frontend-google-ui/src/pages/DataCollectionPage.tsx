@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   Database,
   Loader2,
-  LogOut,
   Plus,
   Trash2,
   RefreshCw,
@@ -42,7 +41,6 @@ import {
 interface DataCollectionPageProps {
   onBack: () => void;
   onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
-  onLogout: () => void;
 }
 
 type Tab = 'monitor' | 'library';
@@ -54,7 +52,7 @@ const PLATFORM_META: Record<Platform, { label: string; color: string; bg: string
   douyin: { label: '抖音', color: 'text-sky-600', bg: 'bg-sky-50' },
 };
 
-export default function DataCollectionPage({ onBack, onNavigate, onLogout }: DataCollectionPageProps) {
+export default function DataCollectionPage({ onBack, onNavigate }: DataCollectionPageProps) {
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
   const [keywords, setKeywords] = useState<MonitoredKeyword[]>([]);
   const [articles, setArticles] = useState<CollectedArticle[]>([]);
@@ -220,14 +218,6 @@ export default function DataCollectionPage({ onBack, onNavigate, onLogout }: Dat
 
           <div className="flex items-center gap-2">
             <ModuleQuickNav current="collection" onNavigate={onNavigate} />
-            <div className="mx-1 h-5 w-px bg-slate-200" />
-            <button
-              onClick={onLogout}
-              className="flex h-9 items-center gap-1.5 rounded-full px-3 text-[11px] font-bold text-slate-500 transition-colors hover:bg-slate-100 hover:text-red-500"
-            >
-              <LogOut className="size-3.5" />
-              <span className="hidden sm:inline">退出</span>
-            </button>
           </div>
         </div>
       </header>

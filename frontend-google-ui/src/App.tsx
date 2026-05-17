@@ -92,42 +92,36 @@ export default function App() {
         <CreativeCreationPage
           onBack={handleBackToHome}
           onNavigate={handleNavigate}
-          onLogout={handleLogout}
         />
       )}
       {currentPage === 'douyin' && (
         <DouyinDownloaderPage
           onBack={handleBackToHome}
           onNavigate={handleNavigate}
-          onLogout={handleLogout}
         />
       )}
       {currentPage === 'collection' && (
         <DataCollectionPage
           onBack={handleBackToHome}
           onNavigate={handleNavigate}
-          onLogout={handleLogout}
         />
       )}
       {currentPage === 'image' && (
         <ImageGenerationPage
           onBack={handleBackToHome}
           onNavigate={handleNavigate}
-          onLogout={handleLogout}
         />
       )}
       {currentPage === 'topmodel' && (
         <TopModelPage
           onBack={handleBackToHome}
           onNavigate={handleNavigate}
-          onLogout={handleLogout}
         />
       )}
       {currentPage === 'universal' && (
         <UniversalExtractorPage
           onBack={handleBackToDouyin}
           onNavigate={handleNavigate}
-          onLogout={handleLogout}
         />
       )}
     </div>
