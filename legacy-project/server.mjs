@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { createServer } from 'node:http';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -3704,6 +3704,188 @@ function shouldRetryDouyinVideoDownloadError(error) {
   }
 
   return [5, 6, 7, 18, 28, 52, 55, 56].includes(curlCode);
+}
+
+async function raceVideoDownloads({ candidates, requestId, referer, timeoutMs }) {
+  const topCandidates = candidates.slice(0, 3);
+  if (topCandidates.length === 0) {
+    throw createDouyinResolveError({
+      stage: 'universal_video_download_no_candidates',
+      statusCode: 400,
+      message: '视频下载失败',
+      detail: '没有可用的视频下载候选地址。'
+    });
+  }
+
+  if (topCandidates.length === 1) {
+    const outputPath = path.join(UPLOAD_TEMP_DIR, `${requestId}_video${getFallbackExtensionFromUrl(topCandidates[0].url)}`);
+    const result = await downloadSingleVideoWithCurl({
+      url: topCandidates[0].url,
+      outputPath,
+      referer,
+      timeoutMs
+    });
+    const probeResult = await validateDownloadedVideoFile(result.outputPath, Math.min(timeoutMs, 30 * 1000));
+    return {
+      videoPath: result.outputPath,
+      fileSize: result.fileSize,
+      host: topCandidates[0].host || getHostnameFromUrl(topCandidates[0].url),
+      effectiveUrl: topCandidates[0].url,
+      httpStatus: 200,
+      validation: probeResult,
+      firstSelectedHost: topCandidates[0].host || getHostnameFromUrl(topCandidates[0].url)
+    };
+  }
+
+  const processes = [];
+  const outputPaths = [];
+  const promises = [];
+
+  for (let i = 0; i < topCandidates.length; i++) {
+    const candidate = topCandidates[i];
+    const outputPath = path.join(UPLOAD_TEMP_DIR, `${requestId}_race_${i}${getFallbackExtensionFromUrl(candidate.url)}`);
+    outputPaths.push(outputPath);
+
+    const promise = new Promise((resolve, reject) => {
+      const curl = spawn('curl', [
+        '--location', '--silent', '--show-error',
+        '--output', outputPath,
+        '--request', 'GET',
+        '--url', candidate.url,
+        '--user-agent', DOUYIN_USER_AGENT,
+        '--header', `Referer: ${referer || 'https://www.douyin.com/'}`,
+        '--header', 'Accept: */*',
+        '--connect-timeout', String(DOUYIN_VIDEO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS),
+        '--max-time', String(Math.ceil(timeoutMs / 1000)),
+      ]);
+
+      processes.push(curl);
+
+      const timer = setTimeout(() => {
+        curl.kill('SIGKILL');
+      }, timeoutMs + 3000);
+
+      curl.on('exit', async (code) => {
+        clearTimeout(timer);
+        if (code !== 0) {
+          await unlink(outputPath).catch(() => {});
+          reject(new Error(`curl exit ${code}`));
+          return;
+        }
+        try {
+          const info = await stat(outputPath);
+          if (info.size <= 0) {
+            await unlink(outputPath).catch(() => {});
+            reject(new Error('empty file'));
+            return;
+          }
+          resolve({
+            outputPath,
+            fileSize: info.size,
+            candidate
+          });
+        } catch (e) {
+          reject(e);
+        }
+      });
+
+      curl.on('error', (err) => {
+        clearTimeout(timer);
+        unlink(outputPath).catch(() => {});
+        reject(err);
+      });
+    });
+
+    promises.push(promise);
+  }
+
+  try {
+    const winner = await Promise.race(promises);
+
+    for (const proc of processes) {
+      proc.kill('SIGKILL');
+    }
+
+    for (const p of outputPaths) {
+      if (p !== winner.outputPath) {
+        unlink(p).catch(() => {});
+      }
+    }
+
+    const probeResult = await validateDownloadedVideoFile(winner.outputPath, Math.min(timeoutMs, 30 * 1000));
+
+    return {
+      videoPath: winner.outputPath,
+      fileSize: winner.fileSize,
+      host: winner.candidate.host || getHostnameFromUrl(winner.candidate.url),
+      effectiveUrl: winner.candidate.url,
+      httpStatus: 200,
+      validation: probeResult,
+      firstSelectedHost: winner.candidate.host || getHostnameFromUrl(winner.candidate.url)
+    };
+  } catch (error) {
+    for (const proc of processes) {
+      proc.kill('SIGKILL');
+    }
+    for (const p of outputPaths) {
+      unlink(p).catch(() => {});
+    }
+    throw createDouyinResolveError({
+      stage: 'universal_video_download_parallel_failed',
+      statusCode: 502,
+      message: '视频下载失败',
+      detail: '所有并行下载候选均失败，请稍后重试。'
+    });
+  }
+}
+
+async function downloadSingleVideoWithCurl({ url, outputPath, referer, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const curl = spawn('curl', [
+      '--location', '--silent', '--show-error',
+      '--output', outputPath,
+      '--request', 'GET',
+      '--url', url,
+      '--user-agent', DOUYIN_USER_AGENT,
+      '--header', `Referer: ${referer || 'https://www.douyin.com/'}`,
+      '--header', 'Accept: */*',
+      '--connect-timeout', String(DOUYIN_VIDEO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS),
+      '--max-time', String(Math.ceil(timeoutMs / 1000)),
+    ]);
+
+    const timer = setTimeout(() => {
+      curl.kill('SIGKILL');
+    }, timeoutMs + 3000);
+
+    curl.on('exit', async (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        await unlink(outputPath).catch(() => {});
+        reject(new Error(`curl exit ${code}`));
+        return;
+      }
+      try {
+        const info = await stat(outputPath);
+        if (info.size <= 0) {
+          await unlink(outputPath).catch(() => {});
+          reject(new Error('empty file'));
+          return;
+        }
+        resolve({
+          outputPath,
+          fileSize: info.size
+        });
+      } catch (e) {
+        reject(e);
+      }
+    });
+
+    curl.on('error', (err) => {
+      clearTimeout(timer);
+      unlink(outputPath).catch(() => {});
+      reject(err);
+    });
+  });
 }
 
 async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = [], requestId, parentDeadlineAt = 0, referer = '' }) {
@@ -9723,18 +9905,12 @@ async function handleUniversalExtractTranscript(req, res) {
 
     const rawCandidates = Array.isArray(body?.videoUrlCandidates) ? body.videoUrlCandidates : [];
     const downloadUrlCandidates = serializeDouyinDownloadCandidates(rawCandidates, videoUrl);
-    const downloadStageDeadlineAt = createStageDeadlineAt({
-      stageStartedAt: Date.now(),
-      stageTimeoutMs: DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS,
-      parentDeadlineAt: transcriptDeadlineAt
-    });
 
-    const downloaded = await downloadDouyinVideoToTemp({
-      downloadUrl: videoUrl,
-      downloadUrlCandidates,
+    const downloaded = await raceVideoDownloads({
+      candidates: downloadUrlCandidates,
       requestId,
-      parentDeadlineAt: downloadStageDeadlineAt,
-      referer: resolveProxyReferer(videoUrl)
+      referer: resolveProxyReferer(videoUrl),
+      timeoutMs: Math.min(DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS, 25 * 1000)
     });
     videoPath = downloaded.videoPath;
     tempFiles.push(videoPath);

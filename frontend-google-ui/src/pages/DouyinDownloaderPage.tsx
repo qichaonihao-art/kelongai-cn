@@ -908,7 +908,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                         <div className="flex items-center gap-2">
                           <div className="flex items-center gap-2 rounded-full border border-emerald-100/80 bg-emerald-50/80 px-3 py-2 text-xs font-bold text-emerald-600">
                             <CheckCircle2 className="size-3.5" />
-                            文案提取成功
+                            提取成功 · 共 {(displayTranscript || transcriptResult?.transcript || '').replace(/\s/g, '').length} 字
                           </div>
                           {displayTranscript !== originalTranscript && originalTranscript && (
                             <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50/80 px-2 py-1 rounded-md border border-indigo-100/80">

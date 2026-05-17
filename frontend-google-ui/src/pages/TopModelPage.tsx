@@ -7,6 +7,8 @@ import {
   Loader2,
   User,
   Trash2,
+  Plus,
+  History,
   ChevronDown,
   Image as ImageIcon,
   Video,
@@ -613,7 +615,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
                 className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-100"
                 title="展开历史对话"
               >
-                <Trash2 className="size-3.5" />
+                <History className="size-3.5" />
                 <span className="hidden sm:inline">历史</span>
               </button>
             )}
@@ -671,11 +673,11 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
         <div className="flex items-center gap-2">
           <button
             onClick={handleNewChat}
-            className="flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-100"
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-fuchsia-100 bg-fuchsia-50 px-3 text-xs font-bold text-fuchsia-700 shadow-sm transition-all hover:border-fuchsia-200 hover:bg-fuchsia-100 hover:shadow-md"
             title="新建对话"
           >
-            <Trash2 className="size-3.5" />
-            <span className="hidden sm:inline">新对话</span>
+            <Plus className="size-3.5" />
+            <span className="hidden sm:inline">新建对话</span>
           </button>
           <div className="hidden sm:flex">
             <ModuleQuickNav current="topmodel" onNavigate={onNavigate} />

@@ -2449,7 +2449,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   disabled={isLoading}
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
                 />
+              </div>
 
+              <div className="mt-3 flex items-center">
                 {additionalChangeHistory.length > 0 && (
                   <div className="relative">
                     {!isAdditionalHistoryOpen && (
@@ -2541,20 +2543,20 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                     )}
                   </div>
                 )}
-              </div>
 
-              <div className="mt-3 flex items-center gap-2">
-                <input
-                  id="include-subtitles"
-                  type="checkbox"
-                  checked={includeSubtitles}
-                  onChange={(e) => setIncludeSubtitles(e.target.checked)}
-                  disabled={isLoading}
-                  className="size-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                />
-                <label htmlFor="include-subtitles" className="text-xs font-semibold text-slate-600 cursor-pointer select-none">
-                  反推提示词包含字幕内容
-                </label>
+                <div className="flex items-center gap-2 ml-auto">
+                  <input
+                    id="include-subtitles"
+                    type="checkbox"
+                    checked={includeSubtitles}
+                    onChange={(e) => setIncludeSubtitles(e.target.checked)}
+                    disabled={isLoading}
+                    className="size-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <label htmlFor="include-subtitles" className="text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                    反推提示词包含字幕内容
+                  </label>
+                </div>
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
