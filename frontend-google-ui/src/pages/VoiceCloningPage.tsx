@@ -286,6 +286,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const inputTextRef = useRef<HTMLTextAreaElement>(null);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const activeAudioIdRef = useRef<string | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const progressAnimationFrameRef = useRef<number | null>(null);
   const generatedAudiosRef = useRef<GeneratedAudio[]>([]);
   const [isApiConfigOpen, setIsApiConfigOpen] = useState(false);
@@ -307,6 +308,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const [uploadedAudioUrl, setUploadedAudioUrl] = useState("");
   const [uploadedAudioDurationSeconds, setUploadedAudioDurationSeconds] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState("");
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const [cloneError, setCloneError] = useState("");
   const [generateError, setGenerateError] = useState("");
   const [configError, setConfigError] = useState("");
@@ -550,6 +552,11 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
         activeAudioRef.current = null;
       }
 
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      }
+
       if (uploadedAudioUrl) {
         URL.revokeObjectURL(uploadedAudioUrl);
       }
@@ -639,7 +646,46 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
         ? aliyunApiKey
         : '';
 
+  function stopPreviewAudio() {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+      setIsPreviewPlaying(false);
+    }
+  }
+
+  async function handleTogglePreview() {
+    if (!uploadedAudioUrl) return;
+
+    if (isPreviewPlaying && previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+      setIsPreviewPlaying(false);
+      return;
+    }
+
+    const player = new Audio(uploadedAudioUrl);
+    player.onended = () => {
+      setIsPreviewPlaying(false);
+      previewAudioRef.current = null;
+    };
+    player.onerror = () => {
+      setIsPreviewPlaying(false);
+      previewAudioRef.current = null;
+    };
+    previewAudioRef.current = player;
+    setIsPreviewPlaying(true);
+
+    try {
+      await player.play();
+    } catch {
+      setIsPreviewPlaying(false);
+      previewAudioRef.current = null;
+    }
+  }
+
   function resetUploadState() {
+    stopPreviewAudio();
     if (uploadedAudioUrl) {
       URL.revokeObjectURL(uploadedAudioUrl);
     }
@@ -1339,13 +1385,22 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                       {uploadedAudioDurationSeconds !== null ? ` · ${formatDurationLabel(uploadedAudioDurationSeconds)}` : ''}
                     </p>
                     {uploadedAudioUrl && (
-                      <div className="mt-3 w-full max-w-[240px] rounded-xl border border-slate-200 bg-white px-3 py-2"
+                      <button
+                        className="mt-3 h-9 rounded-full px-5 text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 shadow-md transition-all flex items-center justify-center gap-2"
+                        onClick={handleTogglePreview}
                       >
-                        <audio controls src={uploadedAudioUrl} className="w-full h-8"
-                        >
-                          您的浏览器暂不支持音频试听。
-                        </audio>
-                      </div>
+                        {isPreviewPlaying ? (
+                          <>
+                            <Pause className="size-4" />
+                            暂停试听
+                          </>
+                        ) : (
+                          <>
+                            <Play className="size-4" />
+                            试听
+                          </>
+                        )}
+                      </button>
                     )}
                     <button
                       className="mt-2 text-[11px] font-bold text-slate-400 hover:text-slate-700 transition-colors"
