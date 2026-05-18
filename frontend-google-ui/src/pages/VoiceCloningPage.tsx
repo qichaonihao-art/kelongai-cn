@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   ChevronDown,
   ChevronUp,
@@ -318,6 +318,24 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const [playbackProgress, setPlaybackProgress] = useState<Record<string, number>>({});
   const [deviceId] = useState(loadOrCreateDeviceId);
   const [voiceProviderFilter, setVoiceProviderFilter] = useState<VoicePlatform>('aliyun');
+  const refreshConfigStatus = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setIsConfigLoading(true);
+    }
+    setConfigError("");
+    const status = await getVoiceConfigStatus();
+
+    setConfigStatus(status);
+    if (!options?.silent) {
+      setIsConfigLoading(false);
+    }
+
+    if (!status.reachable) {
+      setConfigError("无法读取服务端语音配置，请确认后端已启动且当前登录状态有效。");
+    }
+
+    return status;
+  }, []);
 
   const selectedVoice = useMemo(
     () => voices.find((voice) => voice.id === activeVoiceId) || null,
@@ -366,6 +384,16 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   );
   const hasVolcServerSupport =
     configStatus.volcAppKey && configStatus.volcAccessKey;
+  const hasVolcSlotPool = configStatus.volcSpeakerSlotTotal > 0;
+  const volcSlotBadgeText = hasVolcSlotPool
+    ? `${configStatus.volcSpeakerSlotTotal}-${configStatus.volcSpeakerSlotAvailable}`
+    : '未配置';
+  const isVolcSlotFull =
+    selectedPlatform === '火山引擎' &&
+    !configStatus.mockMode &&
+    hasVolcServerSupport &&
+    hasVolcSlotPool &&
+    configStatus.volcSpeakerSlotAvailable <= 0;
 
   useEffect(() => {
     saveSavedVoices(voices);
@@ -430,26 +458,29 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     let cancelled = false;
 
     async function loadConfig() {
-      setIsConfigLoading(true);
-      setConfigError("");
-      const status = await getVoiceConfigStatus();
-
+      const status = await refreshConfigStatus();
       if (cancelled) return;
 
       setConfigStatus(status);
       setIsConfigLoading(false);
-
-      if (!status.reachable) {
-        setConfigError("无法读取服务端语音配置，请确认后端已启动且当前登录状态有效。");
-      }
     }
 
-    loadConfig();
+    void loadConfig();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshConfigStatus]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void refreshConfigStatus({ silent: true });
+      }
+    }, 8000);
+
+    return () => window.clearInterval(intervalId);
+  }, [refreshConfigStatus]);
 
   useEffect(() => {
     if (!deviceId || configStatus.mockMode || !hasVolcServerSupport) {
@@ -475,6 +506,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
         }
 
         setOwnershipError("");
+        void refreshConfigStatus({ silent: true });
       } catch (error) {
         if (cancelled) {
           return;
@@ -489,7 +521,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     return () => {
       cancelled = true;
     };
-  }, [configStatus.mockMode, deviceId, hasVolcServerSupport, localVolcSpeakerIds]);
+  }, [configStatus.mockMode, deviceId, hasVolcServerSupport, localVolcSpeakerIds, refreshConfigStatus]);
 
   useEffect(() => {
     generatedAudiosRef.current = generatedAudios;
@@ -699,8 +731,14 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
       setVoices((previous) => [voice, ...previous]);
       setActiveVoiceId(voice.id);
       setCloneStatus('done');
+      if (voice.provider === 'volcengine') {
+        void refreshConfigStatus({ silent: true });
+      }
     } catch (error) {
       setCloneStatus('idle');
+      if (selectedPlatformProvider === 'volcengine') {
+        void refreshConfigStatus({ silent: true });
+      }
       setCloneError(error instanceof Error ? error.message : "音色创建失败，请稍后重试。");
     }
   }
@@ -1049,8 +1087,10 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
         speakerId: targetVoice.remoteVoiceId,
       });
       setOwnershipError("");
+      void refreshConfigStatus({ silent: true });
     } catch (error) {
       setOwnershipError(error instanceof Error ? error.message : "火山音色槽位释放失败，请稍后重试。");
+      void refreshConfigStatus({ silent: true });
     }
   }
 
@@ -1173,6 +1213,18 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                     />
                   </div>
                   <div className="md:col-span-2 space-y-2">
+                    {selectedPlatform === '火山引擎' && (
+                      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50/50 px-3 py-2">
+                        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black text-emerald-700 shadow-sm">
+                          槽位 {volcSlotBadgeText}
+                        </span>
+                        <span className="text-[11px] font-medium text-emerald-700">
+                          {hasVolcSlotPool
+                            ? `总共 ${configStatus.volcSpeakerSlotTotal} 个，已用 ${configStatus.volcSpeakerSlotUsed} 个，剩余 ${configStatus.volcSpeakerSlotAvailable} 个`
+                            : '服务端还没有配置火山 speaker_id 槽位'}
+                        </span>
+                      </div>
+                    )}
                     <p className="text-xs text-slate-500 leading-relaxed">{platformHint}</p>
                     {isConfigLoading && <p className="text-xs text-slate-400">正在读取服务端语音配置...</p>}
                     {configError && <p className="text-xs text-red-500">{configError}</p>}
@@ -1314,14 +1366,37 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                 />
               </div>
               {selectedPlatform === '火山引擎' && (
-                <p className="text-[11px] leading-5 text-slate-400"
-                >
-                  火山引擎会从服务端已配置的真实 speaker_id 槽位池里自动分配一个未使用槽位。
-                </p>
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/45 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[11px] font-bold text-emerald-700">火山槽位</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="rounded-full px-2 py-0.5 text-[10px] font-bold text-emerald-700/70 transition-colors hover:bg-white hover:text-emerald-800"
+                        onClick={() => void refreshConfigStatus({ silent: true })}
+                      >
+                        刷新
+                      </button>
+                      <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-black text-emerald-700 shadow-sm">
+                        {volcSlotBadgeText}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-[11px] leading-5 text-emerald-700/80">
+                    {hasVolcSlotPool
+                      ? `剩余 ${configStatus.volcSpeakerSlotAvailable} 个 / 总共 ${configStatus.volcSpeakerSlotTotal} 个。克隆成功会占用 1 个，删除旧火山音色会释放 1 个。`
+                      : '火山引擎会从服务端已配置的真实 speaker_id 槽位池里自动分配一个未使用槽位。'}
+                  </p>
+                  {isVolcSlotFull && (
+                    <p className="mt-1 text-[11px] font-bold text-red-500">
+                      当前槽位已满，请先删除一个旧火山音色。
+                    </p>
+                  )}
+                </div>
               )}
               <button
                 className="w-full h-11 rounded-full text-sm font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/15 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                disabled={uploadStatus !== 'done' || cloneStatus === 'processing'}
+                disabled={uploadStatus !== 'done' || cloneStatus === 'processing' || isVolcSlotFull}
                 onClick={handleCloneVoice}
               >
                 {cloneStatus === 'processing' ? (
