@@ -11,6 +11,8 @@ export interface VoiceConfigStatus {
   volcSpeakerSlotTotal: number;
   volcSpeakerSlotUsed: number;
   volcSpeakerSlotAvailable: number;
+  volcSpeakerSlotUnknown: number;
+  volcSpeakerSlotSource: 'local' | 'volcengine';
   mockMode: boolean;
 }
 
@@ -127,6 +129,8 @@ export async function getVoiceConfigStatus(): Promise<VoiceConfigStatus> {
       volcSpeakerSlotTotal: Number(json?.serverManaged?.volcSpeakerSlotTotal || 0),
       volcSpeakerSlotUsed: Number(json?.serverManaged?.volcSpeakerSlotUsed || 0),
       volcSpeakerSlotAvailable: Number(json?.serverManaged?.volcSpeakerSlotAvailable || 0),
+      volcSpeakerSlotUnknown: Number(json?.serverManaged?.volcSpeakerSlotUnknown || 0),
+      volcSpeakerSlotSource: json?.serverManaged?.volcSpeakerSlotSource === 'volcengine' ? 'volcengine' : 'local',
       mockMode: !!json?.serverManaged?.voiceCloneMockMode,
     };
   } catch {
@@ -141,6 +145,8 @@ export async function getVoiceConfigStatus(): Promise<VoiceConfigStatus> {
       volcSpeakerSlotTotal: 0,
       volcSpeakerSlotUsed: 0,
       volcSpeakerSlotAvailable: 0,
+      volcSpeakerSlotUnknown: 0,
+      volcSpeakerSlotSource: 'local',
       mockMode: false,
     };
   }

@@ -132,6 +132,8 @@ const EMPTY_CONFIG_STATUS: VoiceConfigStatus = {
   volcSpeakerSlotTotal: 0,
   volcSpeakerSlotUsed: 0,
   volcSpeakerSlotAvailable: 0,
+  volcSpeakerSlotUnknown: 0,
+  volcSpeakerSlotSource: 'local',
   mockMode: false,
 };
 
@@ -386,8 +388,11 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     configStatus.volcAppKey && configStatus.volcAccessKey;
   const hasVolcSlotPool = configStatus.volcSpeakerSlotTotal > 0;
   const volcSlotBadgeText = hasVolcSlotPool
-    ? `${configStatus.volcSpeakerSlotTotal}-${configStatus.volcSpeakerSlotAvailable}`
+    ? `剩余 ${configStatus.volcSpeakerSlotAvailable}/${configStatus.volcSpeakerSlotTotal}`
     : '未配置';
+  const volcSlotSourceLabel = configStatus.volcSpeakerSlotSource === 'volcengine'
+    ? '火山后台'
+    : '本地记录';
   const isVolcSlotFull =
     selectedPlatform === '火山引擎' &&
     !configStatus.mockMode &&
@@ -594,12 +599,12 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     }
     if (hasVolcServerSupport) {
       const slotSummary = configStatus.volcSpeakerSlotTotal > 0
-        ? `当前槽位 ${configStatus.volcSpeakerSlotAvailable}/${configStatus.volcSpeakerSlotTotal} 可用。`
+        ? `${volcSlotSourceLabel}显示当前剩余 ${configStatus.volcSpeakerSlotAvailable}/${configStatus.volcSpeakerSlotTotal}。`
         : '';
       return `服务端已托管火山引擎密钥，并会从已配置的真实 speaker_id 槽位池里自动分配一个未使用槽位给新音色；后续生成会继续使用该历史音色自己的 speaker_id。${slotSummary ? ` ${slotSummary}` : ''}`;
     }
     return "火山引擎最小版本依赖服务端配置 VOLCENGINE_APP_KEY、VOLCENGINE_ACCESS_KEY，以及至少一个真实可用的 speaker_id 槽位。";
-  }, [configStatus, hasVolcServerSupport, selectedPlatform]);
+  }, [configStatus, hasVolcServerSupport, selectedPlatform, volcSlotSourceLabel]);
 
   const configInputLabel =
     selectedPlatform === '智谱'
@@ -1220,7 +1225,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                         </span>
                         <span className="text-[11px] font-medium text-emerald-700">
                           {hasVolcSlotPool
-                            ? `总共 ${configStatus.volcSpeakerSlotTotal} 个，已用 ${configStatus.volcSpeakerSlotUsed} 个，剩余 ${configStatus.volcSpeakerSlotAvailable} 个`
+                            ? `${volcSlotSourceLabel}：总共 ${configStatus.volcSpeakerSlotTotal} 个，已用 ${configStatus.volcSpeakerSlotUsed} 个，剩余 ${configStatus.volcSpeakerSlotAvailable} 个${configStatus.volcSpeakerSlotUnknown > 0 ? `，待确认 ${configStatus.volcSpeakerSlotUnknown} 个` : ''}`
                             : '服务端还没有配置火山 speaker_id 槽位'}
                         </span>
                       </div>
@@ -1384,7 +1389,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                   </div>
                   <p className="mt-1 text-[11px] leading-5 text-emerald-700/80">
                     {hasVolcSlotPool
-                      ? `剩余 ${configStatus.volcSpeakerSlotAvailable} 个 / 总共 ${configStatus.volcSpeakerSlotTotal} 个。克隆成功会占用 1 个，删除旧火山音色会释放 1 个。`
+                      ? `${volcSlotSourceLabel}：已用 ${configStatus.volcSpeakerSlotUsed} 个，剩余 ${configStatus.volcSpeakerSlotAvailable} 个，总共 ${configStatus.volcSpeakerSlotTotal} 个${configStatus.volcSpeakerSlotUnknown > 0 ? `，待确认 ${configStatus.volcSpeakerSlotUnknown} 个` : ''}。`
                       : '火山引擎会从服务端已配置的真实 speaker_id 槽位池里自动分配一个未使用槽位。'}
                   </p>
                   {isVolcSlotFull && (

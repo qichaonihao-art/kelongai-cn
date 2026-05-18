@@ -34,6 +34,7 @@ const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-pro-260215';
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.join(__dirname, '.runtime-state');
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
+const VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS = 15 * 1000;
 const COLLECTION_DB_PATH = path.join(RUNTIME_STATE_DIR, 'collection.db');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
 const STARTUP_UPLOAD_TEMP_FILE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
@@ -144,6 +145,11 @@ const DOUYIN_DOWNLOAD_HOST_BASE_SCORES = new Map([
 const VOLC_SPEAKER_POOL_FULL_MESSAGE = '火山音色槽位已满，请删除旧音色或增加 speaker_id 池';
 let volcSpeakerOwnershipState = null;
 let volcSpeakerOwnershipQueue = Promise.resolve();
+let volcSpeakerRemoteStatusCache = {
+  key: '',
+  expiresAt: 0,
+  summary: null
+};
 let collectionDb = null;
 
 function readBooleanEnv(value) {
@@ -838,9 +844,7 @@ function handleAuthStatus(req, res) {
 async function handleConfigStatus(req, res) {
   const publicBaseUrl = getConfiguredPublicBaseUrl();
   const configuredSpeakerIds = getConfiguredVolcSpeakerIds();
-  const ownershipState = await loadVolcSpeakerOwnershipState();
-  const occupiedSpeakerIdCount = configuredSpeakerIds.filter((speakerId) => !!ownershipState.slots[speakerId]).length;
-  const availableSpeakerIdCount = Math.max(0, configuredSpeakerIds.length - occupiedSpeakerIdCount);
+  const remoteSlotSummary = await getVolcSpeakerRemoteSlotSummary();
   sendJson(res, 200, {
     ok: true,
     auth: {
@@ -856,8 +860,10 @@ async function handleConfigStatus(req, res) {
       volcAccessKey: !!readValue(SERVER_CONFIG.volcAccessKey),
       volcSpeakerId: configuredSpeakerIds.length > 0,
       volcSpeakerSlotTotal: configuredSpeakerIds.length,
-      volcSpeakerSlotUsed: occupiedSpeakerIdCount,
-      volcSpeakerSlotAvailable: availableSpeakerIdCount,
+      volcSpeakerSlotUsed: remoteSlotSummary.used,
+      volcSpeakerSlotAvailable: remoteSlotSummary.available,
+      volcSpeakerSlotUnknown: remoteSlotSummary.unknown,
+      volcSpeakerSlotSource: remoteSlotSummary.source,
       tikhubApiToken: !!readValue(SERVER_CONFIG.tikhubApiToken),
       wechatApiToken: !!readValue(SERVER_CONFIG.wechatApiToken),
       douyinApiToken: !!readValue(SERVER_CONFIG.douyinApiToken),
@@ -2194,6 +2200,98 @@ function getConfiguredVolcSpeakerIds() {
   return Array.from(new Set(ids));
 }
 
+function invalidateVolcSpeakerRemoteStatusCache() {
+  volcSpeakerRemoteStatusCache = {
+    key: '',
+    expiresAt: 0,
+    summary: null
+  };
+}
+
+function isVolcSpeakerOccupiedByRemoteStatus(value) {
+  const statuses = Array.isArray(value?.speaker_status) ? value.speaker_status : [];
+  return statuses.length > 0;
+}
+
+async function getVolcSpeakerRemoteSlotSummary({ force = false } = {}) {
+  const configuredSpeakerIds = getConfiguredVolcSpeakerIds();
+  const appKey = readValue(SERVER_CONFIG.volcAppKey);
+  const accessKey = readValue(SERVER_CONFIG.volcAccessKey);
+  const cacheKey = JSON.stringify({
+    appKeyConfigured: !!appKey,
+    accessKeyConfigured: !!accessKey,
+    speakerIds: configuredSpeakerIds
+  });
+
+  if (
+    !force &&
+    volcSpeakerRemoteStatusCache.summary &&
+    volcSpeakerRemoteStatusCache.key === cacheKey &&
+    volcSpeakerRemoteStatusCache.expiresAt > Date.now()
+  ) {
+    return volcSpeakerRemoteStatusCache.summary;
+  }
+
+  const summary = {
+    total: configuredSpeakerIds.length,
+    used: 0,
+    available: configuredSpeakerIds.length,
+    unknown: 0,
+    source: 'local',
+    speakers: {}
+  };
+
+  if (!configuredSpeakerIds.length || !appKey || !accessKey) {
+    volcSpeakerRemoteStatusCache = {
+      key: cacheKey,
+      expiresAt: Date.now() + VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS,
+      summary
+    };
+    return summary;
+  }
+
+  const results = await Promise.allSettled(
+    configuredSpeakerIds.map(async (speakerId) => {
+      const voiceInfo = await volcJsonRequest('/api/v3/tts/get_voice', {
+        appKey,
+        accessKey,
+        body: { speaker_id: speakerId }
+      });
+      return {
+        speakerId,
+        occupied: isVolcSpeakerOccupiedByRemoteStatus(voiceInfo)
+      };
+    })
+  );
+
+  summary.source = 'volcengine';
+  summary.available = 0;
+
+  results.forEach((result, index) => {
+    const speakerId = configuredSpeakerIds[index];
+    if (result.status === 'fulfilled') {
+      const status = result.value.occupied ? 'used' : 'available';
+      summary.speakers[speakerId] = status;
+      if (status === 'used') {
+        summary.used += 1;
+      } else {
+        summary.available += 1;
+      }
+      return;
+    }
+
+    summary.unknown += 1;
+    summary.speakers[speakerId] = 'unknown';
+  });
+
+  volcSpeakerRemoteStatusCache = {
+    key: cacheKey,
+    expiresAt: Date.now() + VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS,
+    summary
+  };
+  return summary;
+}
+
 function normalizeDeviceId(value) {
   return readValue(value).slice(0, 128);
 }
@@ -2338,6 +2436,7 @@ async function reserveVolcSpeakerIdForDevice({ requestedSpeakerId = '', ownerDev
     const configuredSpeakerIds = getConfiguredVolcSpeakerIds();
     const configuredSpeakerIdSet = new Set(configuredSpeakerIds);
     const desiredSpeakerId = readValue(requestedSpeakerId);
+    const remoteSlotSummary = await getVolcSpeakerRemoteSlotSummary({ force: true });
 
     if (!configuredSpeakerIds.length) {
       return {
@@ -2365,6 +2464,22 @@ async function reserveVolcSpeakerIdForDevice({ requestedSpeakerId = '', ownerDev
         };
       }
 
+      if (remoteSlotSummary.speakers[desiredSpeakerId] === 'used') {
+        return {
+          ok: false,
+          statusCode: 409,
+          error: `speaker_id ${desiredSpeakerId} 已在火山后台占用，请换一个未训练的 speaker_id`
+        };
+      }
+
+      if (remoteSlotSummary.speakers[desiredSpeakerId] === 'unknown') {
+        return {
+          ok: false,
+          statusCode: 409,
+          error: `speaker_id ${desiredSpeakerId} 的火山后台状态暂时无法确认，请稍后重试`
+        };
+      }
+
       upsertVolcSpeakerOwnership(state, {
         speakerId: desiredSpeakerId,
         ownerDeviceId,
@@ -2380,6 +2495,10 @@ async function reserveVolcSpeakerIdForDevice({ requestedSpeakerId = '', ownerDev
     for (const speakerId of configuredSpeakerIds) {
       const existingOwner = normalizeDeviceId(state.slots[speakerId]?.ownerDeviceId);
       if (existingOwner) {
+        continue;
+      }
+
+      if (remoteSlotSummary.speakers[speakerId] !== 'available') {
         continue;
       }
 
@@ -2417,6 +2536,7 @@ async function releaseVolcSpeakerIdForDevice({ speakerId, ownerDeviceId }) {
     }
 
     deleteVolcSpeakerOwnership(state, normalizedSpeakerId);
+    invalidateVolcSpeakerRemoteStatusCache();
     return { released: true, reason: 'released' };
   });
 }
@@ -7925,6 +8045,7 @@ async function handleVolcVoiceClone(req, res) {
           ownerDeviceId: resolvedDeviceId
         });
       }
+      invalidateVolcSpeakerRemoteStatusCache();
       console.error('[volc voice clone] upstream non-200 response', {
         url: upstreamUrl,
         status: response.status,
@@ -7941,6 +8062,7 @@ async function handleVolcVoiceClone(req, res) {
       return;
     }
 
+    invalidateVolcSpeakerRemoteStatusCache();
     sendJson(res, 200, {
       ...(json || { raw: responseText }),
       speaker_id: json?.speaker_id || reservedSpeakerId
