@@ -1396,35 +1396,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                     setVoiceName(event.target.value)}
                 />
               </div>
-              {selectedPlatform === '火山引擎' && (
-                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/45 px-3 py-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[11px] font-bold text-emerald-700">火山槽位</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="rounded-full px-2 py-0.5 text-[10px] font-bold text-emerald-700/70 transition-colors hover:bg-white hover:text-emerald-800"
-                        onClick={() => void refreshConfigStatus({ silent: true })}
-                      >
-                        刷新
-                      </button>
-                      <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-black text-emerald-700 shadow-sm">
-                        {volcSlotBadgeText}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="mt-1 text-[11px] leading-5 text-emerald-700/80">
-                    {hasVolcSlotPool
-                      ? `${volcSlotSourceLabel}：已用 ${configStatus.volcSpeakerSlotUsed} 个，剩余 ${configStatus.volcSpeakerSlotAvailable} 个，总共 ${configStatus.volcSpeakerSlotTotal} 个${configStatus.volcSpeakerSlotUnknown > 0 ? `，待确认 ${configStatus.volcSpeakerSlotUnknown} 个` : ''}。`
-                      : '火山引擎会从服务端已配置的真实 speaker_id 槽位池里自动分配一个未使用槽位。'}
-                  </p>
-                  {isVolcSlotFull && (
-                    <p className="mt-1 text-[11px] font-bold text-red-500">
-                      当前槽位已满，请到"我的音色"中释放或删除一个旧火山音色。
-                    </p>
-                  )}
-                </div>
-              )}
               <button
                 className="w-full h-11 rounded-full text-sm font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/15 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 disabled={uploadStatus !== 'done' || cloneStatus === 'processing' || isVolcSlotFull}
