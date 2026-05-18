@@ -15,6 +15,7 @@ import {
   Wand2,
   Pause,
   Trash2,
+  Unlock,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -310,6 +311,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const [generateError, setGenerateError] = useState("");
   const [configError, setConfigError] = useState("");
   const [ownershipError, setOwnershipError] = useState("");
+  const [releasingVoiceId, setReleasingVoiceId] = useState<string | null>(null);
   const [configStatus, setConfigStatus] = useState<VoiceConfigStatus>(EMPTY_CONFIG_STATUS);
   const [isConfigLoading, setIsConfigLoading] = useState(true);
   const [zhipuApiKey, setZhipuApiKey] = useState("");
@@ -1059,6 +1061,30 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     }
   }
 
+  async function handleReleaseVolcVoice(voiceId: string) {
+    const targetVoice = voices.find((voice) => voice.id === voiceId);
+    if (!targetVoice || targetVoice.provider !== 'volcengine' || !deviceId) return;
+
+    setReleasingVoiceId(voiceId);
+    try {
+      await releaseVolcVoiceOwnership({
+        deviceId,
+        speakerId: targetVoice.remoteVoiceId,
+      });
+      setOwnershipError("");
+      setVoices((previous) => previous.filter((voice) => voice.id !== voiceId));
+      if (activeVoiceId === voiceId) {
+        setActiveVoiceId(null);
+      }
+      void refreshConfigStatus({ silent: true });
+    } catch (error) {
+      setOwnershipError(error instanceof Error ? error.message : "火山音色槽位释放失败，请稍后重试。");
+      void refreshConfigStatus({ silent: true });
+    } finally {
+      setReleasingVoiceId(null);
+    }
+  }
+
   async function handleDeleteVoice(voiceId: string) {
     const targetVoice = voices.find((voice) => voice.id === voiceId) || null;
     const nextVoices = voices.filter((voice) => voice.id !== voiceId);
@@ -1394,7 +1420,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                   </p>
                   {isVolcSlotFull && (
                     <p className="mt-1 text-[11px] font-bold text-red-500">
-                      当前槽位已满，请先删除一个旧火山音色。
+                      当前槽位已满，请到"我的音色"中释放或删除一个旧火山音色。
                     </p>
                   )}
                 </div>
@@ -1868,6 +1894,34 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                 </div>
               </div>
 
+              {/* Volc Slot Info (when volcengine tab selected) */}
+              {voiceProviderFilter === 'volcengine' && hasVolcServerSupport && (
+                <div className="px-5 pt-2 pb-0">
+                  <div className="rounded-2xl border border-amber-100 bg-amber-50/45 px-3 py-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[11px] font-bold text-amber-700">火山槽位</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded-full px-2 py-0.5 text-[10px] font-bold text-amber-700/70 transition-colors hover:bg-white hover:text-amber-800"
+                          onClick={() => void refreshConfigStatus({ silent: true })}
+                        >
+                          刷新
+                        </button>
+                        <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-black text-amber-700 shadow-sm">
+                          {volcSlotBadgeText}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="mt-1 text-[11px] leading-5 text-amber-700/80">
+                      {hasVolcSlotPool
+                        ? `${volcSlotSourceLabel}：已用 ${configStatus.volcSpeakerSlotUsed} 个，剩余 ${configStatus.volcSpeakerSlotAvailable} 个，总共 ${configStatus.volcSpeakerSlotTotal} 个${configStatus.volcSpeakerSlotUnknown > 0 ? `，待确认 ${configStatus.volcSpeakerSlotUnknown} 个` : ''}。`
+                        : '服务端还没有配置火山 speaker_id 槽位'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Voice List */}
               <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2">
                 {voices.length === 0 ? (
@@ -1936,6 +1990,32 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                               <span>{voice.createdAt}</span>
                             </div>
                           </div>
+
+                          {/* Release (volcengine only) */}
+                          {voice.provider === 'volcengine' && (
+                            <button
+                              className={cn(
+                                "shrink-0 h-8 px-2 rounded-lg flex items-center justify-center border transition-all opacity-0 group-hover:opacity-100 text-[11px] font-bold",
+                                isActive
+                                  ? "text-amber-600 hover:text-amber-700 hover:bg-white hover:border-amber-200 bg-white/60 border-white/40"
+                                  : "text-amber-500 hover:text-amber-700 hover:bg-amber-50 border-transparent hover:border-amber-200",
+                              )}
+                              disabled={releasingVoiceId === voice.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleReleaseVolcVoice(voice.id);
+                              }}
+                            >
+                              {releasingVoiceId === voice.id ? (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              ) : (
+                                <>
+                                  <Unlock className="size-3 mr-1" />
+                                  释放
+                                </>
+                              )}
+                            </button>
+                          )}
 
                           {/* Delete */}
                           <button
