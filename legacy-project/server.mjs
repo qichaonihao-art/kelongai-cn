@@ -898,6 +898,18 @@ function speechRateToVolcSpeechRate(rate) {
   return Math.round((normalized - 1) * 100);
 }
 
+function buildVolcAudioParams(speechRate) {
+  const audioParams = {
+    format: 'pcm',
+    sample_rate: 24000
+  };
+  const normalizedSpeechRate = normalizeSpeechRate(speechRate);
+  if (Math.abs(normalizedSpeechRate - 1) >= 0.001) {
+    audioParams.speech_rate = speechRateToVolcSpeechRate(normalizedSpeechRate);
+  }
+  return audioParams;
+}
+
 function buildAliyunRealtimeSession({ voice }) {
   return {
     mode: 'commit',
@@ -7625,11 +7637,7 @@ function connectVolcTts({ appKey, accessKey, speakerId, text, resourceId = 'seed
               event: VOLC_EVENT.START_SESSION,
               req_params: {
                 speaker: speakerId,
-                audio_params: {
-                  format: 'pcm',
-                  sample_rate: 24000,
-                  speech_rate: speechRateToVolcSpeechRate(speechRate)
-                }
+                audio_params: buildVolcAudioParams(speechRate)
               }
             }, sessionId));
             return;
