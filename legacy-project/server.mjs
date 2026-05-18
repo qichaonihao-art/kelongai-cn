@@ -887,6 +887,27 @@ function readValue(...candidates) {
   return '';
 }
 
+function normalizeSpeechRate(value, fallback = 1) {
+  const parsed = Number(value);
+  const safe = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  return Math.min(2, Math.max(0.5, safe));
+}
+
+function speechRateToVolcSpeechRate(rate) {
+  const normalized = normalizeSpeechRate(rate);
+  return Math.round((normalized - 1) * 100);
+}
+
+function buildAliyunRealtimeSession({ voice }) {
+  return {
+    mode: 'commit',
+    voice,
+    language_type: 'Auto',
+    response_format: 'pcm',
+    sample_rate: 24000
+  };
+}
+
 function parseJsonString(value, fallback = null) {
   const raw = readValue(value);
   if (!raw) return fallback;
@@ -7225,13 +7246,7 @@ function connectAliyunRealtime({ apiKey, model, voice, text }) {
     ws.on('open', () => {
       sendEvent({
         type: 'session.update',
-        session: {
-          mode: 'commit',
-          voice,
-          language_type: 'Auto',
-          response_format: 'pcm',
-          sample_rate: 24000
-        }
+        session: buildAliyunRealtimeSession({ voice })
       });
 
       sendEvent({
@@ -7306,7 +7321,12 @@ async function handleAliyunTts(req, res) {
       return;
     }
 
-    const pcmBuffer = await connectAliyunRealtime({ apiKey: resolvedApiKey, model, voice, text });
+    const pcmBuffer = await connectAliyunRealtime({
+      apiKey: resolvedApiKey,
+      model,
+      voice,
+      text
+    });
     const wavBuffer = buildWaveFromPcm(pcmBuffer, 24000, 1, 16);
 
     sendWavResponse(res, wavBuffer);
@@ -7549,7 +7569,7 @@ async function resolveVolcResourceId({ appKey, accessKey, speakerId, requestedRe
   throw error;
 }
 
-function connectVolcTts({ appKey, accessKey, speakerId, text, resourceId = 'seed-icl-2.0' }) {
+function connectVolcTts({ appKey, accessKey, speakerId, text, resourceId = 'seed-icl-2.0', speechRate = 1 }) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket('wss://openspeech.bytedance.com/api/v3/tts/bidirection', {
       headers: {
@@ -7607,7 +7627,8 @@ function connectVolcTts({ appKey, accessKey, speakerId, text, resourceId = 'seed
                 speaker: speakerId,
                 audio_params: {
                   format: 'pcm',
-                  sample_rate: 24000
+                  sample_rate: 24000,
+                  speech_rate: speechRateToVolcSpeechRate(speechRate)
                 }
               }
             }, sessionId));
@@ -7658,7 +7679,7 @@ async function handleVolcTts(req, res) {
   let debug = null;
   try {
     const body = await readRequestBody(req);
-    const { appKey, accessKey, speakerId, text, resourceId, speakerSource } = body;
+    const { appKey, accessKey, speakerId, text, resourceId, speakerSource, speechRate } = body;
     const resolvedAppKey = readValue(appKey, SERVER_CONFIG.volcAppKey);
     const resolvedAccessKey = readValue(accessKey, SERVER_CONFIG.volcAccessKey);
     const resolvedSpeakerId = readValue(speakerId, SERVER_CONFIG.volcSpeakerId);
@@ -7705,7 +7726,8 @@ async function handleVolcTts(req, res) {
       accessKey: resolvedAccessKey,
       speakerId: resolvedSpeakerId,
       text,
-      resourceId: resolution.resolvedResourceId
+      resourceId: resolution.resolvedResourceId,
+      speechRate: normalizeSpeechRate(speechRate)
     });
     const wavBuffer = buildWaveFromPcm(pcmBuffer, 24000, 1, 16);
 
@@ -7732,7 +7754,7 @@ async function handleVolcTts(req, res) {
 async function handleZhipuTts(req, res) {
   try {
     const body = await readRequestBody(req);
-    const { apiKey, voice, text } = body;
+    const { apiKey, voice, text, speechRate } = body;
     const resolvedApiKey = readValue(apiKey, SERVER_CONFIG.zhipuApiKey);
 
     if (shouldUseVoiceCloneMock(body)) {
@@ -7762,7 +7784,7 @@ async function handleZhipuTts(req, res) {
         input: text,
         voice,
         response_format: 'wav',
-        speed: 1.0,
+        speed: normalizeSpeechRate(speechRate),
         volume: 1.0
       })
     });

@@ -31,6 +31,7 @@ import {
   generateSpeech,
   getVoiceConfigStatus,
   releaseVolcVoiceOwnership,
+  supportsVoiceSpeechRate,
   syncVolcVoiceOwnership,
 } from "@/src/lib/voice";
 import {
@@ -66,6 +67,12 @@ const MAX_AUDIO_SIZE = 10 * 1024 * 1024;
 const ALIYUN_MAX_AUDIO_DURATION_SECONDS = 60;
 const TEXT_HISTORY_STORAGE_KEY = 'voice-cloning-text-history';
 const MAX_TEXT_HISTORY_ITEMS = 100;
+const DEFAULT_SPEECH_RATE = 1;
+const MIN_SPEECH_RATE = 0.5;
+const MAX_SPEECH_RATE = 2;
+const SPEECH_RATE_STEP = 0.05;
+const NORMAL_SPEECH_RATE_PERCENT =
+  ((DEFAULT_SPEECH_RATE - MIN_SPEECH_RATE) / (MAX_SPEECH_RATE - MIN_SPEECH_RATE)) * 100;
 const VOICE_PROVIDER_ORDER: VoicePlatform[] = ['aliyun', 'volcengine', 'zhipu', 'siliconflow'];
 const VOICE_PROVIDER_META: Record<VoicePlatform, {
   title: string;
@@ -286,6 +293,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const [generateStatus, setGenerateStatus] = useState<'idle' | 'generating'>('idle');
   const [generatedAudios, setGeneratedAudios] = useState<GeneratedAudio[]>([]);
   const [inputText, setInputText] = useState("");
+  const [speechRate, setSpeechRate] = useState(DEFAULT_SPEECH_RATE);
   const [textHistory, setTextHistory] = useState<TextInputHistoryItem[]>(loadTextInputHistory);
   const [textHistoryPreview, setTextHistoryPreview] = useState<TextHistoryPreview | null>(null);
   const [isTextHistoryOpen, setIsTextHistoryOpen] = useState(false);
@@ -336,6 +344,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const activeReadyVoice = selectedVoice || (isSiliconFlowSelected ? currentSiliconFlowVoice : null);
   const isUsingSiliconFlowVoice = activeReadyVoice?.provider === 'siliconflow';
   const isUsingVolcVoice = activeReadyVoice?.provider === 'volcengine';
+  const canAdjustSpeechRate = activeReadyVoice ? supportsVoiceSpeechRate(activeReadyVoice.provider) : false;
   const isVoiceReady = !!activeReadyVoice && (!isUsingSiliconFlowVoice || hasSiliconFlowVoiceUri);
   const activeVolcAliasCount = useMemo(() => {
     if (!activeReadyVoice || activeReadyVoice.provider !== 'volcengine') {
@@ -795,6 +804,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
       const audio = await generateSpeech({
         voice: voiceForGeneration,
         text: inputText.trim(),
+        speechRate: supportsVoiceSpeechRate(voiceForGeneration.provider) ? speechRate : DEFAULT_SPEECH_RATE,
         credentials: buildCredentialsForPlatform(voiceForGeneration.provider, {
           zhipuApiKey,
           aliyunApiKey,
@@ -1468,6 +1478,53 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                 )}
               </div>
 
+              {canAdjustSpeechRate && (
+                <div className="rounded-2xl border border-slate-100 bg-white/55 px-4 py-3">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                      语速
+                    </Label>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-black text-indigo-600">
+                        {speechRate.toFixed(2)}x
+                      </span>
+                      <button
+                        type="button"
+                        className="rounded-full px-2 py-0.5 text-[10px] font-bold text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                        onClick={() => setSpeechRate(DEFAULT_SPEECH_RATE)}
+                      >
+                        重置
+                      </button>
+                    </div>
+                  </div>
+                  <div className="relative pt-5">
+                    {Math.abs(speechRate - DEFAULT_SPEECH_RATE) < SPEECH_RATE_STEP / 2 && (
+                      <span
+                        className="absolute top-0 -translate-x-1/2 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-black text-white shadow-sm"
+                        style={{ left: `${NORMAL_SPEECH_RATE_PERCENT}%` }}
+                      >
+                        正常语速
+                      </span>
+                    )}
+                    <input
+                      type="range"
+                      min={MIN_SPEECH_RATE}
+                      max={MAX_SPEECH_RATE}
+                      step={SPEECH_RATE_STEP}
+                      value={speechRate}
+                      onChange={(event) => setSpeechRate(Number(event.target.value))}
+                      disabled={!isVoiceReady || generateStatus === 'generating'}
+                      className="w-full accent-indigo-600 disabled:opacity-50"
+                    />
+                  </div>
+                  <div className="mt-1 flex justify-between text-[10px] font-bold text-slate-300">
+                    <span>0.5x</span>
+                    <span>1.0x</span>
+                    <span>2.0x</span>
+                  </div>
+                </div>
+              )}
+
               {/* Voice status */}
               <div
                 className={cn(
@@ -1549,8 +1606,15 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                         >
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider"
                           >{audio.providerLabel}</span>
-                          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded"
-                          >{audio.duration}</span>
+                          <div className="flex items-center gap-1.5">
+                            {audio.speechRateSupported && (
+                              <span className="text-[10px] font-bold text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded">
+                                {(audio.speechRate || DEFAULT_SPEECH_RATE).toFixed(2)}x
+                              </span>
+                            )}
+                            <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded"
+                            >{audio.duration}</span>
+                          </div>
                         </div>
                         <button
                           type="button"

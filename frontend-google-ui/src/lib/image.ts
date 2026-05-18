@@ -18,6 +18,7 @@ export interface ImageConfigStatus {
 }
 
 const IMAGE_TASKS_KEY = 'image_generation_tasks';
+const MAX_LOCAL_STORAGE_CHARS = 4_000_000;
 
 function loadTasks(): ImageTask[] {
   try {
@@ -30,10 +31,52 @@ function loadTasks(): ImageTask[] {
 
 function saveTasks(tasks: ImageTask[]) {
   try {
-    localStorage.setItem(IMAGE_TASKS_KEY, JSON.stringify(tasks));
+    const serialized = JSON.stringify(tasks);
+    if (serialized.length <= MAX_LOCAL_STORAGE_CHARS) {
+      localStorage.setItem(IMAGE_TASKS_KEY, serialized);
+      return;
+    }
+
+    const compactTasks = tasks.map((task) => ({
+      ...task,
+      reference_images: task.reference_images?.filter((image) => !image.startsWith('data:')) || [],
+    }));
+    localStorage.setItem(IMAGE_TASKS_KEY, JSON.stringify(compactTasks));
   } catch {
-    // ignore quota exceeded
+    try {
+      const compactTasks = tasks.map((task) => ({ ...task, reference_images: [] }));
+      localStorage.setItem(IMAGE_TASKS_KEY, JSON.stringify(compactTasks));
+    } catch {
+      // Ignore storage failures; generation should keep working.
+    }
   }
+}
+
+function upsertTask(tasks: ImageTask[], task: ImageTask) {
+  const existingIndex = tasks.findIndex((item) => item.id === task.id);
+  if (existingIndex === -1) {
+    return [task, ...tasks];
+  }
+  const next = [...tasks];
+  next[existingIndex] = task;
+  return next;
+}
+
+export function saveImageTaskSnapshot(task: ImageTask) {
+  const tasks = loadTasks();
+  saveTasks(upsertTask(tasks, task));
+}
+
+export function replaceImageTaskSnapshot(previousId: number, task: ImageTask) {
+  const tasks = loadTasks();
+  const previousIndex = tasks.findIndex((item) => item.id === previousId);
+  const remaining = tasks.filter((item) => item.id !== previousId && item.id !== task.id);
+  if (previousIndex === -1) {
+    saveTasks([task, ...remaining]);
+    return;
+  }
+  remaining.splice(previousIndex, 0, task);
+  saveTasks(remaining);
 }
 
 async function parseJsonSafely(response: Response) {
@@ -77,7 +120,8 @@ export async function createImageTask(
   prompt: string,
   size: string,
   resolution: string,
-  imageUrls?: string[]
+  imageUrls?: string[],
+  localTaskId?: number
 ): Promise<ImageTask> {
   const response = await fetch('/api/image/tasks', {
     method: 'POST',
@@ -91,8 +135,11 @@ export async function createImageTask(
   }
   const task = json?.task;
   if (task) {
-    const tasks = loadTasks();
-    saveTasks([task, ...tasks]);
+    if (localTaskId !== undefined) {
+      replaceImageTaskSnapshot(localTaskId, task);
+    } else {
+      saveImageTaskSnapshot(task);
+    }
   }
   return task;
 }
@@ -108,7 +155,7 @@ export async function getImageTaskStatus(id: number): Promise<ImageTask> {
   const task = json?.task;
   if (task) {
     const tasks = loadTasks();
-    const updated = tasks.map((t) => (t.id === task.id ? task : t));
+    const updated = upsertTask(tasks, task);
     saveTasks(updated);
   }
   return task;

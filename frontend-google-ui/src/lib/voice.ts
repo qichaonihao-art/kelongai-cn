@@ -34,6 +34,8 @@ export interface GeneratedAudio {
   voiceName: string;
   providerLabel: string;
   engineModel: string;
+  speechRate: number;
+  speechRateSupported: boolean;
 }
 
 export interface VoiceCredentials {
@@ -67,6 +69,10 @@ function readApiErrorMessage(json: any, fallback: string) {
 
 function createId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function supportsVoiceSpeechRate(provider: VoicePlatform) {
+  return provider === 'zhipu' || provider === 'volcengine';
 }
 
 function readFileAsDataUrl(file: File) {
@@ -367,10 +373,13 @@ async function getAudioDurationLabel(audioUrl: string) {
 export async function generateSpeech(options: {
   voice: ClonedVoice;
   text: string;
+  speechRate?: number;
   credentials?: VoiceCredentials;
   mockMode?: boolean;
 }): Promise<GeneratedAudio> {
-  const { voice, text, credentials, mockMode = false } = options;
+  const { voice, text, speechRate = 1, credentials, mockMode = false } = options;
+  const speechRateSupported = supportsVoiceSpeechRate(voice.provider);
+  const effectiveSpeechRate = speechRateSupported ? speechRate : 1;
   const endpoint = voice.provider === 'zhipu'
     ? '/api/tts/zhipu'
     : voice.provider === 'aliyun'
@@ -383,6 +392,7 @@ export async function generateSpeech(options: {
         apiKey: credentials?.apiKey || '',
         voice: voice.remoteVoiceId,
         text,
+        speechRate: effectiveSpeechRate,
         mockMode,
       }
     : voice.provider === 'aliyun'
@@ -405,6 +415,7 @@ export async function generateSpeech(options: {
         speakerId: voice.remoteVoiceId,
         resourceId: voice.resourceId || VOLC_RESOURCE_ID,
         text,
+        speechRate: effectiveSpeechRate,
         mockMode,
       };
 
@@ -435,5 +446,7 @@ export async function generateSpeech(options: {
     voiceName: voice.name,
     providerLabel: voice.providerLabel,
     engineModel: voice.engineModel,
+    speechRate: effectiveSpeechRate,
+    speechRateSupported,
   };
 }

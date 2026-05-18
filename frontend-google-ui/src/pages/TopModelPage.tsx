@@ -79,6 +79,12 @@ function loadConversations(): ConversationsMap {
 const MAX_CONVERSATIONS_PER_MODEL = 30;
 const MAX_MESSAGES_PER_CONVERSATION = 200;
 const LOCAL_STORAGE_SIZE_LIMIT = 4.5 * 1024 * 1024; // 4.5MB safety limit
+const MAX_IMAGE_UPLOAD_BYTES = 50 * 1024 * 1024;
+const LARGE_IMAGE_UPLOAD_BYTES = 4 * 1024 * 1024;
+const TARGET_IMAGE_BYTES = 2.5 * 1024 * 1024;
+const MAX_IMAGE_EDGE = 2048;
+const MAX_VIDEO_SIZE_MB = 8;
+const MEDIA_LIMIT_TEXT = '图片小于 50MB，大图自动压缩；视频小于 8MB';
 
 function estimateSize(str: string): number {
   // UTF-8 approximate byte count
@@ -115,12 +121,28 @@ function trimConversations(map: ConversationsMap): ConversationsMap {
   return trimmed;
 }
 
+function compactConversationMedia(map: ConversationsMap, options: { stripVideos?: boolean; stripImages?: boolean } = {}): ConversationsMap {
+  const compacted: ConversationsMap = {};
+  for (const [model, convs] of Object.entries(map)) {
+    compacted[model] = convs.map((conv) => ({
+      ...conv,
+      messages: conv.messages.map((message) => ({
+        ...message,
+        images: options.stripImages ? message.images?.filter((image) => !image.startsWith('data:')) : message.images,
+        videos: options.stripVideos ? message.videos?.filter((video) => !video.startsWith('data:')) : message.videos,
+      })),
+    }));
+  }
+  return compacted;
+}
+
 function saveConversations(map: ConversationsMap) {
   try {
     let trimmed = trimConversations(map);
     let json = JSON.stringify(trimmed);
     // If still too large, progressively trim more aggressively
     while (estimateSize(json) > LOCAL_STORAGE_SIZE_LIMIT) {
+      const previousJson = json;
       const allConvs = Object.values(trimmed).flat();
       if (allConvs.length === 0) break;
       // Find model with most conversations and remove oldest one
@@ -153,10 +175,22 @@ function saveConversations(map: ConversationsMap) {
         break;
       }
       json = JSON.stringify(trimmed);
+      if (json === previousJson) break;
     }
     localStorage.setItem(CONVERSATIONS_KEY, json);
   } catch (err) {
-    console.error('[TopModel] Failed to save conversations:', err);
+    try {
+      const withoutVideos = compactConversationMedia(trimConversations(map), { stripVideos: true });
+      const json = JSON.stringify(withoutVideos);
+      if (estimateSize(json) <= LOCAL_STORAGE_SIZE_LIMIT) {
+        localStorage.setItem(CONVERSATIONS_KEY, json);
+        return;
+      }
+      const textOnly = compactConversationMedia(withoutVideos, { stripImages: true, stripVideos: true });
+      localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(textOnly));
+    } catch (fallbackError) {
+      console.error('[TopModel] Failed to save conversations:', err, fallbackError);
+    }
   }
 }
 
@@ -286,22 +320,21 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [selectedVideos, setSelectedVideos] = useState<string[]>([]);
+  const [isProcessingMedia, setIsProcessingMedia] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const conversationsRef = useRef(conversations);
+  const selectedModelRef = useRef(selectedModel);
+  const activeConversationIdRef = useRef(activeConversationId);
 
   const currentModel = AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0];
   const modelConversations = conversations[selectedModel] || [];
   const activeConversation = modelConversations.find((c) => c.id === activeConversationId) || null;
   const messages = activeConversation?.messages || [];
-
-  function persistConversation(model: string, convId: string | null, nextConversations: ConversationsMap) {
-    saveConversations(nextConversations);
-    saveActiveConversationId(model, convId);
-  }
 
   function ensureActiveConversation(model: string, currentMap: ConversationsMap): { map: ConversationsMap; convId: string } {
     const modelConvs = currentMap[model] || [];
@@ -326,6 +359,8 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
     if (convId !== activeConversationId) {
       setConversations(map);
       setActiveConversationId(convId);
+      activeConversationIdRef.current = convId;
+      persistConversationsSnapshot(map, selectedModel, convId);
     }
   }, [selectedModel]);
 
@@ -335,12 +370,25 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
 
   // Save before page unload to prevent data loss
   useEffect(() => {
-    function handleBeforeUnload() {
-      saveConversations(conversations);
+    function saveLatestSnapshot() {
+      saveConversations(conversationsRef.current);
+      saveActiveConversationId(selectedModelRef.current, activeConversationIdRef.current);
     }
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [conversations]);
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        saveLatestSnapshot();
+      }
+    }
+    window.addEventListener('beforeunload', saveLatestSnapshot);
+    window.addEventListener('pagehide', saveLatestSnapshot);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      saveLatestSnapshot();
+      window.removeEventListener('beforeunload', saveLatestSnapshot);
+      window.removeEventListener('pagehide', saveLatestSnapshot);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -367,25 +415,114 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
 
   const supportsMultimodal = currentModel.supportsMultimodal ?? false;
 
-  function handleImageSelect(e: ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
-    if (!files) return;
-    Array.from(files).forEach((file: File) => {
-      if (!file.type.startsWith('image/')) return;
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  useEffect(() => {
+    selectedModelRef.current = selectedModel;
+  }, [selectedModel]);
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+  }, [activeConversationId]);
+
+  function persistConversationsSnapshot(nextMap: ConversationsMap, model = selectedModelRef.current, convId = activeConversationIdRef.current) {
+    conversationsRef.current = nextMap;
+    saveConversations(nextMap);
+    saveActiveConversationId(model, convId);
+  }
+
+  function readFileAsDataUrl(file: Blob) {
+    return new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        setSelectedImages((prev) => [...prev, result]);
-      };
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('文件读取失败'));
       reader.readAsDataURL(file);
     });
-    if (imageInputRef.current) imageInputRef.current.value = '';
+  }
+
+  function loadImageFromObjectUrl(url: string) {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('图片解析失败'));
+      image.src = url;
+    });
+  }
+
+  async function prepareImageForUpload(file: File) {
+    if (file.size <= LARGE_IMAGE_UPLOAD_BYTES) {
+      return readFileAsDataUrl(file);
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const image = await loadImageFromObjectUrl(objectUrl);
+      const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(image.naturalWidth, image.naturalHeight));
+      const width = Math.max(1, Math.round(image.naturalWidth * scale));
+      const height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
+      if (!context) {
+        return readFileAsDataUrl(file);
+      }
+      context.fillStyle = '#fff';
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+
+      let quality = 0.88;
+      let blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+      while (blob && blob.size > TARGET_IMAGE_BYTES && quality > 0.62) {
+        quality -= 0.08;
+        blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+      }
+      return readFileAsDataUrl(blob || file);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  async function handleImageSelect(e: ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files) return;
+    const warnings: string[] = [];
+    setIsProcessingMedia(true);
+    try {
+      const nextImages: string[] = [];
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith('image/')) {
+          warnings.push(`${file.name} 不是图片`);
+          continue;
+        }
+        if (file.size >= MAX_IMAGE_UPLOAD_BYTES) {
+          warnings.push(`${file.name} 超过 50MB`);
+          continue;
+        }
+        nextImages.push(await prepareImageForUpload(file));
+        if (file.size > LARGE_IMAGE_UPLOAD_BYTES) {
+          warnings.push(`${file.name} 已自动压缩`);
+        }
+      }
+      if (nextImages.length > 0) {
+        setSelectedImages((prev) => [...prev, ...nextImages]);
+      }
+      if (warnings.length > 0) {
+        setError(warnings.slice(0, 3).join('；'));
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '图片处理失败');
+    } finally {
+      setIsProcessingMedia(false);
+      if (imageInputRef.current) imageInputRef.current.value = '';
+    }
   }
 
   function handleVideoSelect(e: ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
     if (!files) return;
-    const MAX_VIDEO_SIZE_MB = 8;
     Array.from(files).forEach((file: File) => {
       if (!file.type.startsWith('video/')) return;
       if (file.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
@@ -410,30 +547,44 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
     setSelectedVideos((prev) => prev.filter((_, i) => i !== index));
   }
 
-  function updateActiveMessages(updater: (prev: ChatMessage[]) => ChatMessage[]) {
-    setConversations((prevMap) => {
-      if (!activeConversationId) return prevMap;
-      const modelConvs = [...(prevMap[selectedModel] || [])];
-      const idx = modelConvs.findIndex((c) => c.id === activeConversationId);
-      if (idx === -1) return prevMap;
-      const updatedMsgs = updater(modelConvs[idx].messages);
-      modelConvs[idx] = {
-        ...modelConvs[idx],
-        messages: updatedMsgs,
-        updatedAt: Date.now(),
-        title: modelConvs[idx].title === '新对话' && updatedMsgs.length > 0
-          ? getConversationTitle(updatedMsgs)
-          : modelConvs[idx].title,
-      };
-      const nextMap = { ...prevMap, [selectedModel]: modelConvs };
-      saveConversations(nextMap);
-      return nextMap;
-    });
+  function updateActiveMessages(
+    updater: (prev: ChatMessage[]) => ChatMessage[],
+    targetModel = selectedModelRef.current,
+    targetConvId = activeConversationIdRef.current
+  ) {
+    const model = targetModel;
+    const convId = targetConvId;
+    if (!convId) return;
+
+    const prevMap = conversationsRef.current;
+    const modelConvs = [...(prevMap[model] || [])];
+    const idx = modelConvs.findIndex((c) => c.id === convId);
+    if (idx === -1) return;
+
+    const updatedMsgs = updater(modelConvs[idx].messages);
+    modelConvs[idx] = {
+      ...modelConvs[idx],
+      messages: updatedMsgs,
+      updatedAt: Date.now(),
+      title: modelConvs[idx].title === '新对话' && updatedMsgs.length > 0
+        ? getConversationTitle(updatedMsgs)
+        : modelConvs[idx].title,
+    };
+    const nextMap = { ...prevMap, [model]: modelConvs };
+    persistConversationsSnapshot(nextMap, model, convId);
+    setConversations(nextMap);
   }
 
   async function handleSubmit() {
     const trimmed = input.trim();
-    if ((!trimmed && selectedImages.length === 0 && selectedVideos.length === 0) || isLoading) return;
+    if ((!trimmed && selectedImages.length === 0 && selectedVideos.length === 0) || isLoading || isProcessingMedia) return;
+
+    const requestModel = selectedModelRef.current;
+    const requestConvId = activeConversationIdRef.current;
+    if (!requestConvId) return;
+    const requestConvs = conversationsRef.current[requestModel] || [];
+    const requestConversation = requestConvs.find((conv) => conv.id === requestConvId);
+    const requestMessages = requestConversation?.messages || messages;
 
     const userMsg: ChatMessage = {
       role: 'user',
@@ -441,8 +592,8 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
       images: selectedImages.length > 0 ? selectedImages : undefined,
       videos: selectedVideos.length > 0 ? selectedVideos : undefined,
     };
-    const newMessages = [...messages, userMsg];
-    updateActiveMessages(() => newMessages);
+    const newMessages = [...requestMessages, userMsg];
+    updateActiveMessages(() => newMessages, requestModel, requestConvId);
     setInput('');
     setSelectedImages([]);
     setSelectedVideos([]);
@@ -452,15 +603,15 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
     let hasAddedAssistant = false;
 
     try {
-      const options: { model: string; tools?: Array<{ type: string }> } = { model: selectedModel };
-      if (selectedModel === 'doubao-seed-2-0-pro-260215' || selectedModel === 'qwen3.6-plus') {
+      const options: { model: string; tools?: Array<{ type: string }> } = { model: requestModel };
+      if (requestModel === 'doubao-seed-2-0-pro-260215' || requestModel === 'qwen3.6-plus') {
         options.tools = [{ type: 'web_search' }];
       }
       for await (const chunk of streamChatCompletion(newMessages, options)) {
         if (!hasAddedAssistant) {
           hasAddedAssistant = true;
           flushSync(() => {
-            updateActiveMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
+            updateActiveMessages((prev) => [...prev, { role: 'assistant', content: '' }], requestModel, requestConvId);
           });
         }
         updateActiveMessages((prev) => {
@@ -470,12 +621,16 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
             ...prev.slice(0, -1),
             { ...last, content: last.content + chunk },
           ];
-        });
+        }, requestModel, requestConvId);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : '请求失败');
-      if (hasAddedAssistant) {
-        updateActiveMessages((prev) => prev.slice(0, -1));
+      if (!hasAddedAssistant) {
+        updateActiveMessages(
+          (prev) => [...prev, { role: 'assistant', content: `请求失败：${e instanceof Error ? e.message : '请求失败'}` }],
+          requestModel,
+          requestConvId
+        );
       }
     } finally {
       setIsLoading(false);
@@ -491,13 +646,14 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
 
   function handleNewChat() {
     const newConv = createConversation(selectedModel);
-    setConversations((prev) => {
-      const next = { ...prev, [selectedModel]: [...(prev[selectedModel] || []), newConv] };
-      saveConversations(next);
-      saveActiveConversationId(selectedModel, newConv.id);
-      return next;
-    });
+    const next = {
+      ...conversationsRef.current,
+      [selectedModel]: [...(conversationsRef.current[selectedModel] || []), newConv],
+    };
+    persistConversationsSnapshot(next, selectedModel, newConv.id);
+    setConversations(next);
     setActiveConversationId(newConv.id);
+    activeConversationIdRef.current = newConv.id;
     setInput('');
     setError('');
     setSelectedImages([]);
@@ -505,31 +661,29 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
   }
 
   function handleSelectConversation(convId: string) {
+    activeConversationIdRef.current = convId;
     setActiveConversationId(convId);
     saveActiveConversationId(selectedModel, convId);
   }
 
   function handleDeleteConversation(convId: string, e: React.MouseEvent) {
     e.stopPropagation();
-    setConversations((prev) => {
-      const modelConvs = (prev[selectedModel] || []).filter((c) => c.id !== convId);
-      const next = { ...prev, [selectedModel]: modelConvs };
-      saveConversations(next);
-      if (activeConversationId === convId) {
-        if (modelConvs.length > 0) {
-          const nextId = modelConvs[modelConvs.length - 1].id;
-          setActiveConversationId(nextId);
-          saveActiveConversationId(selectedModel, nextId);
-        } else {
-          const newConv = createConversation(selectedModel);
-          next[selectedModel] = [newConv];
-          saveConversations(next);
-          setActiveConversationId(newConv.id);
-          saveActiveConversationId(selectedModel, newConv.id);
-        }
+    const modelConvs = (conversationsRef.current[selectedModel] || []).filter((c) => c.id !== convId);
+    const next = { ...conversationsRef.current, [selectedModel]: modelConvs };
+    let nextActiveId = activeConversationIdRef.current;
+    if (activeConversationIdRef.current === convId) {
+      if (modelConvs.length > 0) {
+        nextActiveId = modelConvs[modelConvs.length - 1].id;
+      } else {
+        const newConv = createConversation(selectedModel);
+        next[selectedModel] = [newConv];
+        nextActiveId = newConv.id;
       }
-      return next;
-    });
+      setActiveConversationId(nextActiveId);
+      activeConversationIdRef.current = nextActiveId;
+    }
+    persistConversationsSnapshot(next, selectedModel, nextActiveId);
+    setConversations(next);
   }
 
   return (
@@ -646,6 +800,12 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
                         <button
                           key={m.id}
                           onClick={() => {
+                            const { map, convId } = ensureActiveConversation(m.id, conversationsRef.current);
+                            selectedModelRef.current = m.id;
+                            activeConversationIdRef.current = convId;
+                            persistConversationsSnapshot(map, m.id, convId);
+                            setConversations(map);
+                            setActiveConversationId(convId);
                             setSelectedModel(m.id);
                             setShowModelMenu(false);
                           }}
@@ -931,7 +1091,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
             <input
               ref={imageInputRef}
               type="file"
-              accept="image/*"
+              accept="image/png,image/jpeg,image/webp"
               multiple
               onChange={handleImageSelect}
               className="hidden"
@@ -945,11 +1105,11 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
             />
             <button
               onClick={() => imageInputRef.current?.click()}
-              disabled={isLoading}
+              disabled={isLoading || isProcessingMedia}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50"
               title="上传图片"
             >
-              <ImageIcon className="size-4" />
+              {isProcessingMedia ? <Loader2 className="size-4 animate-spin" /> : <ImageIcon className="size-4" />}
             </button>
             {supportsMultimodal && (
               <button
@@ -972,10 +1132,10 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
             />
             <button
               onClick={handleSubmit}
-              disabled={isLoading || (!input.trim() && selectedImages.length === 0 && selectedVideos.length === 0)}
+              disabled={isLoading || isProcessingMedia || (!input.trim() && selectedImages.length === 0 && selectedVideos.length === 0)}
               className={cn(
                 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors',
-                isLoading || (!input.trim() && selectedImages.length === 0 && selectedVideos.length === 0)
+                isLoading || isProcessingMedia || (!input.trim() && selectedImages.length === 0 && selectedVideos.length === 0)
                   ? 'bg-slate-100 text-slate-400'
                   : 'bg-slate-900 text-white hover:bg-slate-800'
               )}
@@ -988,7 +1148,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
             </button>
           </div>
           <p className="mt-1.5 text-center text-[10px] text-slate-400">
-            按 Enter 发送，Shift + Enter 换行
+            按 Enter 发送，Shift + Enter 换行 · {MEDIA_LIMIT_TEXT}
           </p>
         </div>
       </div>

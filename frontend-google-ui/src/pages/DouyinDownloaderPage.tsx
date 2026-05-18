@@ -745,7 +745,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                         <CheckCircle2 className="size-3.5" />
                         视频解析成功
                       </div>
-                      <div className="flex w-fit items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50/80 px-3 py-2 text-xs font-bold text-indigo-600">
+                      <div className="ml-auto flex w-fit items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50/80 px-3 py-2 text-xs font-bold text-indigo-600">
                         <Clock className="size-3.5" />
                         视频时长：{(result.duration || 0) > 0 ? formatDuration(result.duration!) : '暂未获取'}
                       </div>

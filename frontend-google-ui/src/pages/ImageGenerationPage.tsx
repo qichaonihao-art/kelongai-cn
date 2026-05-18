@@ -30,6 +30,8 @@ import {
   getImageTasks,
   deleteImageTask,
   getImageConfigStatus,
+  replaceImageTaskSnapshot,
+  saveImageTaskSnapshot,
 } from "@/src/lib/image";
 
 interface ImageGenerationPageProps {
@@ -57,6 +59,14 @@ const RESOLUTION_OPTIONS = [
   { value: '4k', label: '4K' },
 ];
 
+const MAX_REFERENCE_IMAGES = 16;
+const MAX_REFERENCE_IMAGE_BYTES = 50 * 1024 * 1024;
+const LARGE_REFERENCE_IMAGE_BYTES = 4 * 1024 * 1024;
+const TARGET_REFERENCE_IMAGE_BYTES = 2.5 * 1024 * 1024;
+const MAX_REFERENCE_IMAGE_EDGE = 2048;
+const REFERENCE_IMAGE_LIMIT_TEXT = '支持 JPG / PNG / WebP，模型单张上限小于 50MB，大图会自动压缩，最多 16 张';
+const SUPPORTED_REFERENCE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
 const EXAMPLE_PROMPTS = [
   '一只橘猫坐在窗台上，水彩画风格，温暖的午后阳光',
   '赛博朋克风格的城市夜景，霓虹灯，雨夜，电影感',
@@ -81,6 +91,7 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
   const [error, setError] = useState('');
   const [configStatus, setConfigStatus] = useState<{ reachable: boolean; gptImageApiKey: boolean } | null>(null);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const [isProcessingImages, setIsProcessingImages] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const pollingRefs = useRef<Map<number, number>>(new Map());
@@ -166,23 +177,114 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
     pollingRefs.current.set(taskId, timerId);
   }
 
-  function handleFileSelect(event: ChangeEvent<HTMLInputElement>) {
+  function readFileAsDataUrl(file: Blob) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('图片读取失败'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImageFromObjectUrl(url: string) {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('图片解析失败'));
+      image.src = url;
+    });
+  }
+
+  async function compressReferenceImage(file: File) {
+    if (file.size <= LARGE_REFERENCE_IMAGE_BYTES) {
+      return readFileAsDataUrl(file);
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const image = await loadImageFromObjectUrl(objectUrl);
+      const scale = Math.min(1, MAX_REFERENCE_IMAGE_EDGE / Math.max(image.naturalWidth, image.naturalHeight));
+      const width = Math.max(1, Math.round(image.naturalWidth * scale));
+      const height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
+      if (!context) {
+        return readFileAsDataUrl(file);
+      }
+      context.fillStyle = '#fff';
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+
+      const mimeType = 'image/jpeg';
+      let quality = 0.88;
+      let blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, quality));
+      while (blob && blob.size > TARGET_REFERENCE_IMAGE_BYTES && quality > 0.62) {
+        quality -= 0.08;
+        blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, quality));
+      }
+      return readFileAsDataUrl(blob || file);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  async function handleFileSelect(event: ChangeEvent<HTMLInputElement>) {
     const files = event.target.files;
     if (!files) return;
 
-    const remainingSlots = 16 - referenceImages.length;
-    const toProcess = Array.from(files as Iterable<File>).slice(0, remainingSlots);
+    setError('');
 
-    toProcess.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        setReferenceImages((prev) => [...prev, result]);
-      };
-      reader.readAsDataURL(file);
-    });
+    const remainingSlots = MAX_REFERENCE_IMAGES - referenceImages.length;
+    if (remainingSlots <= 0) {
+      setError(`参考图最多上传 ${MAX_REFERENCE_IMAGES} 张`);
+      event.target.value = '';
+      return;
+    }
 
-    event.target.value = '';
+    const selectedFiles = Array.from(files as Iterable<File>);
+    const rejectedMessages: string[] = [];
+    const toProcess = selectedFiles
+      .slice(0, remainingSlots)
+      .filter((file) => {
+        if (!SUPPORTED_REFERENCE_IMAGE_TYPES.has(file.type)) {
+          rejectedMessages.push(`${file.name} 格式不支持`);
+          return false;
+        }
+        if (file.size >= MAX_REFERENCE_IMAGE_BYTES) {
+          rejectedMessages.push(`${file.name} 超过 50MB`);
+          return false;
+        }
+        return true;
+      });
+
+    if (selectedFiles.length > remainingSlots) {
+      rejectedMessages.push(`已达到 ${MAX_REFERENCE_IMAGES} 张上限，多余图片未添加`);
+    }
+
+    setIsProcessingImages(true);
+    try {
+      const processedImages: string[] = [];
+      for (const file of toProcess) {
+        processedImages.push(await compressReferenceImage(file));
+      }
+      if (processedImages.length > 0) {
+        setReferenceImages((prev) => [...prev, ...processedImages]);
+      }
+      const processedLargeImage = toProcess.some((file) => file.size > LARGE_REFERENCE_IMAGE_BYTES);
+      if (processedLargeImage) {
+        rejectedMessages.push('大图已自动压缩后用于参考');
+      }
+      if (rejectedMessages.length > 0) {
+        setError(rejectedMessages.slice(0, 3).join('；'));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '图片处理失败');
+    } finally {
+      setIsProcessingImages(false);
+      event.target.value = '';
+    }
   }
 
   function removeReferenceImage(index: number) {
@@ -191,7 +293,7 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
 
   async function handleSubmit() {
     const trimmed = prompt.trim();
-    if (!trimmed || isSubmitting) return;
+    if (!trimmed || isSubmitting || isProcessingImages) return;
 
     // Capture current input state before clearing
     const currentPrompt = trimmed;
@@ -214,6 +316,7 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
       created_at: Math.floor(Date.now() / 1000),
       completed_at: null,
     };
+    saveImageTaskSnapshot(optimisticTask);
 
     // Clear input immediately
     setPrompt('');
@@ -227,7 +330,8 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
         currentPrompt,
         currentSize,
         currentResolution,
-        currentRefImages.length > 0 ? currentRefImages : undefined
+        currentRefImages.length > 0 ? currentRefImages : undefined,
+        optimisticId
       );
 
       // Replace optimistic task with real task, preserve reference_images if backend returns empty
@@ -242,15 +346,18 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
       );
       startPolling(task.id);
     } catch (e) {
+      const message = e instanceof Error ? e.message : '创建任务失败';
+      const failedTask: ImageTask = { ...optimisticTask, status: 'failed', error_message: message };
+      replaceImageTaskSnapshot(optimisticId, failedTask);
       // Mark optimistic task as failed
       setTasks((prev) =>
         prev.map((t) =>
           t.id === optimisticId
-            ? { ...t, status: 'failed', error_message: e instanceof Error ? e.message : '创建任务失败' }
+            ? failedTask
             : t
         )
       );
-      setError(e instanceof Error ? e.message : '创建任务失败');
+      setError(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -611,7 +718,7 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
                     </button>
                   </div>
                 ))}
-                {referenceImages.length < 16 && (
+                {referenceImages.length < MAX_REFERENCE_IMAGES && (
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     className="flex size-8 items-center justify-center rounded-md border border-dashed border-slate-300 text-slate-400 hover:border-slate-400 hover:text-slate-600"
@@ -645,14 +752,14 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
               className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
               title="上传参考图"
             >
-              <ImagePlus className="size-4" />
+              {isProcessingImages ? <Loader2 className="size-4 animate-spin" /> : <ImagePlus className="size-4" />}
             </button>
             <button
               onClick={handleSubmit}
-              disabled={isSubmitting || !prompt.trim()}
+              disabled={isSubmitting || isProcessingImages || !prompt.trim()}
               className={cn(
                 'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
-                isSubmitting || !prompt.trim()
+                isSubmitting || isProcessingImages || !prompt.trim()
                   ? 'bg-slate-100 text-slate-400'
                   : 'bg-slate-900 text-white hover:bg-slate-800'
               )}
@@ -666,14 +773,14 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
           </div>
         </div>
         <p className="mt-1.5 text-center text-[10px] text-slate-400">
-          按 Enter 发送，Shift + Enter 换行
+          按 Enter 发送，Shift + Enter 换行 · {REFERENCE_IMAGE_LIMIT_TEXT}
         </p>
       </div>
 
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/png,image/jpeg,image/webp"
         multiple
         onChange={handleFileSelect}
         className="hidden"
