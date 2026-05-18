@@ -58,6 +58,7 @@ const SERVER_CONFIG = {
   volcAccessKey: process.env.VOLCENGINE_ACCESS_KEY || '',
   volcSpeakerId: process.env.VOLCENGINE_SPEAKER_ID || '',
   volcSpeakerIdPool: process.env.VOLCENGINE_SPEAKER_ID_POOL || '',
+  volcEngineGroups: buildVolcEngineGroups(),
   tikhubApiToken: process.env.TIKHUB_API_TOKEN || '',
   siliconFlowApiKey: process.env.SILICONFLOW_API_KEY || '',
   wechatApiToken: process.env.WECHAT_API_TOKEN || '',
@@ -856,8 +857,8 @@ async function handleConfigStatus(req, res) {
       zhipuApiKey: !!readValue(SERVER_CONFIG.zhipuApiKey),
       siliconFlowApiKey: !!readValue(SERVER_CONFIG.siliconFlowApiKey),
       seedanceApiKey: !!readValue(SERVER_CONFIG.seedanceApiKey),
-      volcAppKey: !!readValue(SERVER_CONFIG.volcAppKey),
-      volcAccessKey: !!readValue(SERVER_CONFIG.volcAccessKey),
+      volcAppKey: !!readValue(SERVER_CONFIG.volcAppKey) || SERVER_CONFIG.volcEngineGroups.length > 0,
+      volcAccessKey: !!readValue(SERVER_CONFIG.volcAccessKey) || SERVER_CONFIG.volcEngineGroups.length > 0,
       volcSpeakerId: configuredSpeakerIds.length > 0,
       volcSpeakerSlotTotal: configuredSpeakerIds.length,
       volcSpeakerSlotUsed: remoteSlotSummary.used,
@@ -2188,16 +2189,70 @@ function createRequestId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${randomBytes(4).toString('hex')}`;
 }
 
-function getConfiguredVolcSpeakerIds() {
-  const ids = [
-    ...String(SERVER_CONFIG.volcSpeakerIdPool || '')
-      .split(/[\s,]+/g)
-      .map((item) => item.trim())
-      .filter(Boolean),
-    readValue(SERVER_CONFIG.volcSpeakerId)
-  ].filter(Boolean);
+function buildVolcEngineGroups() {
+  const groups = [];
 
-  return Array.from(new Set(ids));
+  // Group 1: unnumbered env vars (backward-compatible)
+  const g1AppKey = process.env.VOLCENGINE_APP_KEY || '';
+  const g1AccessKey = process.env.VOLCENGINE_ACCESS_KEY || '';
+  const g1Pool = process.env.VOLCENGINE_SPEAKER_ID_POOL || '';
+  const g1SpeakerId = process.env.VOLCENGINE_SPEAKER_ID || '';
+  if (g1AppKey && g1AccessKey) {
+    const speakerIds = [
+      ...g1Pool.split(/[\s,]+/g).map((s) => s.trim()).filter(Boolean),
+      g1SpeakerId
+    ].filter(Boolean);
+    if (speakerIds.length > 0) {
+      groups.push({
+        index: 1,
+        appKey: g1AppKey,
+        accessKey: g1AccessKey,
+        speakerIds: Array.from(new Set(speakerIds)),
+      });
+    }
+  }
+
+  // Group 2+: numbered env vars (_2, _3, ... _10)
+  for (let i = 2; i <= 10; i++) {
+    const appKey = process.env[`VOLCENGINE_APP_KEY_${i}`] || '';
+    const accessKey = process.env[`VOLCENGINE_ACCESS_KEY_${i}`] || '';
+    const pool = process.env[`VOLCENGINE_SPEAKER_ID_POOL_${i}`] || '';
+    const speakerId = process.env[`VOLCENGINE_SPEAKER_ID_${i}`] || '';
+    if (!appKey || !accessKey) continue;
+    const speakerIds = [
+      ...pool.split(/[\s,]+/g).map((s) => s.trim()).filter(Boolean),
+      speakerId
+    ].filter(Boolean);
+    if (speakerIds.length > 0) {
+      groups.push({
+        index: i,
+        appKey,
+        accessKey,
+        speakerIds: Array.from(new Set(speakerIds)),
+      });
+    }
+  }
+
+  return groups;
+}
+
+function getVolcEngineGroupForSpeakerId(speakerId) {
+  const target = readValue(speakerId);
+  if (!target) return null;
+  for (const group of SERVER_CONFIG.volcEngineGroups) {
+    if (group.speakerIds.includes(target)) {
+      return group;
+    }
+  }
+  return null;
+}
+
+function getConfiguredVolcSpeakerIds() {
+  const allIds = [];
+  for (const group of SERVER_CONFIG.volcEngineGroups) {
+    allIds.push(...group.speakerIds);
+  }
+  return Array.from(new Set(allIds));
 }
 
 function invalidateVolcSpeakerRemoteStatusCache() {
@@ -2214,13 +2269,14 @@ function isVolcSpeakerOccupiedByRemoteStatus(value) {
 }
 
 async function getVolcSpeakerRemoteSlotSummary({ force = false } = {}) {
+  const groups = SERVER_CONFIG.volcEngineGroups;
   const configuredSpeakerIds = getConfiguredVolcSpeakerIds();
-  const appKey = readValue(SERVER_CONFIG.volcAppKey);
-  const accessKey = readValue(SERVER_CONFIG.volcAccessKey);
   const cacheKey = JSON.stringify({
-    appKeyConfigured: !!appKey,
-    accessKeyConfigured: !!accessKey,
-    speakerIds: configuredSpeakerIds
+    groups: groups.map((g) => ({
+      appKeyConfigured: !!g.appKey,
+      accessKeyConfigured: !!g.accessKey,
+      speakerIds: g.speakerIds,
+    })),
   });
 
   if (
@@ -2233,61 +2289,59 @@ async function getVolcSpeakerRemoteSlotSummary({ force = false } = {}) {
   }
 
   const summary = {
-    total: configuredSpeakerIds.length,
+    total: 0,
     used: 0,
-    available: configuredSpeakerIds.length,
+    available: 0,
     unknown: 0,
-    source: 'local',
-    speakers: {}
+    source: groups.length > 0 ? 'volcengine' : 'local',
+    speakers: {},
   };
 
-  if (!configuredSpeakerIds.length || !appKey || !accessKey) {
+  if (!groups.length) {
     volcSpeakerRemoteStatusCache = {
       key: cacheKey,
       expiresAt: Date.now() + VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS,
-      summary
+      summary,
     };
     return summary;
   }
 
-  const results = await Promise.allSettled(
-    configuredSpeakerIds.map(async (speakerId) => {
-      const voiceInfo = await volcJsonRequest('/api/v3/tts/get_voice', {
-        appKey,
-        accessKey,
-        body: { speaker_id: speakerId }
-      });
-      return {
-        speakerId,
-        occupied: isVolcSpeakerOccupiedByRemoteStatus(voiceInfo)
-      };
-    })
-  );
+  for (const group of groups) {
+    const results = await Promise.allSettled(
+      group.speakerIds.map(async (speakerId) => {
+        const voiceInfo = await volcJsonRequest('/api/v3/tts/get_voice', {
+          appKey: group.appKey,
+          accessKey: group.accessKey,
+          body: { speaker_id: speakerId },
+        });
+        return {
+          speakerId,
+          occupied: isVolcSpeakerOccupiedByRemoteStatus(voiceInfo),
+        };
+      })
+    );
 
-  summary.source = 'volcengine';
-  summary.available = 0;
-
-  results.forEach((result, index) => {
-    const speakerId = configuredSpeakerIds[index];
-    if (result.status === 'fulfilled') {
-      const status = result.value.occupied ? 'used' : 'available';
-      summary.speakers[speakerId] = status;
-      if (status === 'used') {
-        summary.used += 1;
-      } else {
-        summary.available += 1;
+    results.forEach((result) => {
+      if (result.status === 'fulfilled') {
+        const { speakerId, occupied } = result.value;
+        const status = occupied ? 'used' : 'available';
+        summary.speakers[speakerId] = status;
+        summary.total += 1;
+        if (occupied) {
+          summary.used += 1;
+        } else {
+          summary.available += 1;
+        }
+        return;
       }
-      return;
-    }
-
-    summary.unknown += 1;
-    summary.speakers[speakerId] = 'unknown';
-  });
+      summary.unknown += 1;
+    });
+  }
 
   volcSpeakerRemoteStatusCache = {
     key: cacheKey,
     expiresAt: Date.now() + VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS,
-    summary
+    summary,
   };
   return summary;
 }
@@ -2405,11 +2459,12 @@ function withVolcSpeakerOwnershipLock(callback) {
   return next;
 }
 
-function upsertVolcSpeakerOwnership(state, { speakerId, ownerDeviceId, preferredName = '' }) {
+function upsertVolcSpeakerOwnership(state, { speakerId, ownerDeviceId, preferredName = '', groupIndex = 1 }) {
   const existing = state.slots[speakerId];
   const now = new Date().toISOString();
   state.slots[speakerId] = {
     ownerDeviceId,
+    groupIndex: groupIndex || existing?.groupIndex || 1,
     claimedAt: readValue(existing?.claimedAt, now),
     updatedAt: now,
     preferredName: readValue(preferredName, existing?.preferredName),
@@ -2480,10 +2535,12 @@ async function reserveVolcSpeakerIdForDevice({ requestedSpeakerId = '', ownerDev
         };
       }
 
+      const group = getVolcEngineGroupForSpeakerId(desiredSpeakerId);
       upsertVolcSpeakerOwnership(state, {
         speakerId: desiredSpeakerId,
         ownerDeviceId,
         preferredName,
+        groupIndex: group?.index || 1,
       });
       return {
         ok: true,
@@ -2502,10 +2559,12 @@ async function reserveVolcSpeakerIdForDevice({ requestedSpeakerId = '', ownerDev
         continue;
       }
 
+      const group = getVolcEngineGroupForSpeakerId(speakerId);
       upsertVolcSpeakerOwnership(state, {
         speakerId,
         ownerDeviceId,
         preferredName,
+        groupIndex: group?.index || 1,
       });
       return {
         ok: true,
@@ -7808,8 +7867,6 @@ async function handleVolcTts(req, res) {
   try {
     const body = await readRequestBody(req);
     const { appKey, accessKey, speakerId, text, resourceId, speakerSource, speechRate } = body;
-    const resolvedAppKey = readValue(appKey, SERVER_CONFIG.volcAppKey);
-    const resolvedAccessKey = readValue(accessKey, SERVER_CONFIG.volcAccessKey);
     const resolvedSpeakerId = readValue(speakerId, SERVER_CONFIG.volcSpeakerId);
 
     if (shouldUseVoiceCloneMock(body)) {
@@ -7817,6 +7874,10 @@ async function handleVolcTts(req, res) {
       sendWavResponse(res, wavBuffer);
       return;
     }
+
+    const group = getVolcEngineGroupForSpeakerId(resolvedSpeakerId);
+    const resolvedAppKey = group ? group.appKey : readValue(appKey, SERVER_CONFIG.volcAppKey);
+    const resolvedAccessKey = group ? group.accessKey : readValue(accessKey, SERVER_CONFIG.volcAccessKey);
 
     if (!resolvedAppKey || !resolvedAccessKey || !resolvedSpeakerId || !text) {
       sendJson(res, 400, { error: '缺少火山引擎 App Key、Access Key、Speaker ID 或 text' });
@@ -7944,8 +8005,6 @@ async function handleVolcVoiceClone(req, res) {
   try {
     const body = await readRequestBody(req);
     const { speakerId, resourceId, audioData, audioFormat, referenceText, deviceId, preferredName } = body;
-    const resolvedAppKey = readValue(SERVER_CONFIG.volcAppKey);
-    const resolvedAccessKey = readValue(SERVER_CONFIG.volcAccessKey);
     resolvedDeviceId = normalizeDeviceId(deviceId);
     const resolvedReferenceText = readValue(referenceText, '这是一段用于声音克隆的参考音频。');
 
@@ -7954,10 +8013,12 @@ async function handleVolcVoiceClone(req, res) {
       return;
     }
 
+    const hasAnyGroup = SERVER_CONFIG.volcEngineGroups.length > 0;
     const debugFlags = {
-      hasEnvAppKey: !!resolvedAppKey,
-      hasEnvAccessKey: !!resolvedAccessKey,
+      hasEnvAppKey: hasAnyGroup || !!readValue(SERVER_CONFIG.volcAppKey),
+      hasEnvAccessKey: hasAnyGroup || !!readValue(SERVER_CONFIG.volcAccessKey),
       configuredSpeakerIdCount: getConfiguredVolcSpeakerIds().length,
+      groupCount: SERVER_CONFIG.volcEngineGroups.length,
       hasBodySpeakerId: !!readValue(speakerId),
       hasBodyDeviceId: !!resolvedDeviceId,
       hasBodyAudioData: typeof audioData === 'string' && audioData.length > 0,
@@ -7970,13 +8031,8 @@ async function handleVolcVoiceClone(req, res) {
 
     console.error('[volc voice clone] incoming request summary', debugFlags);
 
-    if (!debugFlags.hasEnvAppKey) {
-      sendJson(res, 400, { error: '缺少服务端环境变量 VOLCENGINE_APP_KEY', debug: debugFlags });
-      return;
-    }
-
-    if (!debugFlags.hasEnvAccessKey) {
-      sendJson(res, 400, { error: '缺少服务端环境变量 VOLCENGINE_ACCESS_KEY', debug: debugFlags });
+    if (!hasAnyGroup) {
+      sendJson(res, 400, { error: '缺少服务端环境变量 VOLCENGINE_APP_KEY / VOLCENGINE_ACCESS_KEY，或未配置任何 speaker_id 槽位', debug: debugFlags });
       return;
     }
 
@@ -8009,6 +8065,10 @@ async function handleVolcVoiceClone(req, res) {
 
     reservedSpeakerId = reservation.speakerId;
     shouldReleaseReservationOnFailure = reservation.createdByRequest;
+
+    const group = getVolcEngineGroupForSpeakerId(reservedSpeakerId);
+    const resolvedAppKey = group ? group.appKey : readValue(SERVER_CONFIG.volcAppKey);
+    const resolvedAccessKey = group ? group.accessKey : readValue(SERVER_CONFIG.volcAccessKey);
 
     const response = await fetch(upstreamUrl, {
       method: 'POST',
