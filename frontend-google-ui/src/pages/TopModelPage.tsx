@@ -807,7 +807,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
                 <Crown className="size-4" />
               </div>
               <div>
-                <h1 className="text-sm font-bold text-slate-900">顶级模型</h1>
+                <h1 className="text-sm font-bold text-slate-900">模型选择</h1>
                 <div ref={modelMenuRef} className="relative">
                   <button
                     onClick={() => setShowModelMenu(!showModelMenu)}

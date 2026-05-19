@@ -806,9 +806,6 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
             <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 text-white">
               <ImageIcon className="size-4" />
             </div>
-            <div>
-              <h1 className="text-sm font-bold text-slate-900">图片生成</h1>
-            </div>
           </div>
         </div>
 
