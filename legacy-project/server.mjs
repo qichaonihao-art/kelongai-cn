@@ -2307,6 +2307,8 @@ async function getVolcSpeakerRemoteSlotSummary({ force = false } = {}) {
     return summary;
   }
 
+  const ownershipState = await loadVolcSpeakerOwnershipState();
+
   for (const group of groups) {
     const results = await Promise.allSettled(
       group.speakerIds.map(async (speakerId) => {
@@ -2315,22 +2317,31 @@ async function getVolcSpeakerRemoteSlotSummary({ force = false } = {}) {
           accessKey: group.accessKey,
           body: { speaker_id: speakerId },
         });
+        const speakerStatus = Array.isArray(voiceInfo?.speaker_status) ? voiceInfo.speaker_status : [];
+        const availableTrainingTimes = typeof voiceInfo?.available_training_times === 'number' ? voiceInfo.available_training_times : 0;
         return {
           speakerId,
-          occupied: isVolcSpeakerOccupiedByRemoteStatus(voiceInfo),
+          speakerStatusLength: speakerStatus.length,
+          availableTrainingTimes,
         };
       })
     );
 
     results.forEach((result) => {
       if (result.status === 'fulfilled') {
-        const { speakerId, occupied } = result.value;
-        const status = occupied ? 'used' : 'available';
-        summary.speakers[speakerId] = status;
+        const { speakerId, speakerStatusLength, availableTrainingTimes } = result.value;
+        const hasOwnership = !!ownershipState.slots[speakerId]?.ownerDeviceId;
         summary.total += 1;
-        if (occupied) {
+
+        if (availableTrainingTimes <= 0 || hasOwnership) {
+          summary.speakers[speakerId] = 'used';
           summary.used += 1;
         } else {
+          if (speakerStatusLength === 0) {
+            summary.speakers[speakerId] = 'fresh';
+          } else {
+            summary.speakers[speakerId] = 'recyclable';
+          }
           summary.available += 1;
         }
         return;
@@ -2550,16 +2561,26 @@ async function reserveVolcSpeakerIdForDevice({ requestedSpeakerId = '', ownerDev
       };
     }
 
+    // Auto-assign: prioritize fresh slots, then recyclable
+    const freshIds = [];
+    const recyclableIds = [];
+
     for (const speakerId of configuredSpeakerIds) {
       const existingOwner = normalizeDeviceId(state.slots[speakerId]?.ownerDeviceId);
       if (existingOwner) {
         continue;
       }
 
-      if (remoteSlotSummary.speakers[speakerId] !== 'available') {
-        continue;
+      const status = remoteSlotSummary.speakers[speakerId];
+      if (status === 'fresh') {
+        freshIds.push(speakerId);
+      } else if (status === 'recyclable') {
+        recyclableIds.push(speakerId);
       }
+    }
 
+    const candidates = [...freshIds, ...recyclableIds];
+    for (const speakerId of candidates) {
       const group = getVolcEngineGroupForSpeakerId(speakerId);
       upsertVolcSpeakerOwnership(state, {
         speakerId,
