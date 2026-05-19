@@ -802,11 +802,6 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
             </div>
             <span className="text-xs font-bold text-slate-700">返回</span>
           </button>
-          <div className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 text-white">
-              <ImageIcon className="size-4" />
-            </div>
-          </div>
         </div>
 
         <div className="flex items-center gap-2">
