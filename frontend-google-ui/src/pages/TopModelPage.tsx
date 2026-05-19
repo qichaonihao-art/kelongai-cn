@@ -52,6 +52,27 @@ const STORAGE_KEY = 'topmodel_chat_history';
 const MODEL_STORAGE_KEY = 'topmodel_selected_model';
 const CONVERSATIONS_KEY = 'topmodel_conversations';
 const ACTIVE_CONV_KEY = 'topmodel_active_conversation';
+const MODEL_PROMPT_DATE_KEY = 'topmodel_model_prompt_date';
+
+function getTodayStr() {
+  return new Date().toLocaleDateString('zh-CN');
+}
+
+function shouldAutoPromptModel() {
+  try {
+    return localStorage.getItem(MODEL_PROMPT_DATE_KEY) !== getTodayStr();
+  } catch {
+    return true;
+  }
+}
+
+function markModelPrompted() {
+  try {
+    localStorage.setItem(MODEL_PROMPT_DATE_KEY, getTodayStr());
+  } catch {
+    // ignore
+  }
+}
 
 interface Conversation {
   id: string;
@@ -405,6 +426,14 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Auto-expand model selector on first visit each day
+  useEffect(() => {
+    if (shouldAutoPromptModel()) {
+      setShowModelMenu(true);
+      markModelPrompted();
+    }
   }, []);
 
   useEffect(() => {

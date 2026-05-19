@@ -34,6 +34,7 @@ const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-pro-260215';
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.join(__dirname, '.runtime-state');
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
+const VOICE_ARCHIVE_FILE = path.join(RUNTIME_STATE_DIR, 'voice-archive.json');
 const VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS = 15 * 1000;
 const COLLECTION_DB_PATH = path.join(RUNTIME_STATE_DIR, 'collection.db');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
@@ -2667,6 +2668,216 @@ async function syncVolcSpeakerOwnershipForDevice({ ownerDeviceId, speakerIds = [
       ownedSpeakerIds: listOwnedVolcSpeakerIds(state, ownerDeviceId)
     };
   });
+}
+
+// ========== Voice Archive (shared across devices) ==========
+
+function createEmptyVoiceArchive() {
+  return { version: 1, records: [] };
+}
+
+function sanitizeVoiceArchive(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return createEmptyVoiceArchive();
+  }
+  const rawRecords = value.records;
+  const records = [];
+  if (Array.isArray(rawRecords)) {
+    for (const item of rawRecords) {
+      if (!item || typeof item !== 'object') continue;
+      const provider = readValue(item.provider);
+      const name = readValue(item.name);
+      const remoteVoiceId = readValue(item.remoteVoiceId);
+      if (!provider || !name || !remoteVoiceId) continue;
+      records.push({
+        id: readValue(item.id) || `${provider}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        provider,
+        providerLabel: readValue(item.providerLabel) || provider,
+        remoteVoiceId,
+        engineModel: readValue(item.engineModel) || '',
+        resourceId: item.resourceId === undefined ? undefined : readValue(item.resourceId),
+        createdBy: readValue(item.createdBy) || '',
+        createdAt: readValue(item.createdAt) || new Date().toISOString(),
+      });
+    }
+  }
+  return { version: 1, records };
+}
+
+async function loadVoiceArchive() {
+  try {
+    const raw = await readFile(VOICE_ARCHIVE_FILE, 'utf8');
+    return sanitizeVoiceArchive(parseJsonString(raw, createEmptyVoiceArchive()));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.error('[voice archive] load_failed', { filePath: VOICE_ARCHIVE_FILE, message: error?.message || '' });
+    }
+    return createEmptyVoiceArchive();
+  }
+}
+
+async function saveVoiceArchive(archive) {
+  await ensureRuntimeStateDir();
+  await writeFile(VOICE_ARCHIVE_FILE, JSON.stringify(archive, null, 2), 'utf8');
+}
+
+function buildVoiceArchiveKey(provider, remoteVoiceId) {
+  return `${provider}::${remoteVoiceId}`;
+}
+
+async function addVoiceToArchive(voice) {
+  const archive = await loadVoiceArchive();
+  const key = buildVoiceArchiveKey(voice.provider, voice.remoteVoiceId);
+  const existingIndex = archive.records.findIndex(
+    (r) => buildVoiceArchiveKey(r.provider, r.remoteVoiceId) === key
+  );
+  const record = {
+    id: voice.id || `${voice.provider}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    name: voice.name,
+    provider: voice.provider,
+    providerLabel: voice.providerLabel || voice.provider,
+    remoteVoiceId: voice.remoteVoiceId,
+    engineModel: voice.engineModel || '',
+    resourceId: voice.resourceId,
+    createdBy: voice.createdBy || '',
+    createdAt: voice.createdAt || new Date().toISOString(),
+  };
+  if (existingIndex >= 0) {
+    archive.records[existingIndex] = { ...archive.records[existingIndex], ...record };
+  } else {
+    archive.records.push(record);
+  }
+  await saveVoiceArchive(archive);
+  return record;
+}
+
+async function removeVoiceFromArchive(id) {
+  const archive = await loadVoiceArchive();
+  const initialLength = archive.records.length;
+  archive.records = archive.records.filter((r) => r.id !== id);
+  const removed = archive.records.length < initialLength;
+  if (removed) {
+    await saveVoiceArchive(archive);
+  }
+  return removed;
+}
+
+function deduplicateVoiceArchiveNames(records) {
+  const nameCounts = new Map();
+  for (const record of records) {
+    const base = record.name;
+    const count = nameCounts.get(base) || 0;
+    nameCounts.set(base, count + 1);
+    if (count > 0) {
+      const suffix = String.fromCharCode(65 + count - 1);
+      record.name = `${base}-${suffix}`;
+    }
+  }
+  return records;
+}
+
+async function handleSyncVoiceArchive(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const incoming = Array.isArray(body?.voices) ? body.voices : [];
+    const deviceId = normalizeDeviceId(body?.deviceId);
+    const archive = await loadVoiceArchive();
+    const existingKeys = new Set(
+      archive.records.map((r) => buildVoiceArchiveKey(r.provider, r.remoteVoiceId))
+    );
+    const added = [];
+    const skipped = [];
+
+    for (const item of incoming) {
+      if (!item || typeof item !== 'object') continue;
+      const provider = readValue(item.provider);
+      const remoteVoiceId = readValue(item.remoteVoiceId);
+      if (!provider || !remoteVoiceId) continue;
+      const key = buildVoiceArchiveKey(provider, remoteVoiceId);
+      if (existingKeys.has(key)) {
+        skipped.push(remoteVoiceId);
+        continue;
+      }
+      const record = {
+        id: readValue(item.id) || `${provider}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: readValue(item.name) || '未命名音色',
+        provider,
+        providerLabel: readValue(item.providerLabel) || provider,
+        remoteVoiceId,
+        engineModel: readValue(item.engineModel) || '',
+        resourceId: item.resourceId === undefined ? undefined : readValue(item.resourceId),
+        createdBy: deviceId || readValue(item.createdBy) || '',
+        createdAt: readValue(item.createdAt) || new Date().toISOString(),
+      };
+      archive.records.push(record);
+      added.push(record);
+      existingKeys.add(key);
+    }
+
+    // Deduplicate names within each provider
+    const recordsByProvider = new Map();
+    for (const record of archive.records) {
+      const list = recordsByProvider.get(record.provider) || [];
+      list.push(record);
+      recordsByProvider.set(record.provider, list);
+    }
+    for (const [, list] of recordsByProvider) {
+      deduplicateVoiceArchiveNames(list);
+    }
+
+    await saveVoiceArchive(archive);
+
+    // Rebuild volcengine ownership for volcengine voices
+    for (const record of added) {
+      if (record.provider === 'volcengine' && record.createdBy && record.remoteVoiceId) {
+        const group = getVolcEngineGroupForSpeakerId(record.remoteVoiceId);
+        await withVolcSpeakerOwnershipLock(async (state) => {
+          upsertVolcSpeakerOwnership(state, {
+            speakerId: record.remoteVoiceId,
+            ownerDeviceId: record.createdBy,
+            preferredName: record.name,
+            groupIndex: group?.index || 1,
+          });
+        });
+      }
+    }
+
+    sendJson(res, 200, { ok: true, added: added.length, skipped: skipped.length });
+  } catch (error) {
+    console.error('[voice archive] sync_error', { message: error.message });
+    sendJson(res, 500, { error: error.message || '同步音色档案失败' });
+  }
+}
+
+async function handleGetVoiceArchive(req, res) {
+  try {
+    const archive = await loadVoiceArchive();
+    sendJson(res, 200, { ok: true, records: archive.records });
+  } catch (error) {
+    console.error('[voice archive] get_error', { message: error.message });
+    sendJson(res, 500, { error: error.message || '读取音色档案失败' });
+  }
+}
+
+async function handleDeleteVoiceArchive(req, res) {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const id = decodeURIComponent(url.pathname.replace(/^\/api\/voice\/archive\//, ''));
+    if (!id) {
+      sendJson(res, 400, { error: '缺少音色档案 ID' });
+      return;
+    }
+    const removed = await removeVoiceFromArchive(id);
+    if (!removed) {
+      sendJson(res, 404, { error: '未找到该音色档案' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, removed: true });
+  } catch (error) {
+    console.error('[voice archive] delete_error', { message: error.message });
+    sendJson(res, 500, { error: error.message || '删除音色档案失败' });
+  }
 }
 
 function normalizeDouyinInput(value) {
@@ -7576,6 +7787,14 @@ async function handleAliyunVoiceCreate(req, res) {
       return;
     }
 
+    await addVoiceToArchive({
+      name: normalizedPreferredName,
+      provider: 'aliyun',
+      providerLabel: '阿里云',
+      remoteVoiceId: json?.output?.voice || json?.voiceId || '',
+      engineModel: targetModel,
+      createdAt: new Date().toISOString(),
+    });
     sendJson(res, 200, json);
   } catch (error) {
     sendJson(res, 500, { error: error.message || '阿里云创建音色失败' });
@@ -7660,6 +7879,14 @@ async function handleZhipuVoiceClone(req, res) {
       return;
     }
 
+    await addVoiceToArchive({
+      name: resolvedPreferredName,
+      provider: 'zhipu',
+      providerLabel: '智谱',
+      remoteVoiceId: cloneJson.voice || '',
+      engineModel: 'glm-tts',
+      createdAt: new Date().toISOString(),
+    });
     sendJson(res, 200, {
       ok: true,
       voice: cloneJson.voice,
@@ -8123,6 +8350,16 @@ async function handleVolcVoiceClone(req, res) {
     }
 
     invalidateVolcSpeakerRemoteStatusCache();
+    await addVoiceToArchive({
+      name: readValue(preferredName) || '未命名音色',
+      provider: 'volcengine',
+      providerLabel: '火山引擎',
+      remoteVoiceId: json?.speaker_id || reservedSpeakerId,
+      engineModel: 'volcengine-voice-clone',
+      resourceId: readValue(resourceId) || 'seed-icl-2.0',
+      createdBy: resolvedDeviceId,
+      createdAt: new Date().toISOString(),
+    });
     sendJson(res, 200, {
       ...(json || { raw: responseText }),
       speaker_id: json?.speaker_id || reservedSpeakerId
@@ -8464,6 +8701,14 @@ async function handleSiliconFlowVoiceUpload(req, res) {
       upstreamStatus,
       voiceUri,
       transcriptSource: manualReferenceText ? 'manual' : 'auto_asr'
+    });
+    await addVoiceToArchive({
+      name: customName,
+      provider: 'siliconflow',
+      providerLabel: 'SiliconFlow 声音克隆',
+      remoteVoiceId: voiceUri,
+      engineModel: resolvedModel,
+      createdAt: new Date().toISOString(),
     });
     sendJson(res, 200, {
       ok: true,
@@ -10846,6 +11091,21 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/siliconflow/create-speech') {
     await handleSiliconFlowTts(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/voice/archive/sync') {
+    await handleSyncVoiceArchive(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/voice/archive') {
+    await handleGetVoiceArchive(req, res);
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/voice/archive/')) {
+    await handleDeleteVoiceArchive(req, res);
     return;
   }
 

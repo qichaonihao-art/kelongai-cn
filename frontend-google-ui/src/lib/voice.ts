@@ -456,3 +456,64 @@ export async function generateSpeech(options: {
     speechRateSupported,
   };
 }
+
+export interface VoiceArchiveRecord {
+  id: string;
+  name: string;
+  provider: VoicePlatform;
+  providerLabel: string;
+  remoteVoiceId: string;
+  engineModel: string;
+  resourceId?: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export async function getVoiceArchive(): Promise<VoiceArchiveRecord[]> {
+  try {
+    const response = await fetch('/api/voice/archive', { credentials: 'include' });
+    const json = await parseJsonSafely(response);
+    if (!response.ok) {
+      throw new Error(json?.error || '读取音色档案失败');
+    }
+    const records = Array.isArray(json?.records) ? json.records : [];
+    return records.filter((r: unknown) => {
+      if (!r || typeof r !== 'object') return false;
+      const item = r as Record<string, unknown>;
+      return (
+        typeof item.id === 'string' &&
+        typeof item.name === 'string' &&
+        typeof item.provider === 'string' &&
+        typeof item.remoteVoiceId === 'string'
+      );
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function syncVoiceArchive(voices: ClonedVoice[], deviceId: string) {
+  const response = await fetch('/api/voice/archive/sync', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ voices, deviceId }),
+  });
+  const json = await parseJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(readApiErrorMessage(json, '同步音色档案失败'));
+  }
+  return json as { ok: boolean; added: number; skipped: number };
+}
+
+export async function deleteVoiceArchive(id: string) {
+  const response = await fetch(`/api/voice/archive/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  const json = await parseJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(readApiErrorMessage(json, '删除音色档案失败'));
+  }
+  return json;
+}
