@@ -15,6 +15,7 @@ import {
   Wand2,
   Pause,
   Trash2,
+  Pencil,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -330,6 +331,8 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const [playbackProgress, setPlaybackProgress] = useState<Record<string, number>>({});
   const [deviceId] = useState(loadOrCreateDeviceId);
   const [voiceProviderFilter, setVoiceProviderFilter] = useState<VoicePlatform>('aliyun');
+  const [editingVoiceId, setEditingVoiceId] = useState<string | null>(null);
+  const [editingNameValue, setEditingNameValue] = useState("");
   const refreshConfigStatus = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
       setIsConfigLoading(true);
@@ -1272,6 +1275,43 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     }
   }
 
+  function handleStartEditName(voice: ClonedVoice) {
+    setEditingVoiceId(voice.id);
+    setEditingNameValue(voice.name);
+  }
+
+  function handleCancelEditName() {
+    setEditingVoiceId(null);
+    setEditingNameValue("");
+  }
+
+  async function handleSaveVoiceName(voiceId: string) {
+    const trimmed = editingNameValue.trim();
+    if (!trimmed) {
+      handleCancelEditName();
+      return;
+    }
+
+    const targetVoice = voices.find((v) => v.id === voiceId);
+    if (!targetVoice || targetVoice.name === trimmed) {
+      handleCancelEditName();
+      return;
+    }
+
+    const updatedVoices = voices.map((v) =>
+      v.id === voiceId ? { ...v, name: trimmed } : v
+    );
+    setVoices(updatedVoices);
+    handleCancelEditName();
+
+    // Sync updated names to server archive
+    try {
+      await syncVoiceArchive(updatedVoices, deviceId);
+    } catch {
+      // Silent fail - local name is already updated
+    }
+  }
+
   function scrollToTextInputAfterVoiceSelect() {
     window.setTimeout(() => {
       textToSpeechSectionRef.current?.scrollIntoView({
@@ -2145,9 +2185,49 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                           {/* Info */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-black truncate text-slate-900">
-                                {voice.name}
-                              </span>
+                              {editingVoiceId === voice.id ? (
+                                <input
+                                  type="text"
+                                  value={editingNameValue}
+                                  onChange={(e) => setEditingNameValue(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      void handleSaveVoiceName(voice.id);
+                                    } else if (e.key === 'Escape') {
+                                      handleCancelEditName();
+                                    }
+                                  }}
+                                  onBlur={() => void handleSaveVoiceName(voice.id)}
+                                  autoFocus
+                                  className={cn(
+                                    "text-sm font-black bg-transparent border-b-2 outline-none px-0.5 w-full max-w-[180px]",
+                                    isActive
+                                      ? "border-emerald-400 text-slate-900"
+                                      : "border-slate-300 text-slate-900"
+                                  )}
+                                />
+                              ) : (
+                                <>
+                                  <span className="text-sm font-black truncate text-slate-900">
+                                    {voice.name}
+                                  </span>
+                                  <button
+                                    className={cn(
+                                      "shrink-0 size-5 rounded flex items-center justify-center transition-all opacity-0 group-hover:opacity-100",
+                                      isActive
+                                        ? "text-slate-400 hover:text-slate-600 hover:bg-white"
+                                        : "text-slate-300 hover:text-slate-500 hover:bg-slate-100"
+                                    )}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleStartEditName(voice);
+                                    }}
+                                  >
+                                    <Pencil className="size-3" />
+                                  </button>
+                                </>
+                              )}
                             </div>
                             <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
                               <span className={cn("font-bold", meta.textColor)}>{voice.providerLabel}</span>

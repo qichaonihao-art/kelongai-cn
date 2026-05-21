@@ -2816,13 +2816,23 @@ async function handleSyncVoiceArchive(req, res) {
       const remoteVoiceId = readValue(item.remoteVoiceId);
       if (!provider || !remoteVoiceId) continue;
       const key = buildVoiceArchiveKey(provider, remoteVoiceId);
-      if (existingKeys.has(key)) {
-        skipped.push(remoteVoiceId);
+      const existingIndex = archive.records.findIndex(
+        (r) => buildVoiceArchiveKey(r.provider, r.remoteVoiceId) === key
+      );
+      const incomingName = readValue(item.name) || '未命名音色';
+      if (existingIndex >= 0) {
+        // Update name if changed
+        if (archive.records[existingIndex].name !== incomingName) {
+          archive.records[existingIndex].name = incomingName;
+          added.push(archive.records[existingIndex]);
+        } else {
+          skipped.push(remoteVoiceId);
+        }
         continue;
       }
       const record = {
         id: readValue(item.id) || `${provider}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        name: readValue(item.name) || '未命名音色',
+        name: incomingName,
         provider,
         providerLabel: readValue(item.providerLabel) || provider,
         remoteVoiceId,
