@@ -15,7 +15,6 @@ import {
   Wand2,
   Pause,
   Trash2,
-  Unlock,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -318,7 +317,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const [generateError, setGenerateError] = useState("");
   const [configError, setConfigError] = useState("");
   const [ownershipError, setOwnershipError] = useState("");
-  const [releasingVoiceId, setReleasingVoiceId] = useState<string | null>(null);
   const [configStatus, setConfigStatus] = useState<VoiceConfigStatus>(EMPTY_CONFIG_STATUS);
   const [isConfigLoading, setIsConfigLoading] = useState(true);
   const [zhipuApiKey, setZhipuApiKey] = useState("");
@@ -769,15 +767,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     setPreviewVoiceId(null);
 
     try {
-      console.log('[preview] voice:', {
-        id: voice.id,
-        name: voice.name,
-        provider: voice.provider,
-        remoteVoiceId: voice.remoteVoiceId,
-        engineModel: voice.engineModel,
-        resourceId: voice.resourceId,
-      });
-
       const audio = await generateSpeech({
         voice,
         text: "你好，我是你的专属AI语音助手。",
@@ -785,21 +774,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
         credentials: buildCredentialsForPlatform(voice.provider, { zhipuApiKey, aliyunApiKey }),
         mockMode: configStatus.mockMode,
       });
-
-      console.log('[preview] audio generated:', {
-        audioUrl: audio.audioUrl,
-        duration: audio.duration,
-        providerLabel: audio.providerLabel,
-      });
-
-      // Check blob size
-      try {
-        const resp = await fetch(audio.audioUrl);
-        const blob = await resp.blob();
-        console.log('[preview] blob size:', blob.size, 'type:', blob.type);
-      } catch (e) {
-        console.log('[preview] blob check failed:', e);
-      }
 
       const player = new Audio(audio.audioUrl);
       player.onended = () => {
@@ -1248,30 +1222,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
       activeAudioRef.current = null;
       activeAudioIdRef.current = null;
       setPlayingAudioId(null);
-    }
-  }
-
-  async function handleReleaseVolcVoice(voiceId: string) {
-    const targetVoice = voices.find((voice) => voice.id === voiceId);
-    if (!targetVoice || targetVoice.provider !== 'volcengine' || !deviceId) return;
-
-    setReleasingVoiceId(voiceId);
-    try {
-      await releaseVolcVoiceOwnership({
-        deviceId,
-        speakerId: targetVoice.remoteVoiceId,
-      });
-      setOwnershipError("");
-      setVoices((previous) => previous.filter((voice) => voice.id !== voiceId));
-      if (activeVoiceId === voiceId) {
-        setActiveVoiceId(null);
-      }
-      void refreshConfigStatus({ silent: true });
-    } catch (error) {
-      setOwnershipError(error instanceof Error ? error.message : "火山音色槽位释放失败，请稍后重试。");
-      void refreshConfigStatus({ silent: true });
-    } finally {
-      setReleasingVoiceId(null);
     }
   }
 
@@ -2205,32 +2155,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                               <Play className="size-3.5" />
                             )}
                           </button>
-
-                          {/* Release (volcengine only) */}
-                          {voice.provider === 'volcengine' && (
-                            <button
-                              className={cn(
-                                "shrink-0 h-8 px-2 rounded-lg flex items-center justify-center border transition-all opacity-0 group-hover:opacity-100 text-[11px] font-bold",
-                                isActive
-                                  ? "text-amber-600 hover:text-amber-700 hover:bg-white hover:border-amber-200 bg-white/60 border-white/40"
-                                  : "text-amber-500 hover:text-amber-700 hover:bg-amber-50 border-transparent hover:border-amber-200",
-                              )}
-                              disabled={releasingVoiceId === voice.id}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void handleReleaseVolcVoice(voice.id);
-                              }}
-                            >
-                              {releasingVoiceId === voice.id ? (
-                                <Loader2 className="size-3.5 animate-spin" />
-                              ) : (
-                                <>
-                                  <Unlock className="size-3 mr-1" />
-                                  释放
-                                </>
-                              )}
-                            </button>
-                          )}
 
                           {/* Delete */}
                           <button
