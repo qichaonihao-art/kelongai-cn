@@ -2109,6 +2109,29 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                         )}
 
                         <div className={cn("flex items-center gap-3 p-3", isActive ? "pl-4" : "")}>
+                          {/* Preview */}
+                          <button
+                            className={cn(
+                              "shrink-0 size-8 rounded-lg flex items-center justify-center border transition-all opacity-0 group-hover:opacity-100",
+                              isActive
+                                ? "text-emerald-500 hover:text-emerald-600 hover:bg-white hover:border-emerald-200 bg-white/60 border-white/40"
+                                : "text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 border-transparent hover:border-emerald-200",
+                            )}
+                            disabled={previewLoadingVoiceId === voice.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handlePreviewVoice(voice);
+                            }}
+                          >
+                            {previewLoadingVoiceId === voice.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : previewVoiceId === voice.id ? (
+                              <Pause className="size-3.5" />
+                            ) : (
+                              <Play className="size-3.5" />
+                            )}
+                          </button>
+
                           {/* Avatar */}
                           <div className={cn(
                             "shrink-0 size-9 rounded-lg flex items-center justify-center border transition-colors",
@@ -2132,29 +2155,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                               <span>{voice.createdAt}</span>
                             </div>
                           </div>
-
-                          {/* Preview */}
-                          <button
-                            className={cn(
-                              "shrink-0 size-8 rounded-lg flex items-center justify-center border transition-all opacity-0 group-hover:opacity-100",
-                              isActive
-                                ? "text-emerald-500 hover:text-emerald-600 hover:bg-white hover:border-emerald-200 bg-white/60 border-white/40"
-                                : "text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 border-transparent hover:border-emerald-200",
-                            )}
-                            disabled={previewLoadingVoiceId === voice.id}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handlePreviewVoice(voice);
-                            }}
-                          >
-                            {previewLoadingVoiceId === voice.id ? (
-                              <Loader2 className="size-3.5 animate-spin" />
-                            ) : previewVoiceId === voice.id ? (
-                              <Pause className="size-3.5" />
-                            ) : (
-                              <Play className="size-3.5" />
-                            )}
-                          </button>
 
                           {/* Delete */}
                           <button
