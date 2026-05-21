@@ -291,6 +291,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const activeAudioIdRef = useRef<string | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const voicePreviewAudioRef = useRef<HTMLAudioElement | null>(null);
   const progressAnimationFrameRef = useRef<number | null>(null);
   const generatedAudiosRef = useRef<GeneratedAudio[]>([]);
   const [isApiConfigOpen, setIsApiConfigOpen] = useState(false);
@@ -325,6 +326,8 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const [voices, setVoices] = useState<ClonedVoice[]>(loadSavedVoices);
   const [activeVoiceId, setActiveVoiceId] = useState<string | null>(loadActiveVoiceId);
   const [isSyncingArchive, setIsSyncingArchive] = useState(false);
+  const [previewVoiceId, setPreviewVoiceId] = useState<string | null>(null);
+  const [previewLoadingVoiceId, setPreviewLoadingVoiceId] = useState<string | null>(null);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [playbackProgress, setPlaybackProgress] = useState<Record<string, number>>({});
   const [deviceId] = useState(loadOrCreateDeviceId);
@@ -617,6 +620,11 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
         previewAudioRef.current = null;
       }
 
+      if (voicePreviewAudioRef.current) {
+        voicePreviewAudioRef.current.pause();
+        voicePreviewAudioRef.current = null;
+      }
+
       if (uploadedAudioUrl) {
         URL.revokeObjectURL(uploadedAudioUrl);
       }
@@ -741,6 +749,56 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     } catch {
       setIsPreviewPlaying(false);
       previewAudioRef.current = null;
+    }
+  }
+
+  async function handlePreviewVoice(voice: ClonedVoice) {
+    if (previewVoiceId === voice.id && voicePreviewAudioRef.current) {
+      voicePreviewAudioRef.current.pause();
+      voicePreviewAudioRef.current = null;
+      setPreviewVoiceId(null);
+      return;
+    }
+
+    if (voicePreviewAudioRef.current) {
+      voicePreviewAudioRef.current.pause();
+      voicePreviewAudioRef.current = null;
+    }
+
+    setPreviewLoadingVoiceId(voice.id);
+    setPreviewVoiceId(null);
+
+    try {
+      const audio = await generateSpeech({
+        voice,
+        text: "你好，我是你的专属AI语音助手。",
+        speechRate: supportsVoiceSpeechRate(voice.provider) ? DEFAULT_SPEECH_RATE : 1,
+        credentials: buildCredentialsForPlatform(voice.provider, { zhipuApiKey, aliyunApiKey }),
+        mockMode: configStatus.mockMode,
+      });
+
+      const player = new Audio(audio.audioUrl);
+      player.onended = () => {
+        setPreviewVoiceId(null);
+        voicePreviewAudioRef.current = null;
+      };
+      player.onerror = () => {
+        setPreviewVoiceId(null);
+        voicePreviewAudioRef.current = null;
+      };
+      voicePreviewAudioRef.current = player;
+      setPreviewVoiceId(voice.id);
+      setPreviewLoadingVoiceId(null);
+
+      try {
+        await player.play();
+      } catch {
+        setPreviewVoiceId(null);
+        voicePreviewAudioRef.current = null;
+      }
+    } catch {
+      setPreviewLoadingVoiceId(null);
+      setPreviewVoiceId(null);
     }
   }
 
@@ -2098,6 +2156,29 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                               <span>{voice.createdAt}</span>
                             </div>
                           </div>
+
+                          {/* Preview */}
+                          <button
+                            className={cn(
+                              "shrink-0 size-8 rounded-lg flex items-center justify-center border transition-all opacity-0 group-hover:opacity-100",
+                              isActive
+                                ? "text-emerald-500 hover:text-emerald-600 hover:bg-white hover:border-emerald-200 bg-white/60 border-white/40"
+                                : "text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 border-transparent hover:border-emerald-200",
+                            )}
+                            disabled={previewLoadingVoiceId === voice.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handlePreviewVoice(voice);
+                            }}
+                          >
+                            {previewLoadingVoiceId === voice.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : previewVoiceId === voice.id ? (
+                              <Pause className="size-3.5" />
+                            ) : (
+                              <Play className="size-3.5" />
+                            )}
+                          </button>
 
                           {/* Release (volcengine only) */}
                           {voice.provider === 'volcengine' && (
