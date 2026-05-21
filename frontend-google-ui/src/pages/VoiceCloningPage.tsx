@@ -769,6 +769,15 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     setPreviewVoiceId(null);
 
     try {
+      console.log('[preview] voice:', {
+        id: voice.id,
+        name: voice.name,
+        provider: voice.provider,
+        remoteVoiceId: voice.remoteVoiceId,
+        engineModel: voice.engineModel,
+        resourceId: voice.resourceId,
+      });
+
       const audio = await generateSpeech({
         voice,
         text: "你好，我是你的专属AI语音助手。",
@@ -776,6 +785,21 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
         credentials: buildCredentialsForPlatform(voice.provider, { zhipuApiKey, aliyunApiKey }),
         mockMode: configStatus.mockMode,
       });
+
+      console.log('[preview] audio generated:', {
+        audioUrl: audio.audioUrl,
+        duration: audio.duration,
+        providerLabel: audio.providerLabel,
+      });
+
+      // Check blob size
+      try {
+        const resp = await fetch(audio.audioUrl);
+        const blob = await resp.blob();
+        console.log('[preview] blob size:', blob.size, 'type:', blob.type);
+      } catch (e) {
+        console.log('[preview] blob check failed:', e);
+      }
 
       const player = new Audio(audio.audioUrl);
       player.onended = () => {
