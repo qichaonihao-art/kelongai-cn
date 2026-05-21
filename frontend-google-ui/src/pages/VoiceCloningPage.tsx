@@ -792,13 +792,15 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
 
       try {
         await player.play();
-      } catch {
+      } catch (playError) {
         setPreviewVoiceId(null);
         voicePreviewAudioRef.current = null;
+        setCloneError(playError instanceof Error ? playError.message : "音频播放被浏览器阻止");
       }
-    } catch {
+    } catch (generateError) {
       setPreviewLoadingVoiceId(null);
       setPreviewVoiceId(null);
+      setCloneError(generateError instanceof Error ? generateError.message : "试听语音生成失败");
     }
   }
 
