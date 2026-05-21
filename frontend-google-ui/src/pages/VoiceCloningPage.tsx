@@ -2112,7 +2112,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                           {/* Preview */}
                           <button
                             className={cn(
-                              "shrink-0 size-8 rounded-lg flex items-center justify-center border transition-all opacity-0 group-hover:opacity-100",
+                              "shrink-0 size-8 rounded-lg flex items-center justify-center border transition-all",
                               isActive
                                 ? "text-emerald-500 hover:text-emerald-600 hover:bg-white hover:border-emerald-200 bg-white/60 border-white/40"
                                 : "text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 border-transparent hover:border-emerald-200",
