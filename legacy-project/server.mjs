@@ -3306,30 +3306,69 @@ function pickNestedValue(root, path) {
   return current;
 }
 
+function normalizeBooleanLike(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n'].includes(normalized)) return false;
+  }
+  return null;
+}
+
+function readCandidateHasAudio(record) {
+  if (!record || typeof record !== 'object') return null;
+  for (const key of ['hasAudio', 'has_audio', 'hasAudioTrack', 'has_audio_track', 'withAudio', 'with_audio']) {
+    const parsed = normalizeBooleanLike(record[key]);
+    if (parsed !== null) return parsed;
+  }
+  if (record.audio && typeof record.audio === 'object') return true;
+  if (record.audio_url || record.audioUrl || record.audio_track || record.audioTrack) return true;
+  return null;
+}
+
+function addDownloadUrlCandidate(candidates, seen, rawUrl, source, meta = {}) {
+  const url = stripDouyinWatermark(rawUrl);
+  if (!url) return;
+  const existing = seen.get(url);
+  if (existing) {
+    if (existing.hasAudio === undefined && typeof meta.hasAudio === 'boolean') {
+      existing.hasAudio = meta.hasAudio;
+    }
+    return;
+  }
+
+  const candidate = {
+    url,
+    source,
+    host: getHostnameFromUrl(url)
+  };
+  if (typeof meta.hasAudio === 'boolean') candidate.hasAudio = meta.hasAudio;
+  seen.set(url, candidate);
+  candidates.push(candidate);
+}
+
 function collectDownloadUrlCandidates(payload) {
   const paths = [
     { path: ['video_data', 'video', 'play_addr_h264', 'url_list'], source: 'video_data.video.play_addr_h264' },
-    { path: ['video_data', 'video', 'bit_rate', '*', 'play_addr', 'url_list'], source: 'video_data.video.bit_rate.play_addr' },
     { path: ['video_data', 'video', 'play_addr', 'url_list'], source: 'video_data.video.play_addr' },
     { path: ['video_data', 'video', 'play_api', 'url_list'], source: 'video_data.video.play_api' },
     { path: ['video_data', 'video', 'download_addr', 'url_list'], source: 'video_data.video.download_addr' },
     { path: ['video', 'play_addr_h264', 'url_list'], source: 'video.play_addr_h264' },
-    { path: ['video', 'bit_rate', '*', 'play_addr', 'url_list'], source: 'video.bit_rate.play_addr' },
     { path: ['video', 'play_addr', 'url_list'], source: 'video.play_addr' },
     { path: ['video', 'play_api', 'url_list'], source: 'video.play_api' },
     { path: ['video', 'download_addr', 'url_list'], source: 'video.download_addr' },
     { path: ['aweme_detail', 'video', 'play_addr_h264', 'url_list'], source: 'aweme_detail.video.play_addr_h264' },
-    { path: ['aweme_detail', 'video', 'bit_rate', '*', 'play_addr', 'url_list'], source: 'aweme_detail.video.bit_rate.play_addr' },
     { path: ['aweme_detail', 'video', 'play_addr', 'url_list'], source: 'aweme_detail.video.play_addr' },
     { path: ['aweme_detail', 'video', 'play_api', 'url_list'], source: 'aweme_detail.video.play_api' },
     { path: ['aweme_detail', 'video', 'download_addr', 'url_list'], source: 'aweme_detail.video.download_addr' },
     { path: ['item_info', 'item_struct', 'video', 'play_addr_h264', 'url_list'], source: 'item_info.item_struct.video.play_addr_h264' },
-    { path: ['item_info', 'item_struct', 'video', 'bit_rate', '*', 'play_addr', 'url_list'], source: 'item_info.item_struct.video.bit_rate.play_addr' },
     { path: ['item_info', 'item_struct', 'video', 'play_addr', 'url_list'], source: 'item_info.item_struct.video.play_addr' }
   ];
 
   const candidates = [];
-  const seen = new Set();
+  const seen = new Map();
 
   for (const entry of paths) {
     const value = pickNestedValue(payload, entry.path);
@@ -3341,14 +3380,27 @@ function collectDownloadUrlCandidates(payload) {
       : [extractFirstUrl(value)].filter(Boolean);
 
     for (const rawUrl of urls) {
-      const url = stripDouyinWatermark(rawUrl);
-      if (!url || seen.has(url)) continue;
-      seen.add(url);
-      candidates.push({
-        url,
-        source: entry.source,
-        host: getHostnameFromUrl(url)
-      });
+      addDownloadUrlCandidate(candidates, seen, rawUrl, entry.source, { hasAudio: true });
+    }
+  }
+
+  const videoRoots = [
+    { value: payload?.video_data?.video, source: 'video_data.video.bit_rate.play_addr' },
+    { value: payload?.video, source: 'video.bit_rate.play_addr' },
+    { value: payload?.aweme_detail?.video, source: 'aweme_detail.video.bit_rate.play_addr' },
+    { value: payload?.item_info?.item_struct?.video, source: 'item_info.item_struct.video.bit_rate.play_addr' },
+  ];
+
+  for (const root of videoRoots) {
+    const bitRates = Array.isArray(root.value?.bit_rate) ? root.value.bit_rate : [];
+    for (const bitRate of bitRates) {
+      const hasAudio = readCandidateHasAudio(bitRate);
+      const urls = normalizeUniversalUrlList(bitRate?.play_addr?.url_list || bitRate?.play_addr || bitRate?.url_list || bitRate?.url);
+      for (const rawUrl of urls) {
+        addDownloadUrlCandidate(candidates, seen, rawUrl, root.source, {
+          hasAudio: typeof hasAudio === 'boolean' ? hasAudio : undefined
+        });
+      }
     }
   }
 
@@ -3363,10 +3415,13 @@ function scoreDouyinDownloadCandidate(candidate) {
   let score = getDouyinDownloadHostBaseScore(host);
 
   if (/play_addr_h264/i.test(source)) score += 60;
-  if (/bit_rate/i.test(source)) score += 55;
+  if (/bit_rate/i.test(source)) score += 15;
   if (/play_addr/i.test(source)) score += 45;
   if (/play_api/i.test(source)) score += 25;
-  if (/download_addr/i.test(source)) score -= 20;
+  if (/download_addr/i.test(source)) score += 25;
+
+  if (candidate?.hasAudio === true) score += 160;
+  if (candidate?.hasAudio === false) score -= 420;
 
   if (/playwm/i.test(url)) score -= 80;
   if (/watermark=1|[?&]wm=1/i.test(url)) score -= 40;
@@ -3468,11 +3523,13 @@ function normalizeDouyinDownloadCandidates(downloadUrlCandidates = [], fallbackU
     const url = stripDouyinWatermark(String(candidate?.url || candidate || ''));
     if (!url || seen.has(url)) return;
     seen.add(url);
-    merged.push({
+    const normalized = {
       url,
       source: String(candidate?.source || fallbackSource),
       host: getHostnameFromUrl(url)
-    });
+    };
+    if (typeof candidate?.hasAudio === 'boolean') normalized.hasAudio = candidate.hasAudio;
+    merged.push(normalized);
   };
 
   for (const candidate of downloadUrlCandidates) {
@@ -3492,7 +3549,8 @@ function serializeDouyinDownloadCandidates(downloadUrlCandidates = [], fallbackU
     .map((candidate) => ({
       url: candidate.url,
       source: candidate.source,
-      host: candidate.host
+      host: candidate.host,
+      ...(typeof candidate.hasAudio === 'boolean' ? { hasAudio: candidate.hasAudio } : {})
     }));
 }
 
@@ -6288,6 +6346,8 @@ function scoreUniversalVideoCandidate(candidate, platform = '') {
 
   if (/\.(mp4|webm|mov)(?:[?#]|$)/.test(lower)) score += 60;
   if (/m3u8|mpd/.test(lower)) score += 20;
+  if (candidate?.hasAudio === true) score += 180;
+  if (candidate?.hasAudio === false) score -= 500;
   if (/watermark=1|playwm|logo_name=/i.test(url)) score -= 80;
   if (/avatar|cover|image|pic|jpg|jpeg|png|webp/i.test(lower)) score -= 120;
 
@@ -6298,18 +6358,28 @@ function collectKuaishouVideoCandidates(data) {
   const photo = data?.photo || data?.data?.photo || data || {};
   const candidates = [];
 
-  const add = (rawUrl, source) => {
+  const add = (rawUrl, source, meta = {}) => {
     const url = String(rawUrl || '').trim();
     if (!looksLikeUniversalVideoUrl(url)) return;
-    candidates.push({ url, source, host: getHostnameFromUrl(url) });
+    candidates.push({
+      url,
+      source,
+      host: getHostnameFromUrl(url),
+      ...(typeof meta.hasAudio === 'boolean' ? { hasAudio: meta.hasAudio } : {})
+    });
   };
 
-  for (const url of normalizeUniversalUrlList(photo.mainMvUrls)) add(url, 'kuaishou.photo.mainMvUrls');
+  for (const url of normalizeUniversalUrlList(photo.mainMvUrls)) add(url, 'kuaishou.photo.mainMvUrls', { hasAudio: true });
   for (const adaptationSet of photo.manifest?.adaptationSet || []) {
     for (const representation of adaptationSet?.representation || []) {
-      add(representation?.url, 'kuaishou.photo.manifest.representation.url');
+      const hasAudio = readCandidateHasAudio(representation);
+      add(representation?.url, 'kuaishou.photo.manifest.representation.url', {
+        hasAudio: typeof hasAudio === 'boolean' ? hasAudio : undefined
+      });
       for (const backupUrl of representation?.backupUrl || []) {
-        add(backupUrl, 'kuaishou.photo.manifest.representation.backupUrl');
+        add(backupUrl, 'kuaishou.photo.manifest.representation.backupUrl', {
+          hasAudio: typeof hasAudio === 'boolean' ? hasAudio : undefined
+        });
       }
     }
   }
@@ -6321,7 +6391,7 @@ function collectUniversalVideoCandidates(data, platform = '') {
   const candidates = [];
   const seen = new Set();
 
-  const add = (rawUrl, source) => {
+  const add = (rawUrl, source, meta = {}) => {
     const normalizedUrl = platform === 'douyin'
       ? stripDouyinWatermark(String(rawUrl || '').trim())
       : String(rawUrl || '').trim();
@@ -6330,20 +6400,29 @@ function collectUniversalVideoCandidates(data, platform = '') {
     candidates.push({
       url: normalizedUrl,
       source,
-      host: getHostnameFromUrl(normalizedUrl)
+      host: getHostnameFromUrl(normalizedUrl),
+      ...(typeof meta.hasAudio === 'boolean' ? { hasAudio: meta.hasAudio } : {})
     });
   };
 
   if (platform === 'douyin') {
     for (const candidate of collectDownloadUrlCandidates(data)) {
-      add(candidate.url, candidate.source);
+      add(candidate.url, candidate.source, { hasAudio: candidate.hasAudio });
     }
   }
 
   if (platform === 'kuaishou') {
     for (const candidate of collectKuaishouVideoCandidates(data)) {
-      add(candidate.url, candidate.source);
+      add(candidate.url, candidate.source, { hasAudio: candidate.hasAudio });
     }
+  }
+
+  const videosItems = Array.isArray(data?.videos?.items) ? data.videos.items : [];
+  for (const item of [...videosItems].sort((a, b) => Number(b?.hasAudio === true) - Number(a?.hasAudio === true))) {
+    const hasAudio = readCandidateHasAudio(item);
+    add(item?.url, 'videos.items.url', {
+      hasAudio: typeof hasAudio === 'boolean' ? hasAudio : undefined
+    });
   }
 
   const queue = [data];

@@ -4,6 +4,7 @@ export interface DouyinDownloadCandidate {
   url: string;
   source?: string;
   host?: string;
+  hasAudio?: boolean;
 }
 
 export interface DouyinResolveResult {
@@ -92,6 +93,7 @@ function readDownloadUrlCandidates(value: unknown): DouyinDownloadCandidate[] {
       url,
       source: typeof record.source === 'string' ? record.source : '',
       host: typeof record.host === 'string' ? record.host : '',
+      ...(typeof record.hasAudio === 'boolean' ? { hasAudio: record.hasAudio } : {}),
     });
   }
 
@@ -284,6 +286,7 @@ export async function downloadDouyinVideoFile(params: {
 export async function directDownloadDouyinVideoFile(params: {
   videoId: string;
   downloadUrl: string;
+  downloadUrlCandidates?: DouyinDownloadCandidate[];
   videoUrls?: string[];
   platform?: string;
   onProgress?: (loaded: number, total: number) => void;
@@ -293,28 +296,13 @@ export async function directDownloadDouyinVideoFile(params: {
     throw new Error('缺少 downloadUrl');
   }
 
-  const platform = String(params?.platform || '').trim().toLowerCase();
-
-  // Non-Douyin platforms: use proxy download via form POST
-  if (platform && platform !== 'douyin') {
-    await downloadDouyinVideoFile({
-      videoId: params.videoId,
-      downloadUrl: params.downloadUrl,
-      videoUrls: params.videoUrls,
-      platform: params.platform,
-    });
-    return;
-  }
-
-  // Douyin platform: open CDN URL directly via anchor (browser navigation, bypass CORS)
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.target = '_blank';
-  anchor.rel = 'noopener noreferrer';
-  anchor.style.display = 'none';
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
+  await downloadDouyinVideoFile({
+    videoId: params.videoId,
+    downloadUrl: params.downloadUrl,
+    downloadUrlCandidates: params.downloadUrlCandidates,
+    videoUrls: params.videoUrls,
+    platform: params.platform,
+  });
 }
 
 export async function polishDouyinTranscript(options: {
