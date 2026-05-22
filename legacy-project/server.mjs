@@ -10058,13 +10058,43 @@ async function handleDouyinExtractTranscript(req, res) {
     const resolveTimeoutMs = Math.max(1, resolveDeadlineAt - resolveStartedAt);
 
     redirectInfo = await resolveRedirectedUrl(extracted.url, resolveDeadlineAt);
-    resolved = await resolveDouyinDownloadPrimary({
-      originalUrl: extracted.url,
-      normalizedUrl: redirectInfo.normalizedUrl || redirectInfo.finalUrl || extracted.url,
-      awemeId: redirectInfo.awemeId || extractDouyinAwemeId(redirectInfo.normalizedUrl || extracted.url),
-      requestId,
-      deadlineAt: resolveDeadlineAt
-    });
+    const apiKey = readValue(SERVER_CONFIG.tikhubApiToken);
+    try {
+      resolved = await resolveDouyinDownloadPrimary({
+        originalUrl: extracted.url,
+        normalizedUrl: redirectInfo.normalizedUrl || redirectInfo.finalUrl || extracted.url,
+        awemeId: redirectInfo.awemeId || extractDouyinAwemeId(redirectInfo.normalizedUrl || extracted.url),
+        requestId,
+        deadlineAt: resolveDeadlineAt
+      });
+    } catch (resolveError) {
+      if (apiKey) {
+        try {
+          const data = await extractByUrlUniversal({ apiKey, baseUrl: TIKHUB_API_BASE_URL, url: extracted.url });
+          const normalized = normalizeUniversalExtractResult(data, { sourceUrl: extracted.url });
+          const normalizedDownloadCandidates = normalizeDouyinDownloadCandidates(
+            normalized.videoUrlCandidates || [],
+            normalized.videoUrls[0] || ''
+          );
+          const selectedDownloadCandidate = pickBestDouyinDownloadCandidate(normalizedDownloadCandidates);
+          resolved = {
+            videoId: '',
+            downloadUrl: selectedDownloadCandidate?.url || normalized.videoUrls[0] || '',
+            downloadUrlCandidates: normalizedDownloadCandidates,
+            title: normalized.title,
+            caption: '',
+            authorName: normalized.authorName,
+            duration: normalized.duration,
+            videoData: normalized.raw,
+            normalizedUrl: extracted.url,
+            resolveStrategy: 'universal_extract',
+            fallbackCaption: normalized.title || '',
+            fallbackCaptionSource: 'universal'
+          };
+        } catch {}
+      }
+      if (!resolved) throw resolveError;
+    }
 
     logDouyinTranscriptEvent({
       event: 'video_resolved',
