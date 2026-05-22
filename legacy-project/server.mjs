@@ -10838,25 +10838,34 @@ async function handleDouyinVideoStream(req, res) {
     }
 
     // Douyin platform: use original direct fetch for better performance
+    const rangeHeader = req.headers['range'];
     const upstreamRes = await fetch(downloadUrl, {
       headers: {
         'Referer': 'https://www.douyin.com/',
         'User-Agent': DOUYIN_USER_AGENT,
         'Accept': '*/*',
+        ...(rangeHeader ? { Range: rangeHeader } : {}),
       },
     });
 
-    if (!upstreamRes.ok) {
+    if (!upstreamRes.ok && upstreamRes.status !== 206) {
       console.log('[douyin preview] upstream_failed', { requestId, upstreamStatus: upstreamRes.status });
       sendJson(res, 502, { error: '上游视频请求失败', detail: `HTTP ${upstreamRes.status}` });
       return;
     }
 
     const contentType = upstreamRes.headers.get('content-type') || 'video/mp4';
-    res.writeHead(200, {
+    const contentLength = upstreamRes.headers.get('content-length');
+    const contentRange = upstreamRes.headers.get('content-range');
+    const responseHeaders = {
       'Content-Type': contentType,
       'Cache-Control': 'no-store',
-    });
+      'Accept-Ranges': 'bytes',
+    };
+    if (contentLength) responseHeaders['Content-Length'] = contentLength;
+    if (contentRange) responseHeaders['Content-Range'] = contentRange;
+
+    res.writeHead(upstreamRes.status, responseHeaders);
 
     if (!upstreamRes.body) {
       res.end();
