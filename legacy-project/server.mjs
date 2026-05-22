@@ -9807,10 +9807,18 @@ async function handleDouyinResolveDownload(req, res) {
         if (url) {
           const data = await extractByUrlUniversal({ apiKey, baseUrl: TIKHUB_API_BASE_URL, url });
           const normalized = normalizeUniversalExtractResult(data, { sourceUrl: url });
+          const normalizedDownloadCandidates = normalizeDouyinDownloadCandidates(
+            normalized.videoUrlCandidates || [],
+            normalized.videoUrls[0] || ''
+          );
+          const selectedDownloadCandidate = pickBestDouyinDownloadCandidate(normalizedDownloadCandidates);
+          const selectedDownloadUrl = selectedDownloadCandidate?.url || normalized.videoUrls[0] || '';
 
           console.log('[douyin resolve] universal extract success', {
             requestId,
             platform: normalized.platform,
+            selectedPreviewHost: selectedDownloadCandidate?.host || getHostnameFromUrl(selectedDownloadUrl),
+            candidateCount: normalizedDownloadCandidates.length,
             elapsedMs: Date.now() - startedAt
           });
 
@@ -9828,8 +9836,8 @@ async function handleDouyinResolveDownload(req, res) {
             sourceUrl: normalized.sourceUrl,
             // Legacy compatibility
             videoId: '',
-            downloadUrl: normalized.videoUrls[0] || '',
-            downloadUrlCandidates: normalized.videoUrlCandidates,
+            downloadUrl: selectedDownloadUrl,
+            downloadUrlCandidates: serializeDouyinDownloadCandidates(normalizedDownloadCandidates, selectedDownloadUrl),
             caption: normalized.desc || '',
             fallbackCaption: normalized.title || '',
             fallbackCaptionSource: 'universal',
