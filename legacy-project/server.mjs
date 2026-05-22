@@ -6543,6 +6543,31 @@ function detectUniversalPlatform(data, sourceUrl = '', endpointPath = '') {
   return '';
 }
 
+function normalizeUniversalDurationSeconds(rawValue, platform = '') {
+  const value = Number.parseFloat(String(rawValue || '0'));
+  if (!Number.isFinite(value) || value <= 0) return 0;
+
+  const p = String(platform || '').toLowerCase();
+  const millisecondPlatforms = new Set([
+    'douyin',
+    'kuaishou',
+    'tiktok',
+    'xiaohongshu',
+    'weibo',
+    'instagram'
+  ]);
+
+  if (millisecondPlatforms.has(p) && value > 1000) {
+    return Math.round(value / 1000);
+  }
+
+  if (value > 24 * 60 * 60 && p !== 'youtube' && p !== 'bilibili') {
+    return Math.round(value / 1000);
+  }
+
+  return Math.round(value);
+}
+
 function normalizeUniversalExtractResult(data, { sourceUrl = '', endpointPath = '' } = {}) {
   const platform = detectUniversalPlatform(data, sourceUrl, endpointPath);
   const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data?.note || data?.noteCard || data?.article || data?.mp_article || data?.photo || data || {};
@@ -6583,7 +6608,7 @@ function normalizeUniversalExtractResult(data, { sourceUrl = '', endpointPath = 
     title,
     desc,
     authorName,
-    duration: Number(detail?.duration || detail?.video?.duration || data?.duration || 0),
+    duration: normalizeUniversalDurationSeconds(detail?.duration || detail?.video?.duration || data?.duration || 0, platform),
     videoUrls: videoUrlCandidates.map((candidate) => candidate.url),
     videoUrlCandidates,
     images,
