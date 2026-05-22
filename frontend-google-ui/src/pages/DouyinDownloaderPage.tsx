@@ -27,7 +27,6 @@ import ModuleQuickNav from "@/src/components/ModuleQuickNav";
 import SiteFooter from "@/src/components/SiteFooter";
 import {
   downloadDouyinVideoFile,
-  directDownloadDouyinVideoFile,
   extractDouyinTranscript,
   extractLocalVideoTranscript,
   getDouyinConfigStatus,
@@ -118,7 +117,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [input, setInput] = useState("");
   const [isResolving, setIsResolving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [isDirectDownloading, setIsDirectDownloading] = useState(false);
   const [isTranscriptLoading, setIsTranscriptLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<DouyinResolveResult | null>(null);
@@ -357,38 +355,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       setError(downloadError instanceof Error ? downloadError.message : '视频下载失败，请稍后重试。');
     } finally {
       setIsDownloading(false);
-    }
-  }
-
-  async function handleDirectDownloadVideo() {
-    if (!result?.downloadUrl) {
-      setError('当前没有可下载的视频地址，请先解析视频。');
-      return;
-    }
-
-    setIsDirectDownloading(true);
-    setError('');
-
-    // eslint-disable-next-line no-console
-    console.log('[douyin download] handleDirectDownloadVideo called', {
-      videoId: result.videoId,
-      downloadUrl: result.downloadUrl,
-    });
-
-    try {
-      await directDownloadDouyinVideoFile({
-        videoId: result.videoId,
-        downloadUrl: result.downloadUrl,
-        downloadUrlCandidates: result.downloadUrlCandidates,
-        videoUrls: result.videoUrls,
-        platform: result.platform,
-      });
-    } catch (downloadError) {
-      // eslint-disable-next-line no-console
-      console.error('[douyin download] handleDirectDownloadVideo error:', downloadError);
-      setError(downloadError instanceof Error ? downloadError.message : '极速下载失败，请尝试兼容下载。');
-    } finally {
-      setIsDirectDownloading(false);
     }
   }
 
@@ -831,23 +797,14 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                     <div className="flex flex-col gap-3">
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div className="flex flex-col gap-1 rounded-3xl border border-amber-100 bg-amber-50/65 p-3">
-                          <button
-                            onClick={handleDirectDownloadVideo}
-                            disabled={isDirectDownloading}
-                            className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-amber-500 text-sm font-bold text-white shadow-lg shadow-amber-500/20 transition-all hover:bg-amber-600 active:scale-[0.98] disabled:opacity-60"
+                          <a
+                            href={`/api/douyin/video-stream?url=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId || '')}&platform=${encodeURIComponent(result.platform || 'douyin')}&download=1`}
+                            download
+                            className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-amber-500 text-sm font-bold text-white shadow-lg shadow-amber-500/20 transition-all hover:bg-amber-600 active:scale-[0.98]"
                           >
-                            {isDirectDownloading ? (
-                              <>
-                                <Loader2 className="size-4 animate-spin" />
-                                下载中...
-                              </>
-                            ) : (
-                              <>
-                                <Zap className="size-4" />
-                                极速下载
-                              </>
-                            )}
-                          </button>
+                            <Zap className="size-4" />
+                            极速下载
+                          </a>
                           <span className="flex items-center gap-1 px-1 text-[10px] text-amber-700/70">
                             <Zap className="size-3 text-amber-500" />
                             通过代理高速下载
@@ -1109,9 +1066,9 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               <X className="size-4" />
             </button>
             <video
-              src={`/api/douyin/video-stream?downloadUrl=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId || '')}&platform=${encodeURIComponent(result.platform || 'douyin')}`}
+              src={`/api/douyin/video-stream?url=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId || '')}&platform=${encodeURIComponent(result.platform || 'douyin')}`}
               controls
-              autoPlay
+              preload="metadata"
               className="max-h-[78vh] max-w-[92vw] bg-black"
               playsInline
               onError={() => {
