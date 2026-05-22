@@ -10833,23 +10833,11 @@ async function handleDouyinVideoStream(req, res) {
   console.log('[douyin preview] stream_started', { requestId, videoId, targetPath: downloadUrl, platform });
 
   try {
-    // For non-Douyin platforms, use proxy stream with proper referer handling
-    if (!isDouyinPlatform(platform)) {
-      await proxyVideoStream({
-        targetUrl: downloadUrl,
-        req,
-        res,
-        asAttachment: false
-      });
-      console.log('[douyin preview] stream_finished', { requestId, platform, mode: 'proxy' });
-      return;
-    }
-
-    // Douyin platform: use original direct fetch for better performance
     const rangeHeader = req.headers['range'];
+    const referer = isDouyinPlatform(platform) ? 'https://www.douyin.com/' : resolveProxyReferer(downloadUrl);
     const upstreamRes = await fetch(downloadUrl, {
       headers: {
-        'Referer': 'https://www.douyin.com/',
+        'Referer': referer,
         'User-Agent': DOUYIN_USER_AGENT,
         'Accept': '*/*',
         ...(rangeHeader ? { Range: rangeHeader } : {}),
@@ -10863,12 +10851,27 @@ async function handleDouyinVideoStream(req, res) {
     }
 
     const contentType = upstreamRes.headers.get('content-type') || 'video/mp4';
+    if (!contentType.includes('video/') && !contentType.includes('audio/') && !contentType.includes('application/octet-stream')) {
+      try { await upstreamRes.body?.cancel(); } catch {}
+      await proxyVideoStream({
+        targetUrl: downloadUrl,
+        req,
+        res,
+        asAttachment: false
+      });
+      console.log('[douyin preview] stream_finished', { requestId, platform, mode: 'fallback_proxy' });
+      return;
+    }
+
     const contentLength = upstreamRes.headers.get('content-length');
+    const acceptRanges = upstreamRes.headers.get('accept-ranges');
     const contentRange = upstreamRes.headers.get('content-range');
     const responseHeaders = {
       'Content-Type': contentType,
-      'Cache-Control': 'no-store',
-      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=3600',
+      'Accept-Ranges': acceptRanges || 'bytes',
+      'Content-Disposition': 'inline; filename="preview.mp4"',
+      'X-Accel-Buffering': 'no',
     };
     if (contentLength) responseHeaders['Content-Length'] = contentLength;
     if (contentRange) responseHeaders['Content-Range'] = contentRange;
@@ -10880,19 +10883,8 @@ async function handleDouyinVideoStream(req, res) {
       return;
     }
 
-    const reader = upstreamRes.body.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(Buffer.from(value));
-        if (res.flush) res.flush();
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    res.end();
-    console.log('[douyin preview] stream_finished', { requestId, platform, mode: 'direct' });
+    await pipeline(Readable.fromWeb(upstreamRes.body), res);
+    console.log('[douyin preview] stream_finished', { requestId, platform, mode: 'thin_proxy' });
   } catch (error) {
     console.error('[douyin preview] stream_error', { requestId, message: error?.message });
     if (!res.headersSent) {
