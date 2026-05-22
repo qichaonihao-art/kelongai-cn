@@ -619,7 +619,7 @@ function scoreVideoUrl(url: string): number {
 function extractTags(data: any): string[] {
   if (!data || typeof data !== 'object') return [];
   if (Array.isArray(data.tags) && data.tags.length) {
-    return Array.from(new Set(data.tags.map((t: unknown) => String(t || '').replace(/^#/, '').trim()).filter(Boolean)));
+    return normalizeTags(data.tags);
   }
   const detail = findPrimaryDetail(data) || {};
   const allTags: string[] = [];
@@ -646,7 +646,18 @@ function extractTags(data: any): string[] {
   const matches = text.match(/#[^\s#，,。；;]+/g);
   if (matches) allTags.push(...matches);
 
-  return Array.from(new Set(allTags.map((t) => t.replace(/^#/, '').replace(/\[话题\]$/g, '').trim()).filter(Boolean)));
+  return normalizeTags(allTags);
+}
+
+function normalizeTags(tags: unknown[]): string[] {
+  return Array.from(
+    new Set(
+      tags
+        .filter((tag) => typeof tag === 'string' || typeof tag === 'number')
+        .map((tag) => String(tag || '').replace(/^#/, '').replace(/\[话题\]$/g, '').trim())
+        .filter((tag) => tag && tag !== '[object Object]')
+    )
+  );
 }
 
 function detectPlatform(data: any): string {

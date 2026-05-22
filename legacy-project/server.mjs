@@ -6693,8 +6693,9 @@ function collectUniversalImages(data, platform = '') {
 function collectUniversalTags(data) {
   const tags = [];
   const add = (value) => {
+    if (typeof value !== 'string' && typeof value !== 'number') return;
     const tag = String(value || '').replace(/^#/, '').replace(/\[话题\]$/g, '').trim();
-    if (tag) tags.push(tag);
+    if (tag && tag !== '[object Object]') tags.push(tag);
   };
   const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data?.note || data?.photo || data || {};
 

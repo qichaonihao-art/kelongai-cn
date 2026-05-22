@@ -112,6 +112,17 @@ function formatDuration(seconds: number): string {
   return `${s}秒`;
 }
 
+function normalizeDisplayTags(tags?: string[]): string[] {
+  if (!Array.isArray(tags)) return [];
+  return Array.from(
+    new Set(
+      tags
+        .map((tag) => String(tag || '').replace(/^#/, '').trim())
+        .filter((tag) => tag && tag !== '[object Object]')
+    )
+  );
+}
+
 export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
   const [isResolving, setIsResolving] = useState(false);
@@ -435,6 +446,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const tikhubConfigured = configStatus?.tikhubApiToken === true;
   const arkApiKeyConfigured = configStatus?.arkApiKey === true;
   const dashscopeConfigured = configStatus?.dashscopeApiKey === true;
+  const displayTags = normalizeDisplayTags(result?.tags);
 
   return (
     <div className="relative isolate min-h-screen overflow-x-hidden bg-[#F3F5F9] flex flex-col text-slate-900">
@@ -788,9 +800,9 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                         </div>
                       )}
 
-                      {result.tags && result.tags.length > 0 && (
+                      {displayTags.length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
-                          {result.tags.map((tag, i) => (
+                          {displayTags.map((tag, i) => (
                             <span key={i} className="rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-0.5 text-[10px] font-bold text-indigo-600">
                               #{tag}
                             </span>
