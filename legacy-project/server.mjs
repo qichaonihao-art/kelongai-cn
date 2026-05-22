@@ -79,12 +79,12 @@ const DEFAULT_SILICONFLOW_VOICE_MODEL = 'FunAudioLLM/CosyVoice2-0.5B';
 const DEFAULT_SILICONFLOW_RESPONSE_FORMAT = 'wav';
 const SILICONFLOW_VOICE_UPLOAD_TIMEOUT_MS = 2 * 60 * 1000;
 const SILICONFLOW_TTS_TIMEOUT_MS = 2 * 60 * 1000;
-const DEFAULT_DOUYIN_VIDEO_RESOLVE_TIMEOUT_MS = 2 * 60 * 1000;
-const DEFAULT_DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS = 45 * 1000;
-const DEFAULT_DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS = 5 * 60 * 1000;
-const DEFAULT_DOUYIN_ASR_TIMEOUT_MS = 12 * 60 * 1000;
-const DEFAULT_DOUYIN_TRANSCRIPT_TOTAL_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_DOUYIN_VIDEO_RESOLVE_TIMEOUT_MS = 30 * 1000;
+const DEFAULT_DOUYIN_VIDEO_DOWNLOAD_TIMEOUT_MS = 3 * 60 * 1000;
+const DEFAULT_DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS = 20 * 1000;
+const DEFAULT_DOUYIN_AUDIO_EXTRACT_TIMEOUT_MS = 2 * 60 * 1000;
+const DEFAULT_DOUYIN_ASR_TIMEOUT_MS = 3 * 60 * 1000;
+const DEFAULT_DOUYIN_TRANSCRIPT_TOTAL_TIMEOUT_MS = 5 * 60 * 1000;
 const DOUYIN_VIDEO_RESOLVE_TIMEOUT_MS = readTimeoutMs(
   process.env.DOUYIN_VIDEO_RESOLVE_TIMEOUT_MS || process.env.DOUYIN_DOWNLOAD_TIMEOUT_MS,
   DEFAULT_DOUYIN_VIDEO_RESOLVE_TIMEOUT_MS,
@@ -5467,29 +5467,51 @@ async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeI
     let highQualityResult = null;
 
     if (normalizedUrl) {
-      try {
-        tikhubResult = await callTikHubVideoDetailByShareUrl({ shareUrl: normalizedUrl, requestId, deadlineAt });
-      } catch (error) {
-        tikhubError = error;
-      }
+      // Fire detail + high-quality requests in parallel for speed
+      const detailPromise = callTikHubVideoDetailByShareUrl({
+        shareUrl: normalizedUrl,
+        requestId,
+        deadlineAt
+      }).catch((err) => ({ __error: true, message: err.message }));
 
-      try {
-        highQualityResult = await callTikHubHighQualityPlayUrl({ shareUrl: normalizedUrl, requestId, deadlineAt });
-      } catch {}
+      const hqPromise = callTikHubHighQualityPlayUrl({
+        shareUrl: normalizedUrl,
+        requestId,
+        deadlineAt
+      }).catch(() => null);
+
+      const detailResult = await detailPromise;
+      if (detailResult && !detailResult.__error) {
+        tikhubResult = detailResult;
+      } else {
+        tikhubError = detailResult;
+      }
+      highQualityResult = await hqPromise;
     }
 
+    // If share_url failed, try aweme_id; also fetch HQ for aweme_id
     if (!tikhubResult && awemeId) {
-      try {
-        tikhubResult = await callTikHubVideoDetailByAwemeId({ awemeId, requestId, deadlineAt });
-      } catch (error) {
-        tikhubError = tikhubError || error;
-      }
-    }
+      const detailPromise = callTikHubVideoDetailByAwemeId({
+        awemeId,
+        requestId,
+        deadlineAt
+      }).catch((err) => ({ __error: true, message: err.message }));
 
-    if (!highQualityResult && awemeId) {
-      try {
-        highQualityResult = await callTikHubHighQualityPlayUrl({ awemeId, requestId, deadlineAt });
-      } catch {}
+      const hqPromise = callTikHubHighQualityPlayUrl({
+        awemeId,
+        requestId,
+        deadlineAt
+      }).catch(() => null);
+
+      const detailResult = await detailPromise;
+      if (detailResult && !detailResult.__error) {
+        tikhubResult = detailResult;
+      } else {
+        tikhubError = tikhubError || detailResult;
+      }
+      if (!highQualityResult) {
+        highQualityResult = await hqPromise;
+      }
     }
 
     if (tikhubResult) {
@@ -6053,50 +6075,131 @@ async function callTikHubDouyinVideoDetail({ path, shareUrl, awemeId, requestId,
 }
 
 async function callTikHubVideoDetailByShareUrl({ shareUrl, requestId, deadlineAt = 0 }) {
-  // Try web endpoint first (returns full-quality video with audio)
-  try {
-    return await callTikHubDouyinVideoDetail({
-      path: '/api/v1/douyin/web/fetch_one_video_by_share_url',
-      shareUrl,
-      requestId,
-      deadlineAt
-    });
-  } catch (webError) {
-    console.log('[douyin resolve] web endpoint failed, falling back to app endpoint', {
-      requestId,
-      webError: webError.message
-    });
-  }
-  // Fallback to app endpoint
-  return callTikHubDouyinVideoDetail({
+  // Race web + app endpoints in parallel for fastest response
+  const webPromise = callTikHubDouyinVideoDetail({
+    path: '/api/v1/douyin/web/fetch_one_video_by_share_url',
+    shareUrl,
+    requestId,
+    deadlineAt
+  }).catch((err) => ({ __error: true, __source: 'web', message: err.message }));
+
+  const appPromise = callTikHubDouyinVideoDetail({
     path: '/api/v1/douyin/app/v3/fetch_one_video_by_share_url',
     shareUrl,
     requestId,
     deadlineAt
+  }).catch((err) => ({ __error: true, __source: 'app', message: err.message }));
+
+  const [webResult, appResult] = await Promise.all([webPromise, appPromise]);
+
+  const webOk = webResult && !webResult.__error;
+  const appOk = appResult && !appResult.__error;
+
+  if (webOk && appOk) {
+    // Merge candidates from both endpoints, prefer web's metadata but keep all URLs
+    const mergedCandidates = [
+      ...(webResult.downloadUrlCandidates || []),
+      ...(appResult.downloadUrlCandidates || [])
+    ].filter((c) => c?.url);
+    const seen = new Set();
+    const uniqueCandidates = mergedCandidates.filter((c) => {
+      if (seen.has(c.url)) return false;
+      seen.add(c.url);
+      return true;
+    });
+    // Prefer web payload for metadata, but use the merged candidate list
+    return {
+      videoId: webResult.videoId || appResult.videoId,
+      downloadUrl: pickBestDouyinDownloadCandidate(uniqueCandidates)?.url || webResult.downloadUrl || appResult.downloadUrl,
+      downloadUrlCandidates: uniqueCandidates,
+      caption: webResult.caption || appResult.caption,
+      authorName: webResult.authorName || appResult.authorName,
+      duration: webResult.duration || appResult.duration || 0,
+      videoData: webResult.videoData || appResult.videoData || null
+    };
+  }
+
+  if (webOk) {
+    return webResult;
+  }
+  if (appOk) {
+    return appResult;
+  }
+
+  console.error('[douyin resolve] both web and app endpoints failed', {
+    requestId,
+    webError: webResult?.message,
+    appError: appResult?.message
+  });
+  throw createDouyinResolveError({
+    stage: 'tikhub_video_data_missing_download_url_share_url',
+    statusCode: 502,
+    message: 'TikHub 视频详情获取失败',
+    detail: `web: ${webResult?.message || 'failed'}, app: ${appResult?.message || 'failed'}`
   });
 }
 
 async function callTikHubVideoDetailByAwemeId({ awemeId, requestId, deadlineAt = 0 }) {
-  // Try web endpoint first (returns full-quality video with audio)
-  try {
-    return await callTikHubDouyinVideoDetail({
-      path: '/api/v1/douyin/web/fetch_one_video',
-      awemeId,
-      requestId,
-      deadlineAt
-    });
-  } catch (webError) {
-    console.log('[douyin resolve] web endpoint failed, falling back to app endpoint', {
-      requestId,
-      webError: webError.message
-    });
-  }
-  // Fallback to app endpoint
-  return callTikHubDouyinVideoDetail({
+  // Race web + app endpoints in parallel for fastest response
+  const webPromise = callTikHubDouyinVideoDetail({
+    path: '/api/v1/douyin/web/fetch_one_video',
+    awemeId,
+    requestId,
+    deadlineAt
+  }).catch((err) => ({ __error: true, __source: 'web', message: err.message }));
+
+  const appPromise = callTikHubDouyinVideoDetail({
     path: '/api/v1/douyin/app/v3/fetch_one_video',
     awemeId,
     requestId,
     deadlineAt
+  }).catch((err) => ({ __error: true, __source: 'app', message: err.message }));
+
+  const [webResult, appResult] = await Promise.all([webPromise, appPromise]);
+
+  const webOk = webResult && !webResult.__error;
+  const appOk = appResult && !appResult.__error;
+
+  if (webOk && appOk) {
+    const mergedCandidates = [
+      ...(webResult.downloadUrlCandidates || []),
+      ...(appResult.downloadUrlCandidates || [])
+    ].filter((c) => c?.url);
+    const seen = new Set();
+    const uniqueCandidates = mergedCandidates.filter((c) => {
+      if (seen.has(c.url)) return false;
+      seen.add(c.url);
+      return true;
+    });
+    return {
+      videoId: webResult.videoId || appResult.videoId,
+      downloadUrl: pickBestDouyinDownloadCandidate(uniqueCandidates)?.url || webResult.downloadUrl || appResult.downloadUrl,
+      downloadUrlCandidates: uniqueCandidates,
+      caption: webResult.caption || appResult.caption,
+      authorName: webResult.authorName || appResult.authorName,
+      duration: webResult.duration || appResult.duration || 0,
+      videoData: webResult.videoData || appResult.videoData || null
+    };
+  }
+
+  if (webOk) {
+    return webResult;
+  }
+  if (appOk) {
+    return appResult;
+  }
+
+  console.error('[douyin resolve] both web and app endpoints failed (awemeId)', {
+    requestId,
+    awemeId,
+    webError: webResult?.message,
+    appError: appResult?.message
+  });
+  throw createDouyinResolveError({
+    stage: 'tikhub_video_data_missing_download_url_aweme_id',
+    statusCode: 502,
+    message: 'TikHub 视频详情获取失败',
+    detail: `web: ${webResult?.message || 'failed'}, app: ${appResult?.message || 'failed'}`
   });
 }
 
