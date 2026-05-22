@@ -114,11 +114,6 @@ function formatDuration(seconds: number): string {
   return `${s}秒`;
 }
 
-function buildPreviewVideoSrc(result: DouyinResolveResult | null) {
-  if (!result?.downloadUrl) return '';
-  return `/api/douyin/video-stream?downloadUrl=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId || '')}&platform=${encodeURIComponent(result.platform || 'douyin')}`;
-}
-
 export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
   const [isResolving, setIsResolving] = useState(false);
@@ -142,7 +137,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [localVideoUrl, setLocalVideoUrl] = useState<string>('');
   const resultRef = useRef<HTMLDivElement>(null);
   const localVideoInputRef = useRef<HTMLInputElement>(null);
-  const previewVideoSrc = buildPreviewVideoSrc(result);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -1097,19 +1091,8 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
         </AnimatePresence>
       </main>
 
-      {previewVideoSrc && (
-        <video
-          src={previewVideoSrc}
-          preload="metadata"
-          playsInline
-          muted
-          aria-hidden="true"
-          className="pointer-events-none fixed left-0 top-0 h-px w-px opacity-0"
-        />
-      )}
-
       {/* 视频预览弹窗 */}
-      {showVideoPreview && previewVideoSrc && (
+      {showVideoPreview && result?.downloadUrl && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
           onClick={() => setShowVideoPreview(false)}
@@ -1126,10 +1109,9 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               <X className="size-4" />
             </button>
             <video
-              src={previewVideoSrc}
+              src={`/api/douyin/video-stream?downloadUrl=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId || '')}&platform=${encodeURIComponent(result.platform || 'douyin')}`}
               controls
               autoPlay
-              preload="auto"
               className="max-h-[78vh] max-w-[92vw] bg-black"
               playsInline
               onError={() => {
