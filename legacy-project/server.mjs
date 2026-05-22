@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
@@ -4436,13 +4436,19 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
   const videoExtension = getFallbackExtensionFromUrl(fallbackCandidate.url);
   const videoPath = path.join(UPLOAD_TEMP_DIR, `${requestId}_douyin${videoExtension}`);
   const attemptedHosts = new Set();
+  const attemptedUrls = new Set();
   let firstSelectedHost = '';
   let previousAttemptHost = '';
   let lastError = null;
+  const maxAttempts = Math.max(
+    DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS.length,
+    Math.min(normalizedCandidates.length || 1, 12)
+  );
 
-  for (let attempt = 0; attempt < DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS.length; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (attempt > 0) {
-      await sleep(DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS[attempt]);
+      const delayMs = DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS[Math.min(attempt, DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS.length - 1)] || 0;
+      if (delayMs > 0) await sleep(delayMs);
     }
 
     const attemptStartedAt = Date.now();
@@ -4453,14 +4459,19 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
         lastError?.stage === 'douyin_video_download_network_error' ||
         lastError?.stage === 'douyin_video_download_http_5xx' ||
         lastError?.stage === 'douyin_video_download_empty_file' ||
-        lastError?.stage === 'douyin_video_download_invalid_file'
+        lastError?.stage === 'douyin_video_download_invalid_file' ||
+        lastError?.stage === 'douyin_video_download_no_audio'
       );
     const rankedCandidates = rankDouyinDownloadCandidates(normalizedCandidates, {
       attemptedHosts: shouldSwitchHost ? attemptedHosts : new Set()
     });
-    const alternateHostCandidates = rankedCandidates.filter((candidate) => candidate.host && !attemptedHosts.has(candidate.host));
-    const currentCandidate = alternateHostCandidates[0] || rankedCandidates[0] || fallbackCandidate;
+    const untriedCandidates = rankedCandidates.filter((candidate) => candidate.url && !attemptedUrls.has(candidate.url));
+    const alternateHostCandidates = untriedCandidates.filter((candidate) => candidate.host && !attemptedHosts.has(candidate.host));
+    const currentCandidate = alternateHostCandidates[0] || untriedCandidates[0] || rankedCandidates[0] || fallbackCandidate;
     const currentDownloadUrl = currentCandidate.url;
+    if (attemptedUrls.has(currentDownloadUrl) && attemptedUrls.size >= normalizedCandidates.length) {
+      break;
+    }
     const downloadHost = currentCandidate.host || getHostnameFromUrl(currentDownloadUrl);
     const currentCandidateRank = rankedCandidates.findIndex((candidate) => candidate.url === currentDownloadUrl) + 1;
     const retrySwitchedHost = attempt > 0 && previousAttemptHost && downloadHost !== previousAttemptHost ? downloadHost : '';
@@ -4468,6 +4479,7 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
       firstSelectedHost = downloadHost;
     }
     attemptedHosts.add(downloadHost);
+    attemptedUrls.add(currentDownloadUrl);
     updateDouyinDownloadHostStats(downloadHost, 'selected');
     const { timeoutMs } = getStageTimeoutContext({
       parentDeadlineAt,
@@ -4778,7 +4790,8 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
         lastError.curlCode = curlCode;
       }
 
-      const canRetry = attempt < DOUYIN_VIDEO_DOWNLOAD_RETRY_DELAYS_MS.length - 1 && shouldRetryDouyinVideoDownloadError(lastError);
+      const hasUntriedCandidate = normalizedCandidates.some((candidate) => candidate?.url && !attemptedUrls.has(candidate.url));
+      const canRetry = attempt < maxAttempts - 1 && hasUntriedCandidate && shouldRetryDouyinVideoDownloadError(lastError);
       const hostStatsOnFailure = getDouyinDownloadHostStatsSnapshot(downloadHost);
 
       logDouyinTranscriptEvent({
@@ -11023,7 +11036,9 @@ async function handleDouyinDownloadVideo(req, res) {
       return;
     }
 
-    // Douyin platform: use original parallel competitive download
+    // Douyin platform: download to a temp file first and verify it has an
+    // audio stream. Some Douyin CDN candidates are video-only; streaming the
+    // fastest candidate directly can produce silent downloads.
     const normalizedCandidates = normalizeDouyinDownloadCandidates(downloadUrlCandidates, downloadUrl);
     const rankedCandidates = rankDouyinDownloadCandidates(normalizedCandidates, { respectCooldown: true });
 
@@ -11032,104 +11047,49 @@ async function handleDouyinDownloadVideo(req, res) {
       candidateCount: rankedCandidates.length,
       candidateHosts: rankedCandidates.slice(0, 3).map(c => c.host),
       method: req.method,
-      mode: 'parallel'
+      mode: 'validated_audio_download'
     });
 
-    const MAX_PARALLEL = 3;
-    const parallelCandidates = rankedCandidates.slice(0, MAX_PARALLEL);
-
-    const winner = await raceDouyinDownloadCandidates(parallelCandidates, {
-      logDownload,
-      timeoutMs: DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS
-    });
-
-    if (!winner || !winner.ok) {
-      logDownload('all_candidates_failed', {
-        attemptedCount: parallelCandidates.length,
-        candidateHosts: parallelCandidates.map(c => c.host)
+    let tempVideo = null;
+    try {
+      tempVideo = await downloadDouyinVideoToTemp({
+        downloadUrl,
+        downloadUrlCandidates: rankedCandidates,
+        requestId,
+        referer: 'https://www.douyin.com/'
       });
 
-      for (const c of parallelCandidates) {
-        updateDouyinDownloadHostStats(c.host, 'failure');
-      }
+      const responseHeaders = {
+        'Content-Type': 'video/mp4',
+        'Content-Disposition': `attachment; filename="${fileName}"`,
+        'Cache-Control': 'no-store',
+        'Content-Length': String(tempVideo.fileSize || 0)
+      };
 
-      if (!res.headersSent) {
-        sendJson(res, 502, {
-          error: '视频下载失败',
-          detail: '所有下载源均不可用，请稍后重试。'
-        });
-      }
-      return;
-    }
+      res.writeHead(200, responseHeaders);
 
-    const { res: upstreamRes, candidate, ttfbMs, fetchStartAt } = winner;
-    updateDouyinDownloadHostStats(candidate.host, 'selected');
+      logDownload('client_stream_start', {
+        selectedHost: tempVideo.host,
+        selectedDownloadUrl: tempVideo.effectiveUrl || '',
+        fileSize: tempVideo.fileSize,
+        ffprobeDurationSeconds: tempVideo.validation?.durationSeconds || 0,
+        mode: 'validated_audio_download'
+      });
 
-    const responseHeaders = {
-      'Content-Type': 'video/mp4',
-      'Content-Disposition': `attachment; filename="${fileName}"`,
-      'Cache-Control': 'no-store',
-    };
+      await pipeline(createReadStream(tempVideo.videoPath), res);
 
-    const upstreamContentLength = upstreamRes.headers.get('content-length');
-    if (upstreamContentLength) {
-      responseHeaders['Content-Length'] = upstreamContentLength;
-    }
-
-    res.writeHead(200, responseHeaders);
-
-    const clientStartAt = Date.now();
-    logDownload('client_stream_start', {
-      selectedHost: candidate.host,
-      selectedSource: candidate.source || '',
-      selectedDownloadUrl: candidate.url || '',
-      ttfbMs,
-      headToClientMs: clientStartAt - startedAt
-    });
-
-    if (!upstreamRes.body) {
-      res.end();
-      return;
-    }
-
-    let bytesStreamed = 0;
-    const reader = upstreamRes.body.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(value);
-        bytesStreamed += value?.byteLength || 0;
-      }
+      logDownload('stream_finished', {
+        winner: tempVideo.host,
+        videoId,
+        bytesStreamed: tempVideo.fileSize,
+        totalDurationMs: Date.now() - startedAt,
+        mode: 'validated_audio_download'
+      });
     } finally {
-      reader.releaseLock();
+      if (tempVideo?.videoPath) {
+        await unlink(tempVideo.videoPath).catch(() => {});
+      }
     }
-    res.end();
-
-    const totalMs = Date.now() - startedAt;
-    const upstreamMs = Date.now() - fetchStartAt;
-    const totalDurationMs = upstreamMs;
-    updateDouyinDownloadHostStats(candidate.host, 'success', { ttfbMs, totalDurationMs });
-
-    const rollingTtfb = getDouyinDownloadHostRollingAverage(candidate.host, 'ttfb');
-    const rollingDuration = getDouyinDownloadHostRollingAverage(candidate.host, 'totalDuration');
-    const cooldownStatus = isDouyinDownloadHostInCooldown(candidate.host);
-    const hostStats = getDouyinDownloadHostStatsWithTiming(candidate.host);
-
-    logDownload('stream_finished', {
-      winner: candidate.host,
-      videoId,
-      bytesStreamed,
-      ttfbMs,
-      upstreamDurationMs: upstreamMs,
-      totalDurationMs: totalMs,
-      rollingTtfbAvg: rollingTtfb.avgMs,
-      rollingTtfbSamples: rollingTtfb.sampleCount,
-      rollingDurationAvg: rollingDuration.avgMs,
-      rollingDurationSamples: rollingDuration.sampleCount,
-      consecutiveFailures: hostStats.consecutiveFailures,
-      inCooldown: cooldownStatus.inCooldown
-    });
   } catch (error) {
     if (!res.headersSent) {
       sendJson(res, error?.statusCode || 500, {
