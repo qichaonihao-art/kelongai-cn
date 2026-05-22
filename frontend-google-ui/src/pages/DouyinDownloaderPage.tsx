@@ -135,10 +135,41 @@ function buildVideoPreviewSources(result: DouyinResolveResult | null) {
 
   if (!directUrls.length) return [];
 
-  const directSources = directUrls.map((url) => ({ url, mode: 'direct' as const }));
-  const proxySources = directUrls.map((url) => ({ url: buildPreviewProxyUrl(result, url), mode: 'proxy' as const }));
+  const fastDirectUrls = directUrls.slice(0, 4);
+  const directSources = fastDirectUrls.map((url) => ({ url, mode: 'direct' as const }));
+  const proxySources = fastDirectUrls.slice(0, 2).map((url) => ({ url: buildPreviewProxyUrl(result, url), mode: 'proxy' as const }));
 
   return [...directSources, ...proxySources];
+}
+
+function warmVideoPreviewSource(sourceUrl: string, timeoutMs = 2800) {
+  return new Promise<HTMLVideoElement | null>((resolve) => {
+    const video = document.createElement('video');
+    let settled = false;
+    const finish = (player: HTMLVideoElement | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      video.onloadeddata = null;
+      video.oncanplay = null;
+      video.onerror = null;
+      if (!player) {
+        video.removeAttribute('src');
+        video.load();
+      }
+      resolve(player);
+    };
+    const timeoutId = window.setTimeout(() => finish(null), timeoutMs);
+
+    video.preload = 'auto';
+    video.muted = true;
+    video.playsInline = true;
+    video.onloadeddata = () => finish(video);
+    video.oncanplay = () => finish(video);
+    video.onerror = () => finish(null);
+    video.src = sourceUrl;
+    video.load();
+  });
 }
 
 export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownloaderPageProps) {
@@ -158,6 +189,8 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [showDiff, setShowDiff] = useState(true);
   const [showVideoPreview, setShowVideoPreview] = useState(false);
   const [previewSourceIndex, setPreviewSourceIndex] = useState(0);
+  const [previewReadyIndex, setPreviewReadyIndex] = useState<number | null>(null);
+  const [isPreviewWarming, setIsPreviewWarming] = useState(false);
   const [showImages, setShowImages] = useState(false);
   const [isLocalTranscriptLoading, setIsLocalTranscriptLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'link' | 'local'>('link');
@@ -165,6 +198,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [localVideoUrl, setLocalVideoUrl] = useState<string>('');
   const resultRef = useRef<HTMLDivElement>(null);
   const localVideoInputRef = useRef<HTMLInputElement>(null);
+  const previewWarmVideoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -174,6 +208,11 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     return () => {
       if (localVideoUrl) {
         URL.revokeObjectURL(localVideoUrl);
+      }
+      if (previewWarmVideoRef.current) {
+        previewWarmVideoRef.current.removeAttribute('src');
+        previewWarmVideoRef.current.load();
+        previewWarmVideoRef.current = null;
       }
     };
   }, [localVideoUrl]);
@@ -194,6 +233,56 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       cancelled = true;
     };
   }, []);
+
+  const videoPreviewSources = useMemo(() => buildVideoPreviewSources(result), [result]);
+  const activePreviewSource = videoPreviewSources[previewSourceIndex] || videoPreviewSources[0] || null;
+
+  useEffect(() => {
+    let cancelled = false;
+    setPreviewSourceIndex(0);
+    setPreviewReadyIndex(null);
+    setIsPreviewWarming(false);
+
+    if (previewWarmVideoRef.current) {
+      previewWarmVideoRef.current.removeAttribute('src');
+      previewWarmVideoRef.current.load();
+      previewWarmVideoRef.current = null;
+    }
+
+    if (!videoPreviewSources.length) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    async function warmPreview() {
+      setIsPreviewWarming(true);
+      for (let index = 0; index < videoPreviewSources.length; index += 1) {
+        const warmedPlayer = await warmVideoPreviewSource(videoPreviewSources[index].url);
+        if (cancelled) {
+          warmedPlayer?.removeAttribute('src');
+          warmedPlayer?.load();
+          return;
+        }
+        if (warmedPlayer) {
+          previewWarmVideoRef.current = warmedPlayer;
+          setPreviewReadyIndex(index);
+          setPreviewSourceIndex(index);
+          setIsPreviewWarming(false);
+          return;
+        }
+      }
+      if (!cancelled) {
+        setIsPreviewWarming(false);
+      }
+    }
+
+    void warmPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [videoPreviewSources]);
 
   async function handleResolve() {
     const nextInput = input.trim();
@@ -445,6 +534,15 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     setOriginalTranscript('');
     setIsPolishing(false);
     setShowDiff(true);
+    setShowVideoPreview(false);
+    setPreviewSourceIndex(0);
+    setPreviewReadyIndex(null);
+    setIsPreviewWarming(false);
+    if (previewWarmVideoRef.current) {
+      previewWarmVideoRef.current.removeAttribute('src');
+      previewWarmVideoRef.current.load();
+      previewWarmVideoRef.current = null;
+    }
     if (localVideoUrl) {
       URL.revokeObjectURL(localVideoUrl);
       setLocalVideoUrl('');
@@ -459,8 +557,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
 
   const fallbackCaption = transcriptResult?.fallbackCaption || result?.fallbackCaption || '';
   const hasResult = !!result || !!transcriptResult;
-  const videoPreviewSources = useMemo(() => buildVideoPreviewSources(result), [result]);
-  const activePreviewSource = videoPreviewSources[previewSourceIndex] || videoPreviewSources[0] || null;
   const siliconFlowConfigured = configStatus?.siliconFlowApiKey === true;
   const tikhubConfigured = configStatus?.tikhubApiToken === true;
   const arkApiKeyConfigured = configStatus?.arkApiKey === true;
@@ -910,13 +1006,14 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       <div className="grid gap-3 sm:grid-cols-2">
                         <button
                           onClick={() => {
-                            setPreviewSourceIndex(0);
+                            setPreviewSourceIndex(previewReadyIndex ?? 0);
                             setShowVideoPreview(true);
                           }}
-                          className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200/80 bg-white/75 text-sm font-bold text-slate-700 shadow-sm transition-all hover:bg-white hover:shadow-md"
+                          disabled={isPreviewWarming && previewReadyIndex === null}
+                          className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200/80 bg-white/75 text-sm font-bold text-slate-700 shadow-sm transition-all hover:bg-white hover:shadow-md disabled:cursor-wait disabled:opacity-60"
                         >
-                          <Play className="size-4" />
-                          预览视频
+                          {isPreviewWarming && previewReadyIndex === null ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
+                          {isPreviewWarming && previewReadyIndex === null ? '准备预览...' : '预览视频'}
                         </button>
 
                         <button
