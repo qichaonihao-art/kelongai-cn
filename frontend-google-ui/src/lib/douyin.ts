@@ -296,13 +296,29 @@ export async function directDownloadDouyinVideoFile(params: {
     throw new Error('缺少 downloadUrl');
   }
 
-  await downloadDouyinVideoFile({
-    videoId: params.videoId,
-    downloadUrl: params.downloadUrl,
-    downloadUrlCandidates: params.downloadUrlCandidates,
-    videoUrls: params.videoUrls,
-    platform: params.platform,
-  });
+  const platform = String(params?.platform || '').trim().toLowerCase();
+
+  // Non-Douyin platforms: use proxy download via form POST.
+  if (platform && platform !== 'douyin') {
+    await downloadDouyinVideoFile({
+      videoId: params.videoId,
+      downloadUrl: params.downloadUrl,
+      downloadUrlCandidates: params.downloadUrlCandidates,
+      videoUrls: params.videoUrls,
+      platform: params.platform,
+    });
+    return;
+  }
+
+  // Douyin platform: open CDN URL directly via anchor for the fastest path.
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.target = '_blank';
+  anchor.rel = 'noopener noreferrer';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
 }
 
 export async function polishDouyinTranscript(options: {
