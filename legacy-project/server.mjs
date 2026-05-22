@@ -5353,35 +5353,19 @@ async function transcribeAudioWithQwen({ audioPath, requestId, segmentIndex = 0,
 }
 
 async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeId, requestId, deadlineAt = 0 }) {
-  try {
-    return await resolveDouyinVideoByHtml({
-      rawUrl: originalUrl,
-      normalizedUrl,
-      awemeId,
-      requestId,
-      deadlineAt
-    });
-  } catch (directError) {
-    const token = readValue(SERVER_CONFIG.tikhubApiToken);
-    if (!token) {
-      throw directError;
-    }
+  const token = readValue(SERVER_CONFIG.tikhubApiToken);
 
-    console.warn('[douyin resolve] switching to TikHub fallback', {
-      requestId,
-      stage: directError?.stage || '',
-      message: directError?.message || ''
-    });
-
-    let fallbackResult = null;
-    let fallbackError = null;
+  // Try TikHub first (more reliable since Douyin anti-bot upgrades)
+  if (token) {
+    let tikhubResult = null;
+    let tikhubError = null;
     let highQualityResult = null;
 
     if (normalizedUrl) {
       try {
-        fallbackResult = await callTikHubVideoDetailByShareUrl({ shareUrl: normalizedUrl, requestId, deadlineAt });
+        tikhubResult = await callTikHubVideoDetailByShareUrl({ shareUrl: normalizedUrl, requestId, deadlineAt });
       } catch (error) {
-        fallbackError = error;
+        tikhubError = error;
       }
 
       try {
@@ -5389,8 +5373,12 @@ async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeI
       } catch {}
     }
 
-    if (!fallbackResult && awemeId) {
-      fallbackResult = await callTikHubVideoDetailByAwemeId({ awemeId, requestId, deadlineAt });
+    if (!tikhubResult && awemeId) {
+      try {
+        tikhubResult = await callTikHubVideoDetailByAwemeId({ awemeId, requestId, deadlineAt });
+      } catch (error) {
+        tikhubError = tikhubError || error;
+      }
     }
 
     if (!highQualityResult && awemeId) {
@@ -5399,57 +5387,61 @@ async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeI
       } catch {}
     }
 
-    if (!fallbackResult) {
-      throw fallbackError || directError;
+    if (tikhubResult) {
+      const mergedDownloadUrlCandidates = [
+        ...(tikhubResult.downloadUrlCandidates || []),
+        ...(highQualityResult?.downloadUrlCandidates || [])
+      ].filter((candidate) => candidate?.url);
+
+      const selectedCandidate =
+        pickBestDouyinDownloadCandidate(mergedDownloadUrlCandidates) ||
+        (tikhubResult.downloadUrl
+          ? {
+              url: tikhubResult.downloadUrl,
+              source: 'tikhub.primary_result',
+              host: getHostnameFromUrl(tikhubResult.downloadUrl)
+            }
+          : null);
+
+      console.log('[douyin resolve] TikHub primary selected download candidate', {
+        requestId,
+        candidateCount: mergedDownloadUrlCandidates.length,
+        selectedSource: selectedCandidate?.source || '',
+        selectedHost: selectedCandidate?.host || ''
+      });
+
+      return {
+        videoId: tikhubResult.videoId,
+        downloadUrl: selectedCandidate?.url || tikhubResult.downloadUrl,
+        downloadUrlCandidates: mergedDownloadUrlCandidates,
+        title: readValue(tikhubResult.caption),
+        caption: '',
+        authorName: tikhubResult.authorName,
+        duration: tikhubResult.duration || 0,
+        videoData: tikhubResult.videoData,
+        normalizedUrl,
+        resolveStrategy: 'tikhub_primary',
+        fallbackCaption: readValue(tikhubResult.caption),
+        fallbackCaptionSource: tikhubResult.caption ? 'tikhub_caption' : 'none'
+      };
     }
 
-    const mergedDownloadUrlCandidates = [
-      ...(fallbackResult.downloadUrlCandidates || []),
-      ...(highQualityResult?.downloadUrlCandidates || [])
-    ].filter((candidate) => candidate?.url);
-
-    const selectedCandidate =
-      pickBestDouyinDownloadCandidate(mergedDownloadUrlCandidates) ||
-      (fallbackResult.downloadUrl
-        ? {
-            url: fallbackResult.downloadUrl,
-            source: 'tikhub.fallback_result',
-            host: getHostnameFromUrl(fallbackResult.downloadUrl)
-          }
-        : null);
-
-    console.log('[douyin resolve] TikHub fallback selected download candidate', {
+    // TikHub failed, log and fall through to direct HTML scraping
+    console.warn('[douyin resolve] TikHub primary failed, falling back to direct HTML scrape', {
       requestId,
-      candidateCount: mergedDownloadUrlCandidates.length,
-      selectedSource: selectedCandidate?.source || '',
-      selectedHost: selectedCandidate?.host || '',
-      candidateRank: rankDouyinDownloadCandidates(mergedDownloadUrlCandidates)
-        .slice(0, 8)
-        .map((candidate, index) => ({
-          rank: index + 1,
-          host: candidate.host || '',
-          source: candidate.source || '',
-          score: candidate.score
-        })),
-      candidateHosts: [...new Set(mergedDownloadUrlCandidates.map((candidate) => candidate.host).filter(Boolean))],
-      candidateSources: mergedDownloadUrlCandidates.map((candidate) => `${candidate.source}:${candidate.host || 'unknown'}`).slice(0, 8)
+      stage: tikhubError?.stage || '',
+      message: tikhubError?.message || ''
     });
-
-    return {
-      videoId: fallbackResult.videoId,
-      downloadUrl: selectedCandidate?.url || fallbackResult.downloadUrl,
-      downloadUrlCandidates: mergedDownloadUrlCandidates,
-      title: readValue(fallbackResult.caption),
-      caption: '',
-      authorName: fallbackResult.authorName,
-      duration: fallbackResult.duration || 0,
-      videoData: fallbackResult.videoData,
-      normalizedUrl,
-      resolveStrategy: 'tikhub_fallback',
-      fallbackCaption: readValue(fallbackResult.caption),
-      fallbackCaptionSource: fallbackResult.caption ? 'tikhub_caption' : 'none'
-    };
   }
+
+  // Fallback: direct HTML scraping (legacy path)
+  return await resolveDouyinVideoByHtml({
+    rawUrl: originalUrl,
+    normalizedUrl,
+    awemeId,
+    requestId,
+    deadlineAt
+  });
 }
 
 function extractTikHubErrorMeta(payload, fallbackText = '') {
