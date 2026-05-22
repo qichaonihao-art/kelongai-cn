@@ -318,7 +318,11 @@ export async function directDownloadDouyinVideoFile(params: {
   platform?: string;
   onProgress?: (loaded: number, total: number) => void;
 }) {
-  const url = String(params?.downloadUrl || '').trim();
+  // Prefer candidates explicitly marked with audio
+  const candidates = params?.downloadUrlCandidates || [];
+  const audioCandidates = candidates.filter((c) => c.hasAudio === true);
+  const preferredCandidate = audioCandidates[0] || candidates[0];
+  const url = String(preferredCandidate?.url || params?.downloadUrl || '').trim();
   if (!url) {
     throw new Error('缺少 downloadUrl');
   }

@@ -495,9 +495,10 @@ async function getVideoDurationSeconds(filePath) {
 }
 
 async function validateDownloadedVideoFile(filePath, timeoutMs = 30000) {
-  let stdout = '';
+  let formatStdout = '';
+  let streamsStdout = '';
   try {
-    const result = await execFileAsync('ffprobe', [
+    const formatResult = await execFileAsync('ffprobe', [
       '-v', 'error',
       '-show_entries', 'format=duration,size,format_name',
       '-of', 'json',
@@ -506,7 +507,18 @@ async function validateDownloadedVideoFile(filePath, timeoutMs = 30000) {
       timeout: Math.max(1000, timeoutMs),
       killSignal: 'SIGKILL'
     });
-    stdout = result.stdout;
+    formatStdout = formatResult.stdout;
+
+    const streamsResult = await execFileAsync('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'stream=codec_type',
+      '-of', 'json',
+      filePath
+    ], {
+      timeout: Math.max(1000, timeoutMs),
+      killSignal: 'SIGKILL'
+    });
+    streamsStdout = streamsResult.stdout;
   } catch (error) {
     if (error?.code === 'ENOENT') {
       throw createDouyinResolveError({
@@ -519,19 +531,30 @@ async function validateDownloadedVideoFile(filePath, timeoutMs = 30000) {
     throw error;
   }
 
-  let parsed = null;
+  let formatParsed = null;
+  let streamsParsed = null;
   try {
-    parsed = JSON.parse(String(stdout || '{}'));
+    formatParsed = JSON.parse(String(formatStdout || '{}'));
+    streamsParsed = JSON.parse(String(streamsStdout || '{}'));
   } catch {
     throw new Error('ffprobe output is not valid JSON');
   }
 
-  const durationSeconds = Number.parseFloat(String(parsed?.format?.duration || '0'));
-  const formatName = readValue(parsed?.format?.format_name);
-  const probedSize = Number.parseFloat(String(parsed?.format?.size || '0'));
+  const durationSeconds = Number.parseFloat(String(formatParsed?.format?.duration || '0'));
+  const formatName = readValue(formatParsed?.format?.format_name);
+  const probedSize = Number.parseFloat(String(formatParsed?.format?.size || '0'));
 
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
     throw new Error('ffprobe returned invalid duration');
+  }
+
+  // Check for audio stream
+  const streams = Array.isArray(streamsParsed?.streams) ? streamsParsed.streams : [];
+  const hasAudioStream = streams.some((s) => s?.codec_type === 'audio');
+  if (!hasAudioStream) {
+    const error = new Error('视频文件缺少音频流');
+    error.noAudioStream = true;
+    throw error;
   }
 
   return {
@@ -3435,6 +3458,7 @@ function scoreDouyinDownloadCandidate(candidate) {
   score -= hostStats.http4xx * 20;
   score -= hostStats.empty * 30;
   score -= hostStats.invalid * 30;
+  score -= hostStats.noAudio * 35;
   score -= hostStats.network * 12;
 
   const observedAttempts = Math.max(1, hostStats.attempts);
@@ -4116,7 +4140,7 @@ function updateDouyinDownloadHostStats(host, outcome = 'selected', timing = null
     if (timing?.totalDurationMs && Number.isFinite(timing.totalDurationMs)) {
       recordDouyinDownloadHostTotalDuration(normalizedHost, timing.totalDurationMs);
     }
-  } else if (['failure', 'timeout', 'http4xx', 'http5xx', 'empty', 'invalid', 'network'].includes(outcome)) {
+  } else if (['failure', 'timeout', 'http4xx', 'http5xx', 'empty', 'invalid', 'network', 'noAudio'].includes(outcome)) {
     incrementDouyinDownloadHostConsecutiveFailures(normalizedHost);
   }
 
@@ -4139,7 +4163,8 @@ function getDouyinDownloadHostStatsSnapshot(host) {
     http5xx: 0,
     empty: 0,
     invalid: 0,
-    network: 0
+    network: 0,
+    noAudio: 0
   };
 
   return {
@@ -4211,7 +4236,7 @@ function shouldRetryDouyinVideoDownloadError(error) {
     return true;
   }
 
-  if (stage === 'douyin_video_download_empty_file' || stage === 'douyin_video_download_invalid_file') {
+  if (stage === 'douyin_video_download_empty_file' || stage === 'douyin_video_download_invalid_file' || stage === 'douyin_video_download_no_audio') {
     return true;
   }
 
@@ -4606,6 +4631,28 @@ async function downloadDouyinVideoToTemp({ downloadUrl, downloadUrlCandidates = 
         await unlink(videoPath).catch(() => {});
         if (probeError?.stage === 'ffprobe_missing') {
           throw annotateDouyinError(probeError, {
+            failedStage: 'video_download',
+            timeoutMs,
+            targetPath: videoPath,
+            host: downloadHost,
+            curlCode: 0,
+            curlStderr: stderrSummary,
+            curlHttpStatus: httpStatus,
+            effectiveUrl,
+            firstSelectedHost,
+            retrySwitchedHost
+          });
+        }
+        if (probeError?.noAudioStream === true) {
+          updateDouyinDownloadHostStats(downloadHost, 'noAudio');
+          updateDouyinDownloadHostStats(downloadHost, 'failure');
+          throw annotateDouyinError(createDouyinResolveError({
+            stage: 'douyin_video_download_no_audio',
+            statusCode: 502,
+            upstreamStatus: httpStatus,
+            message: '视频下载失败',
+            detail: `视频文件已下载，但缺少音频流，将尝试其他下载地址。`
+          }), {
             failedStage: 'video_download',
             timeoutMs,
             targetPath: videoPath,
@@ -5451,8 +5498,12 @@ async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeI
         ...(highQualityResult?.downloadUrlCandidates || [])
       ].filter((candidate) => candidate?.url);
 
+      // Prefer candidates explicitly marked with audio
+      const audioCandidates = mergedDownloadUrlCandidates.filter((c) => c.hasAudio === true);
+      const candidatePool = audioCandidates.length > 0 ? audioCandidates : mergedDownloadUrlCandidates;
+
       const selectedCandidate =
-        pickBestDouyinDownloadCandidate(mergedDownloadUrlCandidates) ||
+        pickBestDouyinDownloadCandidate(candidatePool) ||
         (tikhubResult.downloadUrl
           ? {
               url: tikhubResult.downloadUrl,
@@ -5464,8 +5515,10 @@ async function resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeI
       console.log('[douyin resolve] TikHub primary selected download candidate', {
         requestId,
         candidateCount: mergedDownloadUrlCandidates.length,
+        audioCandidateCount: audioCandidates.length,
         selectedSource: selectedCandidate?.source || '',
-        selectedHost: selectedCandidate?.host || ''
+        selectedHost: selectedCandidate?.host || '',
+        selectedHasAudio: selectedCandidate?.hasAudio
       });
 
       return {
