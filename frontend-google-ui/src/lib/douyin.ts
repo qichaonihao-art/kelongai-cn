@@ -281,15 +281,33 @@ export async function downloadDouyinVideoFile(params: {
     .replace(/[^a-zA-Z0-9_-]+/g, '')
     .slice(0, 64);
   const fileName = buildDownloadFileName(safeVideoId);
-  const searchParams = new URLSearchParams({
+
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = '/api/douyin/video-stream';
+  form.target = '_blank';
+  form.style.display = 'none';
+
+  const fields: Record<string, string> = {
     downloadUrl: params.downloadUrl,
     videoId: params.videoId || '',
     platform: params.platform || 'douyin',
     fileName,
     download: '1',
-  });
+  };
 
-  await triggerBackgroundDownload(`/api/douyin/video-stream?${searchParams.toString()}`);
+  for (const [key, value] of Object.entries(fields)) {
+    if (!value) continue;
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = key;
+    input.value = value;
+    form.appendChild(input);
+  }
+
+  document.body.appendChild(form);
+  form.submit();
+  document.body.removeChild(form);
 }
 
 export async function directDownloadDouyinVideoFile(params: {

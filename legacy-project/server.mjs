@@ -10924,11 +10924,29 @@ async function handleDouyinDownloadVideo(req, res) {
 
 async function handleDouyinVideoStream(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const downloadUrl = url.searchParams.get('downloadUrl') || url.searchParams.get('url');
-  const videoId = url.searchParams.get('videoId') || '';
-  const platform = readValue(url.searchParams.get('platform')) || 'douyin';
-  const asDownload = url.searchParams.get('download') === '1';
-  const fileName = readValue(url.searchParams.get('fileName')) || buildDouyinVideoDownloadFileName(videoId);
+  let downloadUrl = url.searchParams.get('downloadUrl') || url.searchParams.get('url');
+  let videoId = url.searchParams.get('videoId') || '';
+  let platform = readValue(url.searchParams.get('platform')) || 'douyin';
+  let asDownload = url.searchParams.get('download') === '1';
+  let fileName = readValue(url.searchParams.get('fileName')) || '';
+
+  // Support POST body for long URLs (avoid HTTP 414)
+  if (req.method === 'POST') {
+    try {
+      const body = await readRequestBody(req);
+      downloadUrl = readValue(body?.downloadUrl || body?.url) || downloadUrl;
+      videoId = readValue(body?.videoId) || videoId;
+      platform = readValue(body?.platform) || platform;
+      if (body?.download === '1' || body?.download === true) asDownload = true;
+      fileName = readValue(body?.fileName) || fileName;
+    } catch {
+      // ignore body parse error, fall back to query params
+    }
+  }
+
+  if (!fileName) {
+    fileName = buildDouyinVideoDownloadFileName(videoId);
+  }
 
   if (!downloadUrl) {
     sendJson(res, 400, { error: '缺少下载地址参数' });
@@ -11302,7 +11320,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/douyin/video-stream') {
+  if ((req.method === 'GET' || req.method === 'POST') && url.pathname === '/api/douyin/video-stream') {
     await handleDouyinVideoStream(req, res);
     return;
   }
