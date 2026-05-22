@@ -1107,7 +1107,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               <X className="size-4" />
             </button>
             <video
-              src={`/api/douyin/video-stream?url=${encodeURIComponent(result?.videoUrls?.[0] || result?.downloadUrl || '')}&videoId=${encodeURIComponent(result?.videoId || '')}`}
+              src={`/api/douyin/video-stream?url=${encodeURIComponent(result?.videoUrls?.[0] || result?.downloadUrl || '')}&videoId=${encodeURIComponent(result?.videoId || '')}&platform=${encodeURIComponent(result?.platform || 'douyin')}`}
               controls
               autoPlay
               className="max-h-[78vh] max-w-[92vw] bg-black"

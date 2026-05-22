@@ -10589,6 +10589,11 @@ async function raceDouyinDownloadCandidates(candidates, options) {
   return { ok: false };
 }
 
+function isDouyinPlatform(platform) {
+  const p = String(platform || '').trim().toLowerCase();
+  return !p || p === 'douyin';
+}
+
 async function handleDouyinDownloadVideo(req, res) {
   const requestId = createRequestId('dy_download');
   const startedAt = Date.now();
@@ -10602,83 +10607,173 @@ async function handleDouyinDownloadVideo(req, res) {
   }
 
   try {
-    let targetUrl = '';
-    let videoUrlCandidates = [];
+    let downloadUrl = '';
+    let downloadUrlCandidates = [];
     let videoId = '';
     let platform = 'douyin';
 
     const parsedUrl = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
     if (req.method === 'GET') {
-      targetUrl = readValue(parsedUrl.searchParams.get('downloadUrl') || parsedUrl.searchParams.get('url'));
+      downloadUrl = readValue(parsedUrl.searchParams.get('downloadUrl'));
       videoId = readValue(parsedUrl.searchParams.get('videoId'));
       const candidatesParam = parsedUrl.searchParams.get('candidates');
       if (candidatesParam) {
         try {
           const parsed = JSON.parse(candidatesParam);
-          if (Array.isArray(parsed)) videoUrlCandidates = parsed;
+          if (Array.isArray(parsed)) downloadUrlCandidates = parsed;
         } catch {
-          videoUrlCandidates = [];
-        }
-      }
-      const videoUrlsParam = parsedUrl.searchParams.get('videoUrls');
-      if (videoUrlsParam) {
-        try {
-          const parsed = JSON.parse(videoUrlsParam);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            videoUrlCandidates = parsed.map((u) => (typeof u === 'string' ? { url: u } : u));
-          }
-        } catch {
-          // ignore
+          downloadUrlCandidates = [];
         }
       }
       platform = readValue(parsedUrl.searchParams.get('platform')) || 'douyin';
     } else {
       const body = await readRequestBody(req);
-      targetUrl = readValue(body?.downloadUrl || body?.url);
-      if (!targetUrl && Array.isArray(body?.videoUrls) && body.videoUrls.length > 0) {
-        targetUrl = body.videoUrls[0];
-      }
-      videoUrlCandidates = Array.isArray(body?.videoUrlCandidates)
-        ? body.videoUrlCandidates
-        : (Array.isArray(body?.downloadUrlCandidates) ? body.downloadUrlCandidates : []);
-      if (videoUrlCandidates.length === 0 && Array.isArray(body?.videoUrls)) {
-        videoUrlCandidates = body.videoUrls.map((u) => (typeof u === 'string' ? { url: u } : u));
-      }
+      downloadUrl = readValue(body?.downloadUrl);
+      downloadUrlCandidates = Array.isArray(body?.downloadUrlCandidates) ? body.downloadUrlCandidates : [];
       videoId = readValue(body?.videoId);
       platform = readValue(body?.platform) || 'douyin';
     }
 
-    if (!targetUrl && videoUrlCandidates.length > 0) {
-      targetUrl = videoUrlCandidates[0].url || String(videoUrlCandidates[0]);
-    }
-
-    if (!targetUrl) {
-      sendJson(res, 400, { error: '缺少下载地址' });
+    if (!downloadUrl) {
+      sendJson(res, 400, { error: '缺少 downloadUrl' });
       return;
     }
 
     const fileName = buildDouyinVideoDownloadFileName(videoId);
 
+    // For non-Douyin platforms, use proxy download
+    if (!isDouyinPlatform(platform)) {
+      logDownload('request_received', {
+        videoId,
+        platform,
+        targetUrl: downloadUrl.slice(0, 120),
+        method: req.method,
+        mode: 'proxy'
+      });
+
+      await proxyVideoStream({
+        targetUrl: downloadUrl,
+        req,
+        res,
+        asAttachment: true,
+        fileName
+      });
+
+      logDownload('stream_finished', {
+        videoId,
+        platform,
+        targetUrl: downloadUrl.slice(0, 120),
+        mode: 'proxy'
+      });
+      return;
+    }
+
+    // Douyin platform: use original parallel competitive download
+    const normalizedCandidates = normalizeDouyinDownloadCandidates(downloadUrlCandidates, downloadUrl);
+    const rankedCandidates = rankDouyinDownloadCandidates(normalizedCandidates, { respectCooldown: true });
+
     logDownload('request_received', {
       videoId,
-      platform,
-      targetUrl: targetUrl.slice(0, 120),
-      candidateCount: videoUrlCandidates.length,
-      method: req.method
+      candidateCount: rankedCandidates.length,
+      candidateHosts: rankedCandidates.slice(0, 3).map(c => c.host),
+      method: req.method,
+      mode: 'parallel'
     });
 
-    await proxyVideoStream({
-      targetUrl,
-      req,
-      res,
-      asAttachment: true,
-      fileName
+    const MAX_PARALLEL = 3;
+    const parallelCandidates = rankedCandidates.slice(0, MAX_PARALLEL);
+
+    const winner = await raceDouyinDownloadCandidates(parallelCandidates, {
+      logDownload,
+      timeoutMs: DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS
     });
+
+    if (!winner || !winner.ok) {
+      logDownload('all_candidates_failed', {
+        attemptedCount: parallelCandidates.length,
+        candidateHosts: parallelCandidates.map(c => c.host)
+      });
+
+      for (const c of parallelCandidates) {
+        updateDouyinDownloadHostStats(c.host, 'failure');
+      }
+
+      if (!res.headersSent) {
+        sendJson(res, 502, {
+          error: '视频下载失败',
+          detail: '所有下载源均不可用，请稍后重试。'
+        });
+      }
+      return;
+    }
+
+    const { res: upstreamRes, candidate, ttfbMs, fetchStartAt } = winner;
+    updateDouyinDownloadHostStats(candidate.host, 'selected');
+
+    const responseHeaders = {
+      'Content-Type': 'video/mp4',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+      'Cache-Control': 'no-store',
+    };
+
+    const upstreamContentLength = upstreamRes.headers.get('content-length');
+    if (upstreamContentLength) {
+      responseHeaders['Content-Length'] = upstreamContentLength;
+    }
+
+    res.writeHead(200, responseHeaders);
+
+    const clientStartAt = Date.now();
+    logDownload('client_stream_start', {
+      selectedHost: candidate.host,
+      selectedSource: candidate.source || '',
+      selectedDownloadUrl: candidate.url || '',
+      ttfbMs,
+      headToClientMs: clientStartAt - startedAt
+    });
+
+    if (!upstreamRes.body) {
+      res.end();
+      return;
+    }
+
+    let bytesStreamed = 0;
+    const reader = upstreamRes.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
+        bytesStreamed += value?.byteLength || 0;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    res.end();
+
+    const totalMs = Date.now() - startedAt;
+    const upstreamMs = Date.now() - fetchStartAt;
+    const totalDurationMs = upstreamMs;
+    updateDouyinDownloadHostStats(candidate.host, 'success', { ttfbMs, totalDurationMs });
+
+    const rollingTtfb = getDouyinDownloadHostRollingAverage(candidate.host, 'ttfb');
+    const rollingDuration = getDouyinDownloadHostRollingAverage(candidate.host, 'totalDuration');
+    const cooldownStatus = isDouyinDownloadHostInCooldown(candidate.host);
+    const hostStats = getDouyinDownloadHostStatsWithTiming(candidate.host);
 
     logDownload('stream_finished', {
+      winner: candidate.host,
       videoId,
-      platform,
-      targetUrl: targetUrl.slice(0, 120)
+      bytesStreamed,
+      ttfbMs,
+      upstreamDurationMs: upstreamMs,
+      totalDurationMs: totalMs,
+      rollingTtfbAvg: rollingTtfb.avgMs,
+      rollingTtfbSamples: rollingTtfb.sampleCount,
+      rollingDurationAvg: rollingDuration.avgMs,
+      rollingDurationSamples: rollingDuration.sampleCount,
+      consecutiveFailures: hostStats.consecutiveFailures,
+      inCooldown: cooldownStatus.inCooldown
     });
   } catch (error) {
     if (!res.headersSent) {
@@ -10699,6 +10794,7 @@ async function handleDouyinVideoStream(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const downloadUrl = url.searchParams.get('downloadUrl') || url.searchParams.get('url');
   const videoId = url.searchParams.get('videoId') || '';
+  const platform = readValue(url.searchParams.get('platform')) || 'douyin';
 
   if (!downloadUrl) {
     sendJson(res, 400, { error: '缺少下载地址参数' });
@@ -10706,16 +10802,60 @@ async function handleDouyinVideoStream(req, res) {
   }
 
   const requestId = createRequestId('dy_preview');
-  console.log('[douyin preview] stream_started', { requestId, videoId, targetPath: downloadUrl });
+  console.log('[douyin preview] stream_started', { requestId, videoId, targetPath: downloadUrl, platform });
 
   try {
-    await proxyVideoStream({
-      targetUrl: downloadUrl,
-      req,
-      res,
-      asAttachment: false
+    // For non-Douyin platforms, use proxy stream with proper referer handling
+    if (!isDouyinPlatform(platform)) {
+      await proxyVideoStream({
+        targetUrl: downloadUrl,
+        req,
+        res,
+        asAttachment: false
+      });
+      console.log('[douyin preview] stream_finished', { requestId, platform, mode: 'proxy' });
+      return;
+    }
+
+    // Douyin platform: use original direct fetch for better performance
+    const upstreamRes = await fetch(downloadUrl, {
+      headers: {
+        'Referer': 'https://www.douyin.com/',
+        'User-Agent': DOUYIN_USER_AGENT,
+        'Accept': '*/*',
+      },
     });
-    console.log('[douyin preview] stream_finished', { requestId });
+
+    if (!upstreamRes.ok) {
+      console.log('[douyin preview] upstream_failed', { requestId, upstreamStatus: upstreamRes.status });
+      sendJson(res, 502, { error: '上游视频请求失败', detail: `HTTP ${upstreamRes.status}` });
+      return;
+    }
+
+    const contentType = upstreamRes.headers.get('content-type') || 'video/mp4';
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Cache-Control': 'no-store',
+    });
+
+    if (!upstreamRes.body) {
+      res.end();
+      return;
+    }
+
+    const reader = upstreamRes.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+        if (res.flush) res.flush();
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    res.end();
+    console.log('[douyin preview] stream_finished', { requestId, platform, mode: 'direct' });
   } catch (error) {
     console.error('[douyin preview] stream_error', { requestId, message: error?.message });
     if (!res.headersSent) {
