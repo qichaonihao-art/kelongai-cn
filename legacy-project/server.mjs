@@ -7428,7 +7428,18 @@ function readRequestBody(req) {
     });
     req.on('end', () => {
       try {
-        resolve(body ? JSON.parse(body) : {});
+        if (!body) return resolve({});
+        const contentType = String(req.headers['content-type'] || '').toLowerCase();
+        if (contentType.includes('application/x-www-form-urlencoded')) {
+          const params = new URLSearchParams(body);
+          const result = {};
+          for (const [key, value] of params) {
+            result[key] = value;
+          }
+          resolve(result);
+        } else {
+          resolve(JSON.parse(body));
+        }
       } catch {
         reject(new Error('请求体不是合法 JSON'));
       }
@@ -10629,7 +10640,16 @@ async function handleDouyinDownloadVideo(req, res) {
     } else {
       const body = await readRequestBody(req);
       downloadUrl = readValue(body?.downloadUrl);
-      downloadUrlCandidates = Array.isArray(body?.downloadUrlCandidates) ? body.downloadUrlCandidates : [];
+      if (Array.isArray(body?.downloadUrlCandidates)) {
+        downloadUrlCandidates = body.downloadUrlCandidates;
+      } else if (typeof body?.downloadUrlCandidates === 'string' && body.downloadUrlCandidates) {
+        try {
+          const parsed = JSON.parse(body.downloadUrlCandidates);
+          if (Array.isArray(parsed)) downloadUrlCandidates = parsed;
+        } catch {
+          downloadUrlCandidates = [];
+        }
+      }
       videoId = readValue(body?.videoId);
       platform = readValue(body?.platform) || 'douyin';
     }
