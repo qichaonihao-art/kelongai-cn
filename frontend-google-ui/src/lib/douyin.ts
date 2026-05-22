@@ -129,6 +129,223 @@ export async function getDouyinConfigStatus(): Promise<DouyinConfigStatus> {
   }
 }
 
+// ===================== CopyPilot API =====================
+
+function extractVideoIdFromData(data: any): string {
+  const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data;
+  return String(detail?.aweme_id || detail?.video_id || detail?.id || data?.note?.id || Date.now());
+}
+
+function extractTitleFromData(data: any): string {
+  return data?.title || data?.desc || data?.aweme_detail?.desc || data?.itemInfo?.itemStruct?.desc || data?.note?.title || '';
+}
+
+function extractAuthorFromData(data: any): string {
+  const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data;
+  return detail?.author?.nickname || detail?.author?.unique_id || detail?.author_name || data?.author?.nickname || data?.note?.user?.nickname || '';
+}
+
+function extractDurationFromData(data: any): number {
+  const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data;
+  const video = detail?.video || data?.video || {};
+  const candidates = [
+    data?.lengthSeconds, data?.durationSeconds, data?.duration, data?.duration_sec,
+    detail?.lengthSeconds, detail?.durationSeconds, detail?.duration, detail?.duration_sec,
+    video?.duration, video?.duration_ms, video?.lengthSeconds
+  ];
+  for (const value of candidates) {
+    if (value === undefined || value === null || value === '') continue;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) continue;
+    return numeric > 10000 ? numeric / 1000 : numeric;
+  }
+  return 0;
+}
+
+function extractVideoUrlsFromData(data: any): string[] {
+  const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data?.note || data || {};
+  const video = detail.video || data?.video || {};
+  const links: string[] = [];
+  if (video.play_addr?.url_list?.length) links.push(...video.play_addr.url_list);
+  if (video.download_addr?.url_list?.length) links.push(...video.download_addr.url_list);
+  if (detail.video_url) links.push(detail.video_url);
+  if (data?.video_url) links.push(data.video_url);
+  if (data?.videos?.items?.length) {
+    const sorted = [...data.videos.items].sort((a: any, b: any) => Number(b.hasAudio) - Number(a.hasAudio));
+    links.push(...sorted.map((item: any) => item.url));
+  }
+  return [...new Set(links)].filter((u): u is string => typeof u === 'string' && u.startsWith('http'));
+}
+
+function extractCandidatesFromData(data: any): DouyinDownloadCandidate[] {
+  const items = data?.videos?.items || [];
+  if (!Array.isArray(items)) return [];
+  const candidates: DouyinDownloadCandidate[] = [];
+  for (const item of items) {
+    if (!item?.url) continue;
+    candidates.push({
+      url: String(item.url),
+      source: String(item.source || item.type || ''),
+      host: String(item.host || ''),
+      ...(typeof item.hasAudio === 'boolean' ? { hasAudio: item.hasAudio } : {}),
+    });
+  }
+  // Also add play_addr / download_addr URLs
+  const urls = extractVideoUrlsFromData(data);
+  for (const url of urls) {
+    if (candidates.some(c => c.url === url)) continue;
+    candidates.push({ url, source: 'play_addr' });
+  }
+  return candidates;
+}
+
+function extractImagesFromData(data: any): string[] {
+  const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data?.note || data || {};
+  const images: string[] = [];
+  const imageList = detail.images || data?.images || detail.image_list || data?.image_list;
+  if (Array.isArray(imageList)) {
+    for (const img of imageList) {
+      if (typeof img === 'string' && img.startsWith('http')) {
+        images.push(img);
+      } else if (img?.url_list?.length) {
+        const first = img.url_list.find((u: any) => typeof u === 'string' && u.startsWith('http'));
+        if (first) images.push(first);
+      } else if (img?.url && typeof img.url === 'string' && img.url.startsWith('http')) {
+        images.push(img.url);
+      }
+    }
+  }
+  return [...new Set(images)];
+}
+
+function extractTagsFromData(data: any): string[] {
+  const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data?.note || data || {};
+  const tags = detail.text_extra || data?.text_extra || [];
+  if (!Array.isArray(tags)) return [];
+  return tags
+    .filter((t: any) => t?.hashtag_name || t?.name)
+    .map((t: any) => String(t.hashtag_name || t.name))
+    .filter(Boolean);
+}
+
+function convertCpExtractToResolveResult(data: any): DouyinResolveResult {
+  const videoUrls = extractVideoUrlsFromData(data);
+  const candidates = extractCandidatesFromData(data);
+  return {
+    ok: true,
+    mode: 'stable',
+    videoId: extractVideoIdFromData(data),
+    title: extractTitleFromData(data),
+    desc: extractTitleFromData(data),
+    downloadUrl: videoUrls[0] || '',
+    downloadUrlCandidates: candidates,
+    videoUrls,
+    videoUrlCandidates: candidates,
+    caption: data?.caption || data?.publishedText || '',
+    fallbackCaption: '',
+    fallbackCaptionSource: 'none',
+    authorName: extractAuthorFromData(data),
+    duration: extractDurationFromData(data),
+    videoData: data,
+    normalizedUrl: '',
+    sourceType: 'universal',
+    resolveStrategy: 'copypilot',
+    platform: 'douyin',
+    images: extractImagesFromData(data),
+    tags: extractTagsFromData(data),
+    sourceUrl: '',
+  };
+}
+
+function convertCpTranscribeToResult(data: any): DouyinTranscriptResult {
+  const videoUrls = extractVideoUrlsFromData(data);
+  return {
+    ok: true,
+    transcriptOk: !!data?.transcript || !!data?.text,
+    videoId: extractVideoIdFromData(data),
+    title: extractTitleFromData(data),
+    downloadUrl: videoUrls[0] || '',
+    downloadUrlCandidates: extractCandidatesFromData(data),
+    authorName: extractAuthorFromData(data),
+    normalizedUrl: '',
+    sourceType: 'universal',
+    transcript: data?.transcript || data?.text || '',
+    transcriptError: '',
+    transcriptSegments: 0,
+    fallbackCaption: data?.publishedText || '',
+    fallbackCaptionSource: 'none',
+    resolveStrategy: 'copypilot',
+  };
+}
+
+export async function resolveCpExtract(url: string): Promise<DouyinResolveResult> {
+  const response = await fetch('/api/cp/extract', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+
+  const json = await parseJsonSafely(response);
+  if (!response.ok || json?.ok === false) {
+    throw new Error(json?.message || json?.error || '视频解析失败');
+  }
+
+  return convertCpExtractToResolveResult(json?.data);
+}
+
+export async function extractCpTranscript(url: string): Promise<DouyinTranscriptResult> {
+  const response = await fetch('/api/cp/transcribe-link', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+
+  const json = await parseJsonSafely(response);
+  if (!response.ok || json?.ok === false) {
+    throw new Error(json?.message || json?.error || '视频文案提取失败');
+  }
+
+  return convertCpTranscribeToResult(json?.data);
+}
+
+export async function extractCpLocalTranscript(file: File): Promise<DouyinTranscriptResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch('/api/cp/transcribe', {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  });
+
+  const json = await parseJsonSafely(response);
+  if (!response.ok || json?.ok === false) {
+    throw new Error(json?.message || json?.error || '本地视频文案提取失败');
+  }
+
+  return {
+    ok: true,
+    transcriptOk: !!json?.data?.text,
+    videoId: `local_${Date.now()}`,
+    title: json?.data?.title || file.name,
+    downloadUrl: '',
+    downloadUrlCandidates: [],
+    authorName: '',
+    normalizedUrl: '',
+    sourceType: 'local_upload',
+    transcript: json?.data?.text || '',
+    transcriptError: '',
+    transcriptSegments: 0,
+    fallbackCaption: '',
+    fallbackCaptionSource: 'none',
+    resolveStrategy: 'copypilot',
+  };
+}
+
+// ===================== Legacy API (kept for fallback) =====================
+
 export async function resolveDouyinDownload(input: string): Promise<DouyinResolveResult> {
   const response = await fetch('/api/douyin/resolve-download', {
     method: 'POST',

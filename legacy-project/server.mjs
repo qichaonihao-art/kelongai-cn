@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
+import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11391,7 +11392,8 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const isAuthRoute = url.pathname === '/api/auth/login' || url.pathname === '/api/auth/status' || url.pathname === '/api/auth/logout' || url.pathname === '/api/douyin/host-stats' || url.pathname === '/api/debug/download-test';
+  const isCpRoute = url.pathname.startsWith('/api/cp/');
+  const isAuthRoute = url.pathname === '/api/auth/login' || url.pathname === '/api/auth/status' || url.pathname === '/api/auth/logout' || url.pathname === '/api/douyin/host-stats' || url.pathname === '/api/debug/download-test' || isCpRoute;
   if (req.method === 'POST' && url.pathname === '/api/auth/login') {
     await handleAuthLogin(req, res);
     return;
@@ -11422,6 +11424,12 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname.startsWith('/api/') && !isAuthRoute && !isAuthenticated(req) && !(isDebugDownloadBypass && isDownloadDebugRoute)) {
     sendJson(res, 401, { error: '未登录或登录已失效' });
+    return;
+  }
+
+  // CopyPilot routes (video extraction / transcription)
+  const handledByCopypilot = await tryHandleCopypilotRoute(req, res, url);
+  if (handledByCopypilot) {
     return;
   }
 

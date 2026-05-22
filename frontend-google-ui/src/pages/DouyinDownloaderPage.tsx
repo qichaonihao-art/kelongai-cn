@@ -26,10 +26,13 @@ import SiteFooter from "@/src/components/SiteFooter";
 import {
   downloadDouyinVideoFile,
   directDownloadDouyinVideoFile,
+  extractCpLocalTranscript,
+  extractCpTranscript,
   extractDouyinTranscript,
   extractLocalVideoTranscript,
   getDouyinConfigStatus,
   polishDouyinTranscript,
+  resolveCpExtract,
   resolveDouyinDownload,
   type DouyinConfigStatus,
   type DouyinResolveResult,
@@ -192,7 +195,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     setCopyStatus('idle');
 
     try {
-      const response = await resolveDouyinDownload(nextInput);
+      const response = await resolveCpExtract(nextInput);
       setResult(response);
       setTimeout(() => {
         resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -217,7 +220,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     setCopyStatus('idle');
 
     try {
-      const response = await extractDouyinTranscript(nextInput, asrEngine);
+      const response = await extractCpTranscript(nextInput);
       const normalizedTranscriptResult: DouyinTranscriptResult = response.transcriptOk
         ? response
         : {
@@ -268,7 +271,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     setShowDiff(true);
 
     try {
-      const response = await extractLocalVideoTranscript(file, asrEngine);
+      const response = await extractCpLocalTranscript(file);
       const normalizedTranscriptResult: DouyinTranscriptResult = response.transcriptOk
         ? response
         : {
