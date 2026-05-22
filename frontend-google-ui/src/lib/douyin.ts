@@ -246,25 +246,28 @@ export async function extractLocalVideoTranscript(file: File, asrEngine?: string
   };
 }
 
-function submitDownloadForm(fields: Record<string, string>) {
-  const form = document.createElement('form');
-  form.method = 'POST';
-  form.action = '/api/douyin/download-video';
-  form.target = '_blank';
-  form.style.display = 'none';
+function triggerBackgroundDownload(url: string) {
+  return new Promise<void>((resolve) => {
+    const iframe = document.createElement('iframe');
+    const cleanup = () => {
+      window.setTimeout(() => {
+        iframe.remove();
+      }, 30_000);
+    };
 
-  for (const [key, value] of Object.entries(fields)) {
-    if (!value) continue;
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = key;
-    input.value = value;
-    form.appendChild(input);
-  }
+    iframe.style.display = 'none';
+    iframe.onload = () => {
+      cleanup();
+      resolve();
+    };
+    iframe.src = url;
+    document.body.appendChild(iframe);
 
-  document.body.appendChild(form);
-  form.submit();
-  document.body.removeChild(form);
+    window.setTimeout(() => {
+      cleanup();
+      resolve();
+    }, 1800);
+  });
 }
 
 export async function downloadDouyinVideoFile(params: {
@@ -274,13 +277,19 @@ export async function downloadDouyinVideoFile(params: {
   videoUrls?: string[];
   platform?: string;
 }) {
-  submitDownloadForm({
-    videoId: params.videoId,
+  const safeVideoId = String(params.videoId || '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '')
+    .slice(0, 64);
+  const fileName = buildDownloadFileName(safeVideoId);
+  const searchParams = new URLSearchParams({
     downloadUrl: params.downloadUrl,
-    platform: params.platform || '',
-    downloadUrlCandidates: params.downloadUrlCandidates ? JSON.stringify(params.downloadUrlCandidates) : '',
-    videoUrls: params.videoUrls ? JSON.stringify(params.videoUrls) : '',
+    videoId: params.videoId || '',
+    platform: params.platform || 'douyin',
+    fileName,
+    download: '1',
   });
+
+  await triggerBackgroundDownload(`/api/douyin/video-stream?${searchParams.toString()}`);
 }
 
 export async function directDownloadDouyinVideoFile(params: {

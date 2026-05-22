@@ -10927,14 +10927,16 @@ async function handleDouyinVideoStream(req, res) {
   const downloadUrl = url.searchParams.get('downloadUrl') || url.searchParams.get('url');
   const videoId = url.searchParams.get('videoId') || '';
   const platform = readValue(url.searchParams.get('platform')) || 'douyin';
+  const asDownload = url.searchParams.get('download') === '1';
+  const fileName = readValue(url.searchParams.get('fileName')) || buildDouyinVideoDownloadFileName(videoId);
 
   if (!downloadUrl) {
     sendJson(res, 400, { error: '缺少下载地址参数' });
     return;
   }
 
-  const requestId = createRequestId('dy_preview');
-  console.log('[douyin preview] stream_started', { requestId, videoId, targetPath: downloadUrl, platform });
+  const requestId = createRequestId(asDownload ? 'dy_stream_download' : 'dy_preview');
+  console.log('[douyin preview] stream_started', { requestId, videoId, targetPath: downloadUrl, platform, asDownload });
 
   try {
     const rangeHeader = req.headers['range'];
@@ -10961,7 +10963,8 @@ async function handleDouyinVideoStream(req, res) {
         targetUrl: downloadUrl,
         req,
         res,
-        asAttachment: false
+        asAttachment: asDownload,
+        fileName
       });
       console.log('[douyin preview] stream_finished', { requestId, platform, mode: 'fallback_proxy' });
       return;
@@ -10974,7 +10977,7 @@ async function handleDouyinVideoStream(req, res) {
       'Content-Type': contentType,
       'Cache-Control': 'public, max-age=3600',
       'Accept-Ranges': acceptRanges || 'bytes',
-      'Content-Disposition': 'inline; filename="preview.mp4"',
+      'Content-Disposition': `${asDownload ? 'attachment' : 'inline'}; filename="${fileName}"`,
       'X-Accel-Buffering': 'no',
     };
     if (contentLength) responseHeaders['Content-Length'] = contentLength;
