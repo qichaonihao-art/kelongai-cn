@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Download,
@@ -114,6 +114,33 @@ function formatDuration(seconds: number): string {
   return `${s}秒`;
 }
 
+function buildPreviewProxyUrl(result: DouyinResolveResult, url: string) {
+  return `/api/douyin/video-stream?url=${encodeURIComponent(url)}&videoId=${encodeURIComponent(result.videoId || '')}&platform=${encodeURIComponent(result.platform || 'douyin')}`;
+}
+
+function buildVideoPreviewSources(result: DouyinResolveResult | null) {
+  if (!result) return [];
+
+  const directUrls: string[] = [];
+  const addUrl = (url?: string) => {
+    const normalized = String(url || '').trim();
+    if (!normalized || !/^https?:\/\//i.test(normalized) || directUrls.includes(normalized)) return;
+    directUrls.push(normalized);
+  };
+
+  addUrl(result.downloadUrl);
+  result.videoUrls?.forEach(addUrl);
+  result.videoUrlCandidates?.forEach((candidate) => addUrl(candidate.url));
+  result.downloadUrlCandidates?.forEach((candidate) => addUrl(candidate.url));
+
+  if (!directUrls.length) return [];
+
+  const directSources = directUrls.map((url) => ({ url, mode: 'direct' as const }));
+  const proxySources = directUrls.map((url) => ({ url: buildPreviewProxyUrl(result, url), mode: 'proxy' as const }));
+
+  return [...directSources, ...proxySources];
+}
+
 export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
   const [isResolving, setIsResolving] = useState(false);
@@ -130,6 +157,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [originalTranscript, setOriginalTranscript] = useState('');
   const [showDiff, setShowDiff] = useState(true);
   const [showVideoPreview, setShowVideoPreview] = useState(false);
+  const [previewSourceIndex, setPreviewSourceIndex] = useState(0);
   const [showImages, setShowImages] = useState(false);
   const [isLocalTranscriptLoading, setIsLocalTranscriptLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'link' | 'local'>('link');
@@ -431,6 +459,8 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
 
   const fallbackCaption = transcriptResult?.fallbackCaption || result?.fallbackCaption || '';
   const hasResult = !!result || !!transcriptResult;
+  const videoPreviewSources = useMemo(() => buildVideoPreviewSources(result), [result]);
+  const activePreviewSource = videoPreviewSources[previewSourceIndex] || videoPreviewSources[0] || null;
   const siliconFlowConfigured = configStatus?.siliconFlowApiKey === true;
   const tikhubConfigured = configStatus?.tikhubApiToken === true;
   const arkApiKeyConfigured = configStatus?.arkApiKey === true;
@@ -879,7 +909,10 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
 
                       <div className="grid gap-3 sm:grid-cols-2">
                         <button
-                          onClick={() => setShowVideoPreview(true)}
+                          onClick={() => {
+                            setPreviewSourceIndex(0);
+                            setShowVideoPreview(true);
+                          }}
                           className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200/80 bg-white/75 text-sm font-bold text-slate-700 shadow-sm transition-all hover:bg-white hover:shadow-md"
                         >
                           <Play className="size-4" />
@@ -1090,10 +1123,13 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       </main>
 
       {/* 视频预览弹窗 */}
-      {showVideoPreview && (result?.downloadUrl || (result?.videoUrls && result.videoUrls.length > 0)) && (
+      {showVideoPreview && activePreviewSource && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-          onClick={() => setShowVideoPreview(false)}
+          onClick={() => {
+            setPreviewSourceIndex(0);
+            setShowVideoPreview(false);
+          }}
         >
           <div
             className="relative max-h-[78vh] max-w-[92vw] overflow-hidden rounded-3xl shadow-2xl"
@@ -1101,19 +1137,29 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
           >
             <button
               type="button"
-              onClick={() => setShowVideoPreview(false)}
+              onClick={() => {
+                setPreviewSourceIndex(0);
+                setShowVideoPreview(false);
+              }}
               className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-full bg-black/40 text-white/80 backdrop-blur-sm transition-colors hover:bg-black/60 hover:text-white"
             >
               <X className="size-4" />
             </button>
             <video
-              src={`/api/douyin/video-stream?url=${encodeURIComponent(result?.downloadUrl || result?.videoUrls?.[0] || '')}&videoId=${encodeURIComponent(result?.videoId || '')}&platform=${encodeURIComponent(result?.platform || 'douyin')}`}
+              key={`${activePreviewSource.mode}-${previewSourceIndex}`}
+              src={activePreviewSource.url}
               controls
               autoPlay
+              preload="auto"
               className="max-h-[78vh] max-w-[92vw] bg-black"
               playsInline
               onError={() => {
+                if (previewSourceIndex < videoPreviewSources.length - 1) {
+                  setPreviewSourceIndex((index) => index + 1);
+                  return;
+                }
                 alert('视频加载失败，可能是链接已过期，请重新解析后再试');
+                setPreviewSourceIndex(0);
                 setShowVideoPreview(false);
               }}
             />
