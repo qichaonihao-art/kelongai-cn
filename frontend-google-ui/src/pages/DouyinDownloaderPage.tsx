@@ -130,6 +130,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [originalTranscript, setOriginalTranscript] = useState('');
   const [showDiff, setShowDiff] = useState(true);
   const [showVideoPreview, setShowVideoPreview] = useState(false);
+  const [previewUseProxy, setPreviewUseProxy] = useState(false);
   const [showImages, setShowImages] = useState(false);
   const [isLocalTranscriptLoading, setIsLocalTranscriptLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'link' | 'local'>('link');
@@ -881,7 +882,10 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
 
                       <div className="grid gap-3 sm:grid-cols-2">
                         <button
-                          onClick={() => setShowVideoPreview(true)}
+                          onClick={() => {
+                            setPreviewUseProxy(false);
+                            setShowVideoPreview(true);
+                          }}
                           className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200/80 bg-white/75 text-sm font-bold text-slate-700 shadow-sm transition-all hover:bg-white hover:shadow-md"
                         >
                           <Play className="size-4" />
@@ -1095,7 +1099,10 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       {showVideoPreview && result?.downloadUrl && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-          onClick={() => setShowVideoPreview(false)}
+          onClick={() => {
+            setShowVideoPreview(false);
+            setPreviewUseProxy(false);
+          }}
         >
           <div
             className="relative max-h-[78vh] max-w-[92vw] overflow-hidden rounded-3xl shadow-2xl"
@@ -1103,20 +1110,35 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
           >
             <button
               type="button"
-              onClick={() => setShowVideoPreview(false)}
+              onClick={() => {
+                setShowVideoPreview(false);
+                setPreviewUseProxy(false);
+              }}
               className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-full bg-black/40 text-white/80 backdrop-blur-sm transition-colors hover:bg-black/60 hover:text-white"
             >
               <X className="size-4" />
             </button>
             <video
-              src={`/api/douyin/video-stream?url=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId || '')}&platform=${encodeURIComponent(result.platform || 'douyin')}`}
+              key={previewUseProxy ? 'proxy' : 'direct'}
+              src={previewUseProxy
+                ? `/api/douyin/video-stream?url=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId || '')}&platform=${encodeURIComponent(result.platform || 'douyin')}`
+                : result.downloadUrl
+              }
               controls
+              autoPlay
               preload="metadata"
               className="max-h-[78vh] max-w-[92vw] bg-black"
               playsInline
+              crossOrigin="anonymous"
               onError={() => {
-                alert('视频加载失败，可能是链接已过期，请重新解析后再试');
-                setShowVideoPreview(false);
+                if (!previewUseProxy) {
+                  // 直接 CDN URL 失败，回退到后端代理
+                  setPreviewUseProxy(true);
+                } else {
+                  alert('视频加载失败，可能是链接已过期，请重新解析后再试');
+                  setShowVideoPreview(false);
+                  setPreviewUseProxy(false);
+                }
               }}
             />
           </div>
