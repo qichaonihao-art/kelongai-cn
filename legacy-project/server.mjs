@@ -6000,6 +6000,21 @@ async function callTikHubDouyinVideoDetail({ path, shareUrl, awemeId, requestId,
 }
 
 async function callTikHubVideoDetailByShareUrl({ shareUrl, requestId, deadlineAt = 0 }) {
+  // Try web endpoint first (returns full-quality video with audio)
+  try {
+    return await callTikHubDouyinVideoDetail({
+      path: '/api/v1/douyin/web/fetch_one_video_by_share_url',
+      shareUrl,
+      requestId,
+      deadlineAt
+    });
+  } catch (webError) {
+    console.log('[douyin resolve] web endpoint failed, falling back to app endpoint', {
+      requestId,
+      webError: webError.message
+    });
+  }
+  // Fallback to app endpoint
   return callTikHubDouyinVideoDetail({
     path: '/api/v1/douyin/app/v3/fetch_one_video_by_share_url',
     shareUrl,
@@ -6009,6 +6024,21 @@ async function callTikHubVideoDetailByShareUrl({ shareUrl, requestId, deadlineAt
 }
 
 async function callTikHubVideoDetailByAwemeId({ awemeId, requestId, deadlineAt = 0 }) {
+  // Try web endpoint first (returns full-quality video with audio)
+  try {
+    return await callTikHubDouyinVideoDetail({
+      path: '/api/v1/douyin/web/fetch_one_video',
+      awemeId,
+      requestId,
+      deadlineAt
+    });
+  } catch (webError) {
+    console.log('[douyin resolve] web endpoint failed, falling back to app endpoint', {
+      requestId,
+      webError: webError.message
+    });
+  }
+  // Fallback to app endpoint
   return callTikHubDouyinVideoDetail({
     path: '/api/v1/douyin/app/v3/fetch_one_video',
     awemeId,
