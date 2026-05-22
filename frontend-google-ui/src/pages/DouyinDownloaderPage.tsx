@@ -18,6 +18,9 @@ import {
   X,
   Upload,
   Globe,
+  Image as ImageIcon,
+  Tag,
+  ChevronDown,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -127,6 +130,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [originalTranscript, setOriginalTranscript] = useState('');
   const [showDiff, setShowDiff] = useState(true);
   const [showVideoPreview, setShowVideoPreview] = useState(false);
+  const [showImages, setShowImages] = useState(false);
   const [isLocalTranscriptLoading, setIsLocalTranscriptLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'link' | 'local'>('link');
   const [asrEngine, setAsrEngine] = useState<'siliconflow' | 'qwen'>('qwen');
@@ -344,6 +348,8 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
         videoId: result.videoId,
         downloadUrl: result.downloadUrl,
         downloadUrlCandidates: result.downloadUrlCandidates,
+        videoUrls: result.videoUrls,
+        platform: result.platform,
       });
     } catch (downloadError) {
       // eslint-disable-next-line no-console
@@ -373,6 +379,8 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       await directDownloadDouyinVideoFile({
         videoId: result.videoId,
         downloadUrl: result.downloadUrl,
+        videoUrls: result.videoUrls,
+        platform: result.platform,
       });
     } catch (downloadError) {
       // eslint-disable-next-line no-console
@@ -474,9 +482,9 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                     <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
                     <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
                   </span>
-                  Douyin Toolkit
+                  Video Toolkit
                 </div>
-                <h1 className="text-2xl font-black tracking-tight text-slate-950">抖音视频解析</h1>
+                <h1 className="text-2xl font-black tracking-tight text-slate-950">视频解析</h1>
               </div>
             </div>
             <button
@@ -484,7 +492,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 text-[11px] font-bold text-white shadow-md shadow-indigo-200 transition-all hover:from-indigo-600 hover:to-violet-600 hover:shadow-lg"
             >
               <Globe className="size-3.5" />
-              全网其他平台点这里
+              高级解析
             </button>
           </div>
 
@@ -596,7 +604,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                   <textarea
                     value={input}
                     onChange={(event) => setInput(event.target.value)}
-                    placeholder="请输入抖音链接或分享文案..."
+                    placeholder="请输入视频链接或分享文案，支持抖音、TikTok、快手、B站、小红书、YouTube 等..."
                     className="h-32 w-full resize-none rounded-2xl border-0 bg-transparent p-3 pr-10 text-sm font-medium leading-6 text-slate-700 outline-none placeholder:text-slate-400"
                   />
                   {input && (
@@ -609,7 +617,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                     </button>
                   )}
                   <div className="flex items-center justify-between border-t border-slate-100 px-3 pt-2">
-                    <span className="text-[11px] font-medium text-slate-400">支持短链、整段分享文案，解析成功后可直接下载或转写。</span>
+                    <span className="text-[11px] font-medium text-slate-400">支持抖音、TikTok、快手、B站、小红书、YouTube 等主流平台</span>
                     <span className="text-[10px] font-bold text-slate-300">{input.trim().length} 字</span>
                   </div>
                 </div>
@@ -743,8 +751,14 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="flex w-fit items-center gap-2 rounded-full border border-emerald-100/80 bg-emerald-50/80 px-3 py-2 text-xs font-bold text-emerald-600">
                         <CheckCircle2 className="size-3.5" />
-                        视频解析成功
+                        {result.platform ? `${result.platform} 解析成功` : '视频解析成功'}
                       </div>
+                      {result.platform && (
+                        <div className="flex w-fit items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50/80 px-3 py-2 text-xs font-bold text-indigo-600">
+                          <Globe className="size-3" />
+                          {result.platform}
+                        </div>
+                      )}
                       <div className="ml-auto flex w-fit items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50/80 px-3 py-2 text-xs font-bold text-indigo-600">
                         <Clock className="size-3.5" />
                         视频时长：{(result.duration || 0) > 0 ? formatDuration(result.duration!) : '暂未获取'}
@@ -774,7 +788,43 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                         </div>
                       )}
 
+                      {result.tags && result.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {result.tags.map((tag, i) => (
+                            <span key={i} className="rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-0.5 text-[10px] font-bold text-indigo-600">
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
+
+                    {/* Images gallery for platforms like Xiaohongshu */}
+                    {result.images && result.images.length > 0 && (
+                      <div className="space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowImages((v) => !v)}
+                          className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white/60 px-3.5 py-2.5 text-left transition-all hover:border-indigo-200 hover:bg-indigo-50/50"
+                        >
+                          <span className="flex items-center gap-2">
+                            <ImageIcon className="size-4 text-indigo-500" />
+                            <span className="text-xs font-bold text-slate-500">图片 ({result.images.length}张)</span>
+                          </span>
+                          <ChevronDown className={`size-4 text-slate-400 transition-transform ${showImages ? 'rotate-180' : ''}`} />
+                        </button>
+                        {showImages && (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {result.images.map((img, i) => (
+                              <a key={i} href={img} target="_blank" rel="noopener noreferrer" className="group relative aspect-square rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
+                                <img src={img} alt={`图片${i + 1}`} className="w-full h-full object-cover group-hover:scale-105 transition-transform" loading="lazy" />
+                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all" />
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="flex flex-col gap-3">
                       <div className="grid gap-3 sm:grid-cols-2">
@@ -798,7 +848,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                           </button>
                           <span className="flex items-center gap-1 px-1 text-[10px] text-amber-700/70">
                             <Zap className="size-3 text-amber-500" />
-                            速度更快，少数视频可能失败
+                            通过代理高速下载
                           </span>
                         </div>
 
@@ -822,7 +872,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                           </button>
                           <span className="flex items-center gap-1 px-1 text-[10px] text-indigo-700/70">
                             <Download className="size-3 text-indigo-500" />
-                            成功率更高，但速度可能较慢
+                            自动选择最佳下载源
                           </span>
                         </div>
                       </div>
@@ -1040,7 +1090,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       </main>
 
       {/* 视频预览弹窗 */}
-      {showVideoPreview && result?.downloadUrl && (
+      {showVideoPreview && (result?.downloadUrl || (result?.videoUrls && result.videoUrls.length > 0)) && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
           onClick={() => setShowVideoPreview(false)}
@@ -1057,7 +1107,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               <X className="size-4" />
             </button>
             <video
-              src={`/api/douyin/video-stream?downloadUrl=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId)}`}
+              src={`/api/douyin/video-stream?url=${encodeURIComponent(result?.videoUrls?.[0] || result?.downloadUrl || '')}&videoId=${encodeURIComponent(result?.videoId || '')}`}
               controls
               autoPlay
               className="max-h-[78vh] max-w-[92vw] bg-black"

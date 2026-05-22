@@ -6700,7 +6700,7 @@ async function extractVideoUrlFromJsonOrHtml({ bodyText, contentType, originalUr
   return null;
 }
 
-async function proxyVideoStream({ targetUrl, req, res, depth = 0 }) {
+async function proxyVideoStream({ targetUrl, req, res, depth = 0, asAttachment = false, fileName = '' }) {
   if (depth > 2) {
     sendJson(res, 502, { error: '无法解析视频下载地址，链接可能已过期或需要登录。' });
     return;
@@ -6761,13 +6761,16 @@ async function proxyVideoStream({ targetUrl, req, res, depth = 0 }) {
     headers['Accept-Ranges'] = acceptRanges || 'bytes';
     if (contentRange) headers['Content-Range'] = contentRange;
 
-    let filename = 'video.mp4';
+    let filename = fileName || 'video.mp4';
     try {
-      const pathname = new URL(targetUrl).pathname;
-      const match = pathname.match(/\/([^\/]+\.[a-zA-Z0-9]{2,4})(?:[?#]|$)/);
-      if (match) filename = match[1];
+      if (!fileName) {
+        const pathname = new URL(targetUrl).pathname;
+        const match = pathname.match(/\/([^\/]+\.[a-zA-Z0-9]{2,4})(?:[?#]|$)/);
+        if (match) filename = match[1];
+      }
     } catch {}
-    headers['Content-Disposition'] = `inline; filename="${filename}"`;
+    const dispositionType = asAttachment ? 'attachment' : 'inline';
+    headers['Content-Disposition'] = `${dispositionType}; filename="${filename}"`;
 
     res.writeHead(response.status, headers);
     if (response.body) {
@@ -6784,7 +6787,7 @@ async function proxyVideoStream({ targetUrl, req, res, depth = 0 }) {
 
   if (extractedUrl) {
     console.log('[proxy-download] extracted real video url:', extractedUrl.slice(0, 120));
-    return proxyVideoStream({ targetUrl: extractedUrl, req, res, depth: depth + 1 });
+    return proxyVideoStream({ targetUrl: extractedUrl, req, res, depth: depth + 1, asAttachment, fileName });
   }
 
   console.error('[proxy-download] cannot extract video url from content-type:', contentType, 'body:', bodyText.slice(0, 500));
@@ -9770,141 +9773,102 @@ async function handleSeedanceCreateTask(req, res) {
 async function handleDouyinResolveDownload(req, res) {
   const requestId = createRequestId('douyin');
   const startedAt = Date.now();
-  let originalInput = '';
-  let originalUrl = '';
-  let finalUrl = '';
-  let normalizedUrl = '';
-  let awemeId = '';
-  let finalResolvePath = 'failed';
-  let upstreamStatus = 0;
-  let upstreamBodySummary = '';
-  let requestedMode = 'stable';
-
-  function logDouyinResolve(level, message, extra = {}) {
-    const payload = {
-      requestId,
-      originalInput,
-      originalUrl,
-      normalizedUrl,
-      finalUrl,
-      extractedAwemeId: awemeId,
-      finalResolvePath,
-      upstreamStatus,
-      upstreamBodySummary,
-      ...extra
-    };
-
-    if (level === 'error') {
-      console.error(message, payload);
-      return;
-    }
-    if (level === 'warn') {
-      console.warn(message, payload);
-      return;
-    }
-    console.log(message, payload);
-  }
 
   try {
     const body = await readRequestBody(req);
     const input = normalizeDouyinInput(body?.input);
-    const mode = 'stable';
-    originalInput = input;
-    requestedMode = mode;
+
     if (!input) {
-      const error = createDouyinResolveError({
-        stage: 'no_valid_url_found',
-        statusCode: 400,
-        message: '请先粘贴抖音链接或整段分享文本。'
-      });
-      throw error;
+      sendJson(res, 400, { ok: false, error: '请先粘贴链接或整段分享文本。' });
+      return;
     }
 
-    logDouyinResolve('log', '[douyin resolve] request received', {
-      inputLength: input.length,
-      requestedMode
-    });
+    console.log('[douyin resolve] request received', { requestId, inputLength: input.length });
 
-    const extracted = pickPreferredDouyinUrl(input);
-    originalUrl = extracted.url;
-    if (!originalUrl) {
-      throw createDouyinResolveError({
-        stage: 'no_valid_url_found',
-        statusCode: 400,
-        message: '该分享内容未能识别出有效抖音作品链接。'
-      });
-    }
-
-    logDouyinResolve('log', '[douyin resolve] parsed original url', {
-      sourceType: extracted.sourceType
-    });
-
-    let redirectInfo;
-    const preExtractedAwemeId = extractDouyinAwemeId(originalUrl);
-    if (preExtractedAwemeId && !/v\.douyin\.com/i.test(originalUrl)) {
-      // URL 已经是长链接，直接提取 awemeId，跳过网络展开
-      redirectInfo = {
-        finalUrl: originalUrl,
-        normalizedUrl: originalUrl,
-        awemeId: preExtractedAwemeId,
-        contentType: 'text/html'
-      };
-    } else {
+    // Try universal extract first (supports all platforms)
+    const apiKey = readValue(SERVER_CONFIG.tikhubApiToken);
+    if (apiKey) {
       try {
-        redirectInfo = await retryDouyinOperation({
-          label: 'short_link_expand',
+        // Extract any URL from input
+        const extracted = pickPreferredDouyinUrl(input);
+        const url = extracted.url || extractFirstUrl(input);
+
+        if (url) {
+          const data = await extractByUrlUniversal({ apiKey, baseUrl: TIKHUB_API_BASE_URL, url });
+          const normalized = normalizeUniversalExtractResult(data, { sourceUrl: url });
+
+          console.log('[douyin resolve] universal extract success', {
+            requestId,
+            platform: normalized.platform,
+            elapsedMs: Date.now() - startedAt
+          });
+
+          sendJson(res, 200, {
+            ok: true,
+            platform: normalized.platform,
+            title: normalized.title,
+            desc: normalized.desc,
+            authorName: normalized.authorName,
+            duration: normalized.duration,
+            videoUrls: normalized.videoUrls,
+            videoUrlCandidates: normalized.videoUrlCandidates,
+            images: normalized.images,
+            tags: normalized.tags,
+            sourceUrl: normalized.sourceUrl,
+            // Legacy compatibility
+            videoId: '',
+            downloadUrl: normalized.videoUrls[0] || '',
+            downloadUrlCandidates: normalized.videoUrlCandidates,
+            caption: normalized.desc || '',
+            fallbackCaption: normalized.title || '',
+            fallbackCaptionSource: 'universal',
+            normalizedUrl: normalized.sourceUrl,
+            sourceType: extracted.sourceType || 'universal',
+            resolveStrategy: 'universal_extract'
+          });
+          return;
+        }
+      } catch (universalError) {
+        console.warn('[douyin resolve] universal extract failed, falling back to legacy', {
           requestId,
-          operation: () => resolveRedirectedUrl(originalUrl),
-          shouldRetry: (error) => !error?.stage || error?.stage === 'short_link_expand_failed'
-        });
-      } catch (error) {
-        throw createDouyinResolveError({
-          stage: 'short_link_expand_failed',
-          statusCode: 400,
-          message: '短链接展开失败，请稍后重试或改用网页完整链接。',
-          detail: error?.message || ''
+          message: universalError.message
         });
       }
     }
 
-    finalUrl = redirectInfo.finalUrl || originalUrl;
-    normalizedUrl = redirectInfo.normalizedUrl || finalUrl || originalUrl;
-    awemeId = redirectInfo.awemeId || extractDouyinAwemeId(normalizedUrl || finalUrl || originalUrl);
-
-    logDouyinResolve('log', '[douyin resolve] expanded share_url prepared', {
-      contentType: redirectInfo.contentType
-    });
-
-    if (!awemeId) {
-      throw createDouyinResolveError({
-        stage: 'aweme_id_extract_failed',
-        statusCode: 400,
-        message: '短链接已展开，但目标不是标准作品页，暂时无法提取作品 id。',
-        detail: 'expanded share_url 解析失败，且未能提取 aweme_id'
-      });
+    // Legacy fallback for Douyin-only links
+    const extracted = pickPreferredDouyinUrl(input);
+    const originalUrl = extracted.url;
+    if (!originalUrl) {
+      sendJson(res, 400, { ok: false, error: '该分享内容未能识别出有效链接。' });
+      return;
     }
 
-    const result = await retryDouyinOperation({
-      label: 'resolve_download_primary',
-      requestId,
-      operation: () => resolveDouyinDownloadPrimary({
-        originalUrl,
-        normalizedUrl: normalizedUrl || finalUrl || originalUrl,
-        awemeId,
-        requestId
-      })
-    });
+    let redirectInfo;
+    const preExtractedAwemeId = extractDouyinAwemeId(originalUrl);
+    if (preExtractedAwemeId && !/v\.douyin\.com/i.test(originalUrl)) {
+      redirectInfo = { finalUrl: originalUrl, normalizedUrl: originalUrl, awemeId: preExtractedAwemeId, contentType: 'text/html' };
+    } else {
+      try {
+        redirectInfo = await resolveRedirectedUrl(originalUrl);
+      } catch {
+        sendJson(res, 400, { ok: false, error: '短链接展开失败，请稍后重试或改用网页完整链接。' });
+        return;
+      }
+    }
 
-    finalResolvePath = result.resolveStrategy || 'direct_html';
-    logDouyinResolve('log', '[douyin resolve] resolved successfully', {
-      videoId: result.videoId || awemeId,
-      elapsedMs: Date.now() - startedAt,
-      resolveStrategy: result.resolveStrategy
-    });
+    const normalizedUrl = redirectInfo.normalizedUrl || redirectInfo.finalUrl || originalUrl;
+    const awemeId = redirectInfo.awemeId || extractDouyinAwemeId(normalizedUrl);
+
+    if (!awemeId) {
+      sendJson(res, 400, { ok: false, error: '短链接已展开，但目标不是标准作品页，暂时无法提取作品 id。' });
+      return;
+    }
+
+    const result = await resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeId, requestId });
 
     sendJson(res, 200, {
       ok: true,
-      mode,
       videoId: result.videoId || awemeId,
       title: result.title || '',
       downloadUrl: result.downloadUrl,
@@ -9915,33 +9879,15 @@ async function handleDouyinResolveDownload(req, res) {
       authorName: result.authorName || '',
       duration: result.duration || 0,
       videoData: result.videoData,
-      normalizedUrl: result.normalizedUrl || normalizedUrl || finalUrl || originalUrl,
+      normalizedUrl: result.normalizedUrl || normalizedUrl || originalUrl,
       sourceType: extracted.sourceType,
       resolveStrategy: result.resolveStrategy
     });
-    return;
   } catch (error) {
-    finalResolvePath = 'failed';
-    upstreamStatus = error?.upstreamStatus || upstreamStatus;
-    upstreamBodySummary = error?.upstreamBodySummary || upstreamBodySummary;
-
-    logDouyinResolve('error', '[douyin resolve] request failed', {
-      stage: error?.stage || 'unknown_upstream_error',
-      detail: error?.detail || '',
-      upstreamCode: error?.upstreamCode || '',
-      message: error?.message || '',
-      stack: error?.stack || '',
-      elapsedMs: Date.now() - startedAt
-    });
-
+    console.error('[douyin resolve] request failed', { requestId, message: error.message });
     sendJson(res, error?.statusCode || 500, {
       ok: false,
-      mode: requestedMode,
-      error: error?.message || '抖音视频解析失败',
-      stage: error?.stage || 'unknown_upstream_error',
-      detail: error?.detail || '',
-      upstreamStatus,
-      upstreamBodySummary
+      error: error?.message || '视频解析失败'
     });
   }
 }
@@ -10656,140 +10602,83 @@ async function handleDouyinDownloadVideo(req, res) {
   }
 
   try {
-    let downloadUrl = '';
-    let downloadUrlCandidates = [];
+    let targetUrl = '';
+    let videoUrlCandidates = [];
     let videoId = '';
+    let platform = 'douyin';
 
     const parsedUrl = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
     if (req.method === 'GET') {
-      downloadUrl = readValue(parsedUrl.searchParams.get('downloadUrl'));
+      targetUrl = readValue(parsedUrl.searchParams.get('downloadUrl') || parsedUrl.searchParams.get('url'));
       videoId = readValue(parsedUrl.searchParams.get('videoId'));
       const candidatesParam = parsedUrl.searchParams.get('candidates');
       if (candidatesParam) {
         try {
           const parsed = JSON.parse(candidatesParam);
-          if (Array.isArray(parsed)) downloadUrlCandidates = parsed;
+          if (Array.isArray(parsed)) videoUrlCandidates = parsed;
         } catch {
-          downloadUrlCandidates = [];
+          videoUrlCandidates = [];
         }
       }
+      const videoUrlsParam = parsedUrl.searchParams.get('videoUrls');
+      if (videoUrlsParam) {
+        try {
+          const parsed = JSON.parse(videoUrlsParam);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            videoUrlCandidates = parsed.map((u) => (typeof u === 'string' ? { url: u } : u));
+          }
+        } catch {
+          // ignore
+        }
+      }
+      platform = readValue(parsedUrl.searchParams.get('platform')) || 'douyin';
     } else {
       const body = await readRequestBody(req);
-      downloadUrl = readValue(body?.downloadUrl);
-      downloadUrlCandidates = Array.isArray(body?.downloadUrlCandidates) ? body.downloadUrlCandidates : [];
+      targetUrl = readValue(body?.downloadUrl || body?.url);
+      if (!targetUrl && Array.isArray(body?.videoUrls) && body.videoUrls.length > 0) {
+        targetUrl = body.videoUrls[0];
+      }
+      videoUrlCandidates = Array.isArray(body?.videoUrlCandidates)
+        ? body.videoUrlCandidates
+        : (Array.isArray(body?.downloadUrlCandidates) ? body.downloadUrlCandidates : []);
+      if (videoUrlCandidates.length === 0 && Array.isArray(body?.videoUrls)) {
+        videoUrlCandidates = body.videoUrls.map((u) => (typeof u === 'string' ? { url: u } : u));
+      }
       videoId = readValue(body?.videoId);
+      platform = readValue(body?.platform) || 'douyin';
     }
 
-    if (!downloadUrl) {
-      sendJson(res, 400, { error: '缺少 downloadUrl' });
+    if (!targetUrl && videoUrlCandidates.length > 0) {
+      targetUrl = videoUrlCandidates[0].url || String(videoUrlCandidates[0]);
+    }
+
+    if (!targetUrl) {
+      sendJson(res, 400, { error: '缺少下载地址' });
       return;
     }
 
     const fileName = buildDouyinVideoDownloadFileName(videoId);
-    const normalizedCandidates = normalizeDouyinDownloadCandidates(downloadUrlCandidates, downloadUrl);
-    const rankedCandidates = rankDouyinDownloadCandidates(normalizedCandidates, { respectCooldown: true });
 
     logDownload('request_received', {
       videoId,
-      candidateCount: rankedCandidates.length,
-      candidateHosts: rankedCandidates.slice(0, 3).map(c => c.host),
+      platform,
+      targetUrl: targetUrl.slice(0, 120),
+      candidateCount: videoUrlCandidates.length,
       method: req.method
     });
 
-    const MAX_PARALLEL = 3;
-    const parallelCandidates = rankedCandidates.slice(0, MAX_PARALLEL);
-
-    const winner = await raceDouyinDownloadCandidates(parallelCandidates, {
-      logDownload,
-      timeoutMs: DOUYIN_VIDEO_DOWNLOAD_ATTEMPT_TIMEOUT_MS
+    await proxyVideoStream({
+      targetUrl,
+      req,
+      res,
+      asAttachment: true,
+      fileName
     });
-
-    if (!winner || !winner.ok) {
-      logDownload('all_candidates_failed', {
-        attemptedCount: parallelCandidates.length,
-        candidateHosts: parallelCandidates.map(c => c.host)
-      });
-
-      for (const c of parallelCandidates) {
-        updateDouyinDownloadHostStats(c.host, 'failure');
-      }
-
-      if (!res.headersSent) {
-        sendJson(res, 502, {
-          error: '视频下载失败',
-          detail: '所有下载源均不可用，请稍后重试。'
-        });
-      }
-      return;
-    }
-
-    const { res: upstreamRes, candidate, ttfbMs, fetchStartAt } = winner;
-    updateDouyinDownloadHostStats(candidate.host, 'selected');
-
-    const responseHeaders = {
-      'Content-Type': 'video/mp4',
-      'Content-Disposition': `attachment; filename="${fileName}"`,
-      'Cache-Control': 'no-store',
-    };
-
-    const upstreamContentLength = upstreamRes.headers.get('content-length');
-    if (upstreamContentLength) {
-      responseHeaders['Content-Length'] = upstreamContentLength;
-    }
-
-    res.writeHead(200, responseHeaders);
-
-    const clientStartAt = Date.now();
-    logDownload('client_stream_start', {
-      selectedHost: candidate.host,
-      selectedSource: candidate.source || '',
-      selectedDownloadUrl: candidate.url || '',
-      ttfbMs,
-      headToClientMs: clientStartAt - startedAt
-    });
-
-    if (!upstreamRes.body) {
-      res.end();
-      return;
-    }
-
-    let bytesStreamed = 0;
-    const reader = upstreamRes.body.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(value);
-        bytesStreamed += value?.byteLength || 0;
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    res.end();
-
-    const totalMs = Date.now() - startedAt;
-    const upstreamMs = Date.now() - fetchStartAt;
-    const totalDurationMs = upstreamMs;
-    updateDouyinDownloadHostStats(candidate.host, 'success', { ttfbMs, totalDurationMs });
-
-    const rollingTtfb = getDouyinDownloadHostRollingAverage(candidate.host, 'ttfb');
-    const rollingDuration = getDouyinDownloadHostRollingAverage(candidate.host, 'totalDuration');
-    const cooldownStatus = isDouyinDownloadHostInCooldown(candidate.host);
-    const hostStats = getDouyinDownloadHostStatsWithTiming(candidate.host);
 
     logDownload('stream_finished', {
-      winner: candidate.host,
       videoId,
-      bytesStreamed,
-      ttfbMs,
-      upstreamDurationMs: upstreamMs,
-      totalDurationMs: totalMs,
-      rollingTtfbAvg: rollingTtfb.avgMs,
-      rollingTtfbSamples: rollingTtfb.sampleCount,
-      rollingDurationAvg: rollingDuration.avgMs,
-      rollingDurationSamples: rollingDuration.sampleCount,
-      consecutiveFailures: hostStats.consecutiveFailures,
-      inCooldown: cooldownStatus.inCooldown
+      platform,
+      targetUrl: targetUrl.slice(0, 120)
     });
   } catch (error) {
     if (!res.headersSent) {
@@ -10808,11 +10697,11 @@ async function handleDouyinDownloadVideo(req, res) {
 
 async function handleDouyinVideoStream(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const downloadUrl = url.searchParams.get('downloadUrl');
+  const downloadUrl = url.searchParams.get('downloadUrl') || url.searchParams.get('url');
   const videoId = url.searchParams.get('videoId') || '';
 
   if (!downloadUrl) {
-    sendJson(res, 400, { error: '缺少 downloadUrl 参数' });
+    sendJson(res, 400, { error: '缺少下载地址参数' });
     return;
   }
 
@@ -10820,43 +10709,12 @@ async function handleDouyinVideoStream(req, res) {
   console.log('[douyin preview] stream_started', { requestId, videoId, targetPath: downloadUrl });
 
   try {
-    const upstreamRes = await fetch(downloadUrl, {
-      headers: {
-        'Referer': 'https://www.douyin.com/',
-        'User-Agent': DOUYIN_USER_AGENT,
-        'Accept': '*/*',
-      },
+    await proxyVideoStream({
+      targetUrl: downloadUrl,
+      req,
+      res,
+      asAttachment: false
     });
-
-    if (!upstreamRes.ok) {
-      console.log('[douyin preview] upstream_failed', { requestId, upstreamStatus: upstreamRes.status });
-      sendJson(res, 502, { error: '上游视频请求失败', detail: `HTTP ${upstreamRes.status}` });
-      return;
-    }
-
-    const contentType = upstreamRes.headers.get('content-type') || 'video/mp4';
-    res.writeHead(200, {
-      'Content-Type': contentType,
-      'Cache-Control': 'no-store',
-    });
-
-    if (!upstreamRes.body) {
-      res.end();
-      return;
-    }
-
-    const reader = upstreamRes.body.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(Buffer.from(value));
-        if (res.flush) res.flush();
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    res.end();
     console.log('[douyin preview] stream_finished', { requestId });
   } catch (error) {
     console.error('[douyin preview] stream_error', { requestId, message: error?.message });

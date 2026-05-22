@@ -11,8 +11,11 @@ export interface DouyinResolveResult {
   mode: 'stable';
   videoId: string;
   title?: string;
+  desc?: string;
   downloadUrl: string;
   downloadUrlCandidates?: DouyinDownloadCandidate[];
+  videoUrls?: string[];
+  videoUrlCandidates?: DouyinDownloadCandidate[];
   caption?: string;
   fallbackCaption?: string;
   fallbackCaptionSource?: 'none' | 'tikhub_caption';
@@ -20,8 +23,12 @@ export interface DouyinResolveResult {
   duration?: number;
   videoData?: Record<string, unknown> | null;
   normalizedUrl?: string;
-  sourceType: 'web_url' | 'short_share_text';
+  sourceType: 'web_url' | 'short_share_text' | 'local_upload' | 'universal';
   resolveStrategy?: string;
+  platform?: string;
+  images?: string[];
+  tags?: string[];
+  sourceUrl?: string;
 }
 
 export interface DouyinTranscriptResult {
@@ -33,7 +40,7 @@ export interface DouyinTranscriptResult {
   downloadUrlCandidates?: DouyinDownloadCandidate[];
   authorName?: string;
   normalizedUrl?: string;
-  sourceType: 'web_url' | 'short_share_text';
+  sourceType: 'web_url' | 'short_share_text' | 'local_upload' | 'universal';
   transcript: string;
   transcriptError?: string;
   transcriptSegments?: number;
@@ -135,13 +142,21 @@ export async function resolveDouyinDownload(input: string): Promise<DouyinResolv
     throw new Error(buildErrorMessage(json, '抖音视频解析失败'));
   }
 
+  const videoUrlCandidates = readDownloadUrlCandidates(json?.videoUrlCandidates || json?.downloadUrlCandidates);
+  const videoUrls = Array.isArray(json?.videoUrls)
+    ? json.videoUrls.filter((u: unknown) => typeof u === 'string' && u.startsWith('http'))
+    : videoUrlCandidates.map((c) => c.url);
+
   return {
     ok: true,
     mode: 'stable',
     videoId: String(json?.videoId || ''),
     title: typeof json?.title === 'string' ? json.title : '',
-    downloadUrl: String(json?.downloadUrl || ''),
+    desc: typeof json?.desc === 'string' ? json.desc : '',
+    downloadUrl: String(json?.downloadUrl || json?.videoUrls?.[0] || ''),
     downloadUrlCandidates: readDownloadUrlCandidates(json?.downloadUrlCandidates),
+    videoUrls,
+    videoUrlCandidates,
     caption: typeof json?.caption === 'string' ? json.caption : '',
     fallbackCaption: typeof json?.fallbackCaption === 'string' ? json.fallbackCaption : '',
     fallbackCaptionSource: json?.fallbackCaptionSource === 'tikhub_caption' ? 'tikhub_caption' : 'none',
@@ -149,8 +164,12 @@ export async function resolveDouyinDownload(input: string): Promise<DouyinResolv
     duration: Number.isFinite(Number(json?.duration)) ? Number(json.duration) : 0,
     videoData: json?.videoData && typeof json.videoData === 'object' ? json.videoData as Record<string, unknown> : null,
     normalizedUrl: typeof json?.normalizedUrl === 'string' ? json.normalizedUrl : '',
-    sourceType: json?.sourceType === 'web_url' ? 'web_url' : 'short_share_text',
+    sourceType: json?.sourceType === 'web_url' ? 'web_url' : (json?.sourceType === 'universal' ? 'universal' : 'short_share_text'),
     resolveStrategy: typeof json?.resolveStrategy === 'string' ? json.resolveStrategy : '',
+    platform: typeof json?.platform === 'string' ? json.platform : '',
+    images: Array.isArray(json?.images) ? json.images.filter((u: unknown) => typeof u === 'string' && u.startsWith('http')) : [],
+    tags: Array.isArray(json?.tags) ? json.tags.filter((t: unknown) => typeof t === 'string') : [],
+    sourceUrl: typeof json?.sourceUrl === 'string' ? json.sourceUrl : '',
   };
 }
 
@@ -229,12 +248,20 @@ export async function downloadDouyinVideoFile(params: {
   videoId: string;
   downloadUrl: string;
   downloadUrlCandidates?: DouyinDownloadCandidate[];
+  videoUrls?: string[];
+  platform?: string;
 }) {
   const query = new URLSearchParams();
   query.set('videoId', params.videoId);
   query.set('downloadUrl', params.downloadUrl);
   if (params.downloadUrlCandidates && params.downloadUrlCandidates.length > 0) {
     query.set('candidates', JSON.stringify(params.downloadUrlCandidates));
+  }
+  if (params.videoUrls && params.videoUrls.length > 0) {
+    query.set('videoUrls', JSON.stringify(params.videoUrls));
+  }
+  if (params.platform) {
+    query.set('platform', params.platform);
   }
 
   const url = `/api/douyin/download-video?${query.toString()}`;
@@ -253,74 +280,17 @@ export async function downloadDouyinVideoFile(params: {
 export async function directDownloadDouyinVideoFile(params: {
   videoId: string;
   downloadUrl: string;
+  videoUrls?: string[];
+  platform?: string;
   onProgress?: (loaded: number, total: number) => void;
 }) {
-  const url = String(params?.downloadUrl || '').trim();
-  if (!url) {
-    throw new Error('缺少 downloadUrl');
-  }
-  // eslint-disable-next-line no-console
-  console.log('[douyin download] direct fetch start:', { videoId: params.videoId, url });
-
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'Referer': 'https://www.douyin.com/',
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`直链请求失败: HTTP ${response.status}`);
-    }
-
-    const contentLength = Number(response.headers.get('content-length') || '0');
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('无法读取响应流');
-    }
-
-    const chunks: Uint8Array[] = [];
-    let received = 0;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        chunks.push(value);
-        received += value.byteLength;
-        params.onProgress?.(received, contentLength);
-      }
-    }
-
-    // 合并 chunks
-    const blob = new Blob(chunks);
-    const blobUrl = URL.createObjectURL(blob);
-
-    const anchor = document.createElement('a');
-    anchor.href = blobUrl;
-    anchor.download = buildDownloadFileName(params.videoId);
-    anchor.style.display = 'none';
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-
-    URL.revokeObjectURL(blobUrl);
-    // eslint-disable-next-line no-console
-    console.log('[douyin download] direct fetch done:', { size: blob.size, received });
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.warn('[douyin download] direct fetch failed, falling back to anchor open:', error);
-    // 降级：a 标签打开（可能触发下载或播放，取决于浏览器和跨域策略）
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = buildDownloadFileName(params.videoId);
-    anchor.target = '_blank';
-    anchor.rel = 'noopener noreferrer';
-    anchor.style.display = 'none';
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-  }
+  // Always use proxy download for cross-platform reliability
+  await downloadDouyinVideoFile({
+    videoId: params.videoId,
+    downloadUrl: params.downloadUrl,
+    videoUrls: params.videoUrls,
+    platform: params.platform,
+  });
 }
 
 export async function polishDouyinTranscript(options: {
