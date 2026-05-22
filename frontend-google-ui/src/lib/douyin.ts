@@ -251,27 +251,22 @@ export async function downloadDouyinVideoFile(params: {
   videoUrls?: string[];
   platform?: string;
 }) {
-  const query = new URLSearchParams();
-  query.set('videoId', params.videoId);
-  query.set('downloadUrl', params.downloadUrl);
-  if (params.downloadUrlCandidates && params.downloadUrlCandidates.length > 0) {
-    query.set('candidates', JSON.stringify(params.downloadUrlCandidates));
-  }
-  if (params.videoUrls && params.videoUrls.length > 0) {
-    query.set('videoUrls', JSON.stringify(params.videoUrls));
-  }
-  if (params.platform) {
-    query.set('platform', params.platform);
-  }
+  const body = {
+    videoId: params.videoId,
+    downloadUrl: params.downloadUrl,
+    downloadUrlCandidates: params.downloadUrlCandidates,
+    videoUrls: params.videoUrls,
+    platform: params.platform,
+  };
 
-  const url = `/api/douyin/download-video?${query.toString()}`;
   // eslint-disable-next-line no-console
-  console.log('[douyin download] triggering backend download via fetch:', url);
+  console.log('[douyin download] triggering backend download via POST');
 
-  // Use fetch to ensure cookies are sent (anchor.click may not send SameSite=Lax cookies)
-  const response = await fetch(url, {
-    method: 'GET',
+  const response = await fetch('/api/douyin/download-video', {
+    method: 'POST',
     credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
