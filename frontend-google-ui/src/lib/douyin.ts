@@ -266,15 +266,33 @@ export async function downloadDouyinVideoFile(params: {
 
   const url = `/api/douyin/download-video?${query.toString()}`;
   // eslint-disable-next-line no-console
-  console.log('[douyin download] triggering backend download:', url);
+  console.log('[douyin download] triggering backend download via fetch:', url);
+
+  // Use fetch to ensure cookies are sent (anchor.click may not send SameSite=Lax cookies)
+  const response = await fetch(url, {
+    method: 'GET',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    // eslint-disable-next-line no-console
+    console.error('[douyin download] backend returned error:', response.status, text);
+    throw new Error(`下载失败: HTTP ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
 
   const anchor = document.createElement('a');
-  anchor.href = url;
+  anchor.href = blobUrl;
   anchor.download = buildDownloadFileName(params.videoId);
   anchor.style.display = 'none';
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);
+
+  URL.revokeObjectURL(blobUrl);
 }
 
 export async function directDownloadDouyinVideoFile(params: {
@@ -284,13 +302,82 @@ export async function directDownloadDouyinVideoFile(params: {
   platform?: string;
   onProgress?: (loaded: number, total: number) => void;
 }) {
-  // Always use proxy download for cross-platform reliability
-  await downloadDouyinVideoFile({
-    videoId: params.videoId,
-    downloadUrl: params.downloadUrl,
-    videoUrls: params.videoUrls,
-    platform: params.platform,
-  });
+  const url = String(params?.downloadUrl || '').trim();
+  if (!url) {
+    throw new Error('缺少 downloadUrl');
+  }
+
+  // For non-Douyin platforms, always use proxy download
+  const platform = String(params?.platform || '').trim().toLowerCase();
+  if (platform && platform !== 'douyin') {
+    await downloadDouyinVideoFile({
+      videoId: params.videoId,
+      downloadUrl: params.downloadUrl,
+      videoUrls: params.videoUrls,
+      platform: params.platform,
+    });
+    return;
+  }
+
+  // Douyin platform: try direct CDN download first (faster)
+  // eslint-disable-next-line no-console
+  console.log('[douyin download] direct fetch start:', { videoId: params.videoId, url });
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Referer': 'https://www.douyin.com/',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`直链请求失败: HTTP ${response.status}`);
+    }
+
+    const contentLength = Number(response.headers.get('content-length') || '0');
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('无法读取响应流');
+    }
+
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        received += value.byteLength;
+        params.onProgress?.(received, contentLength);
+      }
+    }
+
+    const blob = new Blob(chunks);
+    const blobUrl = URL.createObjectURL(blob);
+
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = buildDownloadFileName(params.videoId);
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+
+    URL.revokeObjectURL(blobUrl);
+    // eslint-disable-next-line no-console
+    console.log('[douyin download] direct fetch done:', { size: blob.size, received });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn('[douyin download] direct fetch failed, falling back to proxy:', error);
+    // Fallback to proxy download
+    await downloadDouyinVideoFile({
+      videoId: params.videoId,
+      downloadUrl: params.downloadUrl,
+      videoUrls: params.videoUrls,
+      platform: params.platform,
+    });
+  }
 }
 
 export async function polishDouyinTranscript(options: {
