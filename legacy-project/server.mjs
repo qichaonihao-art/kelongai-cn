@@ -5954,7 +5954,8 @@ async function callTikHubHighQualityPlayUrl({ shareUrl, awemeId, requestId, dead
     downloadUrlCandidates: downloadUrl ? [{
       url: downloadUrl,
       source: 'tikhub.original_video_url',
-      host: getHostnameFromUrl(downloadUrl)
+      host: getHostnameFromUrl(downloadUrl),
+      hasAudio: true
     }] : [],
     caption: extractDouyinCaptionFromPayload(payload),
     authorName: extractDouyinAuthorNameFromPayload(payload),
@@ -10110,12 +10111,39 @@ async function handleDouyinResolveDownload(req, res) {
         if (url) {
           const data = await extractByUrlUniversal({ apiKey, baseUrl: TIKHUB_API_BASE_URL, url });
           const normalized = normalizeUniversalExtractResult(data, { sourceUrl: url });
-          const normalizedDownloadCandidates = normalizeDouyinDownloadCandidates(
+          let normalizedDownloadCandidates = normalizeDouyinDownloadCandidates(
             normalized.videoUrlCandidates || [],
             normalized.videoUrls[0] || ''
           );
-          const selectedDownloadCandidate = pickBestDouyinDownloadCandidate(normalizedDownloadCandidates);
-          const selectedDownloadUrl = selectedDownloadCandidate?.url || normalized.videoUrls[0] || '';
+          let selectedDownloadCandidate = pickBestDouyinDownloadCandidate(normalizedDownloadCandidates);
+          let selectedDownloadUrl = selectedDownloadCandidate?.url || normalized.videoUrls[0] || '';
+
+          if (normalized.platform === 'douyin' && !normalizedDownloadCandidates.some((candidate) => candidate?.hasAudio === true)) {
+            try {
+              const highQualityResult = await callTikHubHighQualityPlayUrl({
+                shareUrl: url,
+                requestId,
+                deadlineAt: Date.now() + 8000
+              });
+              normalizedDownloadCandidates = normalizeDouyinDownloadCandidates(
+                [
+                  ...(highQualityResult?.downloadUrlCandidates || []),
+                  ...normalizedDownloadCandidates
+                ],
+                highQualityResult?.downloadUrl || selectedDownloadUrl
+              );
+              const audioCandidates = normalizedDownloadCandidates.filter((candidate) => candidate?.hasAudio === true);
+              selectedDownloadCandidate = pickBestDouyinDownloadCandidate(
+                audioCandidates.length > 0 ? audioCandidates : normalizedDownloadCandidates
+              );
+              selectedDownloadUrl = selectedDownloadCandidate?.url || highQualityResult?.downloadUrl || selectedDownloadUrl;
+            } catch (highQualityError) {
+              console.warn('[douyin resolve] high quality audio candidate failed, keeping universal candidates', {
+                requestId,
+                message: highQualityError.message
+              });
+            }
+          }
 
           console.log('[douyin resolve] universal extract success', {
             requestId,

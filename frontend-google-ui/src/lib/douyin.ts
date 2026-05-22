@@ -270,6 +270,39 @@ function triggerBackgroundDownload(url: string) {
   });
 }
 
+function triggerDirectLinkDownload(url: string, fileName: string) {
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.rel = 'noreferrer';
+  anchor.target = '_blank';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+}
+
+function getDirectDownloadCandidates(params: {
+  downloadUrl: string;
+  downloadUrlCandidates?: DouyinDownloadCandidate[];
+}): DouyinDownloadCandidate[] {
+  const seen = new Set<string>();
+  const candidates = [...(params.downloadUrlCandidates || [])];
+  if (params.downloadUrl) {
+    candidates.push({ url: params.downloadUrl, source: 'resolved.downloadUrl' });
+  }
+
+  return candidates
+    .filter((candidate) => candidate?.url)
+    .sort((left, right) => Number(right.hasAudio === true) - Number(left.hasAudio === true))
+    .filter((candidate) => {
+      if (seen.has(candidate.url)) return false;
+      seen.add(candidate.url);
+      return true;
+    })
+    .slice(0, 6);
+}
+
 export async function downloadDouyinVideoFile(params: {
   videoId: string;
   downloadUrl: string;
@@ -283,9 +316,16 @@ export async function downloadDouyinVideoFile(params: {
   const fileName = buildDownloadFileName(safeVideoId);
 
   const form = document.createElement('form');
+  const iframe = document.createElement('iframe');
+  const frameName = `douyin_download_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+
+  iframe.name = frameName;
+  iframe.style.display = 'none';
+  iframe.setAttribute('aria-hidden', 'true');
+
   form.method = 'POST';
   form.action = '/api/douyin/download-video';
-  form.target = '_blank';
+  form.target = frameName;
   form.style.display = 'none';
 
   const fields: Record<string, string> = {
@@ -308,9 +348,17 @@ export async function downloadDouyinVideoFile(params: {
     form.appendChild(input);
   }
 
+  document.body.appendChild(iframe);
   document.body.appendChild(form);
-  form.submit();
-  document.body.removeChild(form);
+
+  try {
+    form.submit();
+  } finally {
+    document.body.removeChild(form);
+    window.setTimeout(() => {
+      iframe.remove();
+    }, 120_000);
+  }
 }
 
 export async function directDownloadDouyinVideoFile(params: {
@@ -321,16 +369,26 @@ export async function directDownloadDouyinVideoFile(params: {
   platform?: string;
   onProgress?: (loaded: number, total: number) => void;
 }) {
-  // Use the backend validated download path for Douyin too. It downloads the
-  // candidate to a temp file, ffprobes it, and automatically switches away from
-  // video-only sources before sending the file to the browser.
-  await downloadDouyinVideoFile({
-    videoId: params.videoId,
-    downloadUrl: params.downloadUrl,
-    downloadUrlCandidates: params.downloadUrlCandidates,
-    videoUrls: params.videoUrls,
-    platform: params.platform,
-  });
+  const platform = String(params?.platform || '').trim().toLowerCase();
+
+  if (platform && platform !== 'douyin') {
+    await downloadDouyinVideoFile(params);
+    return;
+  }
+
+  const fileName = buildDownloadFileName(params.videoId);
+  const candidates = getDirectDownloadCandidates(params);
+  const directAudioCandidate = candidates.find((candidate) => candidate.hasAudio === true);
+
+  if (directAudioCandidate) {
+    triggerDirectLinkDownload(directAudioCandidate.url, fileName);
+    return;
+  }
+
+  // If the parser cannot prove a candidate contains audio, avoid gambling on a
+  // silent direct file. The backend path downloads, ffprobes, and switches source
+  // when it detects a video-only candidate.
+  await downloadDouyinVideoFile(params);
 }
 
 export async function polishDouyinTranscript(options: {
