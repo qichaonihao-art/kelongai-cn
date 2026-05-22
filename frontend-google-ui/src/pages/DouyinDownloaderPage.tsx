@@ -18,9 +18,7 @@ import {
   X,
   Upload,
   Globe,
-  Image as ImageIcon,
   Tag,
-  ChevronDown,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -131,7 +129,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [showDiff, setShowDiff] = useState(true);
   const [showVideoPreview, setShowVideoPreview] = useState(false);
   const [previewUseProxy, setPreviewUseProxy] = useState(false);
-  const [showImages, setShowImages] = useState(false);
   const [isLocalTranscriptLoading, setIsLocalTranscriptLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'link' | 'local'>('link');
   const [asrEngine, setAsrEngine] = useState<'siliconflow' | 'qwen'>('qwen');
@@ -801,33 +798,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                         </div>
                       )}
                     </div>
-
-                    {/* Images gallery for platforms like Xiaohongshu */}
-                    {result.images && result.images.length > 0 && (
-                      <div className="space-y-2">
-                        <button
-                          type="button"
-                          onClick={() => setShowImages((v) => !v)}
-                          className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white/60 px-3.5 py-2.5 text-left transition-all hover:border-indigo-200 hover:bg-indigo-50/50"
-                        >
-                          <span className="flex items-center gap-2">
-                            <ImageIcon className="size-4 text-indigo-500" />
-                            <span className="text-xs font-bold text-slate-500">图片 ({result.images.length}张)</span>
-                          </span>
-                          <ChevronDown className={`size-4 text-slate-400 transition-transform ${showImages ? 'rotate-180' : ''}`} />
-                        </button>
-                        {showImages && (
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                            {result.images.map((img, i) => (
-                              <a key={i} href={img} target="_blank" rel="noopener noreferrer" className="group relative aspect-square rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
-                                <img src={img} alt={`图片${i + 1}`} className="w-full h-full object-cover group-hover:scale-105 transition-transform" loading="lazy" />
-                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all" />
-                              </a>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
 
                     <div className="flex flex-col gap-3">
                       <div className="grid gap-3 sm:grid-cols-2">

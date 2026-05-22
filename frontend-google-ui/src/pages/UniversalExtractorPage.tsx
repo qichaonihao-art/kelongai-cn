@@ -8,13 +8,11 @@ import {
   Copy,
   CheckCircle2,
   Play,
-  Image as ImageIcon,
   FileText,
   Tag,
   User,
   AlertCircle,
   Sparkles,
-  ChevronDown,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -37,7 +35,6 @@ export default function UniversalExtractorPage({ onBack, onNavigate }: Universal
   const [error, setError] = useState('');
   const [result, setResult] = useState<any>(null);
   const [copiedField, setCopiedField] = useState('');
-  const [showImages, setShowImages] = useState(false);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptText, setTranscriptText] = useState('');
   const [transcriptError, setTranscriptError] = useState('');
@@ -63,7 +60,6 @@ export default function UniversalExtractorPage({ onBack, onNavigate }: Universal
     setLoading(true);
     setError('');
     setResult(null);
-    setShowImages(false);
     resetTranscript();
     try {
       const res = await fetch('/api/extract/universal', {
@@ -97,7 +93,6 @@ export default function UniversalExtractorPage({ onBack, onNavigate }: Universal
     setError('');
     setResult(null);
     setCopiedField('');
-    setShowImages(false);
     setDetectedPlatform('');
     resetTranscript();
   }
@@ -106,7 +101,6 @@ export default function UniversalExtractorPage({ onBack, onNavigate }: Universal
   const author = extractAuthor(result);
   const videoUrls = extractVideoUrls(result);
   const primaryProxyVideoUrl = videoUrls[0] ? buildProxyDownloadUrl(videoUrls[0]) : '';
-  const images = extractImages(result);
   const tags = extractTags(result);
 
   function resetTranscript() {
@@ -193,7 +187,7 @@ export default function UniversalExtractorPage({ onBack, onNavigate }: Universal
             </div>
             <div>
               <h1 className="text-xl font-black tracking-tight text-slate-900">全网全平台解析</h1>
-              <p className="text-xs text-slate-500 mt-0.5 font-medium">粘贴任意平台作品链接，一键提取视频、图片和逐字稿</p>
+              <p className="text-xs text-slate-500 mt-0.5 font-medium">粘贴任意平台作品链接，一键提取视频、下载地址和逐字稿</p>
             </div>
           </div>
 
@@ -370,33 +364,6 @@ export default function UniversalExtractorPage({ onBack, onNavigate }: Universal
                       </a>
                     ))}
                   </div>
-                </div>
-              )}
-
-              {/* Images */}
-              {images.length > 0 && (
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowImages((value) => !value)}
-                    className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white/60 px-3.5 py-2.5 text-left transition-all hover:border-indigo-200 hover:bg-indigo-50/50"
-                  >
-                    <span className="flex items-center gap-2">
-                      <ImageIcon className="size-4 text-indigo-500" />
-                      <span className="text-xs font-bold text-slate-500">图片 ({images.length}张)</span>
-                    </span>
-                    <ChevronDown className={`size-4 text-slate-400 transition-transform ${showImages ? 'rotate-180' : ''}`} />
-                  </button>
-                  {showImages && (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {images.map((img: string, i: number) => (
-                        <a key={i} href={img} target="_blank" rel="noopener noreferrer" className="group relative aspect-square rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
-                          <img src={img} alt={`图片${i + 1}`} className="w-full h-full object-cover group-hover:scale-105 transition-transform" loading="lazy" />
-                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all" />
-                        </a>
-                      ))}
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -649,19 +616,6 @@ function scoreVideoUrl(url: string): number {
   return score;
 }
 
-function extractImages(data: any): string[] {
-  if (!data || typeof data !== 'object') return [];
-  if (Array.isArray(data.images) && data.images.length) {
-    const urls = data.images
-      .map((u: unknown) => String(u || '').trim())
-      .filter((u: string) => u.startsWith('http'));
-    return Array.from(new Set<string>(urls)).slice(0, 20);
-  }
-  const detail = findPrimaryDetail(data);
-  const urls = findImageUrlsDeep(detail || data);
-  return urls;
-}
-
 function extractTags(data: any): string[] {
   if (!data || typeof data !== 'object') return [];
   if (Array.isArray(data.tags) && data.tags.length) {
@@ -763,42 +717,6 @@ function findVideoUrlsDeep(input: any): string[] {
   return [...new Set(urls)].slice(0, 20);
 }
 
-function findImageUrlsDeep(input: any): string[] {
-  const urls: string[] = [];
-  const seen = new Set();
-  const queue = [input];
-
-  while (queue.length) {
-    const item = queue.shift();
-    if (!item || seen.has(item)) continue;
-
-    if (typeof item === 'string') {
-      if (looksLikeImageUrl(item)) urls.push(item);
-      continue;
-    }
-    if (typeof item !== 'object') continue;
-    seen.add(item);
-
-    // Direct image fields
-    if (item.url && looksLikeImageUrl(item.url)) urls.push(item.url);
-    if (item.image_url && looksLikeImageUrl(item.image_url)) urls.push(item.image_url);
-    if (item.src && looksLikeImageUrl(item.src)) urls.push(item.src);
-
-    // url_list arrays
-    if (Array.isArray(item.url_list)) {
-      for (const u of item.url_list) {
-        if (typeof u === 'string' && looksLikeImageUrl(u)) urls.push(u);
-      }
-    }
-
-    for (const value of Object.values(item)) {
-      queue.push(value);
-    }
-  }
-
-  return [...new Set(urls)].slice(0, 20);
-}
-
 function looksLikeVideoUrl(url: string): boolean {
   if (typeof url !== 'string') return false;
   if (!url.startsWith('http')) return false;
@@ -813,12 +731,6 @@ function looksLikeVideoUrl(url: string): boolean {
   if (/youtube|googlevideo/.test(u)) return true;
   if (/xhscdn/.test(u)) return true;
   return false;
-}
-
-function looksLikeImageUrl(url: string): boolean {
-  if (typeof url !== 'string') return false;
-  if (!url.startsWith('http')) return false;
-  return /\.(jpg|jpeg|png|webp|gif|bmp)(?:[?#]|$)/i.test(url) || url.includes('/image/') || url.includes('/img/');
 }
 
 function cleanTitle(value: string): string {

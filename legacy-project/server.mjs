@@ -6758,7 +6758,6 @@ function normalizeUniversalExtractResult(data, { sourceUrl = '', endpointPath = 
   const platform = detectUniversalPlatform(data, sourceUrl, endpointPath);
   const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data?.note || data?.noteCard || data?.article || data?.mp_article || data?.photo || data || {};
   const videoUrlCandidates = collectUniversalVideoCandidates(data, platform);
-  const images = collectUniversalImages(data, platform);
   const title = readValue(
     data?.title,
     detail?.title,
@@ -6797,7 +6796,7 @@ function normalizeUniversalExtractResult(data, { sourceUrl = '', endpointPath = 
     duration: normalizeUniversalDurationSeconds(detail?.duration || detail?.video?.duration || data?.duration || 0, platform),
     videoUrls: videoUrlCandidates.map((candidate) => candidate.url),
     videoUrlCandidates,
-    images,
+    images: [],
     tags: collectUniversalTags(data),
     sourceUrl: extractUrlsFromText(sourceUrl)[0] || sourceUrl,
     sourceEndpoint: endpointPath,
@@ -10121,7 +10120,7 @@ async function handleDouyinResolveDownload(req, res) {
             duration: normalized.duration,
             videoUrls: normalized.videoUrls,
             videoUrlCandidates: normalized.videoUrlCandidates,
-            images: normalized.images,
+            images: [],
             tags: normalized.tags,
             sourceUrl: normalized.sourceUrl,
             // Legacy compatibility
@@ -10175,6 +10174,13 @@ async function handleDouyinResolveDownload(req, res) {
     }
 
     const result = await resolveDouyinDownloadPrimary({ originalUrl, normalizedUrl, awemeId, requestId });
+
+    console.log('[douyin resolve] legacy result', {
+      requestId,
+      downloadUrl: result.downloadUrl,
+      candidateCount: result.downloadUrlCandidates?.length || 0,
+      resolveStrategy: result.resolveStrategy
+    });
 
     sendJson(res, 200, {
       ok: true,
