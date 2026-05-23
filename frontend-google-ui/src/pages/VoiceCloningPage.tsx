@@ -36,7 +36,7 @@ import {
   getVoiceConfigStatus,
   supportsVoiceSpeechRate,
   syncVolcVoiceOwnership,
-  syncVoiceArchive,
+  updateVoiceArchiveName,
 } from "@/src/lib/voice";
 import {
   loadActiveVoiceId,
@@ -520,6 +520,39 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
       cancelled = true;
     };
   }, []);
+
+  // Refresh voice list when drawer opens
+  useEffect(() => {
+    if (!isMyVoicesOpen) return;
+
+    let cancelled = false;
+
+    async function refresh() {
+      try {
+        const records = await getVoiceArchive();
+        if (cancelled) return;
+        const adapted: ClonedVoice[] = records.map((r) => ({
+          id: r.id,
+          name: r.name,
+          provider: r.provider as VoicePlatform,
+          providerLabel: r.providerLabel,
+          remoteVoiceId: r.remoteVoiceId,
+          engineModel: r.engineModel,
+          resourceId: r.resourceId,
+          createdAt: r.createdAt,
+        }));
+        setVoices(adapted);
+      } catch {
+        // Silent fail
+      }
+    }
+
+    void refresh();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isMyVoicesOpen]);
 
   useEffect(() => {
     if (!deviceId || configStatus.mockMode || !hasVolcServerSupport) {
@@ -1251,15 +1284,13 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
       return;
     }
 
-    const updatedVoices = voices.map((v) =>
-      v.id === voiceId ? { ...v, name: trimmed } : v
+    setVoices((prev) =>
+      prev.map((v) => (v.id === voiceId ? { ...v, name: trimmed } : v))
     );
-    setVoices(updatedVoices);
     handleCancelEditName();
 
-    // Sync updated names to server archive
     try {
-      await syncVoiceArchive(updatedVoices, deviceId);
+      await updateVoiceArchiveName(voiceId, trimmed);
     } catch {
       // Silent fail - local name is already updated
     }
@@ -1276,6 +1307,21 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
         inputTextRef.current?.focus({ preventScroll: true });
       }, 320);
     }, 420);
+  }
+
+  function formatVoiceDate(isoString: string): string {
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return isoString;
+    }
   }
 
   return (
@@ -2172,7 +2218,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                             <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
                               <span className={cn("font-bold", meta.textColor)}>{voice.providerLabel}</span>
                               <span className="text-slate-300">|</span>
-                              <span>{voice.createdAt}</span>
+                              <span>{formatVoiceDate(voice.createdAt)}</span>
                             </div>
                           </div>
 

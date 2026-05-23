@@ -2967,6 +2967,45 @@ async function handleDeleteVoiceArchive(req, res) {
   }
 }
 
+async function handleUpdateVoiceArchiveName(req, res) {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const id = decodeURIComponent(url.pathname.replace(/^\/api\/voice\/archive\//, ''));
+    if (!id) {
+      sendJson(res, 400, { error: '缺少音色档案 ID' });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const name = String(body?.name || '').trim();
+    if (!name) {
+      sendJson(res, 400, { error: '缺少音色名称' });
+      return;
+    }
+
+    const updated = await withVoiceArchiveLock(async () => {
+      const archive = await loadVoiceArchive();
+      const record = archive.records.find((r) => r.id === id);
+      if (!record) {
+        return null;
+      }
+      record.name = name;
+      await saveVoiceArchive(archive);
+      return record;
+    });
+
+    if (!updated) {
+      sendJson(res, 404, { error: '未找到该音色档案' });
+      return;
+    }
+
+    sendJson(res, 200, { ok: true, record: updated });
+  } catch (error) {
+    console.error('[voice archive] update_name_error', { message: error.message });
+    sendJson(res, 500, { error: error.message || '更新音色名称失败' });
+  }
+}
+
 function normalizeDouyinInput(value) {
   return String(value || '')
     .replace(/\u00a0/g, ' ')
@@ -11527,6 +11566,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/voice/archive') {
     await handleGetVoiceArchive(req, res);
+    return;
+  }
+
+  if (req.method === 'PATCH' && url.pathname.startsWith('/api/voice/archive/')) {
+    await handleUpdateVoiceArchiveName(req, res);
     return;
   }
 

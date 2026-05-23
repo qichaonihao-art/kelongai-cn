@@ -517,3 +517,17 @@ export async function deleteVoiceArchive(id: string) {
   }
   return json;
 }
+
+export async function updateVoiceArchiveName(id: string, name: string) {
+  const response = await fetch(`/api/voice/archive/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ name }),
+  });
+  const json = await parseJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(readApiErrorMessage(json, '更新音色名称失败'));
+  }
+  return json;
+}
