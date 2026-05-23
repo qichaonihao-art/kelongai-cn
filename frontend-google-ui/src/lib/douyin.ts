@@ -404,7 +404,7 @@ function convertCpTranscribeToResult(data: any): DouyinTranscriptResult {
     transcript: data?.transcript || data?.text || '',
     transcriptError: '',
     transcriptSegments: 0,
-    fallbackCaption: data?.publishedText || '',
+    fallbackCaption: '',
     fallbackCaptionSource: 'none',
     resolveStrategy: 'copypilot',
   };
@@ -426,12 +426,26 @@ export async function resolveCpExtract(url: string): Promise<DouyinResolveResult
   return convertCpExtractToResolveResult(json?.data);
 }
 
-export async function extractCpTranscript(url: string): Promise<DouyinTranscriptResult> {
+export async function extractCpTranscript(
+  url: string,
+  options: {
+    sourceData?: Record<string, unknown> | null;
+    videoUrl?: string;
+    videoUrls?: string[];
+    downloadUrlCandidates?: DouyinDownloadCandidate[];
+  } = {},
+): Promise<DouyinTranscriptResult> {
   const response = await fetch('/api/cp/transcribe-link-qwen', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({
+      url,
+      sourceData: options.sourceData || undefined,
+      videoUrl: options.videoUrl || undefined,
+      videoUrls: options.videoUrls || undefined,
+      downloadUrlCandidates: options.downloadUrlCandidates || undefined,
+    }),
   });
 
   const json = await parseJsonSafely(response);
@@ -440,6 +454,114 @@ export async function extractCpTranscript(url: string): Promise<DouyinTranscript
   }
 
   return convertCpTranscribeToResult(json?.data);
+}
+
+export async function extractCpTranscriptStream(
+  url: string,
+  options: {
+    sourceData?: Record<string, unknown> | null;
+    videoUrl?: string;
+    videoUrls?: string[];
+    downloadUrlCandidates?: DouyinDownloadCandidate[];
+    onDelta?: (text: string) => void;
+    onStatus?: (message: string, stage?: string) => void;
+  } = {},
+): Promise<DouyinTranscriptResult> {
+  const response = await fetch('/api/cp/transcribe-link-qwen', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify({
+      url,
+      stream: true,
+      sourceData: options.sourceData || undefined,
+      videoUrl: options.videoUrl || undefined,
+      videoUrls: options.videoUrls || undefined,
+      downloadUrlCandidates: options.downloadUrlCandidates || undefined,
+    }),
+  });
+
+  if (!response.ok || !response.body) {
+    const json = await parseJsonSafely(response);
+    throw new Error(json?.message || json?.error || '视频文案提取失败');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalResult: DouyinTranscriptResult | null = null;
+
+  const handleBlock = (block: string) => {
+    const lines = block.split(/\r?\n/);
+    let eventName = 'message';
+    const dataLines: string[] = [];
+
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd();
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trimStart());
+      }
+    }
+
+    const rawData = dataLines.join('\n').trim();
+    if (!rawData) return;
+
+    let payload: any = {};
+    try {
+      payload = JSON.parse(rawData);
+    } catch {
+      return;
+    }
+
+    if (eventName === 'status') {
+      options.onStatus?.(String(payload.message || ''), typeof payload.stage === 'string' ? payload.stage : undefined);
+      return;
+    }
+
+    if (eventName === 'delta') {
+      const text = typeof payload.fullText === 'string' ? payload.fullText : String(payload.text || '');
+      if (text) options.onDelta?.(text);
+      return;
+    }
+
+    if (eventName === 'error') {
+      throw new Error(payload.message || '视频文案提取失败');
+    }
+
+    if (eventName === 'result') {
+      if (payload?.ok === false) {
+        throw new Error(payload.message || payload.error || '视频文案提取失败');
+      }
+      finalResult = convertCpTranscribeToResult(payload?.data);
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() || '';
+    for (const block of blocks) {
+      handleBlock(block);
+    }
+  }
+
+  if (buffer.trim()) {
+    handleBlock(buffer);
+  }
+
+  if (!finalResult) {
+    throw new Error('视频文案提取失败：没有收到完整转写结果');
+  }
+
+  return finalResult;
 }
 
 export async function extractCpLocalTranscript(file: File): Promise<DouyinTranscriptResult> {

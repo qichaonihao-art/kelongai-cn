@@ -28,6 +28,7 @@ import {
   directDownloadDouyinVideoFile,
   extractCpLocalTranscript,
   extractCpTranscript,
+  extractCpTranscriptStream,
   extractDouyinTranscript,
   extractLocalVideoTranscript,
   getDouyinConfigStatus,
@@ -136,6 +137,158 @@ function buildVideoStreamUrl(videoUrl: string, result: DouyinResolveResult, asDo
   return `/api/douyin/video-stream?${params.toString()}`;
 }
 
+function collectPreviewCandidateUrls(result: DouyinResolveResult): string[] {
+  const seen = new Set<string>();
+  const urls = [
+    result.previewUrl,
+    ...(result.videoUrlCandidates || []).map((candidate) => candidate.url),
+    ...(result.downloadUrlCandidates || []).map((candidate) => candidate.url),
+    ...(result.videoUrls || []),
+    result.downloadUrl,
+  ];
+
+  return urls.filter((url): url is string => {
+    if (!url || !/^https?:\/\//i.test(url) || seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  });
+}
+
+async function pickFastestPreviewUrl(result: DouyinResolveResult): Promise<string> {
+  const urls = collectPreviewCandidateUrls(result).slice(0, 10);
+  if (urls.length <= 1) return urls[0] || '';
+
+  const controllers: AbortController[] = [];
+  const probes = urls.map((url) => new Promise<{ url: string; elapsedMs: number }>((resolve, reject) => {
+    const controller = new AbortController();
+    controllers.push(controller);
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+    }, 2800);
+    const startedAt = performance.now();
+
+    fetch(buildVideoStreamUrl(url, result), {
+      credentials: 'include',
+      headers: { Range: 'bytes=0-1023' },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok && response.status !== 206) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        await response.arrayBuffer();
+        resolve({ url, elapsedMs: performance.now() - startedAt });
+      })
+      .catch(reject)
+      .finally(() => {
+        window.clearTimeout(timeoutId);
+      });
+  }));
+
+  try {
+    const fastest = await Promise.any(probes);
+    controllers.forEach((controller) => controller.abort());
+    return fastest.url;
+  } catch {
+    return urls[0] || '';
+  }
+}
+
+async function pickFastestDownloadUrl(result: DouyinResolveResult): Promise<string> {
+  const candidates = [
+    ...(result.downloadUrlCandidates || []),
+    ...(result.videoUrlCandidates || []),
+    ...(result.videoUrls || []).map((url) => ({ url })),
+    ...(result.downloadUrl ? [{ url: result.downloadUrl, hasAudio: true }] : []),
+  ];
+  const seen = new Set<string>();
+  const urls = candidates
+    .filter((candidate) => {
+      if (!candidate?.url || !/^https?:\/\//i.test(candidate.url) || seen.has(candidate.url)) return false;
+      if (candidate.hasAudio === false) return false;
+      seen.add(candidate.url);
+      return true;
+    })
+    .sort((left, right) => Number(right.hasAudio === true) - Number(left.hasAudio === true))
+    .slice(0, 8);
+
+  if (urls.length <= 1) return urls[0]?.url || '';
+
+  const controllers: AbortController[] = [];
+  const probes = urls.map((candidate) => new Promise<{
+    url: string;
+    score: number;
+  }>((resolve, reject) => {
+    const controller = new AbortController();
+    controllers.push(controller);
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+    }, 3600);
+    const startedAt = performance.now();
+
+    fetch(buildVideoStreamUrl(candidate.url, result), {
+      credentials: 'include',
+      headers: { Range: 'bytes=0-262143' },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok && response.status !== 206) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType && !/video|octet-stream/i.test(contentType)) {
+          throw new Error(`Invalid content-type ${contentType}`);
+        }
+
+        const buffer = await response.arrayBuffer();
+        if (buffer.byteLength < 1024) {
+          throw new Error('响应内容过小');
+        }
+
+        const elapsedMs = Math.max(1, performance.now() - startedAt);
+        const contentRange = response.headers.get('content-range') || '';
+        const contentLength = Number(response.headers.get('content-length') || '0');
+        const throughput = buffer.byteLength / elapsedMs;
+        let score = throughput;
+        if (candidate.hasAudio === true) score += 5000;
+        if (response.status === 206 || contentRange) score += 1500;
+        if (contentLength > 0) score += 300;
+        resolve({ url: candidate.url, score });
+      })
+      .catch(reject)
+      .finally(() => {
+        window.clearTimeout(timeoutId);
+      });
+  }));
+
+  try {
+    const results = await Promise.allSettled(probes);
+    controllers.forEach((controller) => controller.abort());
+    const fulfilled = results
+      .filter((item): item is PromiseFulfilledResult<{ url: string; score: number }> => item.status === 'fulfilled')
+      .map((item) => item.value)
+      .sort((left, right) => right.score - left.score);
+    return fulfilled[0]?.url || urls[0]?.url || '';
+  } catch {
+    return urls[0]?.url || '';
+  }
+}
+
+function warmPreviewMetadata(videoUrl: string, result: DouyinResolveResult) {
+  if (!videoUrl) return;
+  const video = document.createElement('video');
+  video.preload = 'metadata';
+  video.muted = true;
+  video.playsInline = true;
+  video.style.display = 'none';
+  video.src = buildVideoStreamUrl(videoUrl, result);
+  video.load();
+  document.body.appendChild(video);
+  window.setTimeout(() => {
+    video.remove();
+  }, 45_000);
+}
+
 export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownloaderPageProps) {
   const [input, setInput] = useState("");
   const [isResolving, setIsResolving] = useState(false);
@@ -150,14 +303,28 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [isPolishing, setIsPolishing] = useState(false);
   const [displayTranscript, setDisplayTranscript] = useState('');
   const [originalTranscript, setOriginalTranscript] = useState('');
+  const [transcriptLoadingMessage, setTranscriptLoadingMessage] = useState('');
   const [showDiff, setShowDiff] = useState(true);
   const [showVideoPreview, setShowVideoPreview] = useState(false);
+  const [fastPreviewUrl, setFastPreviewUrl] = useState('');
+  const [fastDownloadUrl, setFastDownloadUrl] = useState('');
   const [isLocalTranscriptLoading, setIsLocalTranscriptLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'link' | 'local'>('link');
   const [asrEngine, setAsrEngine] = useState<'siliconflow' | 'qwen'>('qwen');
   const [localVideoUrl, setLocalVideoUrl] = useState<string>('');
   const resultRef = useRef<HTMLDivElement>(null);
   const localVideoInputRef = useRef<HTMLInputElement>(null);
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
+  const previewProbeIdRef = useRef(0);
+  const downloadProbeIdRef = useRef(0);
+  const hasResult = !!result || !!transcriptResult;
+  const siliconFlowConfigured = configStatus?.siliconFlowApiKey === true;
+  const tikhubConfigured = configStatus?.tikhubApiToken === true;
+  const arkApiKeyConfigured = configStatus?.arkApiKey === true;
+  const dashscopeConfigured = configStatus?.dashscopeApiKey === true;
+  const displayTags = normalizeDisplayTags(result?.tags);
+  const previewDirectUrl = fastPreviewUrl || result?.previewUrl || result?.videoUrls?.[0] || result?.downloadUrl || '';
+  const previewProxyUrl = result && previewDirectUrl ? buildVideoStreamUrl(previewDirectUrl, result) : '';
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -170,6 +337,19 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       }
     };
   }, [localVideoUrl]);
+
+  useEffect(() => {
+    if (!showVideoPreview || !previewDirectUrl) return;
+    const timer = window.setTimeout(() => {
+      const video = previewVideoRef.current;
+      if (!video) return;
+      video.play().catch(() => {
+        video.muted = true;
+        video.play().catch(() => {});
+      });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [showVideoPreview, previewDirectUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,6 +386,23 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     try {
       const response = await resolveCpExtract(nextInput);
       setResult(response);
+      setFastPreviewUrl(response.previewUrl || response.videoUrls?.[0] || response.downloadUrl || '');
+      setFastDownloadUrl(response.downloadUrl || response.videoUrls?.[0] || '');
+
+      const previewProbeId = previewProbeIdRef.current + 1;
+      previewProbeIdRef.current = previewProbeId;
+      void pickFastestPreviewUrl(response).then((fastestUrl) => {
+        if (!fastestUrl || previewProbeIdRef.current !== previewProbeId) return;
+        setFastPreviewUrl(fastestUrl);
+        warmPreviewMetadata(fastestUrl, response);
+      });
+
+      const downloadProbeId = downloadProbeIdRef.current + 1;
+      downloadProbeIdRef.current = downloadProbeId;
+      void pickFastestDownloadUrl(response).then((fastestUrl) => {
+        if (!fastestUrl || downloadProbeIdRef.current !== downloadProbeId) return;
+        setFastDownloadUrl(fastestUrl);
+      });
 
       setTimeout(() => {
         resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -228,9 +425,36 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     setError('');
     setTranscriptResult(null);
     setCopyStatus('idle');
+    setDisplayTranscript('');
+    setOriginalTranscript('');
+    setTranscriptLoadingMessage('正在准备视频音频...');
 
     try {
-      const response = await extractCpTranscript(nextInput);
+      const transcriptOptions = {
+        sourceData: result?.videoData || null,
+        videoUrl: fastPreviewUrl || fastDownloadUrl || result?.previewUrl || result?.downloadUrl || '',
+        videoUrls: result ? collectPreviewCandidateUrls(result).slice(0, 8) : [],
+        downloadUrlCandidates: result?.downloadUrlCandidates || result?.videoUrlCandidates || [],
+      };
+      let response: DouyinTranscriptResult;
+
+      try {
+        response = await extractCpTranscriptStream(nextInput, {
+          ...transcriptOptions,
+          onStatus: (message) => {
+            if (message) setTranscriptLoadingMessage(message);
+          },
+          onDelta: (text) => {
+            setDisplayTranscript(text);
+            setOriginalTranscript(text);
+          },
+        });
+      } catch (streamError) {
+        console.warn('[douyin transcript] stream failed, fallback to non-stream:', streamError);
+        setTranscriptLoadingMessage('流式转写不稳定，正在切换稳妥模式...');
+        response = await extractCpTranscript(nextInput, transcriptOptions);
+      }
+
       const normalizedTranscriptResult: DouyinTranscriptResult = response.transcriptOk
         ? response
         : {
@@ -267,6 +491,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       setError(submitError instanceof Error ? submitError.message : '视频文案提取失败，请稍后重试。');
     } finally {
       setIsTranscriptLoading(false);
+      setTranscriptLoadingMessage('');
     }
   }
 
@@ -277,6 +502,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     setCopyStatus('idle');
     setDisplayTranscript('');
     setOriginalTranscript('');
+    setTranscriptLoadingMessage('');
     setIsPolishing(false);
     setShowDiff(true);
 
@@ -400,7 +626,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     try {
       await directDownloadDouyinVideoFile({
         videoId: result.videoId,
-        downloadUrl: result.downloadUrl,
+        downloadUrl: fastDownloadUrl || result.downloadUrl,
         downloadUrlCandidates: result.downloadUrlCandidates,
         videoUrls: result.videoUrls,
         platform: result.platform,
@@ -438,9 +664,14 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     setCopyStatus('idle');
     setDisplayTranscript('');
     setOriginalTranscript('');
+    setTranscriptLoadingMessage('');
     setIsPolishing(false);
     setShowDiff(true);
     setShowVideoPreview(false);
+    setFastPreviewUrl('');
+    setFastDownloadUrl('');
+    previewProbeIdRef.current += 1;
+    downloadProbeIdRef.current += 1;
     if (localVideoUrl) {
       URL.revokeObjectURL(localVideoUrl);
       setLocalVideoUrl('');
@@ -453,25 +684,15 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     resetAll();
   }
 
-  const fallbackCaption = transcriptResult?.fallbackCaption || result?.fallbackCaption || '';
-  const hasResult = !!result || !!transcriptResult;
-  const siliconFlowConfigured = configStatus?.siliconFlowApiKey === true;
-  const tikhubConfigured = configStatus?.tikhubApiToken === true;
-  const arkApiKeyConfigured = configStatus?.arkApiKey === true;
-  const dashscopeConfigured = configStatus?.dashscopeApiKey === true;
-  const displayTags = normalizeDisplayTags(result?.tags);
-  const previewDirectUrl = result?.previewUrl || result?.videoUrls?.[0] || result?.downloadUrl || '';
-  const previewProxyUrl = result && previewDirectUrl ? buildVideoStreamUrl(previewDirectUrl, result) : '';
-
   return (
-    <div className="relative isolate min-h-screen overflow-x-hidden bg-[#F3F5F9] flex flex-col text-slate-900">
+    <div className="douyin-page relative isolate min-h-screen overflow-x-hidden bg-[#F3F5F9] flex flex-col text-slate-900">
       <div className="pointer-events-none absolute inset-0 -z-10">
-        <div className="absolute left-[-120px] top-[-120px] size-80 rounded-full bg-indigo-200/35 blur-3xl" />
-        <div className="absolute right-[-140px] top-40 size-96 rounded-full bg-sky-200/30 blur-3xl" />
-        <div className="absolute bottom-[-180px] left-1/2 size-[420px] -translate-x-1/2 rounded-full bg-amber-100/40 blur-3xl" />
+        <div className="douyin-orb absolute left-[-120px] top-[-120px] size-80 rounded-full bg-indigo-200/35 blur-3xl" />
+        <div className="douyin-orb absolute right-[-140px] top-40 size-96 rounded-full bg-sky-200/30 blur-3xl" />
+        <div className="douyin-orb absolute bottom-[-180px] left-1/2 size-[420px] -translate-x-1/2 rounded-full bg-amber-100/40 blur-3xl" />
       </div>
       {/* Header */}
-      <header className="sticky top-0 z-30 border-b border-white/60 bg-white/60 px-4 backdrop-blur-2xl shadow-sm">
+      <header className="sticky top-0 z-30 border-b border-white/70 bg-white/90 px-4 shadow-sm">
         <div className="flex h-16 items-center">
           <div className="flex min-w-0 items-center gap-8">
             <button
@@ -949,13 +1170,24 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      className="rounded-3xl border border-indigo-100 bg-indigo-50/70 px-4 py-4"
+                      className="space-y-3 rounded-3xl border border-indigo-100 bg-indigo-50/70 px-4 py-4"
                     >
                       <div className="flex items-center gap-3 text-sm text-indigo-700 font-semibold">
                         <Loader2 className="size-4 animate-spin" />
-                        正在提取音频并转写文案...
+                        {transcriptLoadingMessage || '正在提取音频并转写文案...'}
                       </div>
-                      <p className="text-xs text-indigo-500 mt-2 ml-7">这一步通常需要一些时间，请耐心等待。</p>
+                      {displayTranscript ? (
+                        <>
+                          <div className="ml-7 inline-flex rounded-full border border-indigo-100 bg-white/70 px-2.5 py-1 text-[10px] font-bold text-indigo-600">
+                            已实时转写 {displayTranscript.replace(/\s/g, '').length} 字
+                          </div>
+                          <div className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-2xl border border-indigo-100/80 bg-white/80 p-4 text-sm leading-7 text-slate-700 shadow-inner shadow-indigo-100/50">
+                            {displayTranscript}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-xs text-indigo-500 ml-7">已启用流式转写，拿到首段内容会立即显示。</p>
+                      )}
                     </motion.div>
                   ) : transcriptResult?.transcriptOk ? (
                     <motion.div
@@ -979,7 +1211,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2">
-                          {transcriptResult.transcriptSegments && transcriptResult.transcriptSegments > 1 && (
+                          {Number(transcriptResult.transcriptSegments || 0) > 1 && (
                             <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
                               <Clock className="size-3" />
                               {transcriptResult.transcriptSegments} 段音频
@@ -1067,15 +1299,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                         </div>
                         <div className="mt-1.5 text-xs leading-5 opacity-80">{transcriptResult.transcriptError || '请稍后重试。'}</div>
                       </div>
-
-                      {fallbackCaption && (
-                        <div className="rounded-3xl border border-slate-100 bg-white/60 p-4 text-sm text-slate-600 space-y-2">
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                            弱兜底文案
-                          </div>
-                          <div className="leading-6 whitespace-pre-wrap break-words text-xs">{fallbackCaption}</div>
-                        </div>
-                      )}
                     </motion.div>
                   ) : (
                     <motion.div
@@ -1122,6 +1345,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               <X className="size-4" />
             </button>
             <video
+              ref={previewVideoRef}
               key={previewProxyUrl || previewDirectUrl}
               src={previewProxyUrl || previewDirectUrl}
               controls
@@ -1129,6 +1353,9 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               preload="metadata"
               className="max-h-[78vh] max-w-[92vw] bg-black"
               playsInline
+              onCanPlay={(event) => {
+                event.currentTarget.play().catch(() => {});
+              }}
               onError={(e) => {
                 const videoEl = e.currentTarget;
                 const currentSrc = videoEl.currentSrc || '';

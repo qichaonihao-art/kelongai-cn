@@ -41,6 +41,26 @@
   .glass-inner {
     @apply bg-white/20 backdrop-blur-xl border border-white/30 shadow-inner;
   }
+  .douyin-page .glass-card {
+    background: rgba(255, 255, 255, 0.78);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: 0 18px 42px -22px rgba(15, 23, 42, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.68);
+    transition-property: background-color, border-color, box-shadow;
+    transition-duration: 180ms;
+  }
+  .douyin-page .douyin-orb {
+    filter: blur(26px);
+    opacity: 0.72;
+    transform: translateZ(0);
+  }
+  .douyin-page .backdrop-blur-sm,
+  .douyin-page .backdrop-blur-xl,
+  .douyin-page .backdrop-blur-2xl,
+  .douyin-page .backdrop-blur-3xl {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
   .animate-shimmer {
     background-size: 200% auto;
     animation: shimmer 6s linear infinite;
