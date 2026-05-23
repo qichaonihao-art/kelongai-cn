@@ -142,7 +142,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [originalTranscript, setOriginalTranscript] = useState('');
   const [showDiff, setShowDiff] = useState(true);
   const [showVideoPreview, setShowVideoPreview] = useState(false);
-  const [previewUseProxy, setPreviewUseProxy] = useState(false);
   const [isLocalTranscriptLoading, setIsLocalTranscriptLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'link' | 'local'>('link');
   const [asrEngine, setAsrEngine] = useState<'siliconflow' | 'qwen'>('qwen');
@@ -197,6 +196,21 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     try {
       const response = await resolveCpExtract(nextInput);
       setResult(response);
+
+      // Preload video in background for instant preview
+      if (response.downloadUrl) {
+        const preloadVideo = document.createElement('video');
+        preloadVideo.preload = 'auto';
+        preloadVideo.style.display = 'none';
+        preloadVideo.src = response.downloadUrl;
+        preloadVideo.muted = true;
+        preloadVideo.load();
+        document.body.appendChild(preloadVideo);
+        setTimeout(() => {
+          preloadVideo.remove();
+        }, 60_000);
+      }
+
       setTimeout(() => {
         resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }, 300);
@@ -868,7 +882,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       <div className="grid gap-3 sm:grid-cols-2">
                         <button
                           onClick={() => {
-                            setPreviewUseProxy(false);
                             setShowVideoPreview(true);
                           }}
                           className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200/80 bg-white/75 text-sm font-bold text-slate-700 shadow-sm transition-all hover:bg-white hover:shadow-md"
@@ -1086,7 +1099,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
           onClick={() => {
             setShowVideoPreview(false);
-            setPreviewUseProxy(false);
           }}
         >
           <div
@@ -1104,28 +1116,39 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               <X className="size-4" />
             </button>
             <video
-              key={previewUseProxy ? 'proxy' : 'direct'}
-              src={previewUseProxy
-                ? `/api/douyin/video-stream?url=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId || '')}&platform=${encodeURIComponent(result.platform || 'douyin')}`
-                : result.downloadUrl
-              }
               controls
               autoPlay
-              preload="metadata"
+              preload="auto"
               className="max-h-[78vh] max-w-[92vw] bg-black"
               playsInline
-              crossOrigin="anonymous"
-              onError={() => {
-                if (!previewUseProxy) {
-                  // 直接 CDN URL 失败，回退到后端代理
-                  setPreviewUseProxy(true);
+              onError={(e) => {
+                const videoEl = e.currentTarget;
+                const currentSrc = videoEl.currentSrc || '';
+                // Try proxy URL if direct CDN failed
+                if (!currentSrc.includes('/api/')) {
+                  const proxySrc = `/api/douyin/video-stream?url=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId || '')}&platform=${encodeURIComponent(result.platform || 'douyin')}`;
+                  videoEl.src = proxySrc;
+                  videoEl.load();
+                  videoEl.play().catch(() => {});
                 } else {
                   alert('视频加载失败，可能是链接已过期，请重新解析后再试');
                   setShowVideoPreview(false);
                   setPreviewUseProxy(false);
                 }
               }}
-            />
+            >
+              {/* Direct CDN source — fastest, no server hop */}
+              {result.downloadUrl && (
+                <source src={result.downloadUrl} type="video/mp4" />
+              )}
+              {/* Fallback: server proxy with proper Referer headers */}
+              {result.downloadUrl && (
+                <source
+                  src={`/api/douyin/video-stream?url=${encodeURIComponent(result.downloadUrl)}&videoId=${encodeURIComponent(result.videoId || '')}&platform=${encodeURIComponent(result.platform || 'douyin')}`}
+                  type="video/mp4"
+                />
+              )}
+            </video>
           </div>
         </div>
       )}
