@@ -148,6 +148,7 @@ const DOUYIN_DOWNLOAD_HOST_BASE_SCORES = new Map([
 const VOLC_SPEAKER_POOL_FULL_MESSAGE = '火山音色槽位已满，请删除旧音色或增加 speaker_id 池';
 let volcSpeakerOwnershipState = null;
 let volcSpeakerOwnershipQueue = Promise.resolve();
+let voiceArchiveQueue = Promise.resolve();
 let volcSpeakerRemoteStatusCache = {
   key: '',
   expiresAt: 0,
@@ -2495,6 +2496,12 @@ function withVolcSpeakerOwnershipLock(callback) {
   return next;
 }
 
+function withVoiceArchiveLock(callback) {
+  const next = voiceArchiveQueue.then(callback, callback);
+  voiceArchiveQueue = next.then(() => undefined, () => undefined);
+  return next;
+}
+
 function upsertVolcSpeakerOwnership(state, { speakerId, ownerDeviceId, preferredName = '', groupIndex = 1 }) {
   const existing = state.slots[speakerId];
   const now = new Date().toISOString();
@@ -2772,40 +2779,44 @@ function buildVoiceArchiveKey(provider, remoteVoiceId) {
 }
 
 async function addVoiceToArchive(voice) {
-  const archive = await loadVoiceArchive();
-  const key = buildVoiceArchiveKey(voice.provider, voice.remoteVoiceId);
-  const existingIndex = archive.records.findIndex(
-    (r) => buildVoiceArchiveKey(r.provider, r.remoteVoiceId) === key
-  );
-  const record = {
-    id: voice.id || `${voice.provider}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    name: voice.name,
-    provider: voice.provider,
-    providerLabel: voice.providerLabel || voice.provider,
-    remoteVoiceId: voice.remoteVoiceId,
-    engineModel: voice.engineModel || '',
-    resourceId: voice.resourceId,
-    createdBy: voice.createdBy || '',
-    createdAt: voice.createdAt || new Date().toISOString(),
-  };
-  if (existingIndex >= 0) {
-    archive.records[existingIndex] = { ...archive.records[existingIndex], ...record };
-  } else {
-    archive.records.push(record);
-  }
-  await saveVoiceArchive(archive);
-  return record;
+  return withVoiceArchiveLock(async () => {
+    const archive = await loadVoiceArchive();
+    const key = buildVoiceArchiveKey(voice.provider, voice.remoteVoiceId);
+    const existingIndex = archive.records.findIndex(
+      (r) => buildVoiceArchiveKey(r.provider, r.remoteVoiceId) === key
+    );
+    const record = {
+      id: voice.id || `${voice.provider}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: voice.name,
+      provider: voice.provider,
+      providerLabel: voice.providerLabel || voice.provider,
+      remoteVoiceId: voice.remoteVoiceId,
+      engineModel: voice.engineModel || '',
+      resourceId: voice.resourceId,
+      createdBy: voice.createdBy || '',
+      createdAt: voice.createdAt || new Date().toISOString(),
+    };
+    if (existingIndex >= 0) {
+      archive.records[existingIndex] = { ...archive.records[existingIndex], ...record };
+    } else {
+      archive.records.push(record);
+    }
+    await saveVoiceArchive(archive);
+    return record;
+  });
 }
 
 async function removeVoiceFromArchive(id) {
-  const archive = await loadVoiceArchive();
-  const initialLength = archive.records.length;
-  archive.records = archive.records.filter((r) => r.id !== id);
-  const removed = archive.records.length < initialLength;
-  if (removed) {
-    await saveVoiceArchive(archive);
-  }
-  return removed;
+  return withVoiceArchiveLock(async () => {
+    const archive = await loadVoiceArchive();
+    const initialLength = archive.records.length;
+    archive.records = archive.records.filter((r) => r.id !== id);
+    const removed = archive.records.length < initialLength;
+    if (removed) {
+      await saveVoiceArchive(archive);
+    }
+    return removed;
+  });
 }
 
 function deduplicateVoiceArchiveNames(records) {
@@ -2827,61 +2838,65 @@ async function handleSyncVoiceArchive(req, res) {
     const body = await readRequestBody(req);
     const incoming = Array.isArray(body?.voices) ? body.voices : [];
     const deviceId = normalizeDeviceId(body?.deviceId);
-    const archive = await loadVoiceArchive();
-    const existingKeys = new Set(
-      archive.records.map((r) => buildVoiceArchiveKey(r.provider, r.remoteVoiceId))
-    );
-    const added = [];
-    const skipped = [];
 
-    for (const item of incoming) {
-      if (!item || typeof item !== 'object') continue;
-      const provider = readValue(item.provider);
-      const remoteVoiceId = readValue(item.remoteVoiceId);
-      if (!provider || !remoteVoiceId) continue;
-      const key = buildVoiceArchiveKey(provider, remoteVoiceId);
-      const existingIndex = archive.records.findIndex(
-        (r) => buildVoiceArchiveKey(r.provider, r.remoteVoiceId) === key
+    const { added, skipped } = await withVoiceArchiveLock(async () => {
+      const archive = await loadVoiceArchive();
+      const existingKeys = new Set(
+        archive.records.map((r) => buildVoiceArchiveKey(r.provider, r.remoteVoiceId))
       );
-      const incomingName = readValue(item.name) || '未命名音色';
-      if (existingIndex >= 0) {
-        // Update name if changed
-        if (archive.records[existingIndex].name !== incomingName) {
-          archive.records[existingIndex].name = incomingName;
-          added.push(archive.records[existingIndex]);
-        } else {
-          skipped.push(remoteVoiceId);
+      const added = [];
+      const skipped = [];
+
+      for (const item of incoming) {
+        if (!item || typeof item !== 'object') continue;
+        const provider = readValue(item.provider);
+        const remoteVoiceId = readValue(item.remoteVoiceId);
+        if (!provider || !remoteVoiceId) continue;
+        const key = buildVoiceArchiveKey(provider, remoteVoiceId);
+        const existingIndex = archive.records.findIndex(
+          (r) => buildVoiceArchiveKey(r.provider, r.remoteVoiceId) === key
+        );
+        const incomingName = readValue(item.name) || '未命名音色';
+        if (existingIndex >= 0) {
+          // Update name if changed
+          if (archive.records[existingIndex].name !== incomingName) {
+            archive.records[existingIndex].name = incomingName;
+            added.push(archive.records[existingIndex]);
+          } else {
+            skipped.push(remoteVoiceId);
+          }
+          continue;
         }
-        continue;
+        const record = {
+          id: readValue(item.id) || `${provider}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          name: incomingName,
+          provider,
+          providerLabel: readValue(item.providerLabel) || provider,
+          remoteVoiceId,
+          engineModel: readValue(item.engineModel) || '',
+          resourceId: item.resourceId === undefined ? undefined : readValue(item.resourceId),
+          createdBy: deviceId || readValue(item.createdBy) || '',
+          createdAt: readValue(item.createdAt) || new Date().toISOString(),
+        };
+        archive.records.push(record);
+        added.push(record);
+        existingKeys.add(key);
       }
-      const record = {
-        id: readValue(item.id) || `${provider}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        name: incomingName,
-        provider,
-        providerLabel: readValue(item.providerLabel) || provider,
-        remoteVoiceId,
-        engineModel: readValue(item.engineModel) || '',
-        resourceId: item.resourceId === undefined ? undefined : readValue(item.resourceId),
-        createdBy: deviceId || readValue(item.createdBy) || '',
-        createdAt: readValue(item.createdAt) || new Date().toISOString(),
-      };
-      archive.records.push(record);
-      added.push(record);
-      existingKeys.add(key);
-    }
 
-    // Deduplicate names within each provider
-    const recordsByProvider = new Map();
-    for (const record of archive.records) {
-      const list = recordsByProvider.get(record.provider) || [];
-      list.push(record);
-      recordsByProvider.set(record.provider, list);
-    }
-    for (const [, list] of recordsByProvider) {
-      deduplicateVoiceArchiveNames(list);
-    }
+      // Deduplicate names within each provider
+      const recordsByProvider = new Map();
+      for (const record of archive.records) {
+        const list = recordsByProvider.get(record.provider) || [];
+        list.push(record);
+        recordsByProvider.set(record.provider, list);
+      }
+      for (const [, list] of recordsByProvider) {
+        deduplicateVoiceArchiveNames(list);
+      }
 
-    await saveVoiceArchive(archive);
+      await saveVoiceArchive(archive);
+      return { added, skipped };
+    });
 
     // Rebuild volcengine ownership for volcengine voices
     for (const record of added) {
@@ -2907,7 +2922,7 @@ async function handleSyncVoiceArchive(req, res) {
 
 async function handleGetVoiceArchive(req, res) {
   try {
-    const archive = await loadVoiceArchive();
+    const archive = await withVoiceArchiveLock(() => loadVoiceArchive());
     sendJson(res, 200, { ok: true, records: archive.records });
   } catch (error) {
     console.error('[voice archive] get_error', { message: error.message });
