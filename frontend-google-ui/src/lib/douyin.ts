@@ -295,7 +295,7 @@ export async function resolveCpExtract(url: string): Promise<DouyinResolveResult
 }
 
 export async function extractCpTranscript(url: string): Promise<DouyinTranscriptResult> {
-  const response = await fetch('/api/cp/transcribe-link', {
+  const response = await fetch('/api/cp/transcribe-link-qwen', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

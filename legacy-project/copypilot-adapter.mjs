@@ -1,5 +1,6 @@
 import { onRequestPost as extractPost } from './copypilot-api/extract.js';
 import { onRequestPost as transcribeLinkPost } from './copypilot-api/transcribe-link.js';
+import { onRequestPost as transcribeLinkQwenPost } from './copypilot-api/transcribe-link-qwen.mjs';
 import { onRequestPost as transcribePost } from './copypilot-api/transcribe.js';
 import { onRequestGet as videoProxyGet } from './copypilot-api/video-proxy.js';
 import { onRequestGet as imageProxyGet } from './copypilot-api/image-proxy.js';
@@ -98,6 +99,7 @@ async function handleGet(handler, req, res, url) {
 const ROUTES = [
   { method: 'POST', path: '/api/cp/extract', handler: extractPost },
   { method: 'POST', path: '/api/cp/transcribe-link', handler: transcribeLinkPost },
+  { method: 'POST', path: '/api/cp/transcribe-link-qwen', handler: transcribeLinkQwenPost },
   { method: 'POST', path: '/api/cp/transcribe', handler: transcribePost },
   { method: 'POST', path: '/api/cp/batch-extract', handler: batchExtractPost },
   { method: 'GET', path: '/api/cp/video-proxy', handler: videoProxyGet },
