@@ -516,13 +516,22 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                 <h1 className="text-2xl font-black tracking-tight text-slate-950">视频解析</h1>
               </div>
             </div>
-            <button
-              onClick={() => onNavigate('universal')}
-              className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 text-[11px] font-bold text-white shadow-md shadow-indigo-200 transition-all hover:from-indigo-600 hover:to-violet-600 hover:shadow-lg"
-            >
-              <Globe className="size-3.5" />
-              高级解析
-            </button>
+            <div className="flex shrink-0 gap-2">
+              <button
+                onClick={() => onNavigate('universal')}
+                className="flex h-10 items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 text-[11px] font-bold text-white shadow-md shadow-indigo-200 transition-all hover:from-indigo-600 hover:to-violet-600 hover:shadow-lg"
+              >
+                <Globe className="size-3.5" />
+                高级解析
+              </button>
+              <button
+                onClick={() => onNavigate('copypilot')}
+                className="flex h-10 items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-4 text-[11px] font-bold text-white shadow-md shadow-sky-200 transition-all hover:from-sky-600 hover:to-cyan-600 hover:shadow-lg"
+              >
+                <Sparkles className="size-3.5" />
+                Copy Pilot
+              </button>
+            </div>
           </div>
 
           <div className="relative mt-5 grid gap-2 sm:grid-cols-3">

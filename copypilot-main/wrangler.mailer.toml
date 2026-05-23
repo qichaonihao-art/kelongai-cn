@@ -1,0 +1,11 @@
+name = "copypilot-mailer"
+main = "workers/mailer.js"
+compatibility_date = "2026-05-09"
+
+[vars]
+EMAIL_FROM = "CopyPilot <no-reply@copypilot.cc>"
+
+[[send_email]]
+name = "EMAIL"
+destination_address = "430lgs@gmail.com"
+allowed_sender_addresses = ["no-reply@copypilot.cc"]

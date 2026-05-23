@@ -1,0 +1,9 @@
+node_modules
+dist
+.wrangler
+.dev.vars
+.env
+*.log
+tmp-*
+anytocopy-home.html
+nuxt-entry.js

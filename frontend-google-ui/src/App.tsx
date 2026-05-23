@@ -13,9 +13,10 @@ import DataCollectionPage from './pages/DataCollectionPage';
 import ImageGenerationPage from './pages/ImageGenerationPage';
 import TopModelPage from './pages/TopModelPage';
 import UniversalExtractorPage from './pages/UniversalExtractorPage';
+import CopyPilotPage from './pages/CopyPilotPage';
 import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
 
-type Page = 'login' | 'home' | 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal';
+type Page = 'login' | 'home' | 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal' | 'copypilot';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
@@ -122,6 +123,11 @@ export default function App() {
         <UniversalExtractorPage
           onBack={handleBackToDouyin}
           onNavigate={handleNavigate}
+        />
+      )}
+      {currentPage === 'copypilot' && (
+        <CopyPilotPage
+          onBack={handleBackToDouyin}
         />
       )}
     </div>

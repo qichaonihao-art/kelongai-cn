@@ -6,6 +6,8 @@ import { onRequestGet as videoProxyGet } from './copypilot-api/video-proxy.js';
 import { onRequestGet as imageProxyGet } from './copypilot-api/image-proxy.js';
 import { onRequestPost as batchExtractPost } from './copypilot-api/batch-extract.js';
 import { onRequestGet as healthGet } from './copypilot-api/health.js';
+import { onRequestPost as rewritePost } from './copypilot-api/rewrite.js';
+import { onRequestPost as eventsPost } from './copypilot-api/events.js';
 
 // Map existing env names to copypilot expected names
 if (!process.env.TIKHUB_API_KEY && process.env.TIKHUB_API_TOKEN) {
@@ -96,6 +98,23 @@ async function handleGet(handler, req, res, url) {
   await sendResponse(res, response);
 }
 
+function stubJson(payload, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json; charset=utf-8' }
+  });
+}
+
+const authMeGet = () => stubJson({ ok: true, user: null, isAdmin: false });
+const authLogoutPost = () => stubJson({ ok: true });
+const authSendCodePost = () => stubJson({ ok: false, message: '未配置' }, 503);
+const authVerifyCodePost = () => stubJson({ ok: false, message: '未配置' }, 503);
+const authGoogleGet = () => new Response(null, { status: 302, headers: { 'Location': '/' } });
+const siteContentGet = () => stubJson({ ok: true, content: {} });
+const membershipPlansGet = () => stubJson({ ok: true, plans: [] });
+const userRecordsGet = () => stubJson({ ok: true, records: [] });
+const adminForbidden = () => stubJson({ ok: false, message: '未配置' }, 403);
+
 const ROUTES = [
   { method: 'POST', path: '/api/cp/extract', handler: extractPost },
   { method: 'POST', path: '/api/cp/transcribe-link', handler: transcribeLinkPost },
@@ -105,6 +124,23 @@ const ROUTES = [
   { method: 'GET', path: '/api/cp/video-proxy', handler: videoProxyGet },
   { method: 'GET', path: '/api/cp/image-proxy', handler: imageProxyGet },
   { method: 'GET', path: '/api/cp/health', handler: healthGet },
+  { method: 'POST', path: '/api/cp/rewrite', handler: rewritePost },
+  { method: 'POST', path: '/api/cp/events', handler: eventsPost },
+  { method: 'GET', path: '/api/cp/auth/me', handler: authMeGet },
+  { method: 'POST', path: '/api/cp/auth/logout', handler: authLogoutPost },
+  { method: 'POST', path: '/api/cp/auth/send-code', handler: authSendCodePost },
+  { method: 'POST', path: '/api/cp/auth/verify-code', handler: authVerifyCodePost },
+  { method: 'GET', path: '/api/cp/auth/google', handler: authGoogleGet },
+  { method: 'GET', path: '/api/cp/site/content', handler: siteContentGet },
+  { method: 'GET', path: '/api/cp/membership/plans', handler: membershipPlansGet },
+  { method: 'GET', path: '/api/cp/user/records', handler: userRecordsGet },
+  { method: 'GET', path: '/api/cp/admin/users', handler: adminForbidden },
+  { method: 'PATCH', path: '/api/cp/admin/users', handler: adminForbidden },
+  { method: 'GET', path: '/api/cp/admin/membership-plans', handler: adminForbidden },
+  { method: 'PATCH', path: '/api/cp/admin/membership-plans', handler: adminForbidden },
+  { method: 'GET', path: '/api/cp/admin/site-content', handler: adminForbidden },
+  { method: 'PATCH', path: '/api/cp/admin/site-content', handler: adminForbidden },
+  { method: 'GET', path: '/api/cp/admin/analytics', handler: adminForbidden },
 ];
 
 export async function tryHandleCopypilotRoute(req, res, url) {

@@ -1,0 +1,11 @@
+name = "copypilot"
+compatibility_date = "2026-05-09"
+pages_build_output_dir = "dist"
+
+[vars]
+TIKHUB_BASE_URL = "https://api.tikhub.io"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "copypilot-db"
+database_id = "3e6d4ffd-a693-468c-9c15-bb86187c4000"

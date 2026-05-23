@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>CopyPilot 数据统计后台</title>
+    <style>
+      :root {
+        color: #101828;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f4f7fb;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      .shell {
+        margin: 0 auto;
+        max-width: 1240px;
+        padding: 28px 22px 48px;
+      }
+
+      .topbar,
+      .panel,
+      .metric,
+      .table-card {
+        background: #fff;
+        border: 1px solid #dbe4f0;
+        border-radius: 8px;
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06);
+      }
+
+      .topbar {
+        align-items: center;
+        display: grid;
+        gap: 18px;
+        grid-template-columns: 1fr auto;
+        margin-bottom: 18px;
+        padding: 22px;
+      }
+
+      .brand {
+        align-items: center;
+        display: flex;
+        gap: 12px;
+      }
+
+      .mark {
+        align-items: center;
+        background: #2563eb;
+        border-radius: 8px;
+        color: #fff;
+        display: inline-flex;
+        font-weight: 950;
+        height: 42px;
+        justify-content: center;
+        width: 42px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 24px;
+        line-height: 1.25;
+      }
+
+      .muted {
+        color: #667085;
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1.7;
+      }
+
+      .actions {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: flex-end;
+      }
+
+      .button {
+        background: #2563eb;
+        border: 1px solid #2563eb;
+        border-radius: 8px;
+        color: #fff;
+        cursor: pointer;
+        font-weight: 900;
+        min-height: 42px;
+        padding: 0 16px;
+      }
+
+      .button.secondary {
+        background: #fff;
+        border-color: #c9d5e7;
+        color: #344054;
+      }
+
+      .button:disabled {
+        cursor: not-allowed;
+        opacity: 0.65;
+      }
+
+      .select,
+      .input {
+        background: #fff;
+        border: 1px solid #c9d5e7;
+        border-radius: 8px;
+        color: #101828;
+        min-height: 42px;
+        padding: 0 12px;
+      }
+
+      .panel {
+        display: grid;
+        gap: 14px;
+        margin-bottom: 18px;
+        padding: 20px;
+      }
+
+      .login-panel {
+        margin: 80px auto;
+        max-width: 520px;
+      }
+
+      .login-row {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: 1fr auto;
+      }
+
+      .status {
+        border-radius: 8px;
+        display: none;
+        font-size: 13px;
+        font-weight: 850;
+        padding: 12px 14px;
+      }
+
+      .status.show {
+        display: block;
+      }
+
+      .status.error {
+        background: #fff1f2;
+        border: 1px solid #fecdd3;
+        color: #be123c;
+      }
+
+      .status.ok {
+        background: #ecfdf3;
+        border: 1px solid #bbf7d0;
+        color: #047857;
+      }
+
+      .metrics {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin-bottom: 18px;
+      }
+
+      .metric {
+        display: grid;
+        gap: 8px;
+        padding: 18px;
+      }
+
+      .metric span {
+        color: #667085;
+        font-size: 13px;
+        font-weight: 850;
+      }
+
+      .metric strong {
+        font-size: 30px;
+        letter-spacing: 0;
+        line-height: 1.1;
+      }
+
+      .grid {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      }
+
+      .wide {
+        grid-column: 1 / -1;
+      }
+
+      .table-card {
+        overflow: hidden;
+      }
+
+      .table-head {
+        align-items: center;
+        background: #eef5ff;
+        display: flex;
+        justify-content: space-between;
+        padding: 16px 18px;
+      }
+
+      .table-head h2 {
+        font-size: 18px;
+      }
+
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+
+      th,
+      td {
+        border-top: 1px solid #edf2f7;
+        font-size: 13px;
+        padding: 12px 14px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: #475467;
+        font-size: 12px;
+        font-weight: 950;
+      }
+
+      td.num,
+      th.num {
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      .path {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        max-width: 520px;
+        overflow-wrap: anywhere;
+      }
+
+      .bar-cell {
+        min-width: 160px;
+      }
+
+      .bar {
+        background: #e8eef8;
+        border-radius: 999px;
+        height: 8px;
+        overflow: hidden;
+      }
+
+      .bar i {
+        background: linear-gradient(90deg, #2563eb, #7c3aed);
+        display: block;
+        height: 100%;
+      }
+
+      .empty {
+        color: #667085;
+        padding: 18px;
+      }
+
+      @media (max-width: 900px) {
+        .topbar,
+        .grid,
+        .login-row {
+          grid-template-columns: 1fr;
+        }
+
+        .actions {
+          justify-content: flex-start;
+        }
+
+        .metrics {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 560px) {
+        .shell {
+          padding: 16px 12px 32px;
+        }
+
+        .metrics {
+          grid-template-columns: 1fr;
+        }
+
+        .metric strong {
+          font-size: 26px;
+        }
+
+        th,
+        td {
+          padding: 10px 8px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section id="loginPanel" class="panel login-panel">
+        <div class="brand">
+          <span class="mark">CP</span>
+          <div>
+            <h1>CopyPilot 数据统计后台</h1>
+            <p class="muted">输入统计访问码后查看 Cloudflare 最近流量数据。访问码只保存在当前浏览器。</p>
+          </div>
+        </div>
+        <div class="login-row">
+          <input id="keyInput" class="input" type="password" placeholder="输入统计访问码" autocomplete="current-password" />
+          <button id="loginButton" class="button">进入后台</button>
+        </div>
+        <p id="loginStatus" class="status"></p>
+      </section>
+
+      <section id="dashboard" hidden>
+        <header class="topbar">
+          <div class="brand">
+            <span class="mark">CP</span>
+            <div>
+              <h1>CopyPilot 数据统计后台</h1>
+              <p id="periodText" class="muted">正在加载...</p>
+            </div>
+          </div>
+          <div class="actions">
+            <select id="rangeSelect" class="select">
+              <option value="24">最近 24 小时</option>
+              <option value="48" selected>最近 48 小时</option>
+              <option value="72">最近 72 小时</option>
+            </select>
+            <button id="refreshButton" class="button">刷新数据</button>
+            <button id="logoutButton" class="button secondary">清除访问码</button>
+          </div>
+        </header>
+
+        <p id="dashboardStatus" class="status"></p>
+
+        <section class="metrics">
+          <article class="metric">
+            <span>页面浏览 PV</span>
+            <strong id="pvMetric">-</strong>
+            <p class="muted">Cloudflare pageViews</p>
+          </article>
+          <article class="metric">
+            <span>总请求数</span>
+            <strong id="requestMetric">-</strong>
+            <p class="muted">页面、接口、资源合计</p>
+          </article>
+          <article class="metric">
+            <span>流量</span>
+            <strong id="trafficMetric">-</strong>
+            <p class="muted">Cloudflare 边缘出站</p>
+          </article>
+          <article class="metric">
+            <span>小时访客相加</span>
+            <strong id="uniqueMetric">-</strong>
+            <p class="muted">会跨小时重复，不等于精确 UV</p>
+          </article>
+        </section>
+
+        <section class="grid">
+          <article class="table-card">
+            <div class="table-head">
+              <h2>北京时间分日</h2>
+              <span class="muted">来自小时数据汇总</span>
+            </div>
+            <div id="localDayTable"></div>
+          </article>
+
+          <article class="table-card">
+            <div class="table-head">
+              <h2>Cloudflare UTC 日报</h2>
+              <span class="muted">单日 uniques 更接近访客</span>
+            </div>
+            <div id="dailyTable"></div>
+          </article>
+
+          <article class="table-card">
+            <div class="table-head">
+              <h2>PV 高峰小时</h2>
+              <span class="muted">北京时间</span>
+            </div>
+            <div id="topHoursTable"></div>
+          </article>
+
+          <article class="table-card">
+            <div class="table-head">
+              <h2>访问国家/地区</h2>
+              <span class="muted">最近 24 小时</span>
+            </div>
+            <div id="countryTable"></div>
+          </article>
+
+          <article class="table-card">
+            <div class="table-head">
+              <h2>产品转化漏斗</h2>
+              <span class="muted">来自站内事件</span>
+            </div>
+            <div id="productFunnelTable"></div>
+          </article>
+
+          <article class="table-card">
+            <div class="table-head">
+              <h2>平台使用排行</h2>
+              <span class="muted">按提取事件统计</span>
+            </div>
+            <div id="platformTable"></div>
+          </article>
+
+          <article class="table-card wide">
+            <div class="table-head">
+              <h2>热门路径</h2>
+              <span class="muted">最近 24 小时，按请求数</span>
+            </div>
+            <div id="pathTable"></div>
+          </article>
+
+          <article class="table-card wide">
+            <div class="table-head">
+              <h2>流量消耗路径</h2>
+              <span class="muted">最近 24 小时，按出站流量</span>
+            </div>
+            <div id="trafficTable"></div>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const keyInput = document.querySelector('#keyInput');
+      const loginPanel = document.querySelector('#loginPanel');
+      const dashboard = document.querySelector('#dashboard');
+      const loginButton = document.querySelector('#loginButton');
+      const refreshButton = document.querySelector('#refreshButton');
+      const logoutButton = document.querySelector('#logoutButton');
+      const rangeSelect = document.querySelector('#rangeSelect');
+      const loginStatus = document.querySelector('#loginStatus');
+      const dashboardStatus = document.querySelector('#dashboardStatus');
+
+      const storageKey = 'copypilot-analytics-key';
+
+      loginButton.addEventListener('click', () => {
+        const key = keyInput.value.trim();
+        if (!key) return showStatus(loginStatus, '请输入统计访问码。', 'error');
+        localStorage.setItem(storageKey, key);
+        loadAnalytics();
+      });
+
+      refreshButton.addEventListener('click', loadAnalytics);
+      rangeSelect.addEventListener('change', loadAnalytics);
+      logoutButton.addEventListener('click', () => {
+        localStorage.removeItem(storageKey);
+        keyInput.value = '';
+        dashboard.hidden = true;
+        loginPanel.hidden = false;
+      });
+
+      keyInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') loginButton.click();
+      });
+
+      const savedKey = localStorage.getItem(storageKey);
+      if (savedKey) {
+        keyInput.value = savedKey;
+        loadAnalytics();
+      }
+
+      async function loadAnalytics() {
+        const key = localStorage.getItem(storageKey) || keyInput.value.trim();
+        if (!key) return;
+        showStatus(dashboardStatus, '正在读取 Cloudflare 统计数据...', 'ok');
+        refreshButton.disabled = true;
+
+        try {
+          const response = await fetch(`/api/admin/analytics?range=${rangeSelect.value}`, {
+            headers: { 'x-analytics-key': key }
+          });
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) throw new Error(payload.message || '统计数据读取失败。');
+
+          loginPanel.hidden = true;
+          dashboard.hidden = false;
+          renderDashboard(payload.data);
+          showStatus(dashboardStatus, '数据已刷新。', 'ok');
+        } catch (error) {
+          dashboard.hidden = true;
+          loginPanel.hidden = false;
+          showStatus(loginStatus, error.message || '统计数据读取失败。', 'error');
+        } finally {
+          refreshButton.disabled = false;
+        }
+      }
+
+      function renderDashboard(data) {
+        document.querySelector('#periodText').textContent = `${data.meta.zoneName} · ${data.meta.periodLocal} 北京时间 · ${data.meta.note}`;
+        document.querySelector('#pvMetric').textContent = formatNumber(data.totals.pageViews);
+        document.querySelector('#requestMetric').textContent = formatNumber(data.totals.requests);
+        document.querySelector('#trafficMetric').textContent = formatBytes(data.totals.bytes);
+        document.querySelector('#uniqueMetric').textContent = formatNumber(data.totals.hourlyUniqueSum);
+
+        renderTable('#localDayTable', data.byLocalDay, [
+          ['日期', 'date'],
+          ['PV', 'pageViews', 'num'],
+          ['请求', 'requests', 'num'],
+          ['小时访客相加', 'hourlyUniqueSum', 'num'],
+          ['流量', 'bytes', 'bytes']
+        ]);
+
+        renderTable('#dailyTable', data.daily, [
+          ['UTC 日期', 'dateUtc'],
+          ['独立访客', 'uniques', 'num'],
+          ['PV', 'pageViews', 'num'],
+          ['请求', 'requests', 'num'],
+          ['流量', 'bytes', 'bytes']
+        ]);
+
+        renderTable('#topHoursTable', data.topHours, [
+          ['小时', 'localHour'],
+          ['PV', 'pageViews', 'num'],
+          ['请求', 'requests', 'num'],
+          ['访客', 'uniques', 'num']
+        ]);
+
+        renderTable('#countryTable', data.topCountries, [
+          ['国家/地区', 'country'],
+          ['请求', 'requests', 'num'],
+          ['访问', 'visits', 'num'],
+          ['流量', 'bytes', 'bytes']
+        ]);
+
+        renderTable('#productFunnelTable', data.productEvents?.funnel || [], [
+          ['事件', 'label'],
+          ['次数', 'count', 'num']
+        ]);
+
+        renderTable('#platformTable', data.productEvents?.platforms || [], [
+          ['平台', 'platform'],
+          ['事件数', 'count', 'num']
+        ]);
+
+        renderPathTable('#pathTable', data.topPaths, 'requests');
+        renderPathTable('#trafficTable', data.topTraffic, 'bytes');
+      }
+
+      function renderTable(selector, rows, columns) {
+        const root = document.querySelector(selector);
+        if (!rows?.length) {
+          root.innerHTML = '<p class="empty">暂无数据。</p>';
+          return;
+        }
+        root.innerHTML = `
+          <table>
+            <thead>
+              <tr>${columns.map(([label, , type]) => `<th class="${type === 'num' || type === 'bytes' ? 'num' : ''}">${label}</th>`).join('')}</tr>
+            </thead>
+            <tbody>
+              ${rows.map((row) => `
+                <tr>
+                  ${columns.map(([, key, type]) => `<td class="${type === 'num' || type === 'bytes' ? 'num' : ''}">${formatCell(row[key], type)}</td>`).join('')}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      }
+
+      function renderPathTable(selector, rows, metric) {
+        const root = document.querySelector(selector);
+        if (!rows?.length) {
+          root.innerHTML = '<p class="empty">暂无数据。</p>';
+          return;
+        }
+        const max = Math.max(...rows.map((row) => Number(row[metric] || 0)), 1);
+        root.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>路径</th>
+                <th class="num">请求</th>
+                <th class="num">访问</th>
+                <th class="num">流量</th>
+                <th>占比</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((row) => `
+                <tr>
+                  <td class="path">${escapeHtml(row.path)}</td>
+                  <td class="num">${formatNumber(row.requests)}</td>
+                  <td class="num">${formatNumber(row.visits)}</td>
+                  <td class="num">${formatBytes(row.bytes)}</td>
+                  <td class="bar-cell"><span class="bar"><i style="width:${Math.max(3, Math.round(Number(row[metric] || 0) / max * 100))}%"></i></span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      }
+
+      function formatCell(value, type) {
+        if (type === 'num') return formatNumber(value);
+        if (type === 'bytes') return formatBytes(value);
+        return escapeHtml(String(value ?? '-'));
+      }
+
+      function showStatus(element, message, type) {
+        element.textContent = message;
+        element.className = `status show ${type}`;
+      }
+
+      function formatNumber(value) {
+        return Number(value || 0).toLocaleString('zh-CN');
+      }
+
+      function formatBytes(value) {
+        const bytes = Number(value || 0);
+        if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+        if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(2)} MB`;
+        if (bytes >= 1024) return `${(bytes / 1024).toFixed(2)} KB`;
+        return `${bytes} B`;
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+    </script>
+  </body>
+</html>
