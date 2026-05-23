@@ -19,7 +19,7 @@ async function extractAudioFromUrl(videoUrl, outputPath) {
     'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
   ].join('\r\n') + '\r\n';
 
-  await execFileAsync('ffmpeg', [
+  const { stdout, stderr } = await execFileAsync('ffmpeg', [
     '-y',
     '-headers', headers,
     '-i', videoUrl,
@@ -31,6 +31,8 @@ async function extractAudioFromUrl(videoUrl, outputPath) {
     '-t', String(MAX_AUDIO_DURATION_SECONDS),
     outputPath,
   ], { timeout: FFMPEG_TIMEOUT_MS });
+
+  return { stdout, stderr };
 }
 
 async function transcribeWithQwen(audioPath) {
@@ -113,17 +115,30 @@ export async function onRequestPost(context) {
   const url = String(body.url || '').trim();
   if (!url) return json({ ok: false, message: '缺少作品链接。' }, 400);
 
+  const requestId = `cp_qwen_${Date.now().toString(36)}`;
+  console.log(`[${requestId}] transcribe-link-qwen started`, { url: url.slice(0, 80) });
+
   const tempDir = await mkdtemp(join(tmpdir(), 'cp-qwen-'));
 
   try {
     // 1. Extract video info via TikHub
-    const sourceData = await extractByUrl({ apiKey: tikhubKey, baseUrl: tikhubBaseUrl, url });
+    console.log(`[${requestId}] step 1: extracting video info via TikHub`);
+    let sourceData;
+    try {
+      sourceData = await extractByUrl({ apiKey: tikhubKey, baseUrl: tikhubBaseUrl, url });
+    } catch (extractError) {
+      console.error(`[${requestId}] TikHub extract failed:`, extractError.message);
+      return json({ ok: false, message: `视频解析失败：${extractError.message}` }, 502);
+    }
+    console.log(`[${requestId}] TikHub extract success, data keys:`, Object.keys(sourceData || {}).slice(0, 10));
 
     // 2. Fastest path: subtitles
+    console.log(`[${requestId}] step 2: checking subtitles`);
     const subtitleUrl = getSubtitleLinks(sourceData)[0];
     if (subtitleUrl) {
       const subtitleText = await fetchSubtitleText(subtitleUrl);
       if (subtitleText) {
+        console.log(`[${requestId}] subtitles found, returning directly`);
         return json({
           ok: true,
           data: {
@@ -136,10 +151,14 @@ export async function onRequestPost(context) {
         });
       }
     }
+    console.log(`[${requestId}] no subtitles found`);
 
     // 3. Get video URL
-    const videoUrl = getVideoLinks(sourceData)[0];
-    if (!videoUrl) {
+    console.log(`[${requestId}] step 3: extracting video URLs`);
+    const videoUrls = getVideoLinks(sourceData);
+    console.log(`[${requestId}] video URLs found:`, videoUrls.length);
+    if (!videoUrls.length) {
+      console.error(`[${requestId}] no video URLs in response`, { dataKeys: Object.keys(sourceData || {}) });
       return json({
         ok: false,
         message: '已解析作品信息，但没有拿到可转写的视频源。',
@@ -147,12 +166,42 @@ export async function onRequestPost(context) {
       }, 502);
     }
 
-    // 4. Extract audio directly from URL with FFmpeg (no full video download)
+    const videoUrl = videoUrls[0];
+    console.log(`[${requestId}] using video URL:`, videoUrl.slice(0, 120));
+
+    // 4. Extract audio directly from URL with FFmpeg
+    console.log(`[${requestId}] step 4: extracting audio with FFmpeg`);
     const audioPath = join(tempDir, 'audio.mp3');
-    await extractAudioFromUrl(videoUrl, audioPath);
+    try {
+      const { stderr } = await extractAudioFromUrl(videoUrl, audioPath);
+      const audioStats = await readFile(audioPath).then(b => ({ size: b.length }));
+      console.log(`[${requestId}] FFmpeg success, audio size: ${audioStats.size} bytes`);
+      if (stderr) {
+        console.log(`[${requestId}] FFmpeg stderr:`, stderr.slice(0, 500));
+      }
+    } catch (ffmpegError) {
+      console.error(`[${requestId}] FFmpeg failed:`, ffmpegError.message);
+      // Fallback: try other video URLs
+      for (let i = 1; i < videoUrls.length; i++) {
+        console.log(`[${requestId}] trying fallback URL ${i}:`, videoUrls[i].slice(0, 120));
+        try {
+          await extractAudioFromUrl(videoUrls[i], audioPath);
+          const audioStats = await readFile(audioPath).then(b => ({ size: b.length }));
+          console.log(`[${requestId}] FFmpeg fallback ${i} success, audio size: ${audioStats.size} bytes`);
+          break;
+        } catch (fallbackError) {
+          console.error(`[${requestId}] FFmpeg fallback ${i} failed:`, fallbackError.message);
+          if (i === videoUrls.length - 1) {
+            throw new Error(`所有视频源均无法提取音频：${ffmpegError.message}`);
+          }
+        }
+      }
+    }
 
     // 5. Transcribe with Qwen ASR
+    console.log(`[${requestId}] step 5: transcribing with Qwen ASR`);
     const transcript = await transcribeWithQwen(audioPath);
+    console.log(`[${requestId}] Qwen ASR success, transcript length:`, transcript.length);
 
     const publishedText = getPublishedText(sourceData);
 
@@ -167,9 +216,11 @@ export async function onRequestPost(context) {
       }
     });
   } catch (error) {
+    console.error(`[${requestId}] transcribe-link-qwen failed:`, error.message);
     return json({ ok: false, message: error.message || '转写失败' }, 502);
   } finally {
     await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    console.log(`[${requestId}] cleanup done`);
   }
 }
 
