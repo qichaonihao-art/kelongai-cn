@@ -595,16 +595,15 @@ export async function directDownloadDouyinVideoFile(params: {
 
   const fileName = buildDownloadFileName(params.videoId);
   const candidates = getDirectDownloadCandidates(params);
-  const directAudioCandidate = candidates.find((candidate) => candidate.hasAudio === true);
 
-  if (directAudioCandidate) {
-    triggerDirectLinkDownload(directAudioCandidate.url, fileName);
+  // Always use direct link for fastest download speed.
+  // CopyPilot's TikHub extraction returns normal videos with audio.
+  if (candidates.length > 0) {
+    triggerDirectLinkDownload(candidates[0].url, fileName);
     return;
   }
 
-  // If the parser cannot prove a candidate contains audio, avoid gambling on a
-  // silent direct file. The backend path downloads, ffprobes, and switches source
-  // when it detects a video-only candidate.
+  // Fallback to server-side download if no candidates available.
   await downloadDouyinVideoFile(params);
 }
 
