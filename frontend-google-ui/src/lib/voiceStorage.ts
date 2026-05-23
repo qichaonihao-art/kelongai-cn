@@ -28,37 +28,6 @@ function isValidVoice(value: unknown): value is ClonedVoice {
   );
 }
 
-export function loadSavedVoices(): ClonedVoice[] {
-  if (typeof window === 'undefined') {
-    return [];
-  }
-
-  try {
-    const raw = window.localStorage.getItem(VOICES_STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-
-    const parsed = JSON.parse(raw) as unknown[];
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed.filter(isValidVoice);
-  } catch {
-    window.localStorage.removeItem(VOICES_STORAGE_KEY);
-    return [];
-  }
-}
-
-export function saveSavedVoices(voices: ClonedVoice[]) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(VOICES_STORAGE_KEY, JSON.stringify(voices));
-}
-
 export function loadActiveVoiceId(): string | null {
   if (typeof window === 'undefined') {
     return null;

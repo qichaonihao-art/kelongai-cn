@@ -2809,12 +2809,13 @@ async function addVoiceToArchive(voice) {
 async function removeVoiceFromArchive(id) {
   return withVoiceArchiveLock(async () => {
     const archive = await loadVoiceArchive();
-    const initialLength = archive.records.length;
-    archive.records = archive.records.filter((r) => r.id !== id);
-    const removed = archive.records.length < initialLength;
-    if (removed) {
-      await saveVoiceArchive(archive);
+    const index = archive.records.findIndex((r) => r.id === id);
+    if (index === -1) {
+      return null;
     }
+    const removed = archive.records[index];
+    archive.records.splice(index, 1);
+    await saveVoiceArchive(archive);
     return removed;
   });
 }
@@ -2943,6 +2944,22 @@ async function handleDeleteVoiceArchive(req, res) {
       sendJson(res, 404, { error: '未找到该音色档案' });
       return;
     }
+
+    // Release volcengine speaker ownership when a volcengine voice is deleted
+    if (removed.provider === 'volcengine' && removed.remoteVoiceId) {
+      try {
+        await withVolcSpeakerOwnershipLock(async (state) => {
+          deleteVolcSpeakerOwnership(state, removed.remoteVoiceId);
+        });
+        invalidateVolcSpeakerRemoteStatusCache();
+      } catch (ownershipError) {
+        console.error('[voice archive] delete_ownership_release_failed', {
+          speakerId: removed.remoteVoiceId,
+          message: ownershipError.message,
+        });
+      }
+    }
+
     sendJson(res, 200, { ok: true, removed: true });
   } catch (error) {
     console.error('[voice archive] delete_error', { message: error.message });

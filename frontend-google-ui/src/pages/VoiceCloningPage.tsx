@@ -34,7 +34,6 @@ import {
   generateSpeech,
   getVoiceArchive,
   getVoiceConfigStatus,
-  releaseVolcVoiceOwnership,
   supportsVoiceSpeechRate,
   syncVolcVoiceOwnership,
   syncVoiceArchive,
@@ -42,9 +41,7 @@ import {
 import {
   loadActiveVoiceId,
   loadOrCreateDeviceId,
-  loadSavedVoices,
   saveActiveVoiceId,
-  saveSavedVoices,
 } from "@/src/lib/voiceStorage";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -322,9 +319,8 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const [isConfigLoading, setIsConfigLoading] = useState(true);
   const [zhipuApiKey, setZhipuApiKey] = useState("");
   const [aliyunApiKey, setAliyunApiKey] = useState("");
-  const [voices, setVoices] = useState<ClonedVoice[]>(loadSavedVoices);
+  const [voices, setVoices] = useState<ClonedVoice[]>([]);
   const [activeVoiceId, setActiveVoiceId] = useState<string | null>(loadActiveVoiceId);
-  const [isSyncingArchive, setIsSyncingArchive] = useState(false);
   const [previewVoiceId, setPreviewVoiceId] = useState<string | null>(null);
   const [previewLoadingVoiceId, setPreviewLoadingVoiceId] = useState<string | null>(null);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
@@ -412,10 +408,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     hasVolcServerSupport &&
     hasVolcSlotPool &&
     configStatus.volcSpeakerSlotAvailable <= 0;
-
-  useEffect(() => {
-    saveSavedVoices(voices);
-  }, [voices]);
 
   useEffect(() => {
     saveActiveVoiceId(activeVoiceId);
@@ -528,32 +520,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
       cancelled = true;
     };
   }, []);
-
-  async function handleSyncArchive() {
-    if (isSyncingArchive) return;
-    setIsSyncingArchive(true);
-    try {
-      const localVoices = loadSavedVoices();
-      const result = await syncVoiceArchive(localVoices, deviceId);
-      const records = await getVoiceArchive();
-      const adapted: ClonedVoice[] = records.map((r) => ({
-        id: r.id,
-        name: r.name,
-        provider: r.provider as VoicePlatform,
-        providerLabel: r.providerLabel,
-        remoteVoiceId: r.remoteVoiceId,
-        engineModel: r.engineModel,
-        resourceId: r.resourceId,
-        createdAt: r.createdAt,
-      }));
-      setVoices(adapted);
-      setOwnershipError('');
-    } catch (error) {
-      setOwnershipError(error instanceof Error ? error.message : '同步失败');
-    } finally {
-      setIsSyncingArchive(false);
-    }
-  }
 
   useEffect(() => {
     if (!deviceId || configStatus.mockMode || !hasVolcServerSupport) {
@@ -1229,49 +1195,36 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   }
 
   async function handleDeleteVoice(voiceId: string) {
-    const targetVoice = voices.find((voice) => voice.id === voiceId) || null;
-    const nextVoices = voices.filter((voice) => voice.id !== voiceId);
-
-    // Delete from server archive first
     try {
       await deleteVoiceArchive(voiceId);
     } catch {
-      // Ignore archive delete errors, proceed with local removal
-    }
-
-    setVoices(nextVoices);
-    if (activeVoiceId === voiceId) {
-      setActiveVoiceId(null);
-    }
-
-    if (
-      !targetVoice ||
-      targetVoice.provider !== 'volcengine' ||
-      configStatus.mockMode ||
-      !hasVolcServerSupport ||
-      !deviceId
-    ) {
       return;
     }
 
-    const hasSameSpeakerRemaining = nextVoices.some(
-      (voice) => voice.provider === 'volcengine' && voice.remoteVoiceId === targetVoice.remoteVoiceId,
-    );
-
-    if (hasSameSpeakerRemaining) {
-      return;
-    }
-
+    // Refresh voices from server after deletion
     try {
-      await releaseVolcVoiceOwnership({
-        deviceId,
-        speakerId: targetVoice.remoteVoiceId,
-      });
-      setOwnershipError("");
+      const records = await getVoiceArchive();
+      const adapted: ClonedVoice[] = records.map((r) => ({
+        id: r.id,
+        name: r.name,
+        provider: r.provider as VoicePlatform,
+        providerLabel: r.providerLabel,
+        remoteVoiceId: r.remoteVoiceId,
+        engineModel: r.engineModel,
+        resourceId: r.resourceId,
+        createdAt: r.createdAt,
+      }));
+      setVoices(adapted);
+      if (activeVoiceId === voiceId) {
+        setActiveVoiceId(null);
+      }
       void refreshConfigStatus({ silent: true });
-    } catch (error) {
-      setOwnershipError(error instanceof Error ? error.message : "火山音色槽位释放失败，请稍后重试。");
-      void refreshConfigStatus({ silent: true });
+    } catch {
+      // If refresh fails, fall back to local removal
+      setVoices((prev) => prev.filter((v) => v.id !== voiceId));
+      if (activeVoiceId === voiceId) {
+        setActiveVoiceId(null);
+      }
     }
   }
 
@@ -2017,19 +1970,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={isSyncingArchive}
-                    className={cn(
-                      "rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition-colors border",
-                      isSyncingArchive
-                        ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
-                        : "bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100"
-                    )}
-                    onClick={() => void handleSyncArchive()}
-                  >
-                    {isSyncingArchive ? '同步中...' : '同步历史音色'}
-                  </button>
                   <button
                     className="size-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-white/60 transition-colors border border-white/50 bg-white/30"
                     onClick={() => setIsMyVoicesOpen(false)}
