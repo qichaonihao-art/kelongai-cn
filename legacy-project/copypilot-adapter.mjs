@@ -8,6 +8,8 @@ import { onRequestPost as batchExtractPost } from './copypilot-api/batch-extract
 import { onRequestGet as healthGet } from './copypilot-api/health.js';
 import { onRequestPost as rewritePost } from './copypilot-api/rewrite.js';
 import { onRequestPost as eventsPost } from './copypilot-api/events.js';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 // Map existing env names to copypilot expected names
 if (!process.env.TIKHUB_API_KEY && process.env.TIKHUB_API_TOKEN) {
@@ -81,8 +83,11 @@ async function sendResponse(res, response) {
       res.setHeader(key, value);
     }
   }
-  const body = await response.arrayBuffer();
-  res.end(Buffer.from(body));
+  if (!response.body) {
+    res.end();
+    return;
+  }
+  await pipeline(Readable.fromWeb(response.body), res);
 }
 
 async function handlePost(handler, req, res, url) {

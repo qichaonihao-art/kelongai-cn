@@ -14,6 +14,7 @@ export interface DouyinResolveResult {
   title?: string;
   desc?: string;
   downloadUrl: string;
+  previewUrl?: string;
   downloadUrlCandidates?: DouyinDownloadCandidate[];
   videoUrls?: string[];
   videoUrlCandidates?: DouyinDownloadCandidate[];
@@ -162,41 +163,164 @@ function extractDurationFromData(data: any): number {
   return 0;
 }
 
-function extractVideoUrlsFromData(data: any): string[] {
-  const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data?.note || data || {};
-  const video = detail.video || data?.video || {};
-  const links: string[] = [];
-  if (video.play_addr?.url_list?.length) links.push(...video.play_addr.url_list);
-  if (video.download_addr?.url_list?.length) links.push(...video.download_addr.url_list);
-  if (detail.video_url) links.push(detail.video_url);
-  if (data?.video_url) links.push(data.video_url);
-  if (data?.videos?.items?.length) {
-    const sorted = [...data.videos.items].sort((a: any, b: any) => Number(b.hasAudio) - Number(a.hasAudio));
-    links.push(...sorted.map((item: any) => item.url));
+function normalizeMediaUrl(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const url = value
+    .replace(/\\u0026/g, '&')
+    .replace(/&amp;/g, '&')
+    .trim();
+  return /^https?:\/\//i.test(url) ? url : '';
+}
+
+function getUrlHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
   }
-  return [...new Set(links)].filter((u): u is string => typeof u === 'string' && u.startsWith('http'));
+}
+
+function looksLikeVideoUrl(url: string): boolean {
+  const lower = url.toLowerCase();
+  return (
+    /\.(mp4|webm|mov|m3u8|mpd)(?:[?#]|$)/.test(lower) ||
+    /video\/tos|douyinvod|mime=video|googlevideo\.com\/videoplayback/.test(lower) ||
+    /kwaicdn|yximgs|ndcimgs|ksapis|ksosvideo/.test(lower) ||
+    /tiktokcdn|tiktokv|hdslb/.test(lower)
+  );
+}
+
+function addVideoCandidate(
+  candidates: DouyinDownloadCandidate[],
+  seen: Set<string>,
+  rawUrl: unknown,
+  source: string,
+  meta: Partial<DouyinDownloadCandidate> = {},
+) {
+  const url = normalizeMediaUrl(rawUrl);
+  if (!url || !looksLikeVideoUrl(url) || seen.has(url)) return;
+  seen.add(url);
+  candidates.push({
+    url,
+    source,
+    host: meta.host || getUrlHost(url),
+    ...(typeof meta.hasAudio === 'boolean' ? { hasAudio: meta.hasAudio } : {}),
+  });
+}
+
+function readHasAudio(value: any): boolean | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  for (const key of ['hasAudio', 'has_audio', 'hasAudioTrack', 'has_audio_track', 'withAudio', 'with_audio']) {
+    if (typeof value[key] === 'boolean') return value[key];
+    if (typeof value[key] === 'number') return value[key] !== 0;
+    if (typeof value[key] === 'string') {
+      const normalized = value[key].trim().toLowerCase();
+      if (['true', '1', 'yes'].includes(normalized)) return true;
+      if (['false', '0', 'no'].includes(normalized)) return false;
+    }
+  }
+  if (value.audio || value.audio_url || value.audioUrl || value.audio_track || value.audioTrack) return true;
+  return undefined;
+}
+
+function collectDeepVideoCandidates(data: any, candidates: DouyinDownloadCandidate[], seen: Set<string>) {
+  const queue = [data];
+  const visited = new Set<object>();
+
+  while (queue.length && candidates.length < 30) {
+    const item = queue.shift();
+    if (!item) continue;
+    if (typeof item === 'string') {
+      addVideoCandidate(candidates, seen, item, 'deep_search');
+      continue;
+    }
+    if (typeof item !== 'object' || visited.has(item)) continue;
+    visited.add(item);
+
+    const record = item as Record<string, any>;
+    const directUrl = record.url || record.src || record.video_url || record.videoUrl || record.play_url || record.playUrl || record.download_url || record.downloadUrl;
+    if (directUrl) {
+      addVideoCandidate(candidates, seen, directUrl, 'deep_search', { hasAudio: readHasAudio(record) });
+    }
+
+    for (const value of Object.values(record)) {
+      if (typeof value === 'string' || (value && typeof value === 'object')) queue.push(value);
+    }
+  }
 }
 
 function extractCandidatesFromData(data: any): DouyinDownloadCandidate[] {
-  const items = data?.videos?.items || [];
-  if (!Array.isArray(items)) return [];
+  const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data?.note || data || {};
+  const video = detail.video || data?.video || {};
   const candidates: DouyinDownloadCandidate[] = [];
-  for (const item of items) {
-    if (!item?.url) continue;
-    candidates.push({
-      url: String(item.url),
-      source: String(item.source || item.type || ''),
-      host: String(item.host || ''),
-      ...(typeof item.hasAudio === 'boolean' ? { hasAudio: item.hasAudio } : {}),
-    });
+  const seen = new Set<string>();
+
+  for (const url of video.play_addr_h264?.url_list || []) {
+    addVideoCandidate(candidates, seen, url, 'video.play_addr_h264', { hasAudio: true });
   }
-  // Also add play_addr / download_addr URLs
-  const urls = extractVideoUrlsFromData(data);
-  for (const url of urls) {
-    if (candidates.some(c => c.url === url)) continue;
-    candidates.push({ url, source: 'play_addr' });
+  for (const url of video.play_addr?.url_list || []) {
+    addVideoCandidate(candidates, seen, url, 'video.play_addr', { hasAudio: true });
   }
-  return candidates;
+  for (const url of video.play_api?.url_list || []) {
+    addVideoCandidate(candidates, seen, url, 'video.play_api', { hasAudio: true });
+  }
+  for (const url of video.download_addr?.url_list || []) {
+    addVideoCandidate(candidates, seen, url, 'video.download_addr', { hasAudio: true });
+  }
+  addVideoCandidate(candidates, seen, detail.video_url, 'detail.video_url');
+  addVideoCandidate(candidates, seen, data?.video_url, 'data.video_url');
+
+  if (data?.videos?.items?.length) {
+    const sorted = [...data.videos.items].sort((a: any, b: any) => Number(b.hasAudio) - Number(a.hasAudio));
+    for (const item of sorted) {
+      addVideoCandidate(candidates, seen, item?.url, String(item?.source || item?.type || 'videos.items'), {
+        host: typeof item?.host === 'string' ? item.host : '',
+        hasAudio: readHasAudio(item),
+      });
+    }
+  }
+
+  collectDeepVideoCandidates(data, candidates, seen);
+  return candidates.slice(0, 20);
+}
+
+function extractVideoUrlsFromData(data: any): string[] {
+  return extractCandidatesFromData(data).map((candidate) => candidate.url);
+}
+
+function scorePreviewCandidate(candidate: DouyinDownloadCandidate): number {
+  const source = String(candidate.source || '');
+  const host = String(candidate.host || '');
+  const url = String(candidate.url || '');
+  let score = 0;
+  if (/play_addr_h264/i.test(source)) score += 120;
+  if (/play_addr/i.test(source)) score += 100;
+  if (/play_api/i.test(source)) score += 80;
+  if (/download_addr/i.test(source)) score += 45;
+  if (/videos\.items|deep_search/i.test(source)) score += 20;
+  if (candidate.hasAudio === true) score += 20;
+  if (/v\d+-dy|douyinvod|zjcdn|byte/i.test(host)) score += 18;
+  if (/playwm|watermark=1|[?&]wm=1/i.test(url)) score -= 80;
+  return score;
+}
+
+function scoreDownloadCandidate(candidate: DouyinDownloadCandidate): number {
+  const source = String(candidate.source || '');
+  const host = String(candidate.host || '');
+  const url = String(candidate.url || '');
+  let score = 0;
+  if (candidate.hasAudio === true) score += 180;
+  if (candidate.hasAudio === false) score -= 500;
+  if (/download_addr/i.test(source)) score += 80;
+  if (/play_addr_h264/i.test(source)) score += 65;
+  if (/play_addr/i.test(source)) score += 55;
+  if (/v\d+-dy|douyinvod|zjcdn|byte/i.test(host)) score += 18;
+  if (/playwm|watermark=1|[?&]wm=1/i.test(url)) score -= 80;
+  return score;
+}
+
+function pickBestCandidate(candidates: DouyinDownloadCandidate[], scorer: (candidate: DouyinDownloadCandidate) => number): DouyinDownloadCandidate | null {
+  return [...candidates].sort((left, right) => scorer(right) - scorer(left))[0] || null;
 }
 
 function extractImagesFromData(data: any): string[] {
@@ -229,17 +353,25 @@ function extractTagsFromData(data: any): string[] {
 }
 
 function convertCpExtractToResolveResult(data: any): DouyinResolveResult {
-  const videoUrls = extractVideoUrlsFromData(data);
   const candidates = extractCandidatesFromData(data);
+  const previewCandidate = pickBestCandidate(candidates, scorePreviewCandidate);
+  const downloadCandidate = pickBestCandidate(candidates, scoreDownloadCandidate) || previewCandidate;
+  const videoUrls = [
+    previewCandidate?.url,
+    downloadCandidate?.url,
+    ...candidates.map((candidate) => candidate.url),
+  ].filter((url): url is string => !!url);
+  const uniqueVideoUrls = Array.from(new Set(videoUrls));
   return {
     ok: true,
     mode: 'stable',
     videoId: extractVideoIdFromData(data),
     title: extractTitleFromData(data),
     desc: extractTitleFromData(data),
-    downloadUrl: videoUrls[0] || '',
+    downloadUrl: downloadCandidate?.url || uniqueVideoUrls[0] || '',
+    previewUrl: previewCandidate?.url || downloadCandidate?.url || uniqueVideoUrls[0] || '',
     downloadUrlCandidates: candidates,
-    videoUrls,
+    videoUrls: uniqueVideoUrls,
     videoUrlCandidates: candidates,
     caption: data?.caption || data?.publishedText || '',
     fallbackCaption: '',
