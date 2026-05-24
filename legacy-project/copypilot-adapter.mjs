@@ -122,7 +122,7 @@ const adminForbidden = () => stubJson({ ok: false, message: '未配置' }, 403);
 
 const ROUTES = [
   { method: 'POST', path: '/api/cp/extract', handler: extractPost },
-  { method: 'POST', path: '/api/cp/transcribe-link', handler: transcribeLinkPost },
+  { method: 'POST', path: '/api/cp/transcribe-link', handler: transcribeLinkQwenPost },
   { method: 'POST', path: '/api/cp/transcribe-link-qwen', handler: transcribeLinkQwenPost },
   { method: 'POST', path: '/api/cp/transcribe', handler: transcribePost },
   { method: 'POST', path: '/api/cp/batch-extract', handler: batchExtractPost },

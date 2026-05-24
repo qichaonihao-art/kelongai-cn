@@ -5,12 +5,15 @@ import { getDefaultMaxVideoMinutes, getMembershipPlan } from './_plans.js';
 const FREE_MAX_TRANSCRIBE_SECONDS = 5 * 60;
 const FREE_MAX_UNKNOWN_DURATION_BYTES = 60 * 1024 * 1024;
 
+const QWEN_ASR_MODEL = 'qwen3-asr-flash';
+const QWEN_ASR_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+const QWEN_TIMEOUT_MS = 420_000;
+
 export async function onRequestPost(context) {
-  const apiKey = context.env.SILICONFLOW_API_KEY;
-  const model = context.env.SILICONFLOW_TRANSCRIBE_MODEL || 'FunAudioLLM/SenseVoiceSmall';
+  const apiKey = context.env.DASHSCOPE_API_KEY || context.env.ALIYUN_API_KEY || '';
 
   if (!apiKey) {
-    return json({ ok: false, message: '转写服务暂未配置完成。' }, 500);
+    return json({ ok: false, message: '服务端未配置 DashScope API Key' }, 500);
   }
 
   const form = await context.request.formData().catch(() => null);
@@ -37,44 +40,78 @@ export async function onRequestPost(context) {
     }, 400);
   }
 
-  const upstreamForm = new FormData();
-  upstreamForm.set('model', model);
-  upstreamForm.set('file', file, file.name || 'media-file');
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const base64Audio = Buffer.from(arrayBuffer).toString('base64');
+    const dataUri = `data:audio/mp3;base64,${base64Audio}`;
 
-  const response = await fetch('https://api.siliconflow.cn/v1/audio/transcriptions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: upstreamForm
-  });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), QWEN_TIMEOUT_MS);
 
-  const payload = await safeJson(response);
-  if (!response.ok) {
-    return json(
-      {
-        ok: false,
-        message: payload?.message || payload?.error?.message || '转写失败。',
-        detail: payload?.code || payload?.status || null
+    const response = await fetch(QWEN_ASR_URL, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
       },
-      response.status
-    );
-  }
+      body: JSON.stringify({
+        model: QWEN_ASR_MODEL,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_audio',
+                input_audio: { data: dataUri }
+              }
+            ]
+          }
+        ],
+        stream: false,
+        asr_options: {
+          language: 'zh',
+          enable_itn: false
+        }
+      })
+    });
 
-  await recordUsage(context, quota, {
-    action: 'extract',
-    resultTitle: file.name,
-    status: 'completed'
-  });
-  const headers = quota.setCookie ? { 'Set-Cookie': quota.setCookie } : {};
+    clearTimeout(timeoutId);
 
-  return json({
-    ok: true,
-    data: {
-      title: file.name,
-      text: payload.text || payload.data?.text || ''
+    const responseText = await response.text();
+    let responseJson;
+    try {
+      responseJson = JSON.parse(responseText);
+    } catch {
+      responseJson = null;
     }
-  }, 200, headers);
+
+    if (!response.ok) {
+      const errorMsg = responseJson?.error?.message || responseJson?.message || `HTTP ${response.status}`;
+      return json({ ok: false, message: `千问 ASR 返回错误：${errorMsg}` }, response.status);
+    }
+
+    const transcript = responseJson?.choices?.[0]?.message?.content || '';
+
+    await recordUsage(context, quota, {
+      action: 'extract',
+      resultTitle: file.name,
+      status: 'completed'
+    });
+    const headers = quota.setCookie ? { 'Set-Cookie': quota.setCookie } : {};
+
+    return json({
+      ok: true,
+      data: {
+        title: file.name,
+        text: transcript,
+        transcript: transcript,
+        transcriptSource: 'qwen-asr'
+      }
+    }, 200, headers);
+  } catch (error) {
+    return json({ ok: false, message: error.message || '千问 ASR 转写失败' }, 502);
+  }
 }
 
 async function getMaxTranscribeSeconds(context, quota) {
@@ -88,13 +125,4 @@ async function getMaxTranscribeSeconds(context, quota) {
     // Use defaults when the editable plan table is unavailable.
   }
   return getDefaultMaxVideoMinutes(plan) * 60;
-}
-
-async function safeJson(response) {
-  const text = await response.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { text };
-  }
 }
