@@ -8201,7 +8201,7 @@ async function handleAliyunVoiceCreate(req, res) {
     }
 
     await addVoiceToArchive({
-      name: normalizedPreferredName,
+      name: readValue(preferredName) || '未命名音色',
       provider: 'aliyun',
       providerLabel: '阿里云',
       remoteVoiceId: json?.output?.voice || json?.voiceId || '',
