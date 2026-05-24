@@ -1,6 +1,13 @@
 import { json } from './_tikhub.js';
 import { recordUsage, requireQuota } from './_auth.js';
 import { getDefaultMaxVideoMinutes, getMembershipPlan } from './_plans.js';
+import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 const FREE_MAX_TRANSCRIBE_SECONDS = 5 * 60;
 const FREE_MAX_UNKNOWN_DURATION_BYTES = 60 * 1024 * 1024;
@@ -8,6 +15,8 @@ const FREE_MAX_UNKNOWN_DURATION_BYTES = 60 * 1024 * 1024;
 const QWEN_ASR_MODEL = 'qwen3-asr-flash';
 const QWEN_ASR_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 const QWEN_TIMEOUT_MS = 420_000;
+const FFMPEG_TIMEOUT_MS = 180_000;
+const MAX_AUDIO_DURATION_SECONDS = 600;
 
 export async function onRequestPost(context) {
   const apiKey = context.env.DASHSCOPE_API_KEY || context.env.ALIYUN_API_KEY || '';
@@ -40,11 +49,34 @@ export async function onRequestPost(context) {
     }, 400);
   }
 
+  const tempDir = await mkdtemp(join(tmpdir(), 'cp-qwen-local-'));
+
   try {
+    // 1. Save uploaded file to temp directory
+    const inputPath = join(tempDir, 'input');
     const arrayBuffer = await file.arrayBuffer();
-    const base64Audio = Buffer.from(arrayBuffer).toString('base64');
+    await writeFile(inputPath, Buffer.from(arrayBuffer));
+
+    // 2. Extract and compress audio with FFmpeg
+    const audioPath = join(tempDir, 'audio.mp3');
+    await execFileAsync('ffmpeg', [
+      '-y',
+      '-i', inputPath,
+      '-vn',
+      '-ar', '16000',
+      '-ac', '1',
+      '-b:a', '32k',
+      '-f', 'mp3',
+      '-t', String(MAX_AUDIO_DURATION_SECONDS),
+      audioPath,
+    ], { timeout: FFMPEG_TIMEOUT_MS });
+
+    // 3. Read compressed audio and convert to base64
+    const audioBuffer = await readFile(audioPath);
+    const base64Audio = audioBuffer.toString('base64');
     const dataUri = `data:audio/mp3;base64,${base64Audio}`;
 
+    // 4. Call Qwen ASR
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), QWEN_TIMEOUT_MS);
 
@@ -111,6 +143,8 @@ export async function onRequestPost(context) {
     }, 200, headers);
   } catch (error) {
     return json({ ok: false, message: error.message || '千问 ASR 转写失败' }, 502);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
