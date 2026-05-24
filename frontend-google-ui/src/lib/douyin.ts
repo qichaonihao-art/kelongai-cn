@@ -831,14 +831,7 @@ export async function directDownloadDouyinVideoFile(params: {
   // Always use direct link for fastest download speed.
   // CopyPilot's TikHub extraction returns normal videos with audio.
   if (candidates.length > 0) {
-    triggerDirectLinkDownload(
-      buildImmediateDownloadUrl({
-        videoId: params.videoId,
-        downloadUrl: candidates[0].url,
-        platform: params.platform,
-      }),
-      fileName,
-    );
+    triggerDirectLinkDownload(candidates[0].url, fileName);
     return;
   }
 
