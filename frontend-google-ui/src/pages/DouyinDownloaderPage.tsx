@@ -594,7 +594,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     try {
       await downloadDouyinVideoFile({
         videoId: result.videoId,
-        downloadUrl: result.downloadUrl,
+        downloadUrl: fastDownloadUrl || result.downloadUrl,
         downloadUrlCandidates: result.downloadUrlCandidates,
         videoUrls: result.videoUrls,
         platform: result.platform,

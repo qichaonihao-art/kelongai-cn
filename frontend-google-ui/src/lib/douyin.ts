@@ -753,6 +753,25 @@ function triggerDirectLinkDownload(url: string, fileName: string) {
   document.body.removeChild(anchor);
 }
 
+function buildImmediateDownloadUrl(params: {
+  videoId: string;
+  downloadUrl: string;
+  platform?: string;
+}) {
+  const safeVideoId = String(params.videoId || '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '')
+    .slice(0, 64);
+  const searchParams = new URLSearchParams({
+    downloadUrl: params.downloadUrl,
+    videoId: params.videoId || '',
+    platform: params.platform || 'douyin',
+    fileName: buildDownloadFileName(safeVideoId),
+    download: '1',
+  });
+
+  return `/api/douyin/video-stream?${searchParams.toString()}`;
+}
+
 function getDirectDownloadCandidates(params: {
   downloadUrl: string;
   downloadUrlCandidates?: DouyinDownloadCandidate[];
@@ -781,55 +800,14 @@ export async function downloadDouyinVideoFile(params: {
   videoUrls?: string[];
   platform?: string;
 }) {
-  const safeVideoId = String(params.videoId || '')
-    .replace(/[^a-zA-Z0-9_-]+/g, '')
-    .slice(0, 64);
-  const fileName = buildDownloadFileName(safeVideoId);
-
-  const form = document.createElement('form');
-  const iframe = document.createElement('iframe');
-  const frameName = `douyin_download_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-
-  iframe.name = frameName;
-  iframe.style.display = 'none';
-  iframe.setAttribute('aria-hidden', 'true');
-
-  form.method = 'POST';
-  form.action = '/api/douyin/download-video';
-  form.target = frameName;
-  form.style.display = 'none';
-
-  const fields: Record<string, string> = {
-    downloadUrl: params.downloadUrl,
-    videoId: params.videoId || '',
-    platform: params.platform || 'douyin',
-    fileName,
-    download: '1',
-  };
-  if (params.downloadUrlCandidates?.length) {
-    fields.downloadUrlCandidates = JSON.stringify(params.downloadUrlCandidates);
-  }
-
-  for (const [key, value] of Object.entries(fields)) {
-    if (!value) continue;
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = key;
-    input.value = value;
-    form.appendChild(input);
-  }
-
-  document.body.appendChild(iframe);
-  document.body.appendChild(form);
-
-  try {
-    form.submit();
-  } finally {
-    document.body.removeChild(form);
-    window.setTimeout(() => {
-      iframe.remove();
-    }, 120_000);
-  }
+  triggerDirectLinkDownload(
+    buildImmediateDownloadUrl({
+      videoId: params.videoId,
+      downloadUrl: params.downloadUrl,
+      platform: params.platform,
+    }),
+    buildDownloadFileName(params.videoId),
+  );
 }
 
 export async function directDownloadDouyinVideoFile(params: {
@@ -853,7 +831,14 @@ export async function directDownloadDouyinVideoFile(params: {
   // Always use direct link for fastest download speed.
   // CopyPilot's TikHub extraction returns normal videos with audio.
   if (candidates.length > 0) {
-    triggerDirectLinkDownload(candidates[0].url, fileName);
+    triggerDirectLinkDownload(
+      buildImmediateDownloadUrl({
+        videoId: params.videoId,
+        downloadUrl: candidates[0].url,
+        platform: params.platform,
+      }),
+      fileName,
+    );
     return;
   }
 
