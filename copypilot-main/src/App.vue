@@ -1440,12 +1440,12 @@ async function extract() {
           }
         } else if (transcriptPayload.data) {
           result.value = { ...result.value, ...transcriptPayload.data };
-          notice.value = `基础内容已提取完成；${transcriptPayload.message || '视频语音文案暂时未识别成功。'}`;
+          notice.value = `基础内容已提取完成；${transcriptPayload.message || '视频语音文案暂时未识别成功，请重新解析，重新提取逐字稿。'}`;
         } else {
-          notice.value = `基础内容已提取完成；${transcriptPayload.message || '视频语音文案暂时未识别成功。'}`;
+          notice.value = `基础内容已提取完成；${transcriptPayload.message || '视频语音文案暂时未识别成功，请重新解析，重新提取逐字稿。'}`;
         }
       } catch (transcriptError) {
-        notice.value = `基础内容已提取完成；视频语音文案暂时未识别成功：${transcriptError.message || '网络请求失败。'}`;
+        notice.value = `基础内容已提取完成；视频语音文案暂时未识别成功：${transcriptError.message || '网络请求失败，请重新解析，重新提取逐字稿。'}`;
       }
     }
 

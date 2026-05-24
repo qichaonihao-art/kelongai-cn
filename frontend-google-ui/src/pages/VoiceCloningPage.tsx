@@ -521,7 +521,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     };
   }, []);
 
-  // Refresh voice list when drawer opens
+  // Refresh voice list and config status when drawer opens
   useEffect(() => {
     if (!isMyVoicesOpen) return;
 
@@ -548,6 +548,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
     }
 
     void refresh();
+    void refreshConfigStatus({ silent: true });
 
     return () => {
       cancelled = true;
@@ -2069,13 +2070,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-[11px] font-bold text-amber-700">火山槽位</span>
                       <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          className="rounded-full px-2 py-0.5 text-[10px] font-bold text-amber-700/70 transition-colors hover:bg-white hover:text-amber-800"
-                          onClick={() => void refreshConfigStatus({ silent: true })}
-                        >
-                          刷新
-                        </button>
                         <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-black text-amber-700 shadow-sm">
                           {volcSlotBadgeText}
                         </span>
