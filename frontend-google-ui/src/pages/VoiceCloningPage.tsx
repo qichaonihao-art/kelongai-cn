@@ -2232,7 +2232,9 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                             )}
                             onClick={(e) => {
                               e.stopPropagation();
-                              void handleDeleteVoice(voice.id);
+                              if (window.confirm(`确定要删除音色"${voice.name}"吗？此操作不可恢复。`)) {
+                                void handleDeleteVoice(voice.id);
+                              }
                             }}
                           >
                             <Trash2 className="size-3.5" />
