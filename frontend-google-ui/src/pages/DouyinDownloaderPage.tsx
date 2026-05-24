@@ -459,7 +459,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
         ? response
         : {
             ...response,
-            transcriptError: response.transcriptError?.trim() || '视频文案提取失败，请稍后重试。',
+            transcriptError: response.transcriptError?.trim() || '视频文案提取失败，请重新解析，重新提取逐字稿。',
           };
 
       setTranscriptResult(normalizedTranscriptResult);
@@ -488,7 +488,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       setTranscriptResult(null);
       setDisplayTranscript('');
       setOriginalTranscript('');
-      setError(submitError instanceof Error ? submitError.message : '视频文案提取失败，请稍后重试。');
+      setError(submitError instanceof Error ? submitError.message : '视频文案提取失败，请重新解析，重新提取逐字稿。');
     } finally {
       setIsTranscriptLoading(false);
       setTranscriptLoadingMessage('');
@@ -512,7 +512,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
         ? response
         : {
             ...response,
-            transcriptError: response.transcriptError?.trim() || '本地视频文案提取失败，请稍后重试。',
+            transcriptError: response.transcriptError?.trim() || '本地视频文案提取失败，请重新解析，重新提取逐字稿。',
           };
 
       setTranscriptResult(normalizedTranscriptResult);
@@ -525,7 +525,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       setTranscriptResult(null);
       setDisplayTranscript('');
       setOriginalTranscript('');
-      setError(submitError instanceof Error ? submitError.message : '本地视频文案提取失败，请稍后重试。');
+      setError(submitError instanceof Error ? submitError.message : '本地视频文案提取失败，请重新解析，重新提取逐字稿。');
     } finally {
       setIsLocalTranscriptLoading(false);
     }
