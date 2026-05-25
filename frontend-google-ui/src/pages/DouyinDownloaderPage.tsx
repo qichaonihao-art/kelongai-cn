@@ -743,13 +743,15 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                 <Globe className="size-3.5" />
                 高级解析
               </button>
-              <button
-                onClick={() => onNavigate('copypilot')}
+              <a
+                href="https://copy.aiqichao.xyz"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="flex h-10 items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-4 text-[11px] font-bold text-white shadow-md shadow-sky-200 transition-all hover:from-sky-600 hover:to-cyan-600 hover:shadow-lg"
               >
                 <Sparkles className="size-3.5" />
-                Copy Pilot
-              </button>
+                Copy pilot 2
+              </a>
             </div>
           </div>
 
