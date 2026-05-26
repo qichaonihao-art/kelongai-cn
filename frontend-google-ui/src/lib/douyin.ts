@@ -564,9 +564,43 @@ export async function extractCpTranscriptStream(
   return finalResult;
 }
 
+function readMediaDurationSeconds(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const audio = new Audio();
+
+    const cleanup = () => {
+      audio.onloadedmetadata = null;
+      audio.onerror = null;
+      URL.revokeObjectURL(objectUrl);
+    };
+
+    audio.onloadedmetadata = () => {
+      const durationSeconds =
+        Number.isFinite(audio.duration) && audio.duration > 0
+          ? audio.duration
+          : null;
+      cleanup();
+      resolve(durationSeconds);
+    };
+
+    audio.onerror = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    audio.preload = 'metadata';
+    audio.src = objectUrl;
+  });
+}
+
 export async function extractCpLocalTranscript(file: File): Promise<DouyinTranscriptResult> {
+  const durationSeconds = await readMediaDurationSeconds(file);
   const formData = new FormData();
   formData.append('file', file);
+  if (durationSeconds !== null) {
+    formData.append('durationSeconds', String(Math.round(durationSeconds)));
+  }
 
   const response = await fetch('/api/cp/transcribe', {
     method: 'POST',
