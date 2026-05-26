@@ -142,7 +142,14 @@ export async function onRequestPost(context) {
       }
     }, 200, headers);
   } catch (error) {
-    return json({ ok: false, message: error.message || '千问 ASR 转写失败' }, 502);
+    const errMsg = String(error?.message || error || '');
+    if (errMsg.includes('does not contain any stream') || errMsg.includes('no audio stream') || errMsg.includes('Output file #0 does not contain any stream')) {
+      return json({ ok: false, message: '该视频没有音频轨道，无法提取逐字稿。请确认视频包含声音后再试。' }, 400);
+    }
+    if (errMsg.includes('Invalid data')) {
+      return json({ ok: false, message: '视频格式不支持，请上传 MP4、MOV 等常见格式的视频。' }, 400);
+    }
+    return json({ ok: false, message: errMsg || '千问 ASR 转写失败' }, 502);
   } finally {
     await rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
