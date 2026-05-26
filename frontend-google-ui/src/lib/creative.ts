@@ -273,6 +273,14 @@ async function consumeStreamResponse(
     for (const block of chunks) {
       const parsed = parseSseBlock(block);
       if (!parsed) continue;
+      console.log('[creative sse] event', {
+        event: parsed.event,
+        done: parsed.done,
+        hasDelta: !!parsed.delta,
+        deltaPreview: parsed.delta ? parsed.delta.slice(0, 50) : '',
+        hasFullText: !!parsed.fullText,
+        fullTextPreview: parsed.fullText ? parsed.fullText.slice(0, 50) : ''
+      });
       if (parsed.error) throw new Error(parsed.error);
       if (isReasoningEvent(parsed.event)) continue;
 

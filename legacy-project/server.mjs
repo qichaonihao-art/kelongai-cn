@@ -2,7 +2,8 @@ import 'dotenv/config';
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -29,8 +30,8 @@ const AUTH_COOKIE_NAME = 'auth_token';
 const authSessions = new Map();
 const SHOULD_USE_REACT_FRONTEND = FRONTEND_MODE === 'react';
 const MAX_MULTIMODAL_UPLOAD_BYTES = 170 * 1024 * 1024;
-const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 45 * 1024 * 1024;
-const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
+const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_COMPRESSED_VIDEO_BYTES = 10 * 1024 * 1024;
 const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-pro-260215';
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.join(__dirname, '.runtime-state');
@@ -7349,6 +7350,84 @@ function normalizeBase64VideoInput(video, videoMimeType) {
   };
 }
 
+async function compressMediaForArk(file, mediaKind) {
+  if (file.size <= MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) return file;
+
+  await ensureVideoCompressionTools();
+  const tempDir = await mkdtemp(join(tmpdir(), 'cp-ark-'));
+  const inputPath = join(tempDir, `input_${mediaKind}`);
+  const outputPath = join(tempDir, `output_${mediaKind}`);
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    await writeFile(inputPath, Buffer.from(arrayBuffer));
+
+    if (mediaKind === 'image') {
+      // 先尝试质量压缩
+      await execFileAsync('ffmpeg', [
+        '-y', '-i', inputPath,
+        '-q:v', '3',
+        outputPath
+      ]);
+      let outputSize = (await stat(outputPath)).size;
+
+      // 如果还超过限制，缩小到最长边 1920
+      if (outputSize > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+        await execFileAsync('ffmpeg', [
+          '-y', '-i', inputPath,
+          '-vf', 'scale=min(1920\\,iw):-1',
+          '-q:v', '3',
+          outputPath
+        ]);
+        outputSize = (await stat(outputPath)).size;
+      }
+
+      // 如果还超过，进一步缩小到 1280
+      if (outputSize > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+        await execFileAsync('ffmpeg', [
+          '-y', '-i', inputPath,
+          '-vf', 'scale=min(1280\\,iw):-1',
+          '-q:v', '5',
+          outputPath
+        ]);
+        outputSize = (await stat(outputPath)).size;
+      }
+
+      // 如果还超过，缩小到 800
+      if (outputSize > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+        await execFileAsync('ffmpeg', [
+          '-y', '-i', inputPath,
+          '-vf', 'scale=min(800\\,iw):-1',
+          '-q:v', '8',
+          outputPath
+        ]);
+        outputSize = (await stat(outputPath)).size;
+      }
+
+      if (outputSize > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+        throw new Error('图片压缩后仍然超过 10MB，请上传更小的图片');
+      }
+
+      const compressedBuffer = await readFile(outputPath);
+      return new File([compressedBuffer], file.name, { type: 'image/jpeg' });
+    }
+
+    // video
+    const durationSeconds = await getVideoDurationSeconds(inputPath);
+    const compressed = await maybeCompressLargeVideo({
+      filePath: inputPath,
+      originalSize: file.size,
+      durationSeconds,
+      mediaId: randomBytes(6).toString('hex')
+    });
+
+    const compressedBuffer = await readFile(compressed.filePath);
+    return new File([compressedBuffer], file.name, { type: 'video/mp4' });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function normalizeUploadedMediaInput(file, mediaKind) {
   if (!(file instanceof File)) {
     throw new Error('上传文件无效');
@@ -7442,6 +7521,10 @@ function extractVisibleDoubaoText(payload) {
   for (const item of containers) {
     if (!item || typeof item !== 'object') continue;
     if (isDoubaoReasoningType(item.type)) continue;
+
+    if (typeof item.output_text === 'string' && item.output_text.trim()) {
+      textParts.push(item.output_text.trim());
+    }
 
     if (typeof item.text === 'string' && item.text.trim()) {
       textParts.push(item.text.trim());
@@ -7726,11 +7809,23 @@ async function proxySseStreamToClient(upstreamRes, req, res, options = {}) {
           const payload = parsed.payload;
           const errorMessage = payload?.error?.message || payload?.error || (payload?.type === 'error' ? (payload?.message || '流式响应失败') : '');
           if (errorMessage) {
+            console.log('[doubao multimodal] upstream sse error event', { requestId, event: parsed.event, errorMessage, raw: block.slice(0, 500) });
             writeSseEvent(res, 'error', { error: errorMessage });
             continue;
           }
 
           const delta = extractVisibleDoubaoDelta(payload, parsed.event);
+          console.log('[doubao multimodal] upstream sse event', {
+            requestId,
+            event: parsed.event,
+            done: parsed.done,
+            hasDelta: !!delta,
+            deltaPreview: delta ? delta.slice(0, 50) : '',
+            payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+            accumulatedBefore: accumulatedAnswer.length,
+            raw: block.slice(0, 300)
+          });
+
           if (delta) {
             const incrementalDelta = getIncrementalText(accumulatedAnswer, delta);
             if (incrementalDelta) {
@@ -9536,7 +9631,8 @@ async function handleDoubaoMultimodal(req, res) {
             video_url: publicMedia.url
           });
         } else {
-          const normalizedUploadedMedia = await normalizeUploadedMediaInput(currentFile, resolvedMediaKind);
+          const compressedFile = await compressMediaForArk(currentFile, resolvedMediaKind);
+          const normalizedUploadedMedia = await normalizeUploadedMediaInput(compressedFile, resolvedMediaKind);
 
           content.push(
             resolvedMediaKind === 'image'
@@ -9614,7 +9710,8 @@ async function handleDoubaoMultimodal(req, res) {
           video_url: publicMedia.url
         });
       } else {
-        const normalizedUploadedMedia = await normalizeUploadedMediaInput(file, resolvedMediaKind);
+        const compressedFile = await compressMediaForArk(file, resolvedMediaKind);
+        const normalizedUploadedMedia = await normalizeUploadedMediaInput(compressedFile, resolvedMediaKind);
 
         content.push(
           resolvedMediaKind === 'image'
@@ -9665,6 +9762,15 @@ async function handleDoubaoMultimodal(req, res) {
       },
       body: JSON.stringify(requestPayload)
     };
+
+    console.log('[doubao multimodal] request payload', {
+      requestId,
+      model: resolvedModel,
+      stream: shouldStream,
+      contentLength: content.length,
+      contentTypes: content.map((c) => c.type),
+      promptPreview: promptText.slice(0, 100)
+    });
 
     if (shouldStream) {
       stage = 'open_stream_to_client';
@@ -10024,7 +10130,8 @@ async function handleSeedanceCreateTask(req, res) {
           sendJson(res, 400, { error: 'Seedance 2.0 最多支持 9 张参考图片。' });
           return;
         }
-        const normalized = await normalizeUploadedMediaInput(file, 'image');
+        const compressedFile = await compressMediaForArk(file, 'image');
+        const normalized = await normalizeUploadedMediaInput(compressedFile, 'image');
         content.push({
           type: 'image_url',
           image_url: {
