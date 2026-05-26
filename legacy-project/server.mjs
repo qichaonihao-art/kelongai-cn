@@ -7730,8 +7730,8 @@ async function proxySseStreamToClient(upstreamRes, req, res, options = {}) {
             continue;
           }
 
-          if (isDoubaoDeltaEvent(parsed.event)) {
-            const delta = extractVisibleDoubaoDelta(payload, parsed.event);
+          const delta = extractVisibleDoubaoDelta(payload, parsed.event);
+          if (delta) {
             const incrementalDelta = getIncrementalText(accumulatedAnswer, delta);
             if (incrementalDelta) {
               accumulatedAnswer += incrementalDelta;
@@ -7763,8 +7763,8 @@ async function proxySseStreamToClient(upstreamRes, req, res, options = {}) {
       const parsed = parseDoubaoSseBlock(buffer);
       if (parsed) {
         const payload = parsed.payload;
-        if (isDoubaoDeltaEvent(parsed.event)) {
-          const delta = extractVisibleDoubaoDelta(payload, parsed.event);
+        const delta = extractVisibleDoubaoDelta(payload, parsed.event);
+        if (delta) {
           const incrementalDelta = getIncrementalText(accumulatedAnswer, delta);
           if (incrementalDelta) {
             accumulatedAnswer += incrementalDelta;
