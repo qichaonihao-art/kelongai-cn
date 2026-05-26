@@ -237,11 +237,13 @@ function parseSseBlock(rawBlock: string) {
       payloadRecord?.type === 'response.done' ||
       payloadRecord?.done === true,
     error:
-      payloadRecord?.error && typeof payloadRecord.error === 'object'
-        ? String((payloadRecord.error as Record<string, unknown>).message || '流式响应失败')
-        : payloadRecord?.type === 'error'
-          ? String(payloadRecord?.message || '流式响应失败')
-          : '',
+      typeof payloadRecord?.error === 'string'
+        ? payloadRecord.error
+        : payloadRecord?.error && typeof payloadRecord.error === 'object'
+          ? String((payloadRecord.error as Record<string, unknown>).message || '流式响应失败')
+          : payloadRecord?.type === 'error'
+            ? String(payloadRecord?.message || '流式响应失败')
+            : '',
     delta: extractStreamDelta(payload),
     fullText: extractResponseText(payload),
   };

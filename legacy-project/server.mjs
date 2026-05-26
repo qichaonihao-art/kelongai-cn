@@ -30,8 +30,9 @@ const AUTH_COOKIE_NAME = 'auth_token';
 const authSessions = new Map();
 const SHOULD_USE_REACT_FRONTEND = FRONTEND_MODE === 'react';
 const MAX_MULTIMODAL_UPLOAD_BYTES = 170 * 1024 * 1024;
-const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 10 * 1024 * 1024;
-const MAX_COMPRESSED_VIDEO_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_ORIGINAL_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 45 * 1024 * 1024;
+const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
 const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-pro-260215';
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.join(__dirname, '.runtime-state');
@@ -7351,7 +7352,8 @@ function normalizeBase64VideoInput(video, videoMimeType) {
 }
 
 async function compressMediaForArk(file, mediaKind) {
-  if (file.size <= MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) return file;
+  const maxOriginalBytes = mediaKind === 'image' ? MAX_IMAGE_ORIGINAL_UPLOAD_BYTES : MAX_VIDEO_ORIGINAL_UPLOAD_BYTES;
+  if (file.size <= maxOriginalBytes) return file;
 
   await ensureVideoCompressionTools();
   const tempDir = await mkdtemp(join(tmpdir(), 'cp-ark-'));
@@ -7372,7 +7374,7 @@ async function compressMediaForArk(file, mediaKind) {
       let outputSize = (await stat(outputPath)).size;
 
       // 如果还超过限制，缩小到最长边 1920
-      if (outputSize > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+      if (outputSize > MAX_IMAGE_ORIGINAL_UPLOAD_BYTES) {
         await execFileAsync('ffmpeg', [
           '-y', '-i', inputPath,
           '-vf', 'scale=min(1920\\,iw):-1',
@@ -7383,7 +7385,7 @@ async function compressMediaForArk(file, mediaKind) {
       }
 
       // 如果还超过，进一步缩小到 1280
-      if (outputSize > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+      if (outputSize > MAX_IMAGE_ORIGINAL_UPLOAD_BYTES) {
         await execFileAsync('ffmpeg', [
           '-y', '-i', inputPath,
           '-vf', 'scale=min(1280\\,iw):-1',
@@ -7394,7 +7396,7 @@ async function compressMediaForArk(file, mediaKind) {
       }
 
       // 如果还超过，缩小到 800
-      if (outputSize > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+      if (outputSize > MAX_IMAGE_ORIGINAL_UPLOAD_BYTES) {
         await execFileAsync('ffmpeg', [
           '-y', '-i', inputPath,
           '-vf', 'scale=min(800\\,iw):-1',
@@ -7404,7 +7406,7 @@ async function compressMediaForArk(file, mediaKind) {
         outputSize = (await stat(outputPath)).size;
       }
 
-      if (outputSize > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+      if (outputSize > MAX_IMAGE_ORIGINAL_UPLOAD_BYTES) {
         throw new Error('图片压缩后仍然超过 10MB，请上传更小的图片');
       }
 
@@ -7766,6 +7768,7 @@ function parseDoubaoSseBlock(rawBlock) {
 }
 
 async function proxySseStreamToClient(upstreamRes, req, res, options = {}) {
+  const requestId = options.requestId || '';
   if (!options.skipInitialHeaders) {
     startSseResponse(res);
   }
@@ -9813,7 +9816,7 @@ async function handleDoubaoMultimodal(req, res) {
         elapsedMs: Date.now() - requestStartedAt
       });
       writeSseEvent(res, 'status', { stage: 'streaming_response' });
-      await proxySseStreamToClient(upstreamRes, req, res, { skipInitialHeaders: true });
+      await proxySseStreamToClient(upstreamRes, req, res, { skipInitialHeaders: true, requestId });
       return;
     }
 
