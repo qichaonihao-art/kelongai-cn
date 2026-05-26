@@ -7376,6 +7376,17 @@ function extractResponsesText(json) {
     return normalizeDoubaoDisplayText(json.output_text);
   }
 
+  const choices = Array.isArray(json.choices) ? json.choices : [];
+  for (const choice of choices) {
+    if (!choice || typeof choice !== 'object') continue;
+    const message = choice.message;
+    if (message && typeof message === 'object') {
+      if (typeof message.content === 'string' && message.content.trim()) {
+        return normalizeDoubaoDisplayText(message.content.trim());
+      }
+    }
+  }
+
   const output = Array.isArray(json.output) ? json.output : [];
   const textParts = [];
 
@@ -7413,6 +7424,17 @@ function extractVisibleDoubaoText(payload) {
   if (!payload || typeof payload !== 'object') return '';
   if (shouldUseDoubaoVisibleText(payload.answer)) return normalizeDoubaoDisplayText(String(payload.answer));
   if (shouldUseDoubaoVisibleText(payload.output_text)) return normalizeDoubaoDisplayText(String(payload.output_text));
+
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  for (const choice of choices) {
+    if (!choice || typeof choice !== 'object') continue;
+    const message = choice.message;
+    if (message && typeof message === 'object') {
+      if (typeof message.content === 'string' && message.content.trim()) {
+        return normalizeDoubaoDisplayText(message.content.trim());
+      }
+    }
+  }
 
   const containers = [payload, payload.response, payload.item].filter(Boolean);
   const textParts = [];
@@ -7493,6 +7515,15 @@ function normalizeDoubaoDisplayText(value) {
 function extractVisibleDoubaoDelta(payload, eventName) {
   const resolvedEvent = String(eventName || payload?.type || '').toLowerCase();
   if (isDoubaoReasoningType(resolvedEvent)) return '';
+
+  const choices = Array.isArray(payload?.choices) ? payload.choices : [];
+  for (const choice of choices) {
+    if (!choice || typeof choice !== 'object') continue;
+    const delta = choice.delta;
+    if (delta && typeof delta === 'object') {
+      if (typeof delta.content === 'string' && delta.content.length > 0) return delta.content;
+    }
+  }
 
   const deltaCandidates = [
     payload?.delta,

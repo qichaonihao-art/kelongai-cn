@@ -52,6 +52,19 @@ function extractResponseText(payload: unknown) {
     }
   }
 
+  const choices = Array.isArray(record.choices) ? record.choices : [];
+  for (const choice of choices) {
+    if (!choice || typeof choice !== 'object') continue;
+    const choiceRecord = choice as Record<string, unknown>;
+    const message = choiceRecord.message;
+    if (message && typeof message === 'object') {
+      const messageRecord = message as Record<string, unknown>;
+      if (typeof messageRecord.content === 'string' && messageRecord.content) {
+        return messageRecord.content;
+      }
+    }
+  }
+
   const containers = [record, response].filter(Boolean) as Array<Record<string, unknown>>;
   const parts: string[] = [];
 
@@ -92,6 +105,19 @@ function extractStreamDelta(payload: unknown): string {
     const deltaRecord = record.delta as Record<string, unknown>;
     if (!isReasoningEvent(deltaRecord.type) && typeof deltaRecord.text === 'string') {
       return deltaRecord.text;
+    }
+  }
+
+  const choices = Array.isArray(record.choices) ? record.choices : [];
+  for (const choice of choices) {
+    if (!choice || typeof choice !== 'object') continue;
+    const choiceRecord = choice as Record<string, unknown>;
+    const delta = choiceRecord.delta;
+    if (delta && typeof delta === 'object') {
+      const deltaRecord = delta as Record<string, unknown>;
+      if (typeof deltaRecord.content === 'string') {
+        return deltaRecord.content;
+      }
     }
   }
 
