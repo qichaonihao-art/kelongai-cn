@@ -440,7 +440,7 @@ export async function sendCreativeMessage(options: {
   if (contentType.includes('text/event-stream')) {
     const answer = await consumeStreamResponse(response, options.onDelta);
     if (!answer) {
-      throw new Error('模型已返回结果，但 answer 为空');
+      throw new Error('模型已返回结果，但 answer 为空（SSE 流无内容）');
     }
     return answer;
   }
@@ -448,7 +448,10 @@ export async function sendCreativeMessage(options: {
   const json = await response.json();
   const answer = String(json?.answer || '').trim();
   if (!answer) {
-    throw new Error('模型已返回结果，但 answer 为空');
+    const debugInfo = json?.debug
+      ? `（响应字段：${json.debug.responseKeys?.join(', ') || '无'}）`
+      : '';
+    throw new Error(`模型已返回结果，但 answer 为空${debugInfo}`);
   }
   return answer;
 }

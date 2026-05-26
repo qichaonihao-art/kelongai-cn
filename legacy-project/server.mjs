@@ -9718,6 +9718,17 @@ async function handleDoubaoMultimodal(req, res) {
       json = responseText ? JSON.parse(responseText) : null;
     } catch {}
 
+    console.log('[doubao multimodal] upstream json parsed', {
+      requestId,
+      hasOutputText: typeof json?.output_text === 'string',
+      hasOutput: Array.isArray(json?.output),
+      hasChoices: Array.isArray(json?.choices),
+      hasAnswer: typeof json?.answer === 'string',
+      keys: json && typeof json === 'object' ? Object.keys(json) : [],
+      firstChoiceKeys: json?.choices?.[0] ? Object.keys(json.choices[0]) : [],
+      extractedLength: extractResponsesText(json).length
+    });
+
     if (!upstreamRes.ok) {
       console.error('[doubao multimodal] upstream non-200 response', {
         requestId,
@@ -9761,18 +9772,24 @@ async function handleDoubaoMultimodal(req, res) {
       return;
     }
 
+    const extractedAnswer = extractResponsesText(json);
     console.log('[doubao multimodal] request complete', {
       requestId,
       stage,
       streamed: false,
-      answerLength: extractResponsesText(json).length,
+      answerLength: extractedAnswer.length,
       elapsedMs: Date.now() - requestStartedAt
     });
     sendJson(res, 200, {
       ok: true,
       model: resolvedModel,
-      answer: extractResponsesText(json),
-      response: json
+      answer: extractedAnswer,
+      response: json,
+      debug: !extractedAnswer ? {
+        responseKeys: json && typeof json === 'object' ? Object.keys(json) : [],
+        firstChoiceKeys: json?.choices?.[0] ? Object.keys(json.choices[0]) : [],
+        firstOutputKeys: json?.output?.[0] ? Object.keys(json.output[0]) : []
+      } : undefined
     });
   } catch (error) {
     if (typeof waitingHeartbeat !== 'undefined' && waitingHeartbeat) {
