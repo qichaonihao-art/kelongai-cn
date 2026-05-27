@@ -311,6 +311,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [isLocalTranscriptLoading, setIsLocalTranscriptLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'link' | 'local'>('link');
   const [asrEngine, setAsrEngine] = useState<'siliconflow' | 'qwen'>('qwen');
+  const [activeMode, setActiveMode] = useState<'menu' | 'copypilot' | 'local' | 'link'>('menu');
   const [localVideoUrl, setLocalVideoUrl] = useState<string>('');
   const resultRef = useRef<HTMLDivElement>(null);
   const localVideoInputRef = useRef<HTMLInputElement>(null);
@@ -735,24 +736,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                 <h1 className="text-2xl font-black tracking-tight text-slate-950">视频解析</h1>
               </div>
             </div>
-            <div className="flex shrink-0 gap-2">
-              <button
-                onClick={() => onNavigate('universal')}
-                className="flex h-10 items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 text-[11px] font-bold text-white shadow-md shadow-indigo-200 transition-all hover:from-indigo-600 hover:to-violet-600 hover:shadow-lg"
-              >
-                <Globe className="size-3.5" />
-                高级解析
-              </button>
-              <a
-                href="https://copy.aiqichao.xyz"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex h-10 items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-4 text-[11px] font-bold text-white shadow-md shadow-sky-200 transition-all hover:from-sky-600 hover:to-cyan-600 hover:shadow-lg"
-              >
-                <Sparkles className="size-3.5" />
-                Copy pilot 2
-              </a>
-            </div>
           </div>
 
           <div className="relative mt-5 grid gap-2 sm:grid-cols-3">
@@ -793,72 +776,190 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
         </motion.section>
 
         {/* 工作区 */}
-        <div className="glass-card rounded-3xl border-white/80 shadow-glass overflow-hidden max-w-3xl mx-auto">
-          {/* Tab栏 */}
-          <div className="flex gap-2 bg-white/35 p-3">
-            <button
-              onClick={() => switchTab('link')}
-              className={`flex-1 flex items-center justify-center gap-2 h-11 rounded-2xl text-xs font-bold transition-all ${
-                activeTab === 'link'
-                  ? 'bg-slate-950 text-white shadow-lg shadow-slate-900/15'
-                  : 'text-slate-500 hover:bg-white/60 hover:text-slate-700'
-              }`}
+        <AnimatePresence mode="wait">
+          {activeMode === 'menu' && (
+            <motion.div
+              key="menu"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.3 }}
+              className="grid gap-4 sm:grid-cols-3"
             >
-              <Link2 className="size-3.5" />
-              链接解析视频
-            </button>
-            <button
-              onClick={() => switchTab('local')}
-              className={`flex-1 flex items-center justify-center gap-2 h-11 rounded-2xl text-xs font-bold transition-all ${
-                activeTab === 'local'
-                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/15'
-                  : 'text-slate-500 hover:bg-white/60 hover:text-slate-700'
-              }`}
-            >
-              <Upload className="size-3.5" />
-              本地视频提取逐字稿
-            </button>
-          </div>
-
-          {/* ASR 引擎选择 */}
-          <div className="px-6 pt-2 pb-0">
-            <div className="flex justify-end">
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => setAsrEngine('qwen')}
-                  className={`h-7 rounded-lg px-3 text-[10px] font-bold transition-all ${
-                    asrEngine === 'qwen'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-slate-400 hover:text-slate-600'
-                  }`}
-                >
-                  千问 ASR
-                </button>
-                <button
-                  onClick={() => setAsrEngine('siliconflow')}
-                  className={`h-7 rounded-lg px-3 text-[10px] font-bold transition-all ${
-                    asrEngine === 'siliconflow'
-                      ? 'bg-white text-slate-700 shadow-sm'
-                      : 'text-slate-400 hover:text-slate-600'
-                  }`}
-                >
-                  SenseVoice（免费）
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* 内容区 */}
-          <AnimatePresence mode="wait">
-            {activeTab === 'link' ? (
-              <motion.div
-                key="link"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="px-6 pb-6 pt-3 space-y-5"
+              {/* 主视频解析 */}
+              <button
+                onClick={() => window.open('https://copy.aiqichao.xyz', '_blank', 'noopener,noreferrer')}
+                className="group flex flex-col items-center gap-4 rounded-3xl border border-sky-100 bg-gradient-to-br from-white/80 to-sky-50/60 p-7 text-center shadow-glass transition-all hover:shadow-lg hover:-translate-y-1"
               >
+                <div className="inline-flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-500 text-white shadow-lg shadow-sky-500/20 transition-transform group-hover:scale-105">
+                  <Sparkles className="size-7" />
+                </div>
+                <div>
+                  <p className="text-base font-black text-slate-800">主视频解析</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">Copy Pilot 2 专业视频文案提取</p>
+                </div>
+                <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-sky-500">
+                  打开网站 <ArrowLeft className="size-3 rotate-180" />
+                </span>
+              </button>
+
+              {/* 视频提取文案 */}
+              <button
+                onClick={() => setActiveMode('local')}
+                className="group flex flex-col items-center gap-4 rounded-3xl border border-emerald-100 bg-gradient-to-br from-white/80 to-emerald-50/60 p-7 text-center shadow-glass transition-all hover:shadow-lg hover:-translate-y-1"
+              >
+                <div className="inline-flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20 transition-transform group-hover:scale-105">
+                  <Upload className="size-7" />
+                </div>
+                <div>
+                  <p className="text-base font-black text-slate-800">视频提取文案</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">上传本地视频，提取逐字稿文案</p>
+                </div>
+                <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-emerald-500">
+                  开始使用 <ArrowLeft className="size-3 rotate-180" />
+                </span>
+              </button>
+
+              {/* 视频解析 */}
+              <button
+                onClick={() => setActiveMode('link')}
+                className="group flex flex-col items-center gap-4 rounded-3xl border border-indigo-100 bg-gradient-to-br from-white/80 to-indigo-50/60 p-7 text-center shadow-glass transition-all hover:shadow-lg hover:-translate-y-1"
+              >
+                <div className="inline-flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white shadow-lg shadow-indigo-500/20 transition-transform group-hover:scale-105">
+                  <Link2 className="size-7" />
+                </div>
+                <div>
+                  <p className="text-base font-black text-slate-800">视频解析</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">粘贴链接解析视频，支持下载</p>
+                </div>
+                <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-indigo-500">
+                  开始使用 <ArrowLeft className="size-3 rotate-180" />
+                </span>
+              </button>
+            </motion.div>
+          )}
+
+          {activeMode === 'local' && (
+            <motion.div
+              key="local"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.3 }}
+              className="glass-card rounded-3xl border-white/80 shadow-glass overflow-hidden max-w-3xl mx-auto"
+            >
+              {/* 返回栏 */}
+              <div className="flex items-center gap-2 border-b border-slate-100/80 bg-white/35 px-4 py-3">
+                <button
+                  onClick={() => setActiveMode('menu')}
+                  className="flex h-9 items-center gap-2 rounded-xl bg-white/70 px-3 text-xs font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md"
+                >
+                  <ArrowLeft className="size-3.5" />
+                  返回
+                </button>
+                <span className="text-xs font-bold text-slate-400">视频提取文案</span>
+              </div>
+
+              {/* ASR 引擎选择 */}
+              <div className="px-6 pt-3 pb-0">
+                <div className="flex justify-end">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setAsrEngine('qwen')}
+                      className={`h-7 rounded-lg px-3 text-[10px] font-bold transition-all ${
+                        asrEngine === 'qwen'
+                          ? 'bg-white text-blue-600 shadow-sm'
+                          : 'text-slate-400 hover:text-slate-600'
+                      }`}
+                    >
+                      千问 ASR
+                    </button>
+                    <button
+                      onClick={() => setAsrEngine('siliconflow')}
+                      className={`h-7 rounded-lg px-3 text-[10px] font-bold transition-all ${
+                        asrEngine === 'siliconflow'
+                          ? 'bg-white text-slate-700 shadow-sm'
+                          : 'text-slate-400 hover:text-slate-600'
+                      }`}
+                    >
+                      SenseVoice（免费）
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 内容区 */}
+              <div className="px-6 pb-6 pt-3 space-y-5">
+                <div className="rounded-3xl border border-dashed border-emerald-200 bg-gradient-to-br from-white/70 to-emerald-50/60 p-7 text-center space-y-3">
+                  <div className="inline-flex size-14 items-center justify-center rounded-2xl bg-white text-emerald-500 shadow-sm">
+                    <Upload className="size-6" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-slate-800">上传本地视频提取逐字稿</p>
+                    <p className="mt-1 text-xs text-slate-400">支持 MP4、MOV 等常见视频格式</p>
+                  </div>
+                  <input
+                    ref={localVideoInputRef}
+                    type="file"
+                    accept="video/*"
+                    onChange={handleLocalVideoSelect}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={isLocalTranscriptLoading}
+                    onClick={() => localVideoInputRef.current?.click()}
+                    className="mx-auto flex h-11 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-6 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 transition-all hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {isLocalTranscriptLoading ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" />
+                        提取逐字稿中...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="size-4" />
+                        选择视频文件
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {localVideoUrl && (
+                  <video
+                    src={localVideoUrl}
+                    controls
+                    className="w-full max-h-44 rounded-3xl bg-slate-900 object-contain shadow-lg shadow-slate-900/10"
+                    playsInline
+                  />
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {activeMode === 'link' && (
+            <motion.div
+              key="link"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.3 }}
+              className="glass-card rounded-3xl border-white/80 shadow-glass overflow-hidden max-w-3xl mx-auto"
+            >
+              {/* 返回栏 */}
+              <div className="flex items-center gap-2 border-b border-slate-100/80 bg-white/35 px-4 py-3">
+                <button
+                  onClick={() => setActiveMode('menu')}
+                  className="flex h-9 items-center gap-2 rounded-xl bg-white/70 px-3 text-xs font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md"
+                >
+                  <ArrowLeft className="size-3.5" />
+                  返回
+                </button>
+                <span className="text-xs font-bold text-slate-400">视频解析</span>
+              </div>
+
+              {/* 内容区 */}
+              <div className="px-6 pb-6 pt-3 space-y-5">
                 <div className="relative rounded-3xl border border-indigo-200 bg-white/75 p-3 shadow-inner shadow-indigo-100/60 ring-4 ring-indigo-100/45 transition-all focus-within:bg-white/90 focus-within:ring-indigo-100/70">
                   <textarea
                     value={input}
@@ -908,63 +1009,10 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                     清空
                   </button>
                 </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="local"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="px-6 pb-6 pt-3 space-y-5"
-              >
-                <div className="rounded-3xl border border-dashed border-emerald-200 bg-gradient-to-br from-white/70 to-emerald-50/60 p-7 text-center space-y-3">
-                  <div className="inline-flex size-14 items-center justify-center rounded-2xl bg-white text-emerald-500 shadow-sm">
-                    <Upload className="size-6" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-black text-slate-800">上传本地视频提取逐字稿</p>
-                    <p className="mt-1 text-xs text-slate-400">支持 MP4、MOV 等常见视频格式</p>
-                  </div>
-                  <input
-                    ref={localVideoInputRef}
-                    type="file"
-                    accept="video/*"
-                    onChange={handleLocalVideoSelect}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    disabled={isLocalTranscriptLoading}
-                    onClick={() => localVideoInputRef.current?.click()}
-                    className="mx-auto flex h-11 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-6 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 transition-all hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50"
-                  >
-                    {isLocalTranscriptLoading ? (
-                      <>
-                        <Loader2 className="size-4 animate-spin" />
-                        提取逐字稿中...
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="size-4" />
-                        选择视频文件
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                {localVideoUrl && (
-                  <video
-                    src={localVideoUrl}
-                    controls
-                    className="w-full max-h-44 rounded-3xl bg-slate-900 object-contain shadow-lg shadow-slate-900/10"
-                    playsInline
-                  />
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* 错误提示 */}
         <AnimatePresence>
@@ -991,7 +1039,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               transition={{ duration: 0.4 }}
               className="space-y-4"
             >
-              {activeTab === 'link' && (
+              {activeMode === 'link' && (
               <div className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass">
                 <div className="flex items-center justify-between gap-3 border-b border-slate-100/80 bg-white/35 px-6 py-4">
                   <div className="flex items-center gap-3">
