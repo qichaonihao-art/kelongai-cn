@@ -2423,6 +2423,23 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                         disabled={isLoading}
                         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
                       />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-medium text-slate-400">常用：</span>
+                        <button
+                          type="button"
+                          onClick={() => setReplaceTarget('视频中的挂画')}
+                          className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-slate-500 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+                        >
+                          视频中的挂画
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setReplaceTarget('视频中的装饰画')}
+                          className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-slate-500 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+                        >
+                          视频中的装饰画
+                        </button>
+                      </div>
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-[11px] font-bold text-slate-600">替换成</label>
@@ -2434,6 +2451,23 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                         disabled={isLoading}
                         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
                       />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-medium text-slate-400">常用：</span>
+                        <button
+                          type="button"
+                          onClick={() => setReplaceWith('图片中的挂画')}
+                          className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-slate-500 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+                        >
+                          图片中的挂画
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setReplaceWith('图片中的装饰画')}
+                          className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-slate-500 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+                        >
+                          图片中的装饰画
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
