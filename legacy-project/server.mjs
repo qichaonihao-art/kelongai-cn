@@ -7594,7 +7594,39 @@ function normalizeDoubaoDisplayText(value) {
     }
   }
 
-  return filteredLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return collapseRepeatedDoubaoText(filteredLines.join('\n').replace(/\n{3,}/g, '\n\n').trim());
+}
+
+function collapseRepeatedDoubaoText(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  const normalized = normalizeDoubaoCompareText(text);
+  if (!normalized) return text;
+
+  const lines = text.split('\n');
+  for (let split = Math.floor(lines.length / 2); split >= 1; split -= 1) {
+    const first = lines.slice(0, split).join('\n').trim();
+    const second = lines.slice(split).join('\n').trim();
+    if (!first || !second) continue;
+    if (normalizeDoubaoCompareText(first) === normalizeDoubaoCompareText(second)) {
+      return first;
+    }
+  }
+
+  const midpoint = Math.floor(text.length / 2);
+  for (let offset = 0; offset <= Math.min(200, midpoint); offset += 1) {
+    for (const split of [midpoint - offset, midpoint + offset]) {
+      if (split <= 0 || split >= text.length) continue;
+      const first = text.slice(0, split).trim();
+      const second = text.slice(split).trim();
+      if (first && second && normalizeDoubaoCompareText(first) === normalizeDoubaoCompareText(second)) {
+        return first;
+      }
+    }
+  }
+
+  return text;
 }
 
 function extractVisibleDoubaoDelta(payload, eventName) {
@@ -7817,7 +7849,8 @@ async function proxySseStreamToClient(upstreamRes, req, res, options = {}) {
             continue;
           }
 
-          const delta = extractVisibleDoubaoDelta(payload, parsed.event);
+          const shouldReadDelta = isDoubaoDeltaEvent(parsed.event);
+          const delta = shouldReadDelta ? extractVisibleDoubaoDelta(payload, parsed.event) : '';
           console.log('[doubao multimodal] upstream sse event', {
             requestId,
             event: parsed.event,
@@ -7861,7 +7894,7 @@ async function proxySseStreamToClient(upstreamRes, req, res, options = {}) {
       const parsed = parseDoubaoSseBlock(buffer);
       if (parsed) {
         const payload = parsed.payload;
-        const delta = extractVisibleDoubaoDelta(payload, parsed.event);
+        const delta = isDoubaoDeltaEvent(parsed.event) ? extractVisibleDoubaoDelta(payload, parsed.event) : '';
         if (delta) {
           const incrementalDelta = getIncrementalText(accumulatedAnswer, delta);
           if (incrementalDelta) {
