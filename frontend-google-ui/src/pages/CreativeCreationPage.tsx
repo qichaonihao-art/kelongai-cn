@@ -94,6 +94,13 @@ interface SeedanceHistoryItem {
   elapsedSeconds?: number;
 }
 
+interface UploadHistoryPreviewItem {
+  id: number;
+  name: string;
+  timestamp: number;
+  previewUrl: string;
+}
+
 const MAX_VIDEO_SIZE_BYTES = 150 * 1024 * 1024;
 const MAX_SAVED_CREATIVE_SESSIONS = 8;
 const MAX_SEEDANCE_HISTORY_ITEMS = 30;
@@ -178,13 +185,14 @@ function getSeedanceCostStats(): { daily: number; monthly: number; yearly: numbe
 }
 
 const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上七个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。';
+const VIDEO_CONTEXT_ISOLATION_RULE = '本次任务是完全独立的一次视频分析。只能基于当前上传的视频、当前上传的参考图片（如有）、本条指令中的替换要求、额外调整和字幕选项进行判断。不得引用、继承、延续或假设任何历史会话、上一次视频、上一次替换目标、上一次参考图、旧提示词中的主体、道具、场景、动作、挂画、海报、装饰物、文字内容或风格要求。所有主体、道具、动作和场景元素必须来自当前视频可见内容或当前指令明确要求；如果当前视频中没有明确出现某元素，不得写入分析和最终提示词。';
 const VIDEO_REVERSE_PROMPT = (options?: { additionalChange?: string; includeSubtitles?: boolean }) => {
   const additionalChange = options?.additionalChange;
   const includeSubtitles = options?.includeSubtitles ?? false;
   const subtitleClause = includeSubtitles
     ? '8. 如果视频中有人物口播或旁白字幕，必须逐字提取并完整保留在最终提示词中，字幕内容不得遗漏、省略或改写。'
     : '8. 视频中的字幕、文字叠加、人物口播字幕、旁白字幕等所有文字元素均不得保留，必须在复刻时彻底去除，确保输出画面不含任何字幕或文字叠加。';
-  const base = `请把这个视频当作”待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。\n5. 目标不是”风格相似”，而是”尽量复刻接近原视频”。\n6. 对于画面中的挂画、海报、装饰画、屏幕显示内容等平面元素，必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换或修改后的元素在画面中的空间占比和边界框大小必须与原元素一致。\n7. 如果原视频中存在水印、平台标识、AI生成标记（如”豆包AI生成”等文字或Logo），必须在复刻时去除，不得保留任何水印信息。\n${subtitleClause}`;
+  const base = `请把这个视频当作”待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n${VIDEO_CONTEXT_ISOLATION_RULE}\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。\n5. 目标不是”风格相似”，而是”尽量复刻接近原视频”。\n6. 对于画面中的挂画、海报、装饰画、屏幕显示内容等平面元素，必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换或修改后的元素在画面中的空间占比和边界框大小必须与原元素一致。\n7. 如果原视频中存在水印、平台标识、AI生成标记（如”豆包AI生成”等文字或Logo），必须在复刻时去除，不得保留任何水印信息。\n${subtitleClause}`;
   if (!additionalChange?.trim()) return base;
   return `${base}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
 };
@@ -200,6 +208,8 @@ const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, options?: { a
 2. 同时参考我上传的图片，把视频中的【${target}】替换成【${replacement}】。
 3. 替换时，${replacement}的外观、风格、质感要与我上传的参考图片保持一致。
 4. 除了被替换的元素外，视频中其他所有内容（场景、人物、动作、镜头运动、光影、色彩、节奏等）必须与原视频完全一致，不能有任何改变。
+
+${VIDEO_CONTEXT_ISOLATION_RULE}
 
 请严格按以下结构输出：
 
@@ -772,11 +782,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [additionalChange, setAdditionalChange] = useState('');
   const [includeSubtitles, setIncludeSubtitles] = useState(false);
   const [additionalChangeHistory, setAdditionalChangeHistory] = useState<string[]>([]);
-  const [videoHistory, setVideoHistory] = useState<Array<{ id: number; name: string; timestamp: number; previewUrl: string }>>([]);
-  const [imageHistory, setImageHistory] = useState<Array<{ id: number; name: string; timestamp: number; previewUrl: string }>>([]);
+  const [videoHistory, setVideoHistory] = useState<UploadHistoryPreviewItem[]>([]);
+  const [imageHistory, setImageHistory] = useState<UploadHistoryPreviewItem[]>([]);
+  const videoHistoryRef = useRef<UploadHistoryPreviewItem[]>([]);
+  const imageHistoryRef = useRef<UploadHistoryPreviewItem[]>([]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance'>('video');
-  const [hoverPreviewItem, setHoverPreviewItem] = useState<{ id: number; name: string; previewUrl: string; timestamp: number; kind: 'video' | 'image'; source: 'video' | 'image-creative' | 'image-seedance' } | null>(null);
+  const [hoverPreviewItem, setHoverPreviewItem] = useState<UploadHistoryPreviewItem & { kind: 'video' | 'image'; source: 'video' | 'image-creative' | 'image-seedance' } | null>(null);
   const hoverPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seedanceCostStats = getSeedanceCostStats();
   const [notebookItems, setNotebookItems] = useState<NotebookItem[]>(loadNotebookItems);
@@ -835,22 +847,24 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       loadUploadHistory('image'),
     ]);
 
-    setVideoHistory(
-      videos.map((item) => ({
+    setVideoHistory((previous) => {
+      previous.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+      return videos.map((item) => ({
         id: item.id,
         name: item.name,
         timestamp: item.timestamp,
         previewUrl: URL.createObjectURL(item.blob),
-      }))
-    );
-    setImageHistory(
-      images.map((item) => ({
+      }));
+    });
+    setImageHistory((previous) => {
+      previous.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+      return images.map((item) => ({
         id: item.id,
         name: item.name,
         timestamp: item.timestamp,
         previewUrl: URL.createObjectURL(item.blob),
-      }))
-    );
+      }));
+    });
   }
 
   useEffect(() => {
@@ -877,6 +891,21 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    videoHistoryRef.current = videoHistory;
+  }, [videoHistory]);
+
+  useEffect(() => {
+    imageHistoryRef.current = imageHistory;
+  }, [imageHistory]);
+
+  useEffect(() => {
+    return () => {
+      videoHistoryRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+      imageHistoryRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
     };
   }, []);
 
@@ -1933,6 +1962,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     const isReversePrompt = rawQuestion.includes('待复刻样片') && rawQuestion.includes('核心主体信息');
     const question = isReversePrompt ? rawQuestion + VIDEO_REVERSE_FORMAT_SUFFIX : rawQuestion;
     const isReplaceMode = reverseMode === 'replace' && selectedMedia?.kind === 'video' && replaceImage;
+    const shouldIsolateReverseTask = selectedMedia?.kind === 'video' && (isReversePrompt || isReplaceMode);
     const mediaToSend: SelectedCreativeMedia | SelectedCreativeMedia[] | null = isReplaceMode
       ? [selectedMedia!, replaceImage!]
       : selectedMedia;
@@ -1982,7 +2012,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       timestamp: new Date(),
     };
     const assistantMessageId = createMessageId('creative_assistant');
-    const history = buildHistory();
+    const history = shouldIsolateReverseTask ? [] : buildHistory();
 
     setMessages((previous) => [
       ...previous,
@@ -3530,12 +3560,14 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                             }, 80);
                           }}
                         >
-                          <div className="relative overflow-hidden rounded-lg bg-slate-950">
-                            <video
-                              src={item.previewUrl}
-                              className="aspect-video w-full object-cover"
-                              preload="metadata"
-                            />
+                          <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-lg bg-slate-950">
+                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_35%_25%,rgba(99,102,241,0.28),transparent_38%),linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.92))]" />
+                            <div className="relative flex size-10 items-center justify-center rounded-full bg-white/10 text-white shadow-sm ring-1 ring-white/15">
+                              <Film className="size-5" />
+                            </div>
+                            <div className="absolute bottom-1.5 left-1.5 rounded bg-black/45 px-1.5 py-0.5 text-[10px] font-bold text-white/80">
+                              视频
+                            </div>
                           </div>
                           <div className="mt-2 flex items-center justify-between gap-1">
                             <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-600">{item.name}</span>
