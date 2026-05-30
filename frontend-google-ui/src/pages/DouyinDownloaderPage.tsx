@@ -786,41 +786,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               transition={{ duration: 0.3 }}
               className="grid gap-4 sm:grid-cols-3"
             >
-              {/* 主视频解析 */}
-              <button
-                onClick={() => window.open('https://copy.aiqichao.xyz', '_blank', 'noopener,noreferrer')}
-                className="group flex flex-col items-center gap-4 rounded-3xl border border-sky-100 bg-gradient-to-br from-white/80 to-sky-50/60 p-7 text-center shadow-glass transition-all hover:shadow-lg hover:-translate-y-1"
-              >
-                <div className="inline-flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-500 text-white shadow-lg shadow-sky-500/20 transition-transform group-hover:scale-105">
-                  <Sparkles className="size-7" />
-                </div>
-                <div>
-                  <p className="text-base font-black text-slate-800">主视频解析</p>
-                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">Copy Pilot 2 专业视频文案提取</p>
-                </div>
-                <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-sky-500">
-                  打开网站 <ArrowLeft className="size-3 rotate-180" />
-                </span>
-              </button>
-
-              {/* 视频提取文案 */}
-              <button
-                onClick={() => setActiveMode('local')}
-                className="group flex flex-col items-center gap-4 rounded-3xl border border-emerald-100 bg-gradient-to-br from-white/80 to-emerald-50/60 p-7 text-center shadow-glass transition-all hover:shadow-lg hover:-translate-y-1"
-              >
-                <div className="inline-flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20 transition-transform group-hover:scale-105">
-                  <Upload className="size-7" />
-                </div>
-                <div>
-                  <p className="text-base font-black text-slate-800">视频提取文案</p>
-                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">上传本地视频，提取逐字稿文案</p>
-                </div>
-                <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-emerald-500">
-                  开始使用 <ArrowLeft className="size-3 rotate-180" />
-                </span>
-              </button>
-
-              {/* 视频解析 */}
+              {/* 在线视频下载 */}
               <button
                 onClick={() => setActiveMode('link')}
                 className="group flex flex-col items-center gap-4 rounded-3xl border border-indigo-100 bg-gradient-to-br from-white/80 to-indigo-50/60 p-7 text-center shadow-glass transition-all hover:shadow-lg hover:-translate-y-1"
@@ -829,10 +795,44 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                   <Link2 className="size-7" />
                 </div>
                 <div>
-                  <p className="text-base font-black text-slate-800">视频解析</p>
+                  <p className="text-base font-black text-slate-800">在线视频下载</p>
                   <p className="mt-1.5 text-xs leading-relaxed text-slate-400">粘贴链接解析视频，支持下载</p>
                 </div>
                 <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-indigo-500">
+                  开始使用 <ArrowLeft className="size-3 rotate-180" />
+                </span>
+              </button>
+
+              {/* 在线文案提取 */}
+              <button
+                onClick={() => window.open('https://copy.aiqichao.xyz', '_blank', 'noopener,noreferrer')}
+                className="group flex flex-col items-center gap-4 rounded-3xl border border-sky-100 bg-gradient-to-br from-white/80 to-sky-50/60 p-7 text-center shadow-glass transition-all hover:shadow-lg hover:-translate-y-1"
+              >
+                <div className="inline-flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-500 text-white shadow-lg shadow-sky-500/20 transition-transform group-hover:scale-105">
+                  <Sparkles className="size-7" />
+                </div>
+                <div>
+                  <p className="text-base font-black text-slate-800">在线文案提取</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">Copy Pilot 2 专业视频文案提取</p>
+                </div>
+                <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-sky-500">
+                  打开网站 <ArrowLeft className="size-3 rotate-180" />
+                </span>
+              </button>
+
+              {/* 本地文案提取 */}
+              <button
+                onClick={() => setActiveMode('local')}
+                className="group flex flex-col items-center gap-4 rounded-3xl border border-emerald-100 bg-gradient-to-br from-white/80 to-emerald-50/60 p-7 text-center shadow-glass transition-all hover:shadow-lg hover:-translate-y-1"
+              >
+                <div className="inline-flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20 transition-transform group-hover:scale-105">
+                  <Upload className="size-7" />
+                </div>
+                <div>
+                  <p className="text-base font-black text-slate-800">本地文案提取</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">上传本地视频，提取逐字稿文案</p>
+                </div>
+                <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-emerald-500">
                   开始使用 <ArrowLeft className="size-3 rotate-180" />
                 </span>
               </button>
@@ -857,7 +857,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                   <ArrowLeft className="size-3.5" />
                   返回
                 </button>
-                <span className="text-xs font-bold text-slate-400">视频提取文案</span>
+                <span className="text-xs font-bold text-slate-400">本地文案提取</span>
               </div>
 
               {/* ASR 引擎选择 */}
@@ -955,7 +955,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                   <ArrowLeft className="size-3.5" />
                   返回
                 </button>
-                <span className="text-xs font-bold text-slate-400">视频解析</span>
+                <span className="text-xs font-bold text-slate-400">在线视频下载</span>
               </div>
 
               {/* 内容区 */}
