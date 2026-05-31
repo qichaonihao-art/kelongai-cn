@@ -1052,26 +1052,22 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
 
               {/* 内容区 */}
               <div className="px-6 pb-6 pt-3 space-y-5">
-                <div className="relative rounded-3xl border border-indigo-200 bg-white/75 p-3 shadow-inner shadow-indigo-100/60 ring-4 ring-indigo-100/45 transition-all focus-within:bg-white/90 focus-within:ring-indigo-100/70">
+                <div className="relative rounded-2xl border border-indigo-200 bg-white/75 shadow-inner shadow-indigo-100/60 transition-all focus-within:ring-2 focus-within:ring-indigo-200/70">
                   <textarea
                     value={input}
                     onChange={(event) => setInput(event.target.value)}
-                    placeholder="请输入视频链接或分享文案，支持抖音、TikTok、快手、B站、小红书、YouTube 等..."
-                    className="h-32 w-full resize-none rounded-2xl border-0 bg-transparent p-3 pr-10 text-sm font-medium leading-6 text-slate-700 outline-none placeholder:text-slate-400"
+                    placeholder="粘贴视频链接..."
+                    className="h-16 w-full resize-none rounded-2xl border-0 bg-transparent p-3 pr-10 text-sm font-medium leading-6 text-slate-700 outline-none placeholder:text-slate-300"
                   />
                   {input && (
                     <button
                       onClick={() => setInput('')}
-                      className="absolute right-5 top-5 flex size-7 items-center justify-center rounded-full bg-slate-100 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
+                      className="absolute right-3 top-3 flex size-6 items-center justify-center rounded-full bg-slate-100 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
                       title="清空输入"
                     >
                       <Trash2 className="size-3 text-slate-400" />
                     </button>
                   )}
-                  <div className="flex items-center justify-between border-t border-slate-100 px-3 pt-2">
-                    <span className="text-[11px] font-medium text-slate-400">支持抖音、TikTok、快手、B站、小红书、YouTube 等主流平台</span>
-                    <span className="text-[10px] font-bold text-slate-300">{input.trim().length} 字</span>
-                  </div>
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -1131,115 +1127,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               transition={{ duration: 0.4 }}
               className="space-y-4"
             >
-              {activeMode === 'link' && (
-              <div className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass">
-                <div className="flex items-center justify-between gap-3 border-b border-slate-100/80 bg-white/35 px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="inline-flex size-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-500/20">
-                      <Download className="size-4" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-black text-slate-500 uppercase tracking-wider">视频信息</div>
-                      <p className="mt-0.5 text-[11px] font-medium text-slate-400">解析结果、下载入口和视频预览</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="p-6 space-y-5">
-                {result ? (
-                  <div className="space-y-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="flex w-fit items-center gap-2 rounded-full border border-emerald-100/80 bg-emerald-50/80 px-3 py-2 text-xs font-bold text-emerald-600">
-                        <CheckCircle2 className="size-3.5" />
-                        {result.platform ? `${result.platform} 解析成功` : '视频解析成功'}
-                      </div>
-                      {result.platform && (
-                        <div className="flex w-fit items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50/80 px-3 py-2 text-xs font-bold text-indigo-600">
-                          <Globe className="size-3" />
-                          {result.platform}
-                        </div>
-                      )}
-                      <div className="ml-auto flex w-fit items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50/80 px-3 py-2 text-xs font-bold text-indigo-600">
-                        <Clock className="size-3.5" />
-                        视频时长：{(result.duration || 0) > 0 ? formatDuration(result.duration!) : '暂未获取'}
-                      </div>
-                    </div>
-
-                    <div className="rounded-3xl border border-slate-100 bg-white/65 p-4 shadow-inner shadow-slate-100/60 space-y-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          <FileText className="size-3" />
-                          视频标题
-                        </div>
-                        <div className="text-base font-black text-slate-900 leading-relaxed">
-                          {result.title?.trim() || result.caption?.trim() || '未提取到标题'}
-                        </div>
-                      </div>
-
-                      {result.authorName?.trim() && (
-                        <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-slate-50/80 px-3 py-2">
-                          <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                            <User className="size-3" />
-                            作者
-                          </div>
-                          <div className="text-xs font-semibold text-slate-700">
-                            {result.authorName.trim()}
-                          </div>
-                        </div>
-                      )}
-
-                      {displayTags.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {displayTags.map((tag, i) => (
-                            <span key={i} className="rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-0.5 text-[10px] font-bold text-indigo-600">
-                              #{tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex flex-col gap-3">
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <button
-                          onClick={() => {
-                            setShowVideoPreview(true);
-                          }}
-                          className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200/80 bg-white/75 text-sm font-bold text-slate-700 shadow-sm transition-all hover:bg-white hover:shadow-md"
-                        >
-                          <Play className="size-4" />
-                          预览视频
-                        </button>
-
-                        <button
-                          onClick={handleOneClickExtract}
-                          disabled={isTranscriptLoading}
-                          className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-indigo-200/80 bg-indigo-50/75 text-sm font-bold text-indigo-700 shadow-sm transition-all hover:bg-indigo-50 hover:shadow-md disabled:opacity-50"
-                        >
-                          {isTranscriptLoading ? (
-                            <>
-                              <Loader2 className="size-4 animate-spin" />
-                              提取中...
-                            </>
-                          ) : (
-                            <>
-                              <AudioLines className="size-4" />
-                              重新提取文案
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-
-                  </div>
-                ) : (
-                  <div className="rounded-3xl border border-slate-100 bg-white/50 px-4 py-8 text-center text-sm text-slate-400">
-                    解析成功后，这里会显示视频信息。
-                  </div>
-                )}
-                </div>
-              </div>
-              )}
-
               {/* Transcript Card */}
               <div className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass">
                 <div className="flex items-center justify-between gap-3 border-b border-slate-100/80 bg-white/35 px-6 py-4">
