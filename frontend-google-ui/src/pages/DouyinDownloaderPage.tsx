@@ -777,6 +777,237 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     resetAll();
   }
 
+  function renderTranscriptCard() {
+    const isOnline = activeMode === 'link';
+    return (
+      <div className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass h-full flex flex-col">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-100/80 bg-white/35 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="inline-flex size-10 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-md shadow-amber-500/20">
+              <AudioLines className="size-4" />
+            </div>
+            <div>
+              <div className="text-xs font-black text-slate-500 uppercase tracking-wider">
+                {isOnline ? '在线视频文案' : '本地视频文案'}
+              </div>
+              <p className="mt-0.5 text-[11px] font-medium text-slate-400">
+                {isOnline ? '粘贴链接一键提取逐字稿' : '本地上传视频提取逐字稿'}
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="p-6 space-y-5 flex-1 overflow-y-auto">
+          <AnimatePresence mode="wait">
+            {isTranscriptLoading ? (
+              <motion.div
+                key="loading-online"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="space-y-4 rounded-3xl border border-indigo-100 bg-indigo-50/70 px-4 py-4"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3 text-sm text-indigo-700 font-semibold">
+                    <Loader2 className="size-4 animate-spin" />
+                    {transcriptLoadingMessage || '正在提取音频并转写文案...'}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[
+                      { key: 'resolving', label: '解析视频' },
+                      { key: 'downloading', label: '下载视频' },
+                      { key: 'extracting_audio', label: '提取音频' },
+                      { key: 'transcribing', label: 'ASR转写' },
+                    ].map((step, index, arr) => {
+                      const stepOrder = ['idle', 'resolving', 'downloading', 'extracting_audio', 'transcribing', 'done', 'error'];
+                      const currentIndex = stepOrder.indexOf(extractStep);
+                      const stepIndex = stepOrder.indexOf(step.key);
+                      const isCompleted = currentIndex > stepIndex;
+                      const isActive = extractStep === step.key;
+                      return (
+                        <div key={step.key} className="flex items-center gap-2">
+                          <div className={cn(
+                            "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold transition-all",
+                            isCompleted && "bg-emerald-100 text-emerald-700",
+                            isActive && "bg-indigo-500 text-white shadow-sm",
+                            !isCompleted && !isActive && "bg-slate-100 text-slate-400"
+                          )}>
+                            <span className={cn(
+                              "flex size-4 items-center justify-center rounded-full text-[9px] font-black",
+                              isCompleted && "bg-emerald-500 text-white",
+                              isActive && "bg-white text-indigo-600",
+                              !isCompleted && !isActive && "bg-slate-300 text-white"
+                            )}>
+                              {isCompleted ? '✓' : index + 1}
+                            </span>
+                            {step.label}
+                          </div>
+                          {index < arr.length - 1 && (
+                            <div className={cn(
+                              "h-px w-3 shrink-0 hidden sm:block",
+                              isCompleted ? "bg-emerald-300" : "bg-slate-200"
+                            )} />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                {displayTranscript ? (
+                  <>
+                    <div className="ml-1 inline-flex rounded-full border border-indigo-100 bg-white/70 px-2.5 py-1 text-[10px] font-bold text-indigo-600">
+                      已实时转写 {displayTranscript.replace(/\s/g, '').length} 字
+                    </div>
+                    <div className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-2xl border border-indigo-100/80 bg-white/80 p-4 text-sm leading-7 text-slate-700 shadow-inner shadow-indigo-100/50">
+                      {displayTranscript}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-indigo-500 ml-1">已启用流式转写，拿到首段内容会立即显示。</p>
+                )}
+              </motion.div>
+            ) : isLocalTranscriptLoading ? (
+              <motion.div
+                key="loading-local"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="space-y-3 rounded-3xl border border-emerald-100 bg-emerald-50/70 px-4 py-4"
+              >
+                <div className="flex items-center gap-3 text-sm text-emerald-700 font-semibold">
+                  <Loader2 className="size-4 animate-spin" />
+                  正在提取本地视频逐字稿...
+                </div>
+                <p className="text-xs text-emerald-500 ml-7">上传完成，正在进行 ASR 语音转写，请稍候。</p>
+              </motion.div>
+            ) : transcriptResult?.transcriptOk ? (
+              <motion.div
+                key="success"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="space-y-4"
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 rounded-full border border-emerald-100/80 bg-emerald-50/80 px-3 py-2 text-xs font-bold text-emerald-600">
+                      <CheckCircle2 className="size-3.5" />
+                      提取成功 · 共 {(displayTranscript || transcriptResult?.transcript || '').replace(/\s/g, '').length} 字
+                    </div>
+                    {displayTranscript !== originalTranscript && originalTranscript && (
+                      <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50/80 px-2 py-1 rounded-md border border-indigo-100/80">
+                        已AI校对
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {Number(transcriptResult.transcriptSegments || 0) > 1 && (
+                      <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
+                        <Clock className="size-3" />
+                        {transcriptResult.transcriptSegments} 段音频
+                      </span>
+                    )}
+                    {displayTranscript !== originalTranscript && originalTranscript && (
+                      <button
+                        onClick={() => setShowDiff((v) => !v)}
+                        className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/70 px-3 text-xs font-bold text-slate-500 shadow-sm transition-all hover:bg-white hover:shadow-md"
+                      >
+                        {showDiff ? '显示完整' : '显示修改'}
+                      </button>
+                    )}
+                    {displayTranscript !== originalTranscript && originalTranscript && (
+                      <button
+                        onClick={handleRestoreOriginal}
+                        className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/70 px-3 text-xs font-bold text-slate-500 shadow-sm transition-all hover:bg-white hover:shadow-md"
+                      >
+                        <ArrowLeft className="size-3" />
+                        恢复原始
+                      </button>
+                    )}
+                    {isPolishing ? (
+                      <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-indigo-100/80 bg-indigo-50/80 px-3 text-xs font-bold text-indigo-600">
+                        <Loader2 className="size-3 animate-spin" />
+                        校对中...
+                      </span>
+                    ) : (
+                      <button
+                        onClick={handlePolishTranscript}
+                        className="flex h-8 items-center gap-1.5 rounded-full border border-indigo-100/80 bg-indigo-50/80 px-3 text-xs font-bold text-indigo-600 shadow-sm transition-all hover:bg-indigo-50 hover:shadow-md"
+                      >
+                        <Sparkles className="size-3" />
+                        AI 校对
+                      </button>
+                    )}
+                    <button
+                      onClick={handleCopyTranscript}
+                      className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/70 px-4 text-xs font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md"
+                    >
+                      <Copy className="size-3" />
+                      {copyStatus === 'done' ? '已复制' : '复制文案'}
+                    </button>
+                  </div>
+                </div>
+                <div className="min-h-[300px] max-h-[600px] overflow-y-auto whitespace-pre-wrap break-words rounded-3xl border border-slate-100 bg-white/70 p-5 text-sm leading-7 text-slate-700 shadow-inner shadow-slate-100/70">
+                  {showDiff && !isPolishing && displayTranscript !== originalTranscript && originalTranscript ? (
+                    <span className="leading-7">
+                      {computeTextDiff(originalTranscript, displayTranscript).map((part, idx) => {
+                        if (part.type === 'removed') {
+                          return (
+                            <span key={idx} className="bg-red-100 text-red-700 line-through decoration-red-400 rounded px-0.5">
+                              {part.text}
+                            </span>
+                          );
+                        }
+                        if (part.type === 'added') {
+                          return (
+                            <span key={idx} className="bg-emerald-100 text-emerald-700 rounded px-0.5 font-medium">
+                              {part.text}
+                            </span>
+                          );
+                        }
+                        return <span key={idx}>{part.text}</span>;
+                      })}
+                    </span>
+                  ) : (
+                    displayTranscript || transcriptResult.transcript
+                  )}
+                </div>
+              </motion.div>
+            ) : transcriptResult && !transcriptResult.transcriptOk ? (
+              <motion.div
+                key="error"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="space-y-4"
+              >
+                <div className="rounded-3xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-sm text-amber-700">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <AlertCircle className="size-4" />
+                    文案提取失败
+                  </div>
+                  <div className="mt-1.5 text-xs leading-5 opacity-80">{transcriptResult.transcriptError || '请稍后重试。'}</div>
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="empty"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="rounded-3xl border border-slate-100 bg-white/50 px-4 py-8 text-center text-sm text-slate-400"
+              >
+                粘贴视频链接或上传本地视频，一键提取逐字稿文案。
+              </motion.div>
+            )}
+          </AnimatePresence>
+          {copyStatus === 'error' && (
+            <div className="text-xs text-red-500">当前没有可复制的文案。</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="douyin-page relative isolate min-h-screen overflow-x-hidden bg-[#F3F5F9] flex flex-col text-slate-900">
       <div className="pointer-events-none absolute inset-0 -z-10">
@@ -802,7 +1033,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
         </div>
       </header>
 
-      <main className="relative z-10 flex-1 max-w-3xl mx-auto w-full p-6 flex flex-col justify-center pb-24">
+      <main className="relative z-10 flex-1 max-w-6xl mx-auto w-full p-6 flex flex-col justify-center pb-24">
         {/* 工作区 */}
         <AnimatePresence mode="wait" className="flex-1 flex flex-col justify-center">
           {activeMode === 'menu' && (
@@ -874,94 +1105,100 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.3 }}
-              className="glass-card rounded-3xl border-white/80 shadow-glass overflow-hidden max-w-3xl mx-auto"
+              className="grid gap-6 lg:grid-cols-[360px_1fr] w-full items-start"
             >
-              {/* 返回栏 */}
-              <div className="flex items-center gap-2 border-b border-slate-100/80 bg-white/35 px-4 py-3">
-                <button
-                  onClick={() => setActiveMode('menu')}
-                  className="flex h-9 items-center gap-2 rounded-xl bg-white/70 px-3 text-xs font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md"
-                >
-                  <ArrowLeft className="size-3.5" />
-                  返回
-                </button>
-                <span className="text-xs font-bold text-slate-400">本地文案提取</span>
-              </div>
-
-              {/* ASR 引擎选择 */}
-              <div className="px-6 pt-3 pb-0">
-                <div className="flex justify-end">
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => setAsrEngine('qwen')}
-                      className={`h-7 rounded-lg px-3 text-[10px] font-bold transition-all ${
-                        asrEngine === 'qwen'
-                          ? 'bg-white text-blue-600 shadow-sm'
-                          : 'text-slate-400 hover:text-slate-600'
-                      }`}
-                    >
-                      千问 ASR
-                    </button>
-                    <button
-                      onClick={() => setAsrEngine('siliconflow')}
-                      className={`h-7 rounded-lg px-3 text-[10px] font-bold transition-all ${
-                        asrEngine === 'siliconflow'
-                          ? 'bg-white text-slate-700 shadow-sm'
-                          : 'text-slate-400 hover:text-slate-600'
-                      }`}
-                    >
-                      SenseVoice（免费）
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* 内容区 */}
-              <div className="px-6 pb-6 pt-3 space-y-5">
-                <div className="rounded-3xl border border-dashed border-emerald-200 bg-gradient-to-br from-white/70 to-emerald-50/60 p-7 text-center space-y-3">
-                  <div className="inline-flex size-14 items-center justify-center rounded-2xl bg-white text-emerald-500 shadow-sm">
-                    <Upload className="size-6" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-black text-slate-800">上传本地视频提取逐字稿</p>
-                    <p className="mt-1 text-xs text-slate-400">支持 MP4、MOV 等常见视频格式</p>
-                  </div>
-                  <input
-                    ref={localVideoInputRef}
-                    type="file"
-                    accept="video/*"
-                    onChange={handleLocalVideoSelect}
-                    className="hidden"
-                  />
+              {/* 左侧：上传区 */}
+              <div className="glass-card rounded-3xl border-white/80 shadow-glass overflow-hidden">
+                {/* 返回栏 */}
+                <div className="flex items-center gap-2 border-b border-slate-100/80 bg-white/35 px-4 py-3">
                   <button
-                    type="button"
-                    disabled={isLocalTranscriptLoading}
-                    onClick={() => localVideoInputRef.current?.click()}
-                    className="mx-auto flex h-11 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-6 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 transition-all hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50"
+                    onClick={() => setActiveMode('menu')}
+                    className="flex h-9 items-center gap-2 rounded-xl bg-white/70 px-3 text-xs font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md"
                   >
-                    {isLocalTranscriptLoading ? (
-                      <>
-                        <Loader2 className="size-4 animate-spin" />
-                        提取逐字稿中...
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="size-4" />
-                        选择视频文件
-                      </>
-                    )}
+                    <ArrowLeft className="size-3.5" />
+                    返回
                   </button>
+                  <span className="text-xs font-bold text-slate-400">本地文案提取</span>
                 </div>
 
-                {localVideoUrl && (
-                  <video
-                    src={localVideoUrl}
-                    controls
-                    className="w-full max-h-44 rounded-3xl bg-slate-900 object-contain shadow-lg shadow-slate-900/10"
-                    playsInline
-                  />
-                )}
+                {/* ASR 引擎选择 */}
+                <div className="px-6 pt-3 pb-0">
+                  <div className="flex justify-end">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setAsrEngine('qwen')}
+                        className={`h-7 rounded-lg px-3 text-[10px] font-bold transition-all ${
+                          asrEngine === 'qwen'
+                            ? 'bg-white text-blue-600 shadow-sm'
+                            : 'text-slate-400 hover:text-slate-600'
+                        }`}
+                      >
+                        千问 ASR
+                      </button>
+                      <button
+                        onClick={() => setAsrEngine('siliconflow')}
+                        className={`h-7 rounded-lg px-3 text-[10px] font-bold transition-all ${
+                          asrEngine === 'siliconflow'
+                            ? 'bg-white text-slate-700 shadow-sm'
+                            : 'text-slate-400 hover:text-slate-600'
+                        }`}
+                      >
+                        SenseVoice（免费）
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 内容区 */}
+                <div className="px-6 pb-6 pt-3 space-y-5">
+                  <div className="rounded-3xl border border-dashed border-emerald-200 bg-gradient-to-br from-white/70 to-emerald-50/60 p-7 text-center space-y-3">
+                    <div className="inline-flex size-14 items-center justify-center rounded-2xl bg-white text-emerald-500 shadow-sm">
+                      <Upload className="size-6" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-slate-800">上传本地视频提取逐字稿</p>
+                      <p className="mt-1 text-xs text-slate-400">支持 MP4、MOV 等常见视频格式</p>
+                    </div>
+                    <input
+                      ref={localVideoInputRef}
+                      type="file"
+                      accept="video/*"
+                      onChange={handleLocalVideoSelect}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      disabled={isLocalTranscriptLoading}
+                      onClick={() => localVideoInputRef.current?.click()}
+                      className="mx-auto flex h-11 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-6 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 transition-all hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50"
+                    >
+                      {isLocalTranscriptLoading ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" />
+                          提取逐字稿中...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="size-4" />
+                          选择视频文件
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {localVideoUrl && (
+                    <video
+                      src={localVideoUrl}
+                      controls
+                      className="w-full max-h-44 rounded-3xl bg-slate-900 object-contain shadow-lg shadow-slate-900/10"
+                      playsInline
+                    />
+                  )}
+                </div>
               </div>
+
+              {/* 右侧：文案结果 */}
+              {renderTranscriptCard()}
             </motion.div>
           )}
 
@@ -972,68 +1209,74 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.3 }}
-              className="glass-card rounded-3xl border-white/80 shadow-glass overflow-hidden max-w-3xl mx-auto"
+              className="grid gap-6 lg:grid-cols-[360px_1fr] w-full items-start"
             >
-              {/* 返回栏 */}
-              <div className="flex items-center gap-2 border-b border-slate-100/80 bg-white/35 px-4 py-3">
-                <button
-                  onClick={() => setActiveMode('menu')}
-                  className="flex h-9 items-center gap-2 rounded-xl bg-white/70 px-3 text-xs font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md"
-                >
-                  <ArrowLeft className="size-3.5" />
-                  返回
-                </button>
-                <span className="text-xs font-bold text-slate-400">在线文案提取</span>
-              </div>
-
-              {/* 内容区 */}
-              <div className="px-6 pb-6 pt-3 space-y-5">
-                <div className="relative rounded-2xl border border-indigo-200 bg-white/75 shadow-inner shadow-indigo-100/60 transition-all focus-within:ring-2 focus-within:ring-indigo-200/70">
-                  <textarea
-                    value={input}
-                    onChange={(event) => setInput(event.target.value)}
-                    placeholder="粘贴视频链接..."
-                    className="h-16 w-full resize-none rounded-2xl border-0 bg-transparent p-3 pr-10 text-sm font-medium leading-6 text-slate-700 outline-none placeholder:text-slate-300"
-                  />
-                  {input && (
-                    <button
-                      onClick={() => setInput('')}
-                      className="absolute right-3 top-3 flex size-6 items-center justify-center rounded-full bg-slate-100 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
-                      title="清空输入"
-                    >
-                      <Trash2 className="size-3 text-slate-400" />
-                    </button>
-                  )}
+              {/* 左侧：输入区 */}
+              <div className="glass-card rounded-3xl border-white/80 shadow-glass overflow-hidden">
+                {/* 返回栏 */}
+                <div className="flex items-center gap-2 border-b border-slate-100/80 bg-white/35 px-4 py-3">
+                  <button
+                    onClick={() => setActiveMode('menu')}
+                    className="flex h-9 items-center gap-2 rounded-xl bg-white/70 px-3 text-xs font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md"
+                  >
+                    <ArrowLeft className="size-3.5" />
+                    返回
+                  </button>
+                  <span className="text-xs font-bold text-slate-400">在线文案提取</span>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <button
-                    disabled={isResolving || isTranscriptLoading}
-                    onClick={handleOneClickExtract}
-                    className="flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-slate-950 text-sm font-bold text-white shadow-lg shadow-slate-900/20 transition-all hover:bg-slate-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isResolving || isTranscriptLoading ? (
-                      <>
-                        <Loader2 className="size-4 animate-spin" />
-                        {extractStep === 'resolving' ? '正在解析...' : '正在提取文案...'}
-                      </>
-                    ) : (
-                      <>
-                        <AudioLines className="size-4" />
-                        一键提取文案
-                      </>
+                {/* 内容区 */}
+                <div className="px-6 pb-6 pt-3 space-y-5">
+                  <div className="relative rounded-2xl border border-indigo-200 bg-white/75 shadow-inner shadow-indigo-100/60 transition-all focus-within:ring-2 focus-within:ring-indigo-200/70">
+                    <textarea
+                      value={input}
+                      onChange={(event) => setInput(event.target.value)}
+                      placeholder="粘贴视频链接..."
+                      className="h-16 w-full resize-none rounded-2xl border-0 bg-transparent p-3 pr-10 text-sm font-medium leading-6 text-slate-700 outline-none placeholder:text-slate-300"
+                    />
+                    {input && (
+                      <button
+                        onClick={() => setInput('')}
+                        className="absolute right-3 top-3 flex size-6 items-center justify-center rounded-full bg-slate-100 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
+                        title="清空输入"
+                      >
+                        <Trash2 className="size-3 text-slate-400" />
+                      </button>
                     )}
-                  </button>
+                  </div>
 
-                  <button
-                    onClick={resetAll}
-                    disabled={isResolving || isTranscriptLoading}
-                    className="h-11 rounded-2xl border border-slate-200/80 bg-white/70 px-5 text-sm font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md disabled:opacity-50"
-                  >
-                    清空
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      disabled={isResolving || isTranscriptLoading}
+                      onClick={handleOneClickExtract}
+                      className="flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-slate-950 text-sm font-bold text-white shadow-lg shadow-slate-900/20 transition-all hover:bg-slate-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isResolving || isTranscriptLoading ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" />
+                          {extractStep === 'resolving' ? '正在解析...' : '正在提取文案...'}
+                        </>
+                      ) : (
+                        <>
+                          <AudioLines className="size-4" />
+                          一键提取文案
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={resetAll}
+                      disabled={isResolving || isTranscriptLoading}
+                      className="h-11 rounded-2xl border border-slate-200/80 bg-white/70 px-5 text-sm font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md disabled:opacity-50"
+                    >
+                      清空
+                    </button>
+                  </div>
                 </div>
               </div>
+
+              {/* 右侧：文案结果 */}
+              {renderTranscriptCard()}
             </motion.div>
           )}
         </AnimatePresence>
@@ -1053,251 +1296,6 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
           )}
         </AnimatePresence>
 
-        {/* Result Section */}
-        <AnimatePresence>
-          {(hasResult || isTranscriptLoading) && (
-            <motion.section
-              ref={resultRef}
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
-              className="space-y-4"
-            >
-              {/* Transcript Card */}
-              <div className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass">
-                <div className="flex items-center justify-between gap-3 border-b border-slate-100/80 bg-white/35 px-6 py-4">
-                  <div className="flex items-center gap-3">
-                  <div className="inline-flex size-10 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-md shadow-amber-500/20">
-                    <AudioLines className="size-4" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-black text-slate-500 uppercase tracking-wider">
-                      {activeMode === 'local' ? '本地视频文案' : '在线视频文案'}
-                    </div>
-                    <p className="mt-0.5 text-[11px] font-medium text-slate-400">
-                      {activeMode === 'local' ? '本地上传视频提取逐字稿' : '粘贴链接一键提取逐字稿'}
-                    </p>
-                  </div>
-                  </div>
-                </div>
-                <div className="p-6 space-y-5">
-
-                <AnimatePresence mode="wait">
-                  {isTranscriptLoading ? (
-                    <motion.div
-                      key="loading-online"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="space-y-4 rounded-3xl border border-indigo-100 bg-indigo-50/70 px-4 py-4"
-                    >
-                      {/* 步骤进度条 */}
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-3 text-sm text-indigo-700 font-semibold">
-                          <Loader2 className="size-4 animate-spin" />
-                          {transcriptLoadingMessage || '正在提取音频并转写文案...'}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          {[
-                            { key: 'resolving', label: '解析视频' },
-                            { key: 'downloading', label: '下载视频' },
-                            { key: 'extracting_audio', label: '提取音频' },
-                            { key: 'transcribing', label: 'ASR转写' },
-                          ].map((step, index, arr) => {
-                            const stepOrder = ['idle', 'resolving', 'downloading', 'extracting_audio', 'transcribing', 'done', 'error'];
-                            const currentIndex = stepOrder.indexOf(extractStep);
-                            const stepIndex = stepOrder.indexOf(step.key);
-                            const isCompleted = currentIndex > stepIndex;
-                            const isActive = extractStep === step.key;
-                            return (
-                              <div key={step.key} className="flex items-center gap-2">
-                                <div className={cn(
-                                  "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold transition-all",
-                                  isCompleted && "bg-emerald-100 text-emerald-700",
-                                  isActive && "bg-indigo-500 text-white shadow-sm",
-                                  !isCompleted && !isActive && "bg-slate-100 text-slate-400"
-                                )}>
-                                  <span className={cn(
-                                    "flex size-4 items-center justify-center rounded-full text-[9px] font-black",
-                                    isCompleted && "bg-emerald-500 text-white",
-                                    isActive && "bg-white text-indigo-600",
-                                    !isCompleted && !isActive && "bg-slate-300 text-white"
-                                  )}>
-                                    {isCompleted ? '✓' : index + 1}
-                                  </span>
-                                  {step.label}
-                                </div>
-                                {index < arr.length - 1 && (
-                                  <div className={cn(
-                                    "h-px w-3 shrink-0 hidden sm:block",
-                                    isCompleted ? "bg-emerald-300" : "bg-slate-200"
-                                  )} />
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {displayTranscript ? (
-                        <>
-                          <div className="ml-1 inline-flex rounded-full border border-indigo-100 bg-white/70 px-2.5 py-1 text-[10px] font-bold text-indigo-600">
-                            已实时转写 {displayTranscript.replace(/\s/g, '').length} 字
-                          </div>
-                          <div className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-2xl border border-indigo-100/80 bg-white/80 p-4 text-sm leading-7 text-slate-700 shadow-inner shadow-indigo-100/50">
-                            {displayTranscript}
-                          </div>
-                        </>
-                      ) : (
-                        <p className="text-xs text-indigo-500 ml-1">已启用流式转写，拿到首段内容会立即显示。</p>
-                      )}
-                    </motion.div>
-                  ) : isLocalTranscriptLoading ? (
-                    <motion.div
-                      key="loading-local"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="space-y-3 rounded-3xl border border-emerald-100 bg-emerald-50/70 px-4 py-4"
-                    >
-                      <div className="flex items-center gap-3 text-sm text-emerald-700 font-semibold">
-                        <Loader2 className="size-4 animate-spin" />
-                        正在提取本地视频逐字稿...
-                      </div>
-                      <p className="text-xs text-emerald-500 ml-7">上传完成，正在进行 ASR 语音转写，请稍候。</p>
-                    </motion.div>
-                  ) : transcriptResult?.transcriptOk ? (
-                    <motion.div
-                      key="success"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="space-y-4"
-                    >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-2 rounded-full border border-emerald-100/80 bg-emerald-50/80 px-3 py-2 text-xs font-bold text-emerald-600">
-                            <CheckCircle2 className="size-3.5" />
-                            提取成功 · 共 {(displayTranscript || transcriptResult?.transcript || '').replace(/\s/g, '').length} 字
-                          </div>
-                          {displayTranscript !== originalTranscript && originalTranscript && (
-                            <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50/80 px-2 py-1 rounded-md border border-indigo-100/80">
-                              已AI校对
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          {Number(transcriptResult.transcriptSegments || 0) > 1 && (
-                            <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
-                              <Clock className="size-3" />
-                              {transcriptResult.transcriptSegments} 段音频
-                            </span>
-                          )}
-                          {displayTranscript !== originalTranscript && originalTranscript && (
-                            <button
-                              onClick={() => setShowDiff((v) => !v)}
-                              className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/70 px-3 text-xs font-bold text-slate-500 shadow-sm transition-all hover:bg-white hover:shadow-md"
-                            >
-                              {showDiff ? '显示完整' : '显示修改'}
-                            </button>
-                          )}
-                          {displayTranscript !== originalTranscript && originalTranscript && (
-                            <button
-                              onClick={handleRestoreOriginal}
-                              className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/70 px-3 text-xs font-bold text-slate-500 shadow-sm transition-all hover:bg-white hover:shadow-md"
-                            >
-                              <ArrowLeft className="size-3" />
-                              恢复原始
-                            </button>
-                          )}
-                          {isPolishing ? (
-                            <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-indigo-100/80 bg-indigo-50/80 px-3 text-xs font-bold text-indigo-600">
-                              <Loader2 className="size-3 animate-spin" />
-                              校对中...
-                            </span>
-                          ) : (
-                            <button
-                              onClick={handlePolishTranscript}
-                              className="flex h-8 items-center gap-1.5 rounded-full border border-indigo-100/80 bg-indigo-50/80 px-3 text-xs font-bold text-indigo-600 shadow-sm transition-all hover:bg-indigo-50 hover:shadow-md"
-                            >
-                              <Sparkles className="size-3" />
-                              AI 校对
-                            </button>
-                          )}
-                          <button
-                            onClick={handleCopyTranscript}
-                            className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/70 px-4 text-xs font-bold text-slate-600 shadow-sm transition-all hover:bg-white hover:shadow-md"
-                          >
-                            <Copy className="size-3" />
-                            {copyStatus === 'done' ? '已复制' : '复制文案'}
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words rounded-3xl border border-slate-100 bg-white/70 p-5 text-sm leading-7 text-slate-700 shadow-inner shadow-slate-100/70">
-                        {showDiff && !isPolishing && displayTranscript !== originalTranscript && originalTranscript ? (
-                          <span className="leading-7">
-                            {computeTextDiff(originalTranscript, displayTranscript).map((part, idx) => {
-                              if (part.type === 'removed') {
-                                return (
-                                  <span key={idx} className="bg-red-100 text-red-700 line-through decoration-red-400 rounded px-0.5">
-                                    {part.text}
-                                  </span>
-                                );
-                              }
-                              if (part.type === 'added') {
-                                return (
-                                  <span key={idx} className="bg-emerald-100 text-emerald-700 rounded px-0.5 font-medium">
-                                    {part.text}
-                                  </span>
-                                );
-                              }
-                              return <span key={idx}>{part.text}</span>;
-                            })}
-                          </span>
-                        ) : (
-                          displayTranscript || transcriptResult.transcript
-                        )}
-                      </div>
-                    </motion.div>
-                  ) : transcriptResult && !transcriptResult.transcriptOk ? (
-                    <motion.div
-                      key="error"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="space-y-4"
-                    >
-                      <div className="rounded-3xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-sm text-amber-700">
-                        <div className="flex items-center gap-2 font-semibold">
-                          <AlertCircle className="size-4" />
-                          文案提取失败
-                        </div>
-                        <div className="mt-1.5 text-xs leading-5 opacity-80">{transcriptResult.transcriptError || '请稍后重试。'}</div>
-                      </div>
-                    </motion.div>
-                  ) : (
-                    <motion.div
-                      key="empty"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="rounded-3xl border border-slate-100 bg-white/50 px-4 py-8 text-center text-sm text-slate-400"
-                    >
-                      粘贴视频链接或上传本地视频，一键提取逐字稿文案。
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {copyStatus === 'error' && (
-                  <div className="text-xs text-red-500">当前没有可复制的文案。</div>
-                )}
-                </div>
-              </div>
-            </motion.section>
-          )}
-        </AnimatePresence>
       </main>
 
       {/* 视频预览弹窗 */}
