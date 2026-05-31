@@ -786,7 +786,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               transition={{ duration: 0.3 }}
               className="grid gap-4 sm:grid-cols-3"
             >
-              {/* 在线文案提取 */}
+              {/* 在线视频下载 */}
               <button
                 onClick={() => window.open('https://copy.aiqichao.xyz', '_blank', 'noopener,noreferrer')}
                 className="group flex flex-col items-center gap-4 rounded-3xl border border-sky-100 bg-gradient-to-br from-white/80 to-sky-50/60 p-7 text-center shadow-glass transition-all hover:shadow-lg hover:-translate-y-1"
@@ -795,7 +795,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                   <Sparkles className="size-7" />
                 </div>
                 <div>
-                  <p className="text-base font-black text-slate-800">在线文案提取</p>
+                  <p className="text-base font-black text-slate-800">在线视频下载</p>
                   <p className="mt-1.5 text-xs leading-relaxed text-slate-400">Copy Pilot 2 专业视频文案提取</p>
                 </div>
                 <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-sky-500">
@@ -803,7 +803,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                 </span>
               </button>
 
-              {/* 在线视频下载 */}
+              {/* 在线文案提取 */}
               <button
                 onClick={() => setActiveMode('link')}
                 className="group flex flex-col items-center gap-4 rounded-3xl border border-indigo-100 bg-gradient-to-br from-white/80 to-indigo-50/60 p-7 text-center shadow-glass transition-all hover:shadow-lg hover:-translate-y-1"
@@ -812,7 +812,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                   <Link2 className="size-7" />
                 </div>
                 <div>
-                  <p className="text-base font-black text-slate-800">在线视频下载</p>
+                  <p className="text-base font-black text-slate-800">在线文案提取</p>
                   <p className="mt-1.5 text-xs leading-relaxed text-slate-400">粘贴链接解析视频，支持下载</p>
                 </div>
                 <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-indigo-500">
