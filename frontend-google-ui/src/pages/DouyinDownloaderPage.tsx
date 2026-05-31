@@ -320,7 +320,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const previewProbeIdRef = useRef(0);
   const downloadProbeIdRef = useRef(0);
-  const hasResult = !!result || !!transcriptResult;
+  const hasResult = !!result || !!transcriptResult || isLocalTranscriptLoading;
   const siliconFlowConfigured = configStatus?.siliconFlowApiKey === true;
   const tikhubConfigured = configStatus?.tikhubApiToken === true;
   const arkApiKeyConfigured = configStatus?.arkApiKey === true;
@@ -802,9 +802,9 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
         </div>
       </header>
 
-      <main className="relative z-10 flex-1 max-w-3xl mx-auto w-full p-6 space-y-5 pb-24">
+      <main className="relative z-10 flex-1 max-w-3xl mx-auto w-full p-6 flex flex-col justify-center pb-24">
         {/* 工作区 */}
-        <AnimatePresence mode="wait">
+        <AnimatePresence mode="wait" className="flex-1 flex flex-col justify-center">
           {activeMode === 'menu' && (
             <motion.div
               key="menu"
@@ -812,7 +812,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.3 }}
-              className="grid gap-4 sm:grid-cols-3"
+              className="grid gap-4 sm:grid-cols-3 self-center w-full"
             >
               {/* 在线视频下载 */}
               <button
@@ -841,7 +841,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                 </div>
                 <div>
                   <p className="text-base font-black text-slate-800">在线文案提取</p>
-                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">粘贴链接解析视频，支持下载</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">粘贴链接一键提取视频逐字稿</p>
                 </div>
                 <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-indigo-500">
                   开始使用 <ArrowLeft className="size-3 rotate-180" />
@@ -1071,8 +1071,12 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                     <AudioLines className="size-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-black text-slate-500 uppercase tracking-wider">视频文案</div>
-                    <p className="mt-0.5 text-[11px] font-medium text-slate-400">ASR 转写、复制和 AI 校对</p>
+                    <div className="text-xs font-black text-slate-500 uppercase tracking-wider">
+                      {activeMode === 'local' ? '本地视频文案' : '在线视频文案'}
+                    </div>
+                    <p className="mt-0.5 text-[11px] font-medium text-slate-400">
+                      {activeMode === 'local' ? '本地上传视频提取逐字稿' : '粘贴链接一键提取逐字稿'}
+                    </p>
                   </div>
                   </div>
                 </div>
@@ -1081,7 +1085,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                 <AnimatePresence mode="wait">
                   {isTranscriptLoading ? (
                     <motion.div
-                      key="loading"
+                      key="loading-online"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
@@ -1093,7 +1097,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                           <Loader2 className="size-4 animate-spin" />
                           {transcriptLoadingMessage || '正在提取音频并转写文案...'}
                         </div>
-                        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                        <div className="flex flex-wrap items-center gap-2">
                           {[
                             { key: 'resolving', label: '解析视频' },
                             { key: 'downloading', label: '下载视频' },
@@ -1106,7 +1110,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                             const isCompleted = currentIndex > stepIndex;
                             const isActive = extractStep === step.key;
                             return (
-                              <div key={step.key} className="flex items-center gap-2 shrink-0">
+                              <div key={step.key} className="flex items-center gap-2">
                                 <div className={cn(
                                   "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold transition-all",
                                   isCompleted && "bg-emerald-100 text-emerald-700",
@@ -1125,7 +1129,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                                 </div>
                                 {index < arr.length - 1 && (
                                   <div className={cn(
-                                    "h-px w-4 shrink-0",
+                                    "h-px w-3 shrink-0 hidden sm:block",
                                     isCompleted ? "bg-emerald-300" : "bg-slate-200"
                                   )} />
                                 )}
@@ -1147,6 +1151,20 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       ) : (
                         <p className="text-xs text-indigo-500 ml-1">已启用流式转写，拿到首段内容会立即显示。</p>
                       )}
+                    </motion.div>
+                  ) : isLocalTranscriptLoading ? (
+                    <motion.div
+                      key="loading-local"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="space-y-3 rounded-3xl border border-emerald-100 bg-emerald-50/70 px-4 py-4"
+                    >
+                      <div className="flex items-center gap-3 text-sm text-emerald-700 font-semibold">
+                        <Loader2 className="size-4 animate-spin" />
+                        正在提取本地视频逐字稿...
+                      </div>
+                      <p className="text-xs text-emerald-500 ml-7">上传完成，正在进行 ASR 语音转写，请稍候。</p>
                     </motion.div>
                   ) : transcriptResult?.transcriptOk ? (
                     <motion.div
@@ -1267,7 +1285,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       exit={{ opacity: 0 }}
                       className="rounded-3xl border border-slate-100 bg-white/50 px-4 py-8 text-center text-sm text-slate-400"
                     >
-                      解析视频后，可提取视频音频里的口播文案。
+                      粘贴视频链接或上传本地视频，一键提取逐字稿文案。
                     </motion.div>
                   )}
                 </AnimatePresence>
