@@ -328,6 +328,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const displayTags = normalizeDisplayTags(result?.tags);
   const previewDirectUrl = fastPreviewUrl || result?.previewUrl || result?.videoUrls?.[0] || result?.downloadUrl || '';
   const previewProxyUrl = result && previewDirectUrl ? buildVideoStreamUrl(previewDirectUrl, result) : '';
+  const onlineVideoDurationLabel = formatDuration(Number(result?.duration || transcriptResult?.duration || 0));
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -498,6 +499,58 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     }
   }
 
+  async function runOneClickExtractAttempt(nextInput: string, attemptNumber: number) {
+    setExtractStep('resolving');
+    setTranscriptLoadingMessage(attemptNumber > 1 ? '第一次提取失败，正在自动重试解析...' : '正在解析视频信息...');
+
+    const resolveResponse = await resolveCpExtract(nextInput);
+    setResult(resolveResponse);
+    setFastPreviewUrl(resolveResponse.previewUrl || resolveResponse.videoUrls?.[0] || resolveResponse.downloadUrl || '');
+    setFastDownloadUrl(resolveResponse.downloadUrl || resolveResponse.videoUrls?.[0] || '');
+
+    setExtractStep('downloading');
+    setTranscriptLoadingMessage(attemptNumber > 1 ? '正在重试下载视频并提取音频...' : '正在下载视频并提取音频...');
+
+    const transcriptOptions = {
+      sourceData: resolveResponse.videoData || null,
+      videoUrl: resolveResponse.previewUrl || resolveResponse.downloadUrl || '',
+      videoUrls: collectPreviewCandidateUrls(resolveResponse).slice(0, 8),
+      downloadUrlCandidates: resolveResponse.downloadUrlCandidates || resolveResponse.videoUrlCandidates || [],
+    };
+
+    let response: DouyinTranscriptResult;
+
+    try {
+      response = await extractCpTranscriptStream(nextInput, {
+        ...transcriptOptions,
+        onStatus: (message, stage) => {
+          if (message) {
+            setTranscriptLoadingMessage(attemptNumber > 1 ? `自动重试中：${message}` : message);
+            if (stage === 'download') setExtractStep('downloading');
+            else if (stage === 'extract_audio') setExtractStep('extracting_audio');
+            else if (stage === 'asr') setExtractStep('transcribing');
+          }
+        },
+        onDelta: (text) => {
+          setDisplayTranscript(text);
+          setOriginalTranscript(text);
+        },
+      });
+    } catch (streamError) {
+      console.warn('[douyin transcript] stream failed, fallback to non-stream:', streamError);
+      setExtractStep('transcribing');
+      setTranscriptLoadingMessage(attemptNumber > 1 ? '自动重试中：正在切换稳妥模式...' : '流式转写不稳定，正在切换稳妥模式...');
+      response = await extractCpTranscript(nextInput, transcriptOptions);
+    }
+
+    return response.transcriptOk
+      ? response
+      : {
+          ...response,
+          transcriptError: response.transcriptError?.trim() || '视频文案提取失败，请重新解析，重新提取逐字稿。',
+        };
+  }
+
   async function handleOneClickExtract() {
     const nextInput = input.trim();
     if (!nextInput) {
@@ -517,55 +570,19 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     setTranscriptLoadingMessage('正在解析视频信息...');
 
     try {
-      // 第一步：解析视频
-      const resolveResponse = await resolveCpExtract(nextInput);
-      setResult(resolveResponse);
-      setFastPreviewUrl(resolveResponse.previewUrl || resolveResponse.videoUrls?.[0] || resolveResponse.downloadUrl || '');
-      setFastDownloadUrl(resolveResponse.downloadUrl || resolveResponse.videoUrls?.[0] || '');
-
-      // 第二步：自动提取文案
-      setExtractStep('downloading');
-      setTranscriptLoadingMessage('正在下载视频并提取音频...');
-
-      const transcriptOptions = {
-        sourceData: resolveResponse.videoData || null,
-        videoUrl: resolveResponse.previewUrl || resolveResponse.downloadUrl || '',
-        videoUrls: collectPreviewCandidateUrls(resolveResponse).slice(0, 8),
-        downloadUrlCandidates: resolveResponse.downloadUrlCandidates || resolveResponse.videoUrlCandidates || [],
-      };
-
-      let response: DouyinTranscriptResult;
-
+      let normalizedTranscriptResult: DouyinTranscriptResult;
       try {
-        response = await extractCpTranscriptStream(nextInput, {
-          ...transcriptOptions,
-          onStatus: (message, stage) => {
-            if (message) {
-              setTranscriptLoadingMessage(message);
-              // 根据后端返回的 stage 更新前端步骤状态
-              if (stage === 'download') setExtractStep('downloading');
-              else if (stage === 'extract_audio') setExtractStep('extracting_audio');
-              else if (stage === 'asr') setExtractStep('transcribing');
-            }
-          },
-          onDelta: (text) => {
-            setDisplayTranscript(text);
-            setOriginalTranscript(text);
-          },
-        });
-      } catch (streamError) {
-        console.warn('[douyin transcript] stream failed, fallback to non-stream:', streamError);
-        setExtractStep('transcribing');
-        setTranscriptLoadingMessage('流式转写不稳定，正在切换稳妥模式...');
-        response = await extractCpTranscript(nextInput, transcriptOptions);
+        normalizedTranscriptResult = await runOneClickExtractAttempt(nextInput, 1);
+        if (!normalizedTranscriptResult.transcriptOk) {
+          throw new Error(normalizedTranscriptResult.transcriptError || '视频文案提取失败');
+        }
+      } catch (firstError) {
+        console.warn('[douyin transcript] first one-click attempt failed, retrying once:', firstError);
+        setTranscriptResult(null);
+        setDisplayTranscript('');
+        setOriginalTranscript('');
+        normalizedTranscriptResult = await runOneClickExtractAttempt(nextInput, 2);
       }
-
-      const normalizedTranscriptResult: DouyinTranscriptResult = response.transcriptOk
-        ? response
-        : {
-            ...response,
-            transcriptError: response.transcriptError?.trim() || '视频文案提取失败，请重新解析，重新提取逐字稿。',
-          };
 
       setTranscriptResult(normalizedTranscriptResult);
       setDisplayTranscript(normalizedTranscriptResult.transcript);
@@ -581,9 +598,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     } finally {
       setIsResolving(false);
       setIsTranscriptLoading(false);
-      if (extractStep !== 'done' && extractStep !== 'error') {
-        setTranscriptLoadingMessage('');
-      }
+      setTranscriptLoadingMessage('');
     }
   }
 
@@ -795,6 +810,14 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               </p>
             </div>
           </div>
+          {isOnline && onlineVideoDurationLabel && (
+            <div className="shrink-0 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1.5 text-[11px] font-black text-slate-600 shadow-sm">
+              <span className="inline-flex items-center gap-1.5">
+                <Clock className="size-3" />
+                {onlineVideoDurationLabel}
+              </span>
+            </div>
+          )}
         </div>
         <div className="p-6 space-y-5 flex-1 overflow-y-auto">
           <AnimatePresence mode="wait">

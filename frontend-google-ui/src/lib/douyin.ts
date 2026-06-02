@@ -46,6 +46,7 @@ export interface DouyinTranscriptResult {
   transcript: string;
   transcriptError?: string;
   transcriptSegments?: number;
+  duration?: number;
   fallbackCaption?: string;
   fallbackCaptionSource?: 'none' | 'tikhub_caption';
   resolveStrategy?: string;
@@ -404,6 +405,7 @@ function convertCpTranscribeToResult(data: any): DouyinTranscriptResult {
     transcript: data?.transcript || data?.text || '',
     transcriptError: '',
     transcriptSegments: 0,
+    duration: extractDurationFromData(data),
     fallbackCaption: '',
     fallbackCaptionSource: 'none',
     resolveStrategy: 'copypilot',
