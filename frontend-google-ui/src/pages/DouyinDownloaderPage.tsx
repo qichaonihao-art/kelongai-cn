@@ -58,6 +58,7 @@ interface TranscriptHistoryItem {
   videoId: string;
   authorName?: string;
   duration?: number;
+  sourceType?: DouyinTranscriptResult['sourceType'];
   transcript: string;
   createdAt: number;
 }
@@ -488,6 +489,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     if (!text) return;
 
     const videoId = transcript.videoId || sourceResult?.videoId || sourceUrl || Date.now().toString(36);
+    const sourceType = transcript.sourceType || sourceResult?.sourceType || 'universal';
     const nextItem: TranscriptHistoryItem = {
       id: `${videoId}_${Date.now().toString(36)}`,
       title: transcript.title || sourceResult?.title || '未命名视频',
@@ -495,6 +497,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       videoId,
       authorName: transcript.authorName || sourceResult?.authorName || '',
       duration: transcript.duration || sourceResult?.duration || 0,
+      sourceType,
       transcript: text,
       createdAt: Date.now(),
     };
@@ -514,7 +517,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       downloadUrl: '',
       authorName: item.authorName,
       normalizedUrl: item.sourceUrl,
-      sourceType: 'universal',
+      sourceType: item.sourceType || 'universal',
       transcript: item.transcript,
       duration: item.duration,
     };
@@ -531,13 +534,13 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       authorName: item.authorName,
       duration: item.duration,
       normalizedUrl: item.sourceUrl,
-      sourceType: 'universal',
+      sourceType: item.sourceType || 'universal',
       videoData: null,
     });
     setCopyStatus('idle');
     setShowDiff(true);
     setShowTranscriptHistory(false);
-    setActiveMode('link');
+    setActiveMode(item.sourceType === 'local_upload' ? 'local' : 'link');
     window.setTimeout(() => {
       resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 120);
@@ -760,6 +763,9 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       setTranscriptResult(normalizedTranscriptResult);
       setDisplayTranscript(normalizedTranscriptResult.transcript);
       setOriginalTranscript(normalizedTranscriptResult.transcript);
+      if (normalizedTranscriptResult.transcriptOk) {
+        addTranscriptHistoryItem(normalizedTranscriptResult, file.name);
+      }
       setTimeout(() => {
         resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 300);
@@ -1353,6 +1359,25 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       playsInline
                     />
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => setShowTranscriptHistory(true)}
+                    className="flex w-full items-center justify-between rounded-2xl border border-slate-200/80 bg-white/70 px-4 py-3 text-left shadow-sm transition-all hover:bg-white hover:shadow-md"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className="flex size-8 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                        <FileText className="size-4" />
+                      </span>
+                      <span>
+                        <span className="block text-xs font-black text-slate-700">提取历史</span>
+                        <span className="block text-[11px] font-semibold text-slate-400">查看近 20 条视频逐字稿</span>
+                      </span>
+                    </span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">
+                      {transcriptHistory.length}
+                    </span>
+                  </button>
                 </div>
               </div>
 
@@ -1442,7 +1467,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       </span>
                       <span>
                         <span className="block text-xs font-black text-slate-700">提取历史</span>
-                        <span className="block text-[11px] font-semibold text-slate-400">查看近 20 条在线视频逐字稿</span>
+                        <span className="block text-[11px] font-semibold text-slate-400">查看近 20 条视频逐字稿</span>
                       </span>
                     </span>
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">
@@ -1496,6 +1521,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                     {transcriptHistory.map((item) => {
                       const durationLabel = formatDuration(Number(item.duration || 0));
                       const charCount = item.transcript.replace(/\s/g, '').length;
+                      const isLocalHistory = item.sourceType === 'local_upload';
                       return (
                         <div
                           key={item.id}
@@ -1508,6 +1534,12 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                                 {item.title || '未命名视频'}
                               </div>
                               <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-400">
+                                <span className={cn(
+                                  'rounded-full px-2 py-0.5 text-[10px] font-black',
+                                  isLocalHistory ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'
+                                )}>
+                                  {isLocalHistory ? '本地视频' : '在线视频'}
+                                </span>
                                 {item.authorName && <span>{item.authorName}</span>}
                                 {durationLabel && (
                                   <span className="inline-flex items-center gap-1 text-indigo-600">
