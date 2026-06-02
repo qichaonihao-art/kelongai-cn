@@ -51,6 +51,65 @@ interface DiffPart {
   text: string;
 }
 
+interface TranscriptHistoryItem {
+  id: string;
+  title: string;
+  sourceUrl: string;
+  videoId: string;
+  authorName?: string;
+  duration?: number;
+  transcript: string;
+  createdAt: number;
+}
+
+const TRANSCRIPT_HISTORY_STORAGE_KEY = 'kelongai.onlineTranscriptHistory';
+const MAX_TRANSCRIPT_HISTORY_ITEMS = 20;
+
+function loadTranscriptHistory(): TranscriptHistoryItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(TRANSCRIPT_HISTORY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is TranscriptHistoryItem => (
+        item &&
+        typeof item.id === 'string' &&
+        typeof item.transcript === 'string' &&
+        typeof item.createdAt === 'number'
+      ))
+      .slice(0, MAX_TRANSCRIPT_HISTORY_ITEMS);
+  } catch {
+    return [];
+  }
+}
+
+function saveTranscriptHistory(items: TranscriptHistoryItem[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      TRANSCRIPT_HISTORY_STORAGE_KEY,
+      JSON.stringify(items.slice(0, MAX_TRANSCRIPT_HISTORY_ITEMS))
+    );
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+function formatHistoryTime(timestamp: number): string {
+  const diffMs = Date.now() - timestamp;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffMins < 1) return '刚刚';
+  if (diffMins < 60) return `${diffMins}分钟前`;
+  if (diffHours < 24) return `${diffHours}小时前`;
+  if (diffDays < 7) return `${diffDays}天前`;
+  const date = new Date(timestamp);
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
 function computeTextDiff(oldText: string, newText: string): DiffPart[] {
   const a = oldText;
   const b = newText;
@@ -315,6 +374,8 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [activeMode, setActiveMode] = useState<'menu' | 'copypilot' | 'local' | 'link'>('menu');
   const [localVideoUrl, setLocalVideoUrl] = useState<string>('');
   const [extractStep, setExtractStep] = useState<'idle' | 'resolving' | 'downloading' | 'extracting_audio' | 'transcribing' | 'done' | 'error'>('idle');
+  const [transcriptHistory, setTranscriptHistory] = useState<TranscriptHistoryItem[]>(loadTranscriptHistory);
+  const [showTranscriptHistory, setShowTranscriptHistory] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
   const localVideoInputRef = useRef<HTMLInputElement>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
@@ -372,6 +433,10 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     };
   }, []);
 
+  useEffect(() => {
+    saveTranscriptHistory(transcriptHistory);
+  }, [transcriptHistory]);
+
   async function handleResolve() {
     const nextInput = input.trim();
     if (!nextInput) {
@@ -416,6 +481,70 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     } finally {
       setIsResolving(false);
     }
+  }
+
+  function addTranscriptHistoryItem(transcript: DouyinTranscriptResult, sourceUrl: string, sourceResult?: DouyinResolveResult | null) {
+    const text = String(transcript.transcript || '').trim();
+    if (!text) return;
+
+    const videoId = transcript.videoId || sourceResult?.videoId || sourceUrl || Date.now().toString(36);
+    const nextItem: TranscriptHistoryItem = {
+      id: `${videoId}_${Date.now().toString(36)}`,
+      title: transcript.title || sourceResult?.title || '未命名视频',
+      sourceUrl,
+      videoId,
+      authorName: transcript.authorName || sourceResult?.authorName || '',
+      duration: transcript.duration || sourceResult?.duration || 0,
+      transcript: text,
+      createdAt: Date.now(),
+    };
+
+    setTranscriptHistory((previous) => {
+      const withoutSameVideo = previous.filter((item) => item.videoId !== videoId || item.sourceUrl !== sourceUrl);
+      return [nextItem, ...withoutSameVideo].slice(0, MAX_TRANSCRIPT_HISTORY_ITEMS);
+    });
+  }
+
+  function openTranscriptHistoryItem(item: TranscriptHistoryItem) {
+    const restored: DouyinTranscriptResult = {
+      ok: true,
+      transcriptOk: true,
+      videoId: item.videoId,
+      title: item.title,
+      downloadUrl: '',
+      authorName: item.authorName,
+      normalizedUrl: item.sourceUrl,
+      sourceType: 'universal',
+      transcript: item.transcript,
+      duration: item.duration,
+    };
+
+    setTranscriptResult(restored);
+    setDisplayTranscript(item.transcript);
+    setOriginalTranscript(item.transcript);
+    setResult((previous) => previous || {
+      ok: true,
+      mode: 'stable',
+      videoId: item.videoId,
+      title: item.title,
+      downloadUrl: '',
+      authorName: item.authorName,
+      duration: item.duration,
+      normalizedUrl: item.sourceUrl,
+      sourceType: 'universal',
+      videoData: null,
+    });
+    setCopyStatus('idle');
+    setShowDiff(true);
+    setShowTranscriptHistory(false);
+    setActiveMode('link');
+    window.setTimeout(() => {
+      resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 120);
+  }
+
+  function deleteTranscriptHistoryItem(id: string) {
+    setTranscriptHistory((previous) => previous.filter((item) => item.id !== id));
   }
 
   async function handleExtractTranscript() {
@@ -469,6 +598,9 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       setTranscriptResult(normalizedTranscriptResult);
       setDisplayTranscript(normalizedTranscriptResult.transcript);
       setOriginalTranscript(normalizedTranscriptResult.transcript);
+      if (normalizedTranscriptResult.transcriptOk) {
+        addTranscriptHistoryItem(normalizedTranscriptResult, nextInput, result);
+      }
 
       if (!result) {
         setResult({
@@ -587,6 +719,9 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       setTranscriptResult(normalizedTranscriptResult);
       setDisplayTranscript(normalizedTranscriptResult.transcript);
       setOriginalTranscript(normalizedTranscriptResult.transcript);
+      if (normalizedTranscriptResult.transcriptOk) {
+        addTranscriptHistoryItem(normalizedTranscriptResult, nextInput);
+      }
       setExtractStep('done');
 
       setTimeout(() => {
@@ -814,7 +949,8 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
             <div className="shrink-0 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1.5 text-[11px] font-black text-slate-600 shadow-sm">
               <span className="inline-flex items-center gap-1.5">
                 <Clock className="size-3" />
-                视频时长 {onlineVideoDurationLabel}
+                <span>视频时长</span>
+                <span className="text-indigo-600">{onlineVideoDurationLabel}</span>
               </span>
             </div>
           )}
@@ -1295,6 +1431,24 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       清空
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowTranscriptHistory(true)}
+                    className="flex w-full items-center justify-between rounded-2xl border border-slate-200/80 bg-white/70 px-4 py-3 text-left shadow-sm transition-all hover:bg-white hover:shadow-md"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className="flex size-8 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+                        <FileText className="size-4" />
+                      </span>
+                      <span>
+                        <span className="block text-xs font-black text-slate-700">提取历史</span>
+                        <span className="block text-[11px] font-semibold text-slate-400">查看近 20 条在线视频逐字稿</span>
+                      </span>
+                    </span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">
+                      {transcriptHistory.length}
+                    </span>
+                  </button>
                 </div>
               </div>
 
@@ -1303,6 +1457,105 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
             </motion.div>
           )}
         </AnimatePresence>
+
+        {showTranscriptHistory && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            onClick={() => setShowTranscriptHistory(false)}
+          >
+            <div
+              className="flex max-h-[82vh] w-full max-w-3xl flex-col rounded-3xl border border-slate-200 bg-white shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-9 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
+                    <FileText className="size-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800">近 20 条提取历史</h3>
+                    <p className="mt-0.5 text-[11px] font-semibold text-slate-400">点击任意记录查看完整逐字稿</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTranscriptHistory(false)}
+                  className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                  aria-label="关闭历史记录"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-5">
+                {transcriptHistory.length === 0 ? (
+                  <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-12 text-center text-sm font-semibold text-slate-400">
+                    暂无提取历史
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {transcriptHistory.map((item) => {
+                      const durationLabel = formatDuration(Number(item.duration || 0));
+                      const charCount = item.transcript.replace(/\s/g, '').length;
+                      return (
+                        <div
+                          key={item.id}
+                          className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-all hover:border-indigo-200 hover:bg-indigo-50/30 hover:shadow-md"
+                          onClick={() => openTranscriptHistoryItem(item)}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-black text-slate-800">
+                                {item.title || '未命名视频'}
+                              </div>
+                              <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-400">
+                                {item.authorName && <span>{item.authorName}</span>}
+                                {durationLabel && (
+                                  <span className="inline-flex items-center gap-1 text-indigo-600">
+                                    <Clock className="size-3" />
+                                    {durationLabel}
+                                  </span>
+                                )}
+                                <span>{formatHistoryTime(item.createdAt)}</span>
+                                <span>{charCount} 字</span>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void navigator.clipboard.writeText(item.transcript);
+                                }}
+                                className="flex size-8 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-white hover:text-indigo-500"
+                                title="复制逐字稿"
+                              >
+                                <Copy className="size-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  deleteTranscriptHistoryItem(item.id);
+                                }}
+                                className="flex size-8 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                                title="删除记录"
+                              >
+                                <Trash2 className="size-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="mt-3 max-h-[4.5rem] overflow-hidden whitespace-pre-wrap text-xs leading-6 text-slate-500">
+                            {item.transcript}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 错误提示 */}
         <AnimatePresence>
