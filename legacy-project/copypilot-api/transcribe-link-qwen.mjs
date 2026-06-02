@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 const QWEN_ASR_MODEL = 'qwen3-asr-flash';
 const QWEN_ASR_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 const MAX_AUDIO_DURATION_SECONDS = 600;
-const FFMPEG_TIMEOUT_MS = 180_000;
+const FFMPEG_TIMEOUT_MS = 120_000;
 const QWEN_TIMEOUT_MS = 420_000;
 const QWEN_STREAM_TIMEOUT_MS = 420_000;
 const TRANSCRIPT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -24,8 +24,18 @@ async function extractAudioFromUrl(videoUrl, outputPath) {
 
   const { stdout, stderr } = await execFileAsync('ffmpeg', [
     '-y',
+    '-nostdin',
+    '-hide_banner',
+    '-loglevel', 'warning',
     '-headers', headers,
+    '-rw_timeout', '15000000',
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '2',
+    '-analyzeduration', '1000000',
+    '-probesize', '1000000',
     '-i', videoUrl,
+    '-map', '0:a:0',
     '-vn',
     '-ar', '16000',
     '-ac', '1',
@@ -492,14 +502,16 @@ function getVideoLinks(data, body = {}) {
   const video = detail.video || data?.video || {};
   const links = [];
 
-  if (typeof body.videoUrl === 'string') links.push(body.videoUrl);
-  if (Array.isArray(body.videoUrls)) links.push(...body.videoUrls);
+  // Prefer explicit download candidates with audio first. Preview URLs can be
+  // fast for playback but slow or silent when ffmpeg reads the whole stream.
   if (Array.isArray(body.downloadUrlCandidates)) {
     const sortedCandidates = [...body.downloadUrlCandidates]
       .filter((item) => item?.hasAudio !== false)
-      .sort((a, b) => Number(b?.hasAudio === true) - Number(a?.hasAudio === true));
+      .sort((a, b) => scoreBodyVideoCandidate(b) - scoreBodyVideoCandidate(a));
     links.push(...sortedCandidates.map((item) => item?.url));
   }
+  if (Array.isArray(body.videoUrls)) links.push(...body.videoUrls);
+  if (typeof body.videoUrl === 'string') links.push(body.videoUrl);
   if (video.play_addr_h264?.url_list?.length) links.push(...video.play_addr_h264.url_list);
   if (video.play_addr?.url_list?.length) links.push(...video.play_addr.url_list);
   if (video.play_api?.url_list?.length) links.push(...video.play_api.url_list);
@@ -511,6 +523,20 @@ function getVideoLinks(data, body = {}) {
     links.push(...sortedVideos.map((item) => item.url));
   }
   return [...new Set(links.map(normalizeVideoUrl).filter(Boolean))];
+}
+
+function scoreBodyVideoCandidate(candidate) {
+  const source = String(candidate?.source || '');
+  const host = String(candidate?.host || '');
+  const url = String(candidate?.url || '');
+  let score = 0;
+  if (candidate?.hasAudio === true) score += 200;
+  if (/download_addr/i.test(source)) score += 90;
+  if (/play_addr_h264/i.test(source)) score += 70;
+  if (/play_addr/i.test(source)) score += 55;
+  if (/v\d+-dy|douyinvod|zjcdn|byte/i.test(host)) score += 20;
+  if (/playwm|watermark=1|[?&]wm=1/i.test(url)) score -= 80;
+  return score;
 }
 
 function normalizeVideoUrl(value) {

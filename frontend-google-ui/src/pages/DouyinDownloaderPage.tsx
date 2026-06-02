@@ -814,7 +814,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
             <div className="shrink-0 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1.5 text-[11px] font-black text-slate-600 shadow-sm">
               <span className="inline-flex items-center gap-1.5">
                 <Clock className="size-3" />
-                {onlineVideoDurationLabel}
+                视频时长 {onlineVideoDurationLabel}
               </span>
             </div>
           )}
