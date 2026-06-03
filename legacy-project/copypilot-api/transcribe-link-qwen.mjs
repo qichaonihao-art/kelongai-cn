@@ -1,6 +1,6 @@
 import { extractByUrl, json } from './_tikhub.js';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -11,12 +11,16 @@ const QWEN_ASR_MODEL = 'qwen3-asr-flash';
 const QWEN_ASR_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 const MAX_AUDIO_DURATION_SECONDS = 600;
 const FFMPEG_TIMEOUT_MS = 120_000;
+const FFMPEG_RACE_TIMEOUT_MS = 75_000;
+const AUDIO_RACE_CONCURRENCY = 3;
+const AUDIO_RACE_MAX_URLS = 8;
+const AUDIO_RACE_STAGGER_MS = 700;
 const QWEN_TIMEOUT_MS = 420_000;
 const QWEN_STREAM_TIMEOUT_MS = 420_000;
 const TRANSCRIPT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const transcriptCache = new Map();
 
-async function extractAudioFromUrl(videoUrl, outputPath) {
+async function extractAudioFromUrl(videoUrl, outputPath, { signal, timeoutMs = FFMPEG_TIMEOUT_MS } = {}) {
   const headers = [
     'Referer: https://www.douyin.com/',
     'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
@@ -43,7 +47,11 @@ async function extractAudioFromUrl(videoUrl, outputPath) {
     '-f', 'mp3',
     '-t', String(MAX_AUDIO_DURATION_SECONDS),
     outputPath,
-  ], { timeout: FFMPEG_TIMEOUT_MS });
+  ], {
+    timeout: timeoutMs,
+    signal,
+    maxBuffer: 512 * 1024
+  });
 
   return { stdout, stderr };
 }
@@ -357,7 +365,7 @@ async function buildTranscriptionPayload({ body, url, env, requestId, emit }) {
 
     // 2. Get video URL. Do not use subtitles or platform captions as transcript:
     // they are often incomplete or rewritten, so this endpoint always uses Qwen ASR.
-    emit?.('status', { stage: 'video', message: '正在选择可转写的视频源' });
+    emit?.('status', { stage: 'download', message: '正在选择最快的视频源' });
     console.log(`[${requestId}] step 2: extracting video URLs for Qwen ASR`);
     const videoUrls = getVideoLinks(sourceData, body);
     console.log(`[${requestId}] video URLs found:`, videoUrls.length);
@@ -387,7 +395,7 @@ async function buildTranscriptionPayload({ body, url, env, requestId, emit }) {
     }
 
     // 3. Extract audio directly from URL with FFmpeg
-    emit?.('status', { stage: 'audio', message: '正在提取音频' });
+    emit?.('status', { stage: 'extract_audio', message: '正在提取音频' });
     console.log(`[${requestId}] step 3: extracting audio with FFmpeg`);
     const audioPath = join(tempDir, 'audio.mp3');
     await extractAudioFromFirstWorkingUrl({
@@ -471,26 +479,101 @@ export async function onRequestPost(context) {
 }
 
 async function extractAudioFromFirstWorkingUrl({ videoUrls, audioPath, requestId }) {
+  const urls = videoUrls.slice(0, AUDIO_RACE_MAX_URLS);
   let lastError = null;
+  let nextIndex = 0;
+  let resolved = false;
+  const controllers = new Set();
+  let resolveWinner;
+  const winnerPromise = new Promise((resolve) => {
+    resolveWinner = resolve;
+  });
 
-  for (let index = 0; index < videoUrls.length; index += 1) {
-    const videoUrl = videoUrls[index];
-    console.log(`[${requestId}] trying video URL ${index + 1}/${videoUrls.length}:`, videoUrl.slice(0, 120));
+  const cleanupCandidateAudio = async (path) => {
+    if (!path || path === audioPath) return;
+    await rm(path, { force: true }).catch(() => {});
+  };
+
+  const tryCandidate = async (index) => {
+    const videoUrl = urls[index];
+    const candidateAudioPath = `${audioPath}.${index}.part.mp3`;
+    const controller = new AbortController();
+    controllers.add(controller);
+
+    console.log(`[${requestId}] trying video URL ${index + 1}/${urls.length}:`, videoUrl.slice(0, 120));
     try {
-      const { stderr } = await extractAudioFromUrl(videoUrl, audioPath);
-      const audioStats = await readFile(audioPath).then((b) => ({ size: b.length }));
+      const { stderr } = await extractAudioFromUrl(videoUrl, candidateAudioPath, {
+        signal: controller.signal,
+        timeoutMs: FFMPEG_RACE_TIMEOUT_MS
+      });
+      const audioStats = await readFile(candidateAudioPath).then((b) => ({ size: b.length }));
       if (!audioStats.size || audioStats.size < 1024) {
         throw new Error(`音频文件过小：${audioStats.size || 0} bytes`);
       }
-      console.log(`[${requestId}] FFmpeg success, audio size: ${audioStats.size} bytes`);
+      console.log(`[${requestId}] FFmpeg success from URL ${index + 1}, audio size: ${audioStats.size} bytes`);
       if (stderr) {
         console.log(`[${requestId}] FFmpeg stderr:`, stderr.slice(0, 500));
       }
-      return;
+      return { index, candidateAudioPath };
     } catch (error) {
-      lastError = error;
-      console.error(`[${requestId}] FFmpeg URL ${index + 1} failed:`, error.message);
+      await cleanupCandidateAudio(candidateAudioPath);
+      if (controller.signal.aborted) {
+        throw new Error('已被更快的视频源取消');
+      }
+      throw error;
+    } finally {
+      controllers.delete(controller);
     }
+  };
+
+  const runWorker = async (workerIndex) => {
+    if (workerIndex > 0) {
+      await new Promise((resolve) => setTimeout(resolve, workerIndex * AUDIO_RACE_STAGGER_MS));
+    }
+
+    while (!resolved && nextIndex < urls.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      try {
+        const result = await tryCandidate(index);
+        if (resolved) {
+          await cleanupCandidateAudio(result.candidateAudioPath);
+          return null;
+        }
+        resolved = true;
+        resolveWinner(result);
+        return result;
+      } catch (error) {
+        lastError = error;
+        console.error(`[${requestId}] FFmpeg URL ${index + 1} failed:`, error.message);
+      }
+    }
+    return null;
+  };
+
+  const workerCount = Math.min(AUDIO_RACE_CONCURRENCY, urls.length);
+  const workers = Array.from({ length: workerCount }, (_, index) => runWorker(index));
+  const allWorkersDone = Promise.allSettled(workers).then(() => null);
+  const winner = await Promise.race([winnerPromise, allWorkersDone]);
+
+  if (winner?.candidateAudioPath) {
+    resolved = true;
+    for (const controller of controllers) controller.abort();
+    await rename(winner.candidateAudioPath, audioPath);
+    await Promise.allSettled(workers);
+    for (let index = 0; index < urls.length; index += 1) {
+      await cleanupCandidateAudio(`${audioPath}.${index}.part.mp3`);
+    }
+    return;
+  }
+
+  await Promise.allSettled(workers);
+
+  if (resolved) {
+    for (let index = 0; index < urls.length; index += 1) {
+      await cleanupCandidateAudio(`${audioPath}.${index}.part.mp3`);
+    }
+    return;
   }
 
   throw new Error(`所有视频源均无法提取音频：${lastError?.message || '未知错误'}`);

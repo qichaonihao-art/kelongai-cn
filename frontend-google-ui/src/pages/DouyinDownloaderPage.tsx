@@ -568,7 +568,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
     try {
       const transcriptOptions = {
         sourceData: result?.videoData || null,
-        videoUrl: fastPreviewUrl || fastDownloadUrl || result?.previewUrl || result?.downloadUrl || '',
+        videoUrl: fastDownloadUrl || result?.downloadUrl || fastPreviewUrl || result?.previewUrl || '',
         videoUrls: result ? collectPreviewCandidateUrls(result).slice(0, 8) : [],
         downloadUrlCandidates: result?.downloadUrlCandidates || result?.videoUrlCandidates || [],
       };
@@ -648,7 +648,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
 
     const transcriptOptions = {
       sourceData: resolveResponse.videoData || null,
-      videoUrl: resolveResponse.previewUrl || resolveResponse.downloadUrl || '',
+      videoUrl: resolveResponse.downloadUrl || resolveResponse.previewUrl || '',
       videoUrls: collectPreviewCandidateUrls(resolveResponse).slice(0, 8),
       downloadUrlCandidates: resolveResponse.downloadUrlCandidates || resolveResponse.videoUrlCandidates || [],
     };
