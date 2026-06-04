@@ -120,8 +120,16 @@ const membershipPlansGet = () => stubJson({ ok: true, plans: [] });
 const userRecordsGet = () => stubJson({ ok: true, records: [] });
 const adminForbidden = () => stubJson({ ok: false, message: '未配置' }, 403);
 
+function isAuthorizedExternalRequest(req) {
+  const token = String(process.env.COPYPILOT_EXTERNAL_API_TOKEN || '').trim();
+  if (!token) return false;
+  const authorization = String(req.headers.authorization || '').trim();
+  return authorization === `Bearer ${token}`;
+}
+
 const ROUTES = [
   { method: 'POST', path: '/api/cp/extract', handler: extractPost },
+  { method: 'POST', path: '/api/cp/external/transcribe-link', handler: transcribeLinkQwenPost, external: true },
   { method: 'POST', path: '/api/cp/transcribe-link', handler: transcribeLinkQwenPost },
   { method: 'POST', path: '/api/cp/transcribe-link-qwen', handler: transcribeLinkQwenPost },
   { method: 'POST', path: '/api/cp/transcribe', handler: transcribePost },
@@ -151,6 +159,10 @@ const ROUTES = [
 export async function tryHandleCopypilotRoute(req, res, url) {
   for (const route of ROUTES) {
     if (req.method === route.method && url.pathname === route.path) {
+      if (route.external && !isAuthorizedExternalRequest(req)) {
+        await sendResponse(res, stubJson({ ok: false, message: '外部接口未授权。' }, 401));
+        return true;
+      }
       if (route.method === 'GET') {
         await handleGet(route.handler, req, res, url);
       } else {
