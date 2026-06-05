@@ -21,6 +21,7 @@ import {
   Trash2,
   BookText,
   Search,
+  Clock,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -101,6 +102,11 @@ interface UploadHistoryPreviewItem {
   previewUrl: string;
 }
 
+type HistoryPreviewItem = UploadHistoryPreviewItem & {
+  kind: 'video' | 'image';
+  source: 'video' | 'image-creative' | 'image-seedance';
+};
+
 const MAX_VIDEO_SIZE_BYTES = 150 * 1024 * 1024;
 const MAX_SAVED_CREATIVE_SESSIONS = 8;
 const MAX_SEEDANCE_HISTORY_ITEMS = 30;
@@ -112,6 +118,50 @@ const SEEDANCE_COST_KEY = 'kelongai.seedanceCost';
 const ADDITIONAL_CHANGE_HISTORY_KEY = 'kelongai.additionalChangeHistory';
 const ADDITIONAL_CHANGE_HISTORY_MAX = 30;
 const NOTEBOOK_STORAGE_KEY = 'kelongai.notebook';
+
+function formatVideoDuration(seconds?: number): string {
+  if (!Number.isFinite(seconds) || !seconds || seconds <= 0) return '未知时长';
+  const totalSeconds = Math.round(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const restSeconds = totalSeconds % 60;
+  if (minutes <= 0) return `${restSeconds}秒`;
+  return `${minutes}分${String(restSeconds).padStart(2, '0')}秒`;
+}
+
+function HistoryVideoThumbnail({
+  src,
+  name,
+  onDuration,
+}: {
+  src: string;
+  name: string;
+  onDuration?: (seconds: number) => void;
+}) {
+  return (
+    <video
+      src={src}
+      className="aspect-video w-full object-cover"
+      muted
+      playsInline
+      preload="metadata"
+      aria-label={name}
+      onLoadedMetadata={(event) => {
+        const video = event.currentTarget;
+        if (Number.isFinite(video.duration) && video.duration > 0) {
+          onDuration?.(video.duration);
+          if (!video.dataset.thumbnailSeeked) {
+            video.dataset.thumbnailSeeked = '1';
+            try {
+              video.currentTime = Math.min(1, Math.max(0.1, video.duration * 0.08));
+            } catch {
+              // Some browsers disallow seeking before enough metadata is ready.
+            }
+          }
+        }
+      }}
+    />
+  );
+}
 
 interface NotebookItem {
   id: string;
@@ -788,7 +838,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const imageHistoryRef = useRef<UploadHistoryPreviewItem[]>([]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance'>('video');
-  const [hoverPreviewItem, setHoverPreviewItem] = useState<UploadHistoryPreviewItem & { kind: 'video' | 'image'; source: 'video' | 'image-creative' | 'image-seedance' } | null>(null);
+  const [historyPreviewItem, setHistoryPreviewItem] = useState<HistoryPreviewItem | null>(null);
+  const [historyVideoDurations, setHistoryVideoDurations] = useState<Record<number, number>>({});
   const hoverPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seedanceCostStats = getSeedanceCostStats();
   const [notebookItems, setNotebookItems] = useState<NotebookItem[]>(loadNotebookItems);
@@ -901,6 +952,12 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   useEffect(() => {
     imageHistoryRef.current = imageHistory;
   }, [imageHistory]);
+
+  useEffect(() => {
+    if (!showHistoryModal) {
+      setHistoryPreviewItem(null);
+    }
+  }, [showHistoryModal]);
 
   useEffect(() => {
     return () => {
@@ -1824,6 +1881,26 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setSelectedMedia({ kind: 'video', file, previewUrl, fileName: file.name });
   }
 
+  function rememberHistoryVideoDuration(id: number, seconds: number) {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    setHistoryVideoDurations((previous) => {
+      if (Math.abs((previous[id] || 0) - seconds) < 0.5) return previous;
+      return { ...previous, [id]: seconds };
+    });
+  }
+
+  async function selectHistoryPreviewItem(item: HistoryPreviewItem) {
+    if (item.source === 'video') {
+      await selectVideoFromHistory(item);
+    } else if (item.source === 'image-creative') {
+      await selectImageFromHistory(item, true);
+    } else {
+      await selectSeedanceReferenceFromHistory(item, 'image');
+    }
+    setShowHistoryModal(false);
+    setHistoryPreviewItem(null);
+  }
+
   async function selectImageFromHistory(item: { id: number; name: string; timestamp: number; previewUrl: string }, forReplace: boolean) {
     const histories = await loadUploadHistory('image');
     const found = histories.find((h) => h.id === item.id);
@@ -1845,6 +1922,12 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
   async function handleDeleteVideoHistory(id: number) {
     await deleteUploadHistory(id);
+    setHistoryPreviewItem((previous) => previous?.kind === 'video' && previous.id === id ? null : previous);
+    setHistoryVideoDurations((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
     setVideoHistory((previous) => {
       const item = previous.find((p) => p.id === id);
       if (item) URL.revokeObjectURL(item.previewUrl);
@@ -3542,31 +3625,34 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       {videoHistory.map((item) => (
                         <div
                           key={item.id}
-                          className="group relative cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md"
+                          className={cn(
+                            "group relative cursor-pointer rounded-xl border bg-white p-2 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md",
+                            historyPreviewItem?.kind === 'video' && historyPreviewItem.id === item.id
+                              ? 'border-indigo-300 ring-2 ring-indigo-100'
+                              : 'border-slate-200'
+                          )}
                           onClick={() => {
-                            void selectVideoFromHistory(item);
-                            setShowHistoryModal(false);
-                          }}
-                          onMouseEnter={() => {
                             if (hoverPreviewTimerRef.current) {
                               clearTimeout(hoverPreviewTimerRef.current);
                               hoverPreviewTimerRef.current = null;
                             }
-                            setHoverPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'video', source: 'video' });
-                          }}
-                          onMouseLeave={() => {
-                            hoverPreviewTimerRef.current = setTimeout(() => {
-                              setHoverPreviewItem(null);
-                            }, 80);
+                            setHistoryPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'video', source: 'video' });
                           }}
                         >
                           <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-lg bg-slate-950">
-                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_35%_25%,rgba(99,102,241,0.28),transparent_38%),linear-gradient(135deg,rgba(15,23,42,0.95),rgba(30,41,59,0.92))]" />
-                            <div className="relative flex size-10 items-center justify-center rounded-full bg-white/10 text-white shadow-sm ring-1 ring-white/15">
-                              <Film className="size-5" />
-                            </div>
+                            <HistoryVideoThumbnail
+                              src={item.previewUrl}
+                              name={item.name}
+                              onDuration={(seconds) => rememberHistoryVideoDuration(item.id, seconds)}
+                            />
+                            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/5" />
                             <div className="absolute bottom-1.5 left-1.5 rounded bg-black/45 px-1.5 py-0.5 text-[10px] font-bold text-white/80">
-                              视频
+                              {formatVideoDuration(historyVideoDurations[item.id])}
+                            </div>
+                            <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
+                              <div className="flex size-9 items-center justify-center rounded-full bg-white/85 text-slate-900 shadow-sm">
+                                <Film className="size-4" />
+                              </div>
                             </div>
                           </div>
                           <div className="mt-2 flex items-center justify-between gap-1">
@@ -3608,11 +3694,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                               clearTimeout(hoverPreviewTimerRef.current);
                               hoverPreviewTimerRef.current = null;
                             }
-                            setHoverPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'image', source: 'image-creative' });
+                            setHistoryPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'image', source: 'image-creative' });
                           }}
                           onMouseLeave={() => {
                             hoverPreviewTimerRef.current = setTimeout(() => {
-                              setHoverPreviewItem(null);
+                              setHistoryPreviewItem(null);
                             }, 80);
                           }}
                         >
@@ -3662,11 +3748,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                               clearTimeout(hoverPreviewTimerRef.current);
                               hoverPreviewTimerRef.current = null;
                             }
-                            setHoverPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'image', source: 'image-seedance' });
+                            setHistoryPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'image', source: 'image-seedance' });
                           }}
                           onMouseLeave={() => {
                             hoverPreviewTimerRef.current = setTimeout(() => {
-                              setHoverPreviewItem(null);
+                              setHistoryPreviewItem(null);
                             }, 80);
                           }}
                         >
@@ -3783,11 +3869,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         </div>
       )}
 
-      {/* Hover 大预览层（Quick Look 风格） */}
-      {hoverPreviewItem && (
+      {/* 历史记录大预览层（Quick Look 风格） */}
+      {historyPreviewItem && (
         <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center pointer-events-none">
           {/* 背景遮罩 */}
-          <div className="absolute inset-0 bg-black/75" />
+          <div className="pointer-events-auto absolute inset-0 bg-black/75" onClick={() => setHistoryPreviewItem(null)} />
           {/* 内容区域 - 接收鼠标事件 */}
           <div
             className="relative pointer-events-auto"
@@ -3797,35 +3883,26 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                 hoverPreviewTimerRef.current = null;
               }
             }}
-            onMouseLeave={() => {
-              setHoverPreviewItem(null);
-            }}
             onDoubleClick={() => {
-              const item = { id: hoverPreviewItem.id, name: hoverPreviewItem.name, previewUrl: hoverPreviewItem.previewUrl, timestamp: hoverPreviewItem.timestamp };
-              if (hoverPreviewItem.source === 'video') {
-                void selectVideoFromHistory(item);
-              } else if (hoverPreviewItem.source === 'image-creative') {
-                void selectImageFromHistory(item, true);
-              } else {
-                void selectSeedanceReferenceFromHistory(item, 'image');
-              }
-              setShowHistoryModal(false);
-              setHoverPreviewItem(null);
+              void selectHistoryPreviewItem(historyPreviewItem);
             }}
           >
             <div className="relative flex max-h-[82vh] max-w-[85vw] items-center justify-center">
-              {hoverPreviewItem.kind === 'video' ? (
+              {historyPreviewItem.kind === 'video' ? (
                 <video
-                  src={hoverPreviewItem.previewUrl}
+                  src={historyPreviewItem.previewUrl}
                   className="max-h-[78vh] max-w-[82vw] rounded-xl object-contain shadow-2xl"
                   autoPlay
                   loop
+                  muted
+                  controls
                   playsInline
+                  onLoadedMetadata={(event) => rememberHistoryVideoDuration(historyPreviewItem.id, event.currentTarget.duration)}
                 />
               ) : (
                 <img
-                  src={hoverPreviewItem.previewUrl}
-                  alt={hoverPreviewItem.name}
+                  src={historyPreviewItem.previewUrl}
+                  alt={historyPreviewItem.name}
                   className="max-h-[78vh] max-w-[82vw] rounded-xl object-contain shadow-2xl"
                 />
               )}
@@ -3834,12 +3911,12 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (hoverPreviewItem.kind === 'video') {
-                    void handleDeleteVideoHistory(hoverPreviewItem.id);
+                  if (historyPreviewItem.kind === 'video') {
+                    void handleDeleteVideoHistory(historyPreviewItem.id);
                   } else {
-                    void handleDeleteImageHistory(hoverPreviewItem.id);
+                    void handleDeleteImageHistory(historyPreviewItem.id);
                   }
-                  setHoverPreviewItem(null);
+                  setHistoryPreviewItem(null);
                 }}
                 className="absolute -right-3 -top-3 flex size-7 items-center justify-center rounded-full bg-white text-slate-400 shadow-md transition-colors hover:bg-red-50 hover:text-red-500"
                 title="删除记录"
@@ -3847,10 +3924,34 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                 <X className="size-3.5" />
               </button>
             </div>
-            <div className="mt-4 text-center">
-              <span className="rounded-full bg-white/10 px-4 py-1.5 text-sm font-semibold text-white backdrop-blur-sm">
-                {hoverPreviewItem.name}
-              </span>
+            <div className="mt-4 flex flex-col items-center gap-3 text-center">
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <span className="rounded-full bg-white/10 px-4 py-1.5 text-sm font-semibold text-white backdrop-blur-sm">
+                  {historyPreviewItem.name}
+                </span>
+                {historyPreviewItem.kind === 'video' && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold text-white/85 backdrop-blur-sm">
+                    <Clock className="size-3.5" />
+                    视频时长 {formatVideoDuration(historyVideoDurations[historyPreviewItem.id])}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setHistoryPreviewItem(null)}
+                  className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-white/20"
+                >
+                  继续浏览
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void selectHistoryPreviewItem(historyPreviewItem)}
+                  className="rounded-full bg-white px-5 py-2 text-xs font-black text-slate-900 shadow-lg transition-colors hover:bg-slate-100"
+                >
+                  选用此{historyPreviewItem.kind === 'video' ? '视频' : '图片'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
