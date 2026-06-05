@@ -375,95 +375,124 @@ export async function sendCreativeMessage(options: {
   onDelta?: (text: string) => void;
   model?: string;
 }) {
-  const headers: Record<string, string> = {
-    Accept: 'text/event-stream, application/json',
-  };
-
-  let body: BodyInit;
   const mediaArray = options.media
     ? Array.isArray(options.media)
       ? options.media
       : [options.media]
     : [];
 
-  if (mediaArray.length > 0) {
-    const formData = new FormData();
-    formData.append('question', options.question);
-    formData.append('history', JSON.stringify(options.history));
-    formData.append('stream', 'true');
-    if (options.model) {
-      formData.append('model', options.model);
-    }
-    if (mediaArray.length === 1) {
-      formData.append('media_kind', mediaArray[0].kind);
-      formData.append('file', mediaArray[0].file, mediaArray[0].fileName);
-    } else {
-      const kinds: string[] = [];
-      for (const media of mediaArray) {
-        formData.append('files', media.file, media.fileName);
-        kinds.push(media.kind);
+  const buildRequest = (stream: boolean): { headers: Record<string, string>; body: BodyInit } => {
+    const headers: Record<string, string> = {
+      Accept: stream ? 'text/event-stream, application/json' : 'application/json',
+    };
+
+    if (mediaArray.length > 0) {
+      const formData = new FormData();
+      formData.append('question', options.question);
+      formData.append('history', JSON.stringify(options.history));
+      formData.append('stream', String(stream));
+      if (options.model) {
+        formData.append('model', options.model);
       }
-      formData.append('files_kinds', JSON.stringify(kinds));
-    }
-    body = formData;
-  } else {
-    headers['Content-Type'] = 'application/json';
-    body = JSON.stringify({
-      question: options.question,
-      history: options.history,
-      stream: true,
-      ...(options.model ? { model: options.model } : {}),
-    });
-  }
-
-  const response = await fetch('/api/doubao/multimodal', {
-    method: 'POST',
-    credentials: 'include',
-    headers,
-    body,
-  });
-
-  if (!response.ok) {
-    let message = `豆包回答失败（HTTP ${response.status}）`;
-    try {
-      const json = await response.json();
-      if (json?.error) {
-        message = String(json.error);
-        if (json?.debug?.stage) {
-          message += `，阶段：${String(json.debug.stage)}`;
+      if (mediaArray.length === 1) {
+        formData.append('media_kind', mediaArray[0].kind);
+        formData.append('file', mediaArray[0].file, mediaArray[0].fileName);
+      } else {
+        const kinds: string[] = [];
+        for (const media of mediaArray) {
+          formData.append('files', media.file, media.fileName);
+          kinds.push(media.kind);
         }
-      } else if (json?.upstream) {
-        message = typeof json.upstream === 'string'
-          ? json.upstream
-          : JSON.stringify(json.upstream);
+        formData.append('files_kinds', JSON.stringify(kinds));
       }
-    } catch {
-      try {
-        const text = await response.text();
-        if (text) message = text;
-      } catch {}
+      return { headers, body: formData };
     }
-    throw new Error(message);
-  }
 
-  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-  if (contentType.includes('text/event-stream')) {
-    const answer = await consumeStreamResponse(response, options.onDelta);
+    headers['Content-Type'] = 'application/json';
+    return {
+      headers,
+      body: JSON.stringify({
+        question: options.question,
+        history: options.history,
+        stream,
+        ...(options.model ? { model: options.model } : {}),
+      }),
+    };
+  };
+
+  const isRetriableNetworkError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error || '');
+    return /network|fetch|failed|timeout|timed out|abort|terminated|connection|econn|socket|网络|连接|中断|超时/i.test(message);
+  };
+
+  const runRequest = async (stream: boolean) => {
+    const { headers, body } = buildRequest(stream);
+    const response = await fetch('/api/doubao/multimodal', {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body,
+    });
+
+    if (!response.ok) {
+      let message = `豆包回答失败（HTTP ${response.status}）`;
+      try {
+        const json = await response.json();
+        if (json?.error) {
+          message = String(json.error);
+          if (json?.debug?.stage) {
+            message += `，阶段：${String(json.debug.stage)}`;
+          }
+        } else if (json?.upstream) {
+          message = typeof json.upstream === 'string'
+            ? json.upstream
+            : JSON.stringify(json.upstream);
+        }
+      } catch {
+        try {
+          const text = await response.text();
+          if (text) message = text;
+        } catch {}
+      }
+      throw new Error(message);
+    }
+
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    if (contentType.includes('text/event-stream')) {
+      const answer = await consumeStreamResponse(response, options.onDelta);
+      if (!answer) {
+        throw new Error('模型已返回结果，但 answer 为空（SSE 流无内容）');
+      }
+      return answer;
+    }
+
+    const json = await response.json();
+    const answer = String(json?.answer || '').trim();
     if (!answer) {
-      throw new Error('模型已返回结果，但 answer 为空（SSE 流无内容）');
+      const debugInfo = json?.debug
+        ? `（响应字段：${json.debug.responseKeys?.join(', ') || '无'}）`
+        : '';
+      throw new Error(`模型已返回结果，但 answer 为空${debugInfo}`);
     }
     return answer;
-  }
+  };
 
-  const json = await response.json();
-  const answer = String(json?.answer || '').trim();
-  if (!answer) {
-    const debugInfo = json?.debug
-      ? `（响应字段：${json.debug.responseKeys?.join(', ') || '无'}）`
-      : '';
-    throw new Error(`模型已返回结果，但 answer 为空${debugInfo}`);
+  try {
+    return await runRequest(true);
+  } catch (error) {
+    if (!isRetriableNetworkError(error)) {
+      throw error;
+    }
+    console.warn('[creative] stream request failed, retrying once with non-stream mode:', error);
+    try {
+      return await runRequest(false);
+    } catch (retryError) {
+      if (isRetriableNetworkError(retryError)) {
+        throw new Error('豆包连接偶发中断，已自动重试一次但仍未成功。请稍后再试。');
+      }
+      throw retryError;
+    }
   }
-  return answer;
 }
 
 export async function createSeedanceTask(options: {

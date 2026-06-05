@@ -34,6 +34,7 @@ const MAX_IMAGE_ORIGINAL_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 45 * 1024 * 1024;
 const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
 const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-pro-260215';
+const DOUBAO_MULTIMODAL_TIMEOUT_MS = 8 * 60 * 1000;
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.join(__dirname, '.runtime-state');
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
@@ -9796,7 +9797,8 @@ async function handleDoubaoMultimodal(req, res) {
         Authorization: `Bearer ${resolvedApiKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(requestPayload)
+      body: JSON.stringify(requestPayload),
+      signal: AbortSignal.timeout(DOUBAO_MULTIMODAL_TIMEOUT_MS)
     };
 
     console.log('[doubao multimodal] request payload', {
@@ -9952,10 +9954,16 @@ async function handleDoubaoMultimodal(req, res) {
       error.message === '请求体不是合法 JSON' ||
       error.message === '请求体过大' ||
       error.message === '上传文件过大';
+    const isNetworkOrTimeoutError =
+      error?.name === 'TimeoutError' ||
+      error?.name === 'AbortError' ||
+      /network|fetch failed|terminated|socket|connection|econn|timeout|timed out|aborted/i.test(String(error?.message || ''));
 
     const zhError = isBodyParseOrSizeError
       ? error.message
-      : translateUpstreamError(error?.message, `豆包请求失败，请稍后重试。`);
+      : isNetworkOrTimeoutError
+        ? '豆包连接偶发中断或超时，系统已尝试兜底重试；如果仍失败，请稍后再试。'
+        : translateUpstreamError(error?.message, `豆包请求失败，请稍后重试。`);
 
     if (shouldStream) {
       writeSseEvent(res, 'error', { error: zhError, debug: { originalMessage: error?.message || '', stage } });
@@ -9963,7 +9971,7 @@ async function handleDoubaoMultimodal(req, res) {
       return;
     }
 
-    sendJson(res, isBodyParseOrSizeError ? 400 : 500, {
+    sendJson(res, isBodyParseOrSizeError ? 400 : (isNetworkOrTimeoutError ? 504 : 500), {
       error: zhError,
       debug: { originalMessage: error?.message || '', stage }
     });

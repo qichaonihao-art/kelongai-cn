@@ -137,29 +137,63 @@ function HistoryVideoThumbnail({
   name: string;
   onDuration?: (seconds: number) => void;
 }) {
-  return (
-    <video
-      src={src}
-      className="aspect-video w-full object-cover"
-      muted
-      playsInline
-      preload="metadata"
-      aria-label={name}
-      onLoadedMetadata={(event) => {
-        const video = event.currentTarget;
-        if (Number.isFinite(video.duration) && video.duration > 0) {
-          onDuration?.(video.duration);
-          if (!video.dataset.thumbnailSeeked) {
-            video.dataset.thumbnailSeeked = '1';
-            try {
-              video.currentTime = Math.min(1, Math.max(0.1, video.duration * 0.08));
-            } catch {
-              // Some browsers disallow seeking before enough metadata is ready.
-            }
-          }
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    if (isVisible) return;
+    const node = containerRef.current;
+    if (!node) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setIsVisible(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect();
         }
-      }}
-    />
+      },
+      { rootMargin: '160px' }
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [isVisible]);
+
+  return (
+    <div ref={containerRef} className="aspect-video w-full bg-slate-950">
+      {isVisible ? (
+        <video
+          src={src}
+          className="size-full object-cover"
+          muted
+          playsInline
+          preload="metadata"
+          aria-label={name}
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            if (Number.isFinite(video.duration) && video.duration > 0) {
+              onDuration?.(video.duration);
+              if (!video.dataset.thumbnailSeeked) {
+                video.dataset.thumbnailSeeked = '1';
+                try {
+                  video.currentTime = Math.min(1, Math.max(0.1, video.duration * 0.08));
+                } catch {
+                  // Some browsers disallow seeking before enough metadata is ready.
+                }
+              }
+            }
+          }}
+        />
+      ) : (
+        <div className="flex size-full items-center justify-center bg-slate-900 text-white/50">
+          <Film className="size-5" />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1937,6 +1971,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
   async function handleDeleteImageHistory(id: number) {
     await deleteUploadHistory(id);
+    setHistoryPreviewItem((previous) => previous?.kind === 'image' && previous.id === id ? null : previous);
     setImageHistory((previous) => {
       const item = previous.find((p) => p.id === id);
       if (item) URL.revokeObjectURL(item.previewUrl);
@@ -3684,22 +3719,18 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       {imageHistory.map((item) => (
                         <div
                           key={item.id}
-                          className="group relative cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md"
+                          className={cn(
+                            "group relative cursor-pointer rounded-xl border bg-white p-2 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md",
+                            historyPreviewItem?.kind === 'image' && historyPreviewItem.source === 'image-creative' && historyPreviewItem.id === item.id
+                              ? 'border-indigo-300 ring-2 ring-indigo-100'
+                              : 'border-slate-200'
+                          )}
                           onClick={() => {
-                            void selectImageFromHistory(item, true);
-                            setShowHistoryModal(false);
-                          }}
-                          onMouseEnter={() => {
                             if (hoverPreviewTimerRef.current) {
                               clearTimeout(hoverPreviewTimerRef.current);
                               hoverPreviewTimerRef.current = null;
                             }
                             setHistoryPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'image', source: 'image-creative' });
-                          }}
-                          onMouseLeave={() => {
-                            hoverPreviewTimerRef.current = setTimeout(() => {
-                              setHistoryPreviewItem(null);
-                            }, 80);
                           }}
                         >
                           <div className="relative overflow-hidden rounded-lg bg-slate-950">
@@ -3738,22 +3769,18 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       {imageHistory.map((item) => (
                         <div
                           key={`img_${item.id}`}
-                          className="group relative cursor-pointer rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-all hover:border-violet-200 hover:shadow-md"
+                          className={cn(
+                            "group relative cursor-pointer rounded-xl border bg-white p-2 shadow-sm transition-all hover:border-violet-200 hover:shadow-md",
+                            historyPreviewItem?.kind === 'image' && historyPreviewItem.source === 'image-seedance' && historyPreviewItem.id === item.id
+                              ? 'border-violet-300 ring-2 ring-violet-100'
+                              : 'border-slate-200'
+                          )}
                           onClick={() => {
-                            void selectSeedanceReferenceFromHistory(item, 'image');
-                            setShowHistoryModal(false);
-                          }}
-                          onMouseEnter={() => {
                             if (hoverPreviewTimerRef.current) {
                               clearTimeout(hoverPreviewTimerRef.current);
                               hoverPreviewTimerRef.current = null;
                             }
                             setHistoryPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'image', source: 'image-seedance' });
-                          }}
-                          onMouseLeave={() => {
-                            hoverPreviewTimerRef.current = setTimeout(() => {
-                              setHistoryPreviewItem(null);
-                            }, 80);
                           }}
                         >
                           <div className="relative overflow-hidden rounded-lg bg-slate-950">
@@ -3911,15 +3938,10 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (historyPreviewItem.kind === 'video') {
-                    void handleDeleteVideoHistory(historyPreviewItem.id);
-                  } else {
-                    void handleDeleteImageHistory(historyPreviewItem.id);
-                  }
                   setHistoryPreviewItem(null);
                 }}
-                className="absolute -right-3 -top-3 flex size-7 items-center justify-center rounded-full bg-white text-slate-400 shadow-md transition-colors hover:bg-red-50 hover:text-red-500"
-                title="删除记录"
+                className="absolute -right-3 -top-3 flex size-7 items-center justify-center rounded-full bg-white text-slate-400 shadow-md transition-colors hover:bg-slate-50 hover:text-slate-700"
+                title="关闭预览"
               >
                 <X className="size-3.5" />
               </button>
