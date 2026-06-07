@@ -253,9 +253,11 @@ function createConversation(model: string): Conversation {
 
 function loadModel(): string {
   try {
-    return localStorage.getItem(MODEL_STORAGE_KEY) || 'claude-opus-4-7';
+    const savedModel = localStorage.getItem(MODEL_STORAGE_KEY);
+    if (savedModel === 'claude-opus-4-7') return 'claude-opus-4-8';
+    return savedModel || 'claude-opus-4-8';
   } catch {
-    return 'claude-opus-4-7';
+    return 'claude-opus-4-8';
   }
 }
 

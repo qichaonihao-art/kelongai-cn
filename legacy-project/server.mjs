@@ -36,7 +36,7 @@ const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
 const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-pro-260215';
 const DOUBAO_MULTIMODAL_TIMEOUT_MS = 8 * 60 * 1000;
 const APIMART_API_BASE_URL = String(process.env.APIMART_API_BASE_URL || 'https://api.apimart.ai/v1').trim().replace(/\/+$/g, '');
-const APIMART_IMAGE_MODEL = String(process.env.APIMART_IMAGE_MODEL || 'gpt-image-2-official').trim();
+const APIMART_IMAGE_MODEL = String(process.env.APIMART_IMAGE_MODEL || 'gpt-image-2').trim();
 const APIMART_IMAGE_FETCH_TIMEOUT_MS = 45 * 1000;
 const APIMART_IMAGE_RETRY_DELAYS_MS = [1000];
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
@@ -1700,7 +1700,7 @@ async function handleChatCompletions(req, res) {
   try {
     const body = await readRequestBody(req);
     const messages = body.messages;
-    const model = String(body.model || 'claude-opus-4-7');
+    const model = String(body.model || 'claude-opus-4-8');
     const stream = body.stream !== false;
 
     if (!Array.isArray(messages) || messages.length === 0) {
