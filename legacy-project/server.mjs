@@ -39,6 +39,7 @@ const APIMART_API_BASE_URL = String(process.env.APIMART_API_BASE_URL || 'https:/
 const APIMART_IMAGE_MODEL = String(process.env.APIMART_IMAGE_MODEL || 'gpt-image-2').trim();
 const APIMART_IMAGE_FETCH_TIMEOUT_MS = 45 * 1000;
 const APIMART_IMAGE_RETRY_DELAYS_MS = [1000];
+const APIMART_CHAT_FETCH_TIMEOUT_MS = 8 * 60 * 1000;
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.join(__dirname, '.runtime-state');
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
@@ -1724,7 +1725,7 @@ async function handleChatCompletions(req, res) {
     if (typeof body.max_tokens === 'number') apiBody.max_tokens = body.max_tokens;
     if (typeof body.top_p === 'number') apiBody.top_p = body.top_p;
 
-    const response = await fetch('https://api.apimart.ai/v1/chat/completions', {
+    const response = await fetch(`${APIMART_API_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1732,6 +1733,7 @@ async function handleChatCompletions(req, res) {
         'Accept': stream ? 'text/event-stream' : 'application/json',
       },
       body: JSON.stringify(apiBody),
+      signal: AbortSignal.timeout(APIMART_CHAT_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -1779,7 +1781,13 @@ async function handleChatCompletions(req, res) {
       res.end(data);
     }
   } catch (error) {
-    sendJson(res, 500, { error: error.message || '对话请求失败' });
+    const isNetworkError = isApimartNetworkError(error);
+    sendJson(res, isNetworkError ? 502 : 500, {
+      error: isNetworkError
+        ? '对话 API 网络连接失败：服务器当前无法连接 APIMart，请检查上游服务或服务器网络。'
+        : (error.message || '对话请求失败'),
+      ...(error?.message ? { detail: error.message } : {})
+    });
   }
 }
 
