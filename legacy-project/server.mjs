@@ -35,6 +35,10 @@ const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 45 * 1024 * 1024;
 const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
 const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-pro-260215';
 const DOUBAO_MULTIMODAL_TIMEOUT_MS = 8 * 60 * 1000;
+const APIMART_API_BASE_URL = String(process.env.APIMART_API_BASE_URL || 'https://api.apimart.ai/v1').trim().replace(/\/+$/g, '');
+const APIMART_IMAGE_MODEL = String(process.env.APIMART_IMAGE_MODEL || 'gpt-image-2-official').trim();
+const APIMART_IMAGE_FETCH_TIMEOUT_MS = 45 * 1000;
+const APIMART_IMAGE_RETRY_DELAYS_MS = [1000];
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.join(__dirname, '.runtime-state');
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
@@ -1480,6 +1484,49 @@ async function handleGetArticles(req, res) {
 
 // --- Image Generation API Handlers ---
 
+function isApimartNetworkError(error) {
+  return (
+    error?.name === 'TimeoutError' ||
+    error?.name === 'AbortError' ||
+    /fetch failed|network|socket|connection|econn|timeout|timed out|aborted|terminated/i.test(String(error?.message || ''))
+  );
+}
+
+async function fetchApimartJson(pathname, options = {}) {
+  const url = `${APIMART_API_BASE_URL}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= APIMART_IMAGE_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: AbortSignal.timeout(APIMART_IMAGE_FETCH_TIMEOUT_MS),
+      });
+      const text = await response.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = null;
+      }
+      return { response, json, text, url };
+    } catch (error) {
+      lastError = error;
+      if (!isApimartNetworkError(error) || attempt >= APIMART_IMAGE_RETRY_DELAYS_MS.length) break;
+      await sleep(APIMART_IMAGE_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
+  const networkError = new Error(
+    lastError?.name === 'TimeoutError' || /timeout|timed out/i.test(String(lastError?.message || ''))
+      ? '图片生成 API 连接超时：服务器当前访问 APIMart 较慢或不可达，请稍后重试。'
+      : '图片生成 API 网络连接失败：服务器当前无法连接 APIMart，请检查上游服务或服务器网络。'
+  );
+  networkError.originalMessage = lastError?.message || '';
+  networkError.url = url;
+  throw networkError;
+}
+
 async function handleCreateImageTask(req, res) {
   try {
     const body = await readRequestBody(req);
@@ -1499,7 +1546,7 @@ async function handleCreateImageTask(req, res) {
     }
 
     const apiBody = {
-      model: 'gpt-image-2',
+      model: APIMART_IMAGE_MODEL,
       prompt,
       n: 1,
       size,
@@ -1511,7 +1558,7 @@ async function handleCreateImageTask(req, res) {
       apiBody.image_urls = imageUrls.slice(0, 16);
     }
 
-    const response = await fetch('https://api.apimart.ai/v1/images/generations', {
+    const { response, json, text } = await fetchApimartJson('/images/generations', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1520,9 +1567,8 @@ async function handleCreateImageTask(req, res) {
       body: JSON.stringify(apiBody),
     });
 
-    const json = await response.json();
     if (!response.ok) {
-      const msg = json?.error?.message || json?.message || `图片生成 API 错误: HTTP ${response.status}`;
+      const msg = json?.error?.message || json?.message || text || `图片生成 API 错误: HTTP ${response.status}`;
       sendJson(res, 500, { error: msg });
       return;
     }
@@ -1543,7 +1589,11 @@ async function handleCreateImageTask(req, res) {
 
     sendJson(res, 200, { ok: true, task });
   } catch (error) {
-    sendJson(res, 500, { error: error.message || '创建图片生成任务失败' });
+    const isNetworkError = isApimartNetworkError(error) || /APIMart|图片生成 API/.test(String(error?.message || ''));
+    sendJson(res, isNetworkError ? 502 : 500, {
+      error: error.message || '创建图片生成任务失败',
+      ...(error.originalMessage ? { detail: error.originalMessage } : {})
+    });
   }
 }
 
@@ -1568,15 +1618,14 @@ async function handleGetImageTaskStatus(req, res, id) {
       return;
     }
 
-    const response = await fetch(`https://api.apimart.ai/v1/tasks/${task.external_task_id}`, {
+    const { response, json, text } = await fetchApimartJson(`/tasks/${task.external_task_id}`, {
       headers: {
         'Authorization': `Bearer ${token}`,
       },
     });
 
-    const json = await response.json();
     if (!response.ok) {
-      sendJson(res, 500, { error: json?.error?.message || '查询任务状态失败' });
+      sendJson(res, 500, { error: json?.error?.message || json?.message || text || '查询任务状态失败' });
       return;
     }
 
@@ -1615,7 +1664,11 @@ async function handleGetImageTaskStatus(req, res, id) {
 
     sendJson(res, 200, { ok: true, task });
   } catch (error) {
-    sendJson(res, 500, { error: error.message || '查询任务状态失败' });
+    const isNetworkError = isApimartNetworkError(error) || /APIMart|图片生成 API/.test(String(error?.message || ''));
+    sendJson(res, isNetworkError ? 502 : 500, {
+      error: error.message || '查询任务状态失败',
+      ...(error.originalMessage ? { detail: error.originalMessage } : {})
+    });
   }
 }
 
