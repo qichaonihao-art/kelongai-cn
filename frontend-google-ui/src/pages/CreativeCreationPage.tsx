@@ -42,6 +42,8 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   saveUploadHistory,
   loadUploadHistory,
+  loadUploadHistorySummaries,
+  getUploadHistoryItem,
   deleteUploadHistory,
   blobToFile,
   formatHistoryTime,
@@ -100,11 +102,13 @@ interface UploadHistoryPreviewItem {
   name: string;
   timestamp: number;
   previewUrl: string;
+  duration?: number;
 }
 
 type HistoryPreviewItem = UploadHistoryPreviewItem & {
   kind: 'video' | 'image';
   source: 'video' | 'image-creative' | 'image-seedance';
+  ownedPreviewUrl?: boolean;
 };
 
 const MAX_VIDEO_SIZE_BYTES = 150 * 1024 * 1024;
@@ -131,62 +135,17 @@ function formatVideoDuration(seconds?: number): string {
 function HistoryVideoThumbnail({
   src,
   name,
-  onDuration,
 }: {
   src: string;
   name: string;
-  onDuration?: (seconds: number) => void;
 }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [isVisible, setIsVisible] = useState(false);
-
-  useEffect(() => {
-    if (isVisible) return;
-    const node = containerRef.current;
-    if (!node) return;
-    if (typeof IntersectionObserver === 'undefined') {
-      setIsVisible(true);
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsVisible(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: '160px' }
-    );
-
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [isVisible]);
-
   return (
-    <div ref={containerRef} className="aspect-video w-full bg-slate-950">
-      {isVisible ? (
-        <video
+    <div className="aspect-video w-full bg-slate-950">
+      {src ? (
+        <img
           src={src}
+          alt={name}
           className="size-full object-cover"
-          muted
-          playsInline
-          preload="metadata"
-          aria-label={name}
-          onLoadedMetadata={(event) => {
-            const video = event.currentTarget;
-            if (Number.isFinite(video.duration) && video.duration > 0) {
-              onDuration?.(video.duration);
-              if (!video.dataset.thumbnailSeeked) {
-                video.dataset.thumbnailSeeked = '1';
-                try {
-                  video.currentTime = Math.min(1, Math.max(0.1, video.duration * 0.08));
-                } catch {
-                  // Some browsers disallow seeking before enough metadata is ready.
-                }
-              }
-            }
-          }}
         />
       ) : (
         <div className="flex size-full items-center justify-center bg-slate-900 text-white/50">
@@ -888,6 +847,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance'>('video');
   const [historyPreviewItem, setHistoryPreviewItem] = useState<HistoryPreviewItem | null>(null);
   const [historyVideoDurations, setHistoryVideoDurations] = useState<Record<number, number>>({});
+  const ownedHistoryPreviewUrlRef = useRef<string | null>(null);
   const hoverPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seedanceCostStats = getSeedanceCostStats();
   const [notebookItems, setNotebookItems] = useState<NotebookItem[]>(loadNotebookItems);
@@ -942,7 +902,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
   async function refreshUploadHistories() {
     const [videos, images] = await Promise.all([
-      loadUploadHistory('video'),
+      loadUploadHistorySummaries('video'),
       loadUploadHistory('image'),
     ]);
 
@@ -952,8 +912,18 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         id: item.id,
         name: item.name,
         timestamp: item.timestamp,
-        previewUrl: URL.createObjectURL(item.blob),
+        previewUrl: item.previewBlob ? URL.createObjectURL(item.previewBlob) : '',
+        duration: item.duration,
       }));
+    });
+    setHistoryVideoDurations((previous) => {
+      const next = { ...previous };
+      videos.forEach((item) => {
+        if (Number.isFinite(item.duration) && item.duration && item.duration > 0) {
+          next[item.id] = item.duration;
+        }
+      });
+      return next;
     });
     setImageHistory((previous) => {
       previous.forEach((item) => URL.revokeObjectURL(item.previewUrl));
@@ -1006,6 +976,20 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       setHistoryPreviewItem(null);
     }
   }, [showHistoryModal]);
+
+  useEffect(() => {
+    const ownedUrl = historyPreviewItem?.ownedPreviewUrl ? historyPreviewItem.previewUrl : null;
+    if (ownedHistoryPreviewUrlRef.current && ownedHistoryPreviewUrlRef.current !== ownedUrl) {
+      URL.revokeObjectURL(ownedHistoryPreviewUrlRef.current);
+    }
+    ownedHistoryPreviewUrlRef.current = ownedUrl;
+    return () => {
+      if (ownedHistoryPreviewUrlRef.current) {
+        URL.revokeObjectURL(ownedHistoryPreviewUrlRef.current);
+        ownedHistoryPreviewUrlRef.current = null;
+      }
+    };
+  }, [historyPreviewItem]);
 
   useEffect(() => {
     return () => {
@@ -1924,8 +1908,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   }
 
   async function selectVideoFromHistory(item: { id: number; name: string; timestamp: number; previewUrl: string }) {
-    const histories = await loadUploadHistory('video');
-    const found = histories.find((h) => h.id === item.id);
+    const found = await getUploadHistoryItem(item.id);
     if (!found) return;
     const file = blobToFile(found);
     const previewUrl = createMediaPreviewUrl(file);
@@ -1933,6 +1916,25 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       URL.revokeObjectURL(selectedMedia.previewUrl);
     }
     setSelectedMedia({ kind: 'video', file, previewUrl, fileName: file.name });
+  }
+
+  async function openVideoHistoryPreview(item: UploadHistoryPreviewItem) {
+    const found = await getUploadHistoryItem(item.id);
+    if (!found) return;
+    const previewUrl = URL.createObjectURL(found.blob);
+    setHistoryPreviewItem({
+      id: item.id,
+      name: item.name,
+      timestamp: item.timestamp,
+      previewUrl,
+      duration: item.duration,
+      kind: 'video',
+      source: 'video',
+      ownedPreviewUrl: true,
+    });
+    if (Number.isFinite(item.duration) && item.duration && item.duration > 0) {
+      rememberHistoryVideoDuration(item.id, item.duration);
+    }
   }
 
   function rememberHistoryVideoDuration(id: number, seconds: number) {
@@ -3725,14 +3727,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                               clearTimeout(hoverPreviewTimerRef.current);
                               hoverPreviewTimerRef.current = null;
                             }
-                            setHistoryPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'video', source: 'video' });
+                            void openVideoHistoryPreview(item);
                           }}
                         >
                           <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-lg bg-slate-950">
                             <HistoryVideoThumbnail
                               src={item.previewUrl}
                               name={item.name}
-                              onDuration={(seconds) => rememberHistoryVideoDuration(item.id, seconds)}
                             />
                             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/5" />
                             <div className="absolute bottom-1.5 left-1.5 rounded bg-black/45 px-1.5 py-0.5 text-[10px] font-bold text-white/80">
