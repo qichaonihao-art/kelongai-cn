@@ -269,20 +269,29 @@ function getSeedanceCostStats(): { daily: number; monthly: number; yearly: numbe
 }
 
 const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上十二个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。';
-const VIDEO_CONTEXT_ISOLATION_RULE = '本次任务是完全独立的一次视频分析。只能基于当前上传的视频、当前上传的参考图片（如有）、本条指令中的替换要求、额外调整和字幕选项进行判断。不得引用、继承、延续或假设任何历史会话、上一次视频、上一次替换目标、上一次参考图、旧提示词中的主体、道具、场景、动作、挂画、海报、装饰物、文字内容或风格要求。所有主体、道具、动作和场景元素必须来自当前视频可见内容或当前指令明确要求；如果当前视频中没有明确出现某元素，不得写入分析和最终提示词。';
-const VIDEO_REVERSE_PROMPT = (options?: { additionalChange?: string; includeSubtitles?: boolean }) => {
+const VIDEO_CONTEXT_ISOLATION_RULE = '本次任务是完全独立的一次视频分析。只能基于当前上传的视频、当前上传的参考图片（如有）、本条指令中的替换要求、额外调整、人物改造要求和字幕选项进行判断。不得引用、继承、延续或假设任何历史会话、上一次视频、上一次替换目标、上一次参考图、旧提示词中的主体、道具、场景、动作、挂画、海报、装饰物、文字内容或风格要求。所有主体、道具、动作和场景元素必须来自当前视频可见内容或当前指令明确要求；如果当前视频中没有明确出现某元素，不得写入分析和最终提示词。';
+
+function buildCharacterRemixClause(characterRemix?: string) {
+  const text = characterRemix?.trim();
+  if (!text) return '';
+  return `\n\n人物改造要求：${text}\n如果启用了人物改造要求，只允许改变人物设定本身，不得改变原视频中的场景、道具、构图、镜头运动、动作流程、光影、节奏、卷轴/挂画等非人物元素。必须在保持原视频镜头、构图、动作节奏和场景关系不变的前提下，根据用户指定的人物年龄、性别或身份重新设计人物设定。不能只替换年龄或性别标签，也不能机械保留原人物的服装、发型、妆容和气质。必须根据新人物的年龄、性别、身份气质以及当前视频场景，重新合理设计服装、发型、体态、配饰和整体气质；服装要与场景协调，例如书房、客厅、茶室、办公室、展厅、讲台、家居环境等，应选择符合人物年龄身份和场景氛围的自然着装。最终提示词中必须明确写出改造后人物的年龄段、性别、气质、服装、发型、体态，以及这些人物设定如何与当前场景协调，同时保留原视频中可复刻的镜头语言、动作流程、构图、光影和节奏。`;
+}
+
+const VIDEO_REVERSE_PROMPT = (options?: { additionalChange?: string; includeSubtitles?: boolean; characterRemix?: string }) => {
   const additionalChange = options?.additionalChange;
   const includeSubtitles = options?.includeSubtitles ?? false;
+  const characterRemixClause = buildCharacterRemixClause(options?.characterRemix);
   const subtitleClause = includeSubtitles
     ? '11. 如果视频中有人物口播或旁白字幕，必须逐字提取并完整保留在最终提示词中，字幕内容不得遗漏、省略或改写。'
     : '11. 视频中的字幕、文字叠加、人物口播字幕、旁白字幕等所有文字元素均不得保留，必须在复刻时彻底去除，确保输出画面不含任何字幕或文字叠加。';
-  const base = `请把这个视频当作”待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n${VIDEO_CONTEXT_ISOLATION_RULE}\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。\n5. 目标不是”风格相似”，而是”尽量复刻接近原视频”。\n6. 对于画面中的挂画、海报、装饰画、屏幕显示内容等平面元素，必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换或修改后的元素在画面中的空间占比和边界框大小必须与原元素一致。\n7. 如果原视频中存在水印、平台标识、AI生成标记（如”豆包AI生成”等文字或Logo），必须在复刻时去除，不得保留任何水印信息。\n8. 复刻的视频要尽量减少 AI 感，人物、动作、镜头、光影、材质和环境细节都要更自然、更真实，避免塑料感、过度磨皮、虚假光泽、异常肢体、过度电影化和明显的 AI 生成痕迹。\n9. 如果视频中出现人物，必须重点观察并详细描述人物手部动作，包括手指、手腕、手掌与道具或挂画的接触方式、拿取方式、展开方式、扶持位置、发力方向和动作先后顺序，不得只笼统描述为”展示”或”操作”。\n10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：卷轴或卷筒沿轴向旋转，画布从卷筒中逐步释放并展开；不得描述成普通平面图片的滑动、平移或直接展开。\n${subtitleClause}`;
+  const base = `请把这个视频当作”待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n${VIDEO_CONTEXT_ISOLATION_RULE}\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。\n5. 目标不是”风格相似”，而是”尽量复刻接近原视频”。\n6. 对于画面中的挂画、海报、装饰画、屏幕显示内容等平面元素，必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换或修改后的元素在画面中的空间占比和边界框大小必须与原元素一致。\n7. 如果原视频中存在水印、平台标识、AI生成标记（如”豆包AI生成”等文字或Logo），必须在复刻时去除，不得保留任何水印信息。\n8. 复刻的视频要尽量减少 AI 感，人物、动作、镜头、光影、材质和环境细节都要更自然、更真实，避免塑料感、过度磨皮、虚假光泽、异常肢体、过度电影化和明显的 AI 生成痕迹。\n9. 如果视频中出现人物，必须重点观察并详细描述人物手部动作，包括手指、手腕、手掌与道具或挂画的接触方式、拿取方式、展开方式、扶持位置、发力方向和动作先后顺序，不得只笼统描述为”展示”或”操作”。\n10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：卷轴或卷筒沿轴向旋转，画布从卷筒中逐步释放并展开；不得描述成普通平面图片的滑动、平移或直接展开。\n${subtitleClause}${characterRemixClause}`;
   if (!additionalChange?.trim()) return base;
   return `${base}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
 };
-const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, options?: { additionalChange?: string; includeSubtitles?: boolean }) => {
+const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, options?: { additionalChange?: string; includeSubtitles?: boolean; characterRemix?: string }) => {
   const additionalChange = options?.additionalChange;
   const includeSubtitles = options?.includeSubtitles ?? false;
+  const characterRemixClause = buildCharacterRemixClause(options?.characterRemix);
   const subtitleClause = includeSubtitles
     ? '11. 如果视频中有人物口播或旁白字幕，必须逐字提取并完整保留在最终提示词中，字幕内容不得遗漏、省略或改写。'
     : '11. 视频中的字幕、文字叠加、人物口播字幕、旁白字幕等所有文字元素均不得保留，必须在复刻时彻底去除，确保输出画面不含任何字幕或文字叠加。';
@@ -321,7 +330,7 @@ ${VIDEO_CONTEXT_ISOLATION_RULE}
 8. 复刻的视频要尽量减少 AI 感，人物、动作、镜头、光影、材质和环境细节都要更自然、更真实，避免塑料感、过度磨皮、虚假光泽、异常肢体、过度电影化和明显的 AI 生成痕迹。
 9. 如果视频中出现人物，必须重点观察并详细描述人物手部动作，包括手指、手腕、手掌与道具或挂画的接触方式、拿取方式、展开方式、扶持位置、发力方向和动作先后顺序，不得只笼统描述为”展示”或”操作”。
 10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：卷轴或卷筒沿轴向旋转，画布从卷筒中逐步释放并展开；不得描述成普通平面图片的滑动、平移或直接展开。
-${subtitleClause}`;
+${subtitleClause}${characterRemixClause}`;
   if (!additionalChange?.trim()) return base;
   return `${base}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
 };
@@ -867,6 +876,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [replaceTarget, setReplaceTarget] = useState('');
   const [replaceWith, setReplaceWith] = useState('');
   const [additionalChange, setAdditionalChange] = useState('');
+  const [enableCharacterRemix, setEnableCharacterRemix] = useState(false);
+  const [characterRemix, setCharacterRemix] = useState('');
   const [includeSubtitles, setIncludeSubtitles] = useState(false);
   const [additionalChangeHistory, setAdditionalChangeHistory] = useState<string[]>([]);
   const [videoHistory, setVideoHistory] = useState<UploadHistoryPreviewItem[]>([]);
@@ -1437,12 +1448,18 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   }
 
   function prepareVideoReversePrompt() {
+    const characterRemixText = enableCharacterRemix ? characterRemix.trim() : '';
+    if (enableCharacterRemix && !characterRemixText) {
+      setRequestError('请填写人物改造要求，例如：把人物改成80岁左右的女性，服装要符合茶室环境。');
+      return;
+    }
+
     if (reverseMode === 'replace') {
       if (!replaceTarget.trim() || !replaceWith.trim()) {
         setRequestError('请填写需要替换的元素和目标元素');
         return;
       }
-      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { additionalChange, includeSubtitles });
+      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { additionalChange, includeSubtitles, characterRemix: characterRemixText });
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
@@ -1450,7 +1467,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       scrollToRef(textareaRef);
       handleSend(prompt);
     } else {
-      const prompt = VIDEO_REVERSE_PROMPT({ additionalChange, includeSubtitles });
+      const prompt = VIDEO_REVERSE_PROMPT({ additionalChange, includeSubtitles, characterRemix: characterRemixText });
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
@@ -2729,6 +2746,40 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   </div>
                 )}
 
+                <div className="ml-auto flex items-center gap-2">
+                  <input
+                    id="enable-character-remix"
+                    type="checkbox"
+                    checked={enableCharacterRemix}
+                    onChange={(e) => setEnableCharacterRemix(e.target.checked)}
+                    disabled={isLoading}
+                    className="size-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <label htmlFor="enable-character-remix" className="text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                    启用人物改造
+                  </label>
+                </div>
+              </div>
+
+              {enableCharacterRemix && (
+                <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/45 p-3">
+                  <label htmlFor="character-remix" className="text-[11px] font-bold text-indigo-700">人物改造要求</label>
+                  <input
+                    id="character-remix"
+                    type="text"
+                    value={characterRemix}
+                    onChange={(e) => setCharacterRemix(e.target.value)}
+                    placeholder="如：把人物改成80岁左右的女性，服装要符合茶室环境"
+                    disabled={isLoading}
+                    className="mt-1.5 w-full rounded-xl border border-indigo-100 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
+                  />
+                  <p className="mt-1.5 text-[11px] leading-4 text-indigo-500">
+                    只改变人物年龄、性别、气质、发型和服装等人物设定；场景、道具、镜头、动作流程和光影节奏仍按原视频复刻。
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-3 flex justify-end">
                 <div className="flex items-center gap-2 ml-auto">
                   <input
                     id="include-subtitles"
