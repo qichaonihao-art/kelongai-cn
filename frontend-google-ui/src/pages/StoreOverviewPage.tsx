@@ -137,6 +137,7 @@ function getEdgeEndpoints(
 export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewPageProps) {
   const graphContainerRef = useRef<HTMLDivElement>(null);
   const [graphSize, setGraphSize] = useState({ width: 1180, height: 620 });
+  const [graph, setGraph] = useState<StoreOverviewGraph>({ nodes: [], edges: [], settings: { columnOrder: DEFAULT_GRAPH_COLUMN_TYPES } });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [activeType, setActiveType] = useState<StoreOverviewNodeType | 'all'>('all');
   const [newType, setNewType] = useState<StoreOverviewNodeType>('store');
