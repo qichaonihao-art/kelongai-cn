@@ -146,22 +146,12 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   const relatedNodeIds = useMemo(() => {
     if (!selectedNode) return new Set<number>();
     const ids = new Set<number>([selectedNode.id]);
-
-    let changed = true;
-    while (changed) {
-      changed = false;
-      normalizedEdges.forEach(({ source, target }) => {
-        const touchesHighlightedNode = ids.has(source.id) || ids.has(target.id);
-        if (!touchesHighlightedNode) return;
-        const beforeSize = ids.size;
+    normalizedEdges.forEach(({ source, target }) => {
+      if (source.id === selectedNode.id || target.id === selectedNode.id) {
         ids.add(source.id);
         ids.add(target.id);
-        if (ids.size !== beforeSize) {
-          changed = true;
-        }
-      });
-    }
-
+      }
+    });
     return ids;
   }, [normalizedEdges, selectedNode]);
 
@@ -169,12 +159,12 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     if (!selectedNode) return new Set<number>();
     const ids = new Set<number>();
     normalizedEdges.forEach(({ edge, source, target }) => {
-      if (relatedNodeIds.has(source.id) && relatedNodeIds.has(target.id)) {
+      if (source.id === selectedNode.id || target.id === selectedNode.id) {
         ids.add(edge.id);
       }
     });
     return ids;
-  }, [normalizedEdges, relatedNodeIds, selectedNode]);
+  }, [normalizedEdges, selectedNode]);
 
   const visibleNodes = useMemo(() => {
     return graph.nodes.filter((node) => activeType === 'all' || node.type === activeType);
@@ -729,10 +719,10 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       onDoubleClick={() => void persistGraphColumnTypes(DEFAULT_GRAPH_COLUMN_TYPES)}
                       title="拖动可调整整列顺序，双击恢复默认顺序，也可以点左右箭头移动"
                       className={cn(
-                        'absolute top-3 flex cursor-grab items-center gap-1 rounded-full border px-1.5 py-1 text-[10px] font-black shadow-sm transition-all active:cursor-grabbing',
+                        'absolute top-3 flex cursor-grab items-center gap-1.5 rounded-2xl border px-2 py-1.5 text-sm font-black shadow-md transition-all active:cursor-grabbing',
                         draggingColumnType === column.type
                           ? 'border-emerald-200 bg-emerald-50 text-emerald-700 opacity-70'
-                          : 'border-slate-100 bg-white/85 text-slate-500 hover:border-emerald-200 hover:text-emerald-700'
+                          : 'border-slate-200 bg-white/95 text-slate-800 hover:border-emerald-200 hover:text-emerald-700'
                       )}
                       style={{ left: `${column.x}%`, transform: 'translateX(-50%)' }}
                     >
@@ -743,12 +733,12 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                           moveGraphColumn(column.type, -1);
                         }}
                         disabled={graphColumnTypes.indexOf(column.type) === 0}
-                        className="flex size-4 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-20"
+                        className="flex size-5 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-20"
                         title="整列左移"
                       >
-                        <ChevronLeft className="size-3" />
+                        <ChevronLeft className="size-3.5" />
                       </button>
-                      <span className="px-1">{column.label}</span>
+                      <span className="min-w-[54px] px-1 text-center tracking-wide">{column.label}</span>
                       <button
                         type="button"
                         onClick={(event) => {
@@ -756,10 +746,10 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                           moveGraphColumn(column.type, 1);
                         }}
                         disabled={graphColumnTypes.indexOf(column.type) === graphColumnTypes.length - 1}
-                        className="flex size-4 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-20"
+                        className="flex size-5 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-20"
                         title="整列右移"
                       >
-                        <ChevronRight className="size-3" />
+                        <ChevronRight className="size-3.5" />
                       </button>
                     </div>
                   ))}
