@@ -740,6 +740,44 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                     })}
                   </svg>
 
+                  {/* 激活的连线同样放在节点下面，节点卡片负责盖住线头 */}
+                  <svg className="pointer-events-none absolute inset-0 size-full">
+                    {normalizedEdges.map(({ edge, source, target }) => {
+                      const a = graphNodes.get(source.id);
+                      const b = graphNodes.get(target.id);
+                      if (!a || !b) return null;
+                      const active = !selectedNode || relatedEdgeIds.has(edge.id);
+                      if (!active) return null;
+                      const endpoints = getEdgeEndpoints(a, b);
+                      return (
+                        <g key={edge.id}>
+                          <line
+                            x1={`${endpoints.x1}%`}
+                            y1={`${endpoints.y1}%`}
+                            x2={`${endpoints.x2}%`}
+                            y2={`${endpoints.y2}%`}
+                            stroke="transparent"
+                            strokeWidth={14}
+                            strokeLinecap="round"
+                            className="cursor-pointer"
+                            style={{ pointerEvents: 'stroke' }}
+                            onClick={() => void handleDeleteGraphEdge(edge, source, target)}
+                          />
+                          <line
+                            x1={`${endpoints.x1}%`}
+                            y1={`${endpoints.y1}%`}
+                            x2={`${endpoints.x2}%`}
+                            y2={`${endpoints.y2}%`}
+                            stroke="#10b981"
+                            strokeWidth={3}
+                            strokeLinecap="round"
+                            opacity={0.88}
+                          />
+                        </g>
+                      );
+                    })}
+                  </svg>
+
                   {graphColumns.map((column) => {
                     const meta = TYPE_META[column.type];
                     const Icon = meta.icon;
@@ -824,44 +862,6 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                         </button>
                       );
                     })}
-
-                  {/* 激活的连线：放在非激活节点上面、激活节点下面 */}
-                  <svg className="pointer-events-none absolute inset-0 size-full">
-                    {normalizedEdges.map(({ edge, source, target }) => {
-                      const a = graphNodes.get(source.id);
-                      const b = graphNodes.get(target.id);
-                      if (!a || !b) return null;
-                      const active = !selectedNode || relatedEdgeIds.has(edge.id);
-                      if (!active) return null;
-                      const endpoints = getEdgeEndpoints(a, b);
-                      return (
-                        <g key={edge.id}>
-                          <line
-                            x1={`${endpoints.x1}%`}
-                            y1={`${endpoints.y1}%`}
-                            x2={`${endpoints.x2}%`}
-                            y2={`${endpoints.y2}%`}
-                            stroke="transparent"
-                            strokeWidth={14}
-                            strokeLinecap="round"
-                            className="cursor-pointer"
-                            style={{ pointerEvents: 'stroke' }}
-                            onClick={() => void handleDeleteGraphEdge(edge, source, target)}
-                          />
-                          <line
-                            x1={`${endpoints.x1}%`}
-                            y1={`${endpoints.y1}%`}
-                            x2={`${endpoints.x2}%`}
-                            y2={`${endpoints.y2}%`}
-                            stroke="#10b981"
-                            strokeWidth={3}
-                            strokeLinecap="round"
-                            opacity={0.88}
-                          />
-                        </g>
-                      );
-                    })}
-                  </svg>
 
                   {Array.from(graphNodes.values())
                     .filter(({ node }) => {
