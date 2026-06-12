@@ -62,6 +62,13 @@ const NODE_TYPES: {
 const TYPE_META = Object.fromEntries(NODE_TYPES.map((item) => [item.type, item])) as Record<StoreOverviewNodeType, typeof NODE_TYPES[number]>;
 const STORE_RELATION_TYPES: StoreOverviewNodeType[] = ['product', 'video', 'adq', 'supplier'];
 const DEFAULT_GRAPH_COLUMN_TYPES: StoreOverviewNodeType[] = ['video', 'adq', 'store', 'supplier', 'product'];
+const HIGHLIGHT_LEVEL: Record<StoreOverviewNodeType, number> = {
+  store: 0,
+  video: 1,
+  product: 1,
+  adq: 2,
+  supplier: 2,
+};
 
 function normalizeGraphColumnTypes(value: unknown): StoreOverviewNodeType[] {
   const parsed = Array.isArray(value) ? value : [];
@@ -155,12 +162,26 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
       adjacency.set(target.id, [...(adjacency.get(target.id) || []), { node: source, edgeId: edge.id }]);
     });
 
-    (adjacency.get(selectedNode.id) || []).forEach(({ node, edgeId }) => {
-      // 只点亮与选中节点不同类型的一级关联项目
-      if (node.type === selectedNode.type) return;
-      nodeIds.add(node.id);
-      edgeIds.add(edgeId);
-    });
+    const selectedLevel = HIGHLIGHT_LEVEL[selectedNode.type];
+
+    const visited = new Set<number>([selectedNode.id]);
+    let frontier = [{ id: selectedNode.id, level: selectedLevel }];
+    while (frontier.length > 0) {
+      const nextFrontier: { id: number; level: number }[] = [];
+      frontier.forEach(({ id, level }) => {
+        (adjacency.get(id) || []).forEach(({ node, edgeId }) => {
+          if (visited.has(node.id)) return;
+          const nextLevel = HIGHLIGHT_LEVEL[node.type];
+          // 只往层级更高的方向走，避免反向/同类型乱连
+          if (nextLevel <= level) return;
+          visited.add(node.id);
+          nodeIds.add(node.id);
+          edgeIds.add(edgeId);
+          nextFrontier.push({ id: node.id, level: nextLevel });
+        });
+      });
+      frontier = nextFrontier;
+    }
 
     return { nodeIds, edgeIds };
   }, [normalizedEdges, selectedNode]);
