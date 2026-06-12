@@ -145,13 +145,68 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
   const relatedNodeIds = useMemo(() => {
     if (!selectedNode) return new Set<number>();
-    const ids = new Set<number>([selectedNode.id]);
-    normalizedEdges.forEach(({ source, target }) => {
-      if (source.id === selectedNode.id || target.id === selectedNode.id) {
-        ids.add(source.id);
-        ids.add(target.id);
+    const adjacency = new Map<number, { node: StoreOverviewNode; edgeId: number }[]>();
+    normalizedEdges.forEach(({ edge, source, target }) => {
+      adjacency.set(source.id, [...(adjacency.get(source.id) || []), { node: target, edgeId: edge.id }]);
+      adjacency.set(target.id, [...(adjacency.get(target.id) || []), { node: source, edgeId: edge.id }]);
+    });
+
+    const findRelatedStores = () => {
+      if (selectedNode.type === 'store') return new Set<number>([selectedNode.id]);
+      const stores = new Set<number>();
+      const visited = new Set<number>([selectedNode.id]);
+      let frontier = [selectedNode.id];
+
+      while (frontier.length > 0) {
+        const nextFrontier: number[] = [];
+        frontier.forEach((nodeId) => {
+          (adjacency.get(nodeId) || []).forEach(({ node }) => {
+            if (visited.has(node.id)) return;
+            visited.add(node.id);
+            if (node.type === 'store') {
+              stores.add(node.id);
+              return;
+            }
+            nextFrontier.push(node.id);
+          });
+        });
+        frontier = nextFrontier;
+      }
+      return stores;
+    };
+
+    const rootStoreIds = findRelatedStores();
+
+    if (rootStoreIds.size === 0) {
+      const directIds = new Set<number>([selectedNode.id]);
+      (adjacency.get(selectedNode.id) || []).forEach(({ node }) => directIds.add(node.id));
+      return directIds;
+    }
+
+    const ids = new Set<number>();
+    rootStoreIds.forEach((storeId) => ids.add(storeId));
+
+    rootStoreIds.forEach((rootStoreId) => {
+      const visited = new Set<number>([rootStoreId]);
+      let frontier = [rootStoreId];
+
+      while (frontier.length > 0) {
+        const nextFrontier: number[] = [];
+        frontier.forEach((nodeId) => {
+          (adjacency.get(nodeId) || []).forEach(({ node }) => {
+            if (visited.has(node.id)) return;
+            if (node.type === 'store' && node.id !== rootStoreId) return;
+            visited.add(node.id);
+            ids.add(node.id);
+            if (node.type !== 'store') {
+              nextFrontier.push(node.id);
+            }
+          });
+        });
+        frontier = nextFrontier;
       }
     });
+
     return ids;
   }, [normalizedEdges, selectedNode]);
 
@@ -159,12 +214,19 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     if (!selectedNode) return new Set<number>();
     const ids = new Set<number>();
     normalizedEdges.forEach(({ edge, source, target }) => {
-      if (source.id === selectedNode.id || target.id === selectedNode.id) {
+      if (relatedNodeIds.has(source.id) && relatedNodeIds.has(target.id)) {
         ids.add(edge.id);
       }
     });
+    if (ids.size === 0) {
+      normalizedEdges.forEach(({ edge, source, target }) => {
+        if (source.id === selectedNode.id || target.id === selectedNode.id) {
+          ids.add(edge.id);
+        }
+      });
+    }
     return ids;
-  }, [normalizedEdges, selectedNode]);
+  }, [normalizedEdges, relatedNodeIds, selectedNode]);
 
   const visibleNodes = useMemo(() => {
     return graph.nodes.filter((node) => activeType === 'all' || node.type === activeType);
