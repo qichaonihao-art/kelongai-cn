@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -92,10 +92,13 @@ function normalizeEdge(edge: StoreOverviewEdge, nodeMap: Map<number, StoreOvervi
 
 function getEdgePath(
   source: { x: number; y: number },
-  target: { x: number; y: number }
+  target: { x: number; y: number },
+  size: { width: number; height: number }
 ) {
-  const halfW = 6.35;
-  const halfH = 4.5;
+  const cardW = 150;
+  const cardH = 56;
+  const halfW = size.width ? (cardW / 2 / size.width) * 100 : 6.35;
+  const halfH = size.height ? (cardH / 2 / size.height) * 100 : 4.5;
 
   function edgePoint(from: { x: number; y: number }, to: { x: number; y: number }) {
     const dx = to.x - from.x;
@@ -116,6 +119,8 @@ function getEdgePath(
 }
 
 export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewPageProps) {
+  const graphContainerRef = useRef<HTMLDivElement>(null);
+  const [graphSize, setGraphSize] = useState({ width: 1180, height: 620 });
   const [graph, setGraph] = useState<StoreOverviewGraph>({ nodes: [], edges: [], settings: { columnOrder: DEFAULT_GRAPH_COLUMN_TYPES } });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [activeType, setActiveType] = useState<StoreOverviewNodeType | 'all'>('all');
@@ -158,6 +163,24 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
   useEffect(() => {
     void refreshGraph(false);
+  }, []);
+
+  useEffect(() => {
+    const element = graphContainerRef.current;
+    if (!element) return;
+    const update = () => {
+      const width = element.clientWidth;
+      const height = element.clientHeight;
+      setGraphSize((current) => {
+        if (current.width === width && current.height === height) return current;
+        return { width, height };
+      });
+    };
+    update();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
   }, []);
 
   const nodeMap = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
@@ -736,7 +759,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                   </div>
                 </div>
               ) : (
-                <div className="relative h-full min-w-[1180px]">
+                <div ref={graphContainerRef} className="relative h-full min-w-[1180px]">
                   {/* 未激活的连线：放在节点后面 */}
                   <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
                     {normalizedEdges.map(({ edge, source, target }) => {
@@ -745,7 +768,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       if (!a || !b) return null;
                       const active = !selectedNode || relatedEdgeIds.has(edge.id);
                       if (active) return null;
-                      const path = getEdgePath(a, b);
+                      const path = getEdgePath(a, b, graphSize);
                       return (
                         <path
                           key={edge.id}
@@ -771,7 +794,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       if (!a || !b) return null;
                       const active = !selectedNode || relatedEdgeIds.has(edge.id);
                       if (!active) return null;
-                      const path = getEdgePath(a, b);
+                      const path = getEdgePath(a, b, graphSize);
                       return (
                         <g key={edge.id}>
                           <path
