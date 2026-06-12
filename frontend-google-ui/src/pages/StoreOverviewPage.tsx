@@ -750,12 +750,12 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                         <path
                           key={edge.id}
                           d={path}
-                          stroke="#94a3b8"
+                          stroke="#e2e8f0"
                           strokeWidth={1.5}
                           strokeLinecap="round"
                           fill="none"
                           vectorEffect="non-scaling-stroke"
-                          opacity={0.3}
+                          opacity={0.12}
                         >
                           <title>{source.name} → {target.name}</title>
                         </path>
@@ -790,11 +790,11 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                           <path
                             d={path}
                             stroke="#10b981"
-                            strokeWidth={2.8}
+                            strokeWidth={3}
                             strokeLinecap="round"
                             fill="none"
                             vectorEffect="non-scaling-stroke"
-                            opacity={0.86}
+                            opacity={0.88}
                           >
                             <title>{source.name} → {target.name}</title>
                           </path>
