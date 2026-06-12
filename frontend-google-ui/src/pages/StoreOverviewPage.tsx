@@ -94,12 +94,30 @@ function getEdgePath(
   source: { x: number; y: number },
   target: { x: number; y: number }
 ) {
-  const dx = target.x - source.x;
+  const halfW = 6.4;
+  const halfH = 6.3;
+
+  function edgePoint(from: { x: number; y: number }, to: { x: number; y: number }) {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    if (!dx && !dy) return from;
+    const tx = dx ? halfW / Math.abs(dx) : Infinity;
+    const ty = dy ? halfH / Math.abs(dy) : Infinity;
+    const t = Math.min(tx, ty);
+    return {
+      x: from.x + dx * t,
+      y: from.y + dy * t,
+    };
+  }
+
+  const start = edgePoint(source, target);
+  const end = edgePoint(target, source);
+  const dx = end.x - start.x;
   const direction = dx >= 0 ? 1 : -1;
   const offset = Math.max(8, Math.min(18, Math.abs(dx) * 0.45));
-  const c1x = source.x + direction * offset;
-  const c2x = target.x - direction * offset;
-  return `M ${source.x} ${source.y} C ${c1x} ${source.y}, ${c2x} ${target.y}, ${target.x} ${target.y}`;
+  const c1x = start.x + direction * offset;
+  const c2x = end.x - direction * offset;
+  return `M ${start.x} ${start.y} C ${c1x} ${start.y}, ${c2x} ${end.y}, ${end.x} ${end.y}`;
 }
 
 export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewPageProps) {
