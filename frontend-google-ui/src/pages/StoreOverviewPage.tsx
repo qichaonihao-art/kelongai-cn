@@ -54,7 +54,7 @@ const NODE_TYPES: {
 }[] = [
   { type: 'video', label: '视频号', shortLabel: '视频号', icon: Radio, tone: 'bg-sky-500 text-white', soft: 'bg-sky-50 text-sky-700 border-sky-100', column: 0 },
   { type: 'adq', label: 'ADQ', shortLabel: 'ADQ', icon: Megaphone, tone: 'bg-violet-500 text-white', soft: 'bg-violet-50 text-violet-700 border-violet-100', column: 1 },
-  { type: 'store', label: '店铺', shortLabel: '店铺', icon: Store, tone: 'bg-emerald-500 text-white', soft: 'bg-emerald-50 text-emerald-700 border-emerald-100', column: 2 },
+  { type: 'store', label: '店铺/小店广告', shortLabel: '店铺', icon: Store, tone: 'bg-emerald-500 text-white', soft: 'bg-emerald-50 text-emerald-700 border-emerald-100', column: 2 },
   { type: 'supplier', label: '发货商家', shortLabel: '商家', icon: Truck, tone: 'bg-orange-500 text-white', soft: 'bg-orange-50 text-orange-700 border-orange-100', column: 3 },
   { type: 'product', label: '商品', shortLabel: '商品', icon: Boxes, tone: 'bg-rose-500 text-white', soft: 'bg-rose-50 text-rose-700 border-rose-100', column: 4 },
 ];
@@ -695,6 +695,24 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                 </div>
               ) : (
                 <div className="relative h-full min-w-[1180px]">
+                  {graphColumns.map((column) => {
+                    const meta = TYPE_META[column.type];
+                    return (
+                      <div
+                        key={`column-bg-${column.type}`}
+                        className={cn(
+                          'pointer-events-none absolute top-14 bottom-6 rounded-3xl border-2 border-dashed bg-opacity-30',
+                          meta.soft
+                        )}
+                        style={{
+                          left: `${column.x}%`,
+                          width: '196px',
+                          transform: 'translateX(-50%)',
+                        }}
+                      />
+                    );
+                  })}
+
                   <svg className="absolute inset-0 size-full">
                     {normalizedEdges.map(({ edge, source, target }) => {
                       const a = graphNodes.get(source.id);
@@ -730,51 +748,58 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                     })}
                   </svg>
 
-                  {graphColumns.map((column) => (
-                    <div
-                      key={column.type}
-                      draggable
-                      onDragStart={() => setDraggingColumnType(column.type)}
-                      onDragEnd={() => setDraggingColumnType(null)}
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={() => handleColumnDrop(column.type)}
-                      onDoubleClick={() => void persistGraphColumnTypes(DEFAULT_GRAPH_COLUMN_TYPES)}
-                      title="拖动可调整整列顺序，双击恢复默认顺序，也可以点左右箭头移动"
-                      className={cn(
-                        'absolute top-3 flex cursor-grab items-center gap-1.5 rounded-2xl border px-2 py-1.5 text-sm font-black shadow-md transition-all active:cursor-grabbing',
-                        draggingColumnType === column.type
-                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700 opacity-70'
-                          : 'border-slate-200 bg-white/95 text-slate-800 hover:border-emerald-200 hover:text-emerald-700'
-                      )}
-                      style={{ left: `${column.x}%`, transform: 'translateX(-50%)' }}
-                    >
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          moveGraphColumn(column.type, -1);
-                        }}
-                        disabled={graphColumnTypes.indexOf(column.type) === 0}
-                        className="flex size-5 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-20"
-                        title="整列左移"
+                  {graphColumns.map((column) => {
+                    const meta = TYPE_META[column.type];
+                    const Icon = meta.icon;
+                    return (
+                      <div
+                        key={column.type}
+                        draggable
+                        onDragStart={() => setDraggingColumnType(column.type)}
+                        onDragEnd={() => setDraggingColumnType(null)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => handleColumnDrop(column.type)}
+                        onDoubleClick={() => void persistGraphColumnTypes(DEFAULT_GRAPH_COLUMN_TYPES)}
+                        title="拖动可调整整列顺序，双击恢复默认顺序，也可以点左右箭头移动"
+                        className={cn(
+                          'absolute top-3 flex cursor-grab items-center gap-1.5 rounded-2xl border-2 px-2.5 py-1.5 text-sm font-black shadow-lg transition-all active:cursor-grabbing',
+                          draggingColumnType === column.type
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700 opacity-70'
+                            : cn('bg-opacity-90 backdrop-blur-sm hover:opacity-90', meta.soft)
+                        )}
+                        style={{ left: `${column.x}%`, transform: 'translateX(-50%)' }}
                       >
-                        <ChevronLeft className="size-3.5" />
-                      </button>
-                      <span className="min-w-[54px] px-1 text-center tracking-wide">{column.label}</span>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          moveGraphColumn(column.type, 1);
-                        }}
-                        disabled={graphColumnTypes.indexOf(column.type) === graphColumnTypes.length - 1}
-                        className="flex size-5 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-20"
-                        title="整列右移"
-                      >
-                        <ChevronRight className="size-3.5" />
-                      </button>
-                    </div>
-                  ))}
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            moveGraphColumn(column.type, -1);
+                          }}
+                          disabled={graphColumnTypes.indexOf(column.type) === 0}
+                          className="flex size-5 items-center justify-center rounded-full transition-colors hover:bg-white/40 disabled:cursor-not-allowed disabled:opacity-20"
+                          title="整列左移"
+                        >
+                          <ChevronLeft className="size-3.5" />
+                        </button>
+                        <span className="flex min-w-[64px] items-center justify-center gap-1 px-1 text-center tracking-wide">
+                          <Icon className="size-3.5" />
+                          {column.label}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            moveGraphColumn(column.type, 1);
+                          }}
+                          disabled={graphColumnTypes.indexOf(column.type) === graphColumnTypes.length - 1}
+                          className="flex size-5 items-center justify-center rounded-full transition-colors hover:bg-white/40 disabled:cursor-not-allowed disabled:opacity-20"
+                          title="整列右移"
+                        >
+                          <ChevronRight className="size-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
 
                   {Array.from(graphNodes.values()).map(({ node, x, y }) => {
                     const meta = TYPE_META[node.type];
