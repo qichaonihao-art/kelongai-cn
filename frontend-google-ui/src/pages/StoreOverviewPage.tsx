@@ -88,8 +88,7 @@ function normalizeEdge(edge: StoreOverviewEdge, nodeMap: Map<number, StoreOvervi
   if (!source || !target) return null;
   const store = source.type === 'store' ? source : target.type === 'store' ? target : null;
   const related = store?.id === source.id ? target : source;
-  if (!store || !related) return null;
-  return { edge, store, related };
+  return { edge, source, target, store, related };
 }
 
 export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewPageProps) {
@@ -147,10 +146,10 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   const relatedNodeIds = useMemo(() => {
     if (!selectedNode) return new Set<number>();
     const ids = new Set<number>([selectedNode.id]);
-    normalizedEdges.forEach(({ store, related }) => {
-      if (store.id === selectedNode.id || related.id === selectedNode.id) {
-        ids.add(store.id);
-        ids.add(related.id);
+    normalizedEdges.forEach(({ source, target }) => {
+      if (source.id === selectedNode.id || target.id === selectedNode.id) {
+        ids.add(source.id);
+        ids.add(target.id);
       }
     });
     return ids;
@@ -206,11 +205,24 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   }, [isConnectMode]);
 
   function getStoreEdges(storeId: number, type?: StoreOverviewNodeType) {
-    return normalizedEdges.filter(({ store, related }) => store.id === storeId && (!type || related.type === type));
+    return normalizedEdges
+      .filter(({ store, related }) => store?.id === storeId && related && (!type || related.type === type))
+      .map(({ edge, store, related }) => ({ edge, store: store!, related: related! }));
   }
 
   function getRelatedStores(nodeId: number) {
-    return normalizedEdges.filter(({ related }) => related.id === nodeId);
+    return normalizedEdges
+      .filter(({ store, related }) => related?.id === nodeId && store)
+      .map(({ edge, store, related }) => ({ edge, store: store!, related: related! }));
+  }
+
+  function getDirectRelations(nodeId: number) {
+    return normalizedEdges
+      .filter(({ source, target }) => source.id === nodeId || target.id === nodeId)
+      .map(({ edge, source, target }) => ({
+        edge,
+        node: source.id === nodeId ? target : source,
+      }));
   }
 
   function getAvailableTargets(storeId: number, type: StoreOverviewNodeType) {
@@ -385,12 +397,6 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     if (!source) {
       setConnectSourceId(node.id);
       setSelectedId(node.id);
-      return;
-    }
-
-    if (source.type !== 'store' && node.type !== 'store') {
-      setError('当前图谱以店铺为中心，手动连线必须连接一个店铺。');
-      setNotice('');
       return;
     }
 
@@ -651,11 +657,11 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
               ) : (
                 <div className="relative h-full min-w-[1180px]">
                   <svg className="absolute inset-0 size-full">
-                    {normalizedEdges.map(({ edge, store, related }) => {
-                      const a = graphNodes.get(store.id);
-                      const b = graphNodes.get(related.id);
+                    {normalizedEdges.map(({ edge, source, target }) => {
+                      const a = graphNodes.get(source.id);
+                      const b = graphNodes.get(target.id);
                       if (!a || !b) return null;
-                      const active = !selectedNode || relatedNodeIds.has(store.id) && relatedNodeIds.has(related.id);
+                      const active = !selectedNode || relatedNodeIds.has(source.id) && relatedNodeIds.has(target.id);
                       return (
                         <g key={edge.id}>
                           <line
@@ -667,7 +673,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                             strokeWidth={14}
                             strokeLinecap="round"
                             className="cursor-pointer"
-                            onClick={() => void handleDeleteGraphEdge(edge, store, related)}
+                            onClick={() => void handleDeleteGraphEdge(edge, source, target)}
                           />
                           <line
                             x1={`${a.x}%`}
@@ -821,6 +827,38 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                     <Save className="size-3.5" />
                     保存信息
                   </button>
+                </div>
+
+                <div className="space-y-2 border-t border-slate-100 pt-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-black text-slate-800">直接关联</div>
+                    <div className="text-[10px] font-bold text-slate-400">{getDirectRelations(selectedNode.id).length} 条</div>
+                  </div>
+                  <div className="space-y-1.5">
+                    {getDirectRelations(selectedNode.id).length === 0 ? (
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-400">暂无直接关联</div>
+                    ) : getDirectRelations(selectedNode.id).map(({ edge, node }) => (
+                      <div key={edge.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedId(node.id)}
+                          className="min-w-0 truncate text-left text-xs font-bold text-slate-700"
+                        >
+                          <span className={cn('mr-1.5 rounded-full border px-1.5 py-0.5 text-[9px] font-black', TYPE_META[node.type].soft)}>
+                            {TYPE_META[node.type].shortLabel}
+                          </span>
+                          {node.name}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteEdge(edge.id)}
+                          className="shrink-0 text-slate-300 transition-colors hover:text-red-500"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 {selectedNode.type === 'store' ? (

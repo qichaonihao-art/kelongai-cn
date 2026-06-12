@@ -1364,16 +1364,9 @@ function dbInsertStoreOverviewEdge({ sourceId, targetId, relationType, note }) {
     error.statusCode = 400;
     throw error;
   }
-  if (source.type !== 'store' && target.type !== 'store') {
-    const error = new Error('第一版图谱要求关联线必须连接一个店铺');
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const normalizedSourceId = source.type === 'store' ? source.id : target.id;
-  const normalizedTargetId = source.type === 'store' ? target.id : source.id;
-  const normalizedTarget = source.type === 'store' ? target : source;
-  const normalizedRelationType = relationType || normalizedTarget.type || 'linked';
+  const normalizedSourceId = Math.min(source.id, target.id);
+  const normalizedTargetId = Math.max(source.id, target.id);
+  const normalizedRelationType = relationType || `${source.type}_${target.type}`;
   const existing = db.prepare(`
     SELECT * FROM store_overview_edges
     WHERE source_id = ? AND target_id = ? AND relation_type = ?
