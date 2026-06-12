@@ -112,12 +112,7 @@ function getEdgePath(
 
   const start = edgePoint(source, target);
   const end = edgePoint(target, source);
-  const dx = end.x - start.x;
-  const direction = dx >= 0 ? 1 : -1;
-  const offset = Math.max(8, Math.min(18, Math.abs(dx) * 0.45));
-  const c1x = start.x + direction * offset;
-  const c2x = end.x - direction * offset;
-  return `M ${start.x} ${start.y} C ${c1x} ${start.y}, ${c2x} ${end.y}, ${end.x} ${end.y}`;
+  return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
 }
 
 export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewPageProps) {
@@ -234,16 +229,6 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
   const relatedNodeIds = relatedGraph.nodeIds;
   const relatedEdgeIds = relatedGraph.edgeIds;
-  const directEdgeIds = useMemo(() => {
-    const ids = new Set<number>();
-    if (!selectedNode) return ids;
-    normalizedEdges.forEach(({ edge, source, target }) => {
-      if (source.id === selectedNode.id || target.id === selectedNode.id) {
-        ids.add(edge.id);
-      }
-    });
-    return ids;
-  }, [normalizedEdges, selectedNode]);
 
   const visibleNodes = useMemo(() => {
     return graph.nodes.filter((node) => activeType === 'all' || node.type === activeType);
@@ -766,11 +751,11 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                           key={edge.id}
                           d={path}
                           stroke="#cbd5e1"
-                          strokeWidth={1.5}
+                          strokeWidth={1.2}
                           strokeLinecap="round"
                           fill="none"
                           vectorEffect="non-scaling-stroke"
-                          opacity={0.28}
+                          opacity={0.2}
                         >
                           <title>{source.name} → {target.name}</title>
                         </path>
@@ -792,7 +777,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                           <path
                             d={path}
                             stroke="transparent"
-                            strokeWidth={14}
+                            strokeWidth={12}
                             strokeLinecap="round"
                             fill="none"
                             vectorEffect="non-scaling-stroke"
@@ -805,11 +790,11 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                           <path
                             d={path}
                             stroke="#10b981"
-                            strokeWidth={3}
+                            strokeWidth={2.4}
                             strokeLinecap="round"
                             fill="none"
                             vectorEffect="non-scaling-stroke"
-                            opacity={0.88}
+                            opacity={0.76}
                           >
                             <title>{source.name} → {target.name}</title>
                           </path>
@@ -938,32 +923,6 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                         </button>
                       );
                     })}
-
-                  {selectedNode && (
-                    <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
-                      {normalizedEdges.map(({ edge, source, target }) => {
-                        if (!directEdgeIds.has(edge.id)) return null;
-                        const a = graphNodes.get(source.id);
-                        const b = graphNodes.get(target.id);
-                        if (!a || !b) return null;
-                        const path = getEdgePath(a, b);
-                        return (
-                          <path
-                            key={edge.id}
-                            d={path}
-                            stroke="#059669"
-                            strokeWidth={4}
-                            strokeLinecap="round"
-                            fill="none"
-                            vectorEffect="non-scaling-stroke"
-                            opacity={0.96}
-                          >
-                            <title>{source.name} → {target.name}</title>
-                          </path>
-                        );
-                      })}
-                    </svg>
-                  )}
                 </div>
               )}
             </div>
