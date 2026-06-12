@@ -98,16 +98,16 @@ function normalizeEdge(edge: StoreOverviewEdge, nodeMap: Map<number, StoreOvervi
   return { edge, source, target, store, related };
 }
 
-function getEdgeEndpoints(
+function getEdgePath(
   source: { x: number; y: number },
   target: { x: number; y: number }
 ) {
-  return {
-    x1: source.x,
-    y1: source.y,
-    x2: target.x,
-    y2: target.y,
-  };
+  const dx = target.x - source.x;
+  const direction = dx >= 0 ? 1 : -1;
+  const offset = Math.max(8, Math.min(18, Math.abs(dx) * 0.45));
+  const c1x = source.x + direction * offset;
+  const c2x = target.x - direction * offset;
+  return `M ${source.x} ${source.y} C ${c1x} ${source.y}, ${c2x} ${target.y}, ${target.x} ${target.y}`;
 }
 
 export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewPageProps) {
@@ -723,19 +723,19 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       if (!a || !b) return null;
                       const active = !selectedNode || relatedEdgeIds.has(edge.id);
                       if (active) return null;
-                      const endpoints = getEdgeEndpoints(a, b);
+                      const path = getEdgePath(a, b);
                       return (
-                        <line
+                        <path
                           key={edge.id}
-                          x1={`${endpoints.x1}%`}
-                          y1={`${endpoints.y1}%`}
-                          x2={`${endpoints.x2}%`}
-                          y2={`${endpoints.y2}%`}
+                          d={path}
                           stroke="#cbd5e1"
                           strokeWidth={1.5}
                           strokeLinecap="round"
+                          fill="none"
                           opacity={0.28}
-                        />
+                        >
+                          <title>{source.name} → {target.name}</title>
+                        </path>
                       );
                     })}
                   </svg>
@@ -748,31 +748,31 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       if (!a || !b) return null;
                       const active = !selectedNode || relatedEdgeIds.has(edge.id);
                       if (!active) return null;
-                      const endpoints = getEdgeEndpoints(a, b);
+                      const path = getEdgePath(a, b);
                       return (
                         <g key={edge.id}>
-                          <line
-                            x1={`${endpoints.x1}%`}
-                            y1={`${endpoints.y1}%`}
-                            x2={`${endpoints.x2}%`}
-                            y2={`${endpoints.y2}%`}
+                          <path
+                            d={path}
                             stroke="transparent"
                             strokeWidth={14}
                             strokeLinecap="round"
+                            fill="none"
                             className="cursor-pointer"
                             style={{ pointerEvents: 'stroke' }}
                             onClick={() => void handleDeleteGraphEdge(edge, source, target)}
-                          />
-                          <line
-                            x1={`${endpoints.x1}%`}
-                            y1={`${endpoints.y1}%`}
-                            x2={`${endpoints.x2}%`}
-                            y2={`${endpoints.y2}%`}
+                          >
+                            <title>{source.name} → {target.name}</title>
+                          </path>
+                          <path
+                            d={path}
                             stroke="#10b981"
                             strokeWidth={3}
                             strokeLinecap="round"
+                            fill="none"
                             opacity={0.88}
-                          />
+                          >
+                            <title>{source.name} → {target.name}</title>
+                          </path>
                         </g>
                       );
                     })}
