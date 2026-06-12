@@ -143,90 +143,50 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     [graph.edges, nodeMap]
   );
 
-  const relatedNodeIds = useMemo(() => {
-    if (!selectedNode) return new Set<number>();
+  const relatedGraph = useMemo(() => {
+    const nodeIds = new Set<number>();
+    const edgeIds = new Set<number>();
+    if (!selectedNode) return { nodeIds, edgeIds };
+
+    nodeIds.add(selectedNode.id);
     const adjacency = new Map<number, { node: StoreOverviewNode; edgeId: number }[]>();
     normalizedEdges.forEach(({ edge, source, target }) => {
       adjacency.set(source.id, [...(adjacency.get(source.id) || []), { node: target, edgeId: edge.id }]);
       adjacency.set(target.id, [...(adjacency.get(target.id) || []), { node: source, edgeId: edge.id }]);
     });
 
-    const findRelatedStores = () => {
-      if (selectedNode.type === 'store') return new Set<number>([selectedNode.id]);
-      const stores = new Set<number>();
-      const visited = new Set<number>([selectedNode.id]);
-      let frontier = [selectedNode.id];
+    const typeIndex = new Map(graphColumnTypes.map((type, index) => [type, index]));
+    const selectedIndex = typeIndex.get(selectedNode.type) ?? 0;
 
+    const walk = (direction: -1 | 1) => {
+      const visited = new Set<number>([selectedNode.id]);
+      let frontier = [{ id: selectedNode.id, index: selectedIndex }];
       while (frontier.length > 0) {
-        const nextFrontier: number[] = [];
-        frontier.forEach((nodeId) => {
-          (adjacency.get(nodeId) || []).forEach(({ node }) => {
+        const nextFrontier: { id: number; index: number }[] = [];
+        frontier.forEach(({ id, index }) => {
+          (adjacency.get(id) || []).forEach(({ node, edgeId }) => {
             if (visited.has(node.id)) return;
+            const nextIndex = typeIndex.get(node.type);
+            if (nextIndex === undefined) return;
+            if (direction === -1 && nextIndex >= index) return;
+            if (direction === 1 && nextIndex <= index) return;
             visited.add(node.id);
-            if (node.type === 'store') {
-              stores.add(node.id);
-              return;
-            }
-            nextFrontier.push(node.id);
+            nodeIds.add(node.id);
+            edgeIds.add(edgeId);
+            nextFrontier.push({ id: node.id, index: nextIndex });
           });
         });
         frontier = nextFrontier;
       }
-      return stores;
     };
 
-    const rootStoreIds = findRelatedStores();
+    walk(-1);
+    walk(1);
+    return { nodeIds, edgeIds };
+  }, [graphColumnTypes, normalizedEdges, selectedNode]);
 
-    if (rootStoreIds.size === 0) {
-      const directIds = new Set<number>([selectedNode.id]);
-      (adjacency.get(selectedNode.id) || []).forEach(({ node }) => directIds.add(node.id));
-      return directIds;
-    }
-
-    const ids = new Set<number>();
-    rootStoreIds.forEach((storeId) => ids.add(storeId));
-
-    rootStoreIds.forEach((rootStoreId) => {
-      const visited = new Set<number>([rootStoreId]);
-      let frontier = [rootStoreId];
-
-      while (frontier.length > 0) {
-        const nextFrontier: number[] = [];
-        frontier.forEach((nodeId) => {
-          (adjacency.get(nodeId) || []).forEach(({ node }) => {
-            if (visited.has(node.id)) return;
-            if (node.type === 'store' && node.id !== rootStoreId) return;
-            visited.add(node.id);
-            ids.add(node.id);
-            if (node.type !== 'store') {
-              nextFrontier.push(node.id);
-            }
-          });
-        });
-        frontier = nextFrontier;
-      }
-    });
-
-    return ids;
-  }, [normalizedEdges, selectedNode]);
-
-  const relatedEdgeIds = useMemo(() => {
-    if (!selectedNode) return new Set<number>();
-    const ids = new Set<number>();
-    normalizedEdges.forEach(({ edge, source, target }) => {
-      if (relatedNodeIds.has(source.id) && relatedNodeIds.has(target.id)) {
-        ids.add(edge.id);
-      }
-    });
-    if (ids.size === 0) {
-      normalizedEdges.forEach(({ edge, source, target }) => {
-        if (source.id === selectedNode.id || target.id === selectedNode.id) {
-          ids.add(edge.id);
-        }
-      });
-    }
-    return ids;
-  }, [normalizedEdges, relatedNodeIds, selectedNode]);
+  const relatedNodeIds = relatedGraph.nodeIds;
+  const relatedEdgeIds = relatedGraph.edgeIds;
 
   const visibleNodes = useMemo(() => {
     return graph.nodes.filter((node) => activeType === 'all' || node.type === activeType);
