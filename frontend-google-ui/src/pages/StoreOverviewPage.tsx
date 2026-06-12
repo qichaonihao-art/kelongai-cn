@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -98,8 +98,42 @@ function normalizeEdge(edge: StoreOverviewEdge, nodeMap: Map<number, StoreOvervi
   return { edge, source, target, store, related };
 }
 
+function getEdgeEndpoints(
+  source: { x: number; y: number },
+  target: { x: number; y: number },
+  size: { width: number; height: number }
+) {
+  const halfW = 75;
+  const halfH = 34;
+  const sx = (source.x / 100) * size.width;
+  const sy = (source.y / 100) * size.height;
+  const tx = (target.x / 100) * size.width;
+  const ty = (target.y / 100) * size.height;
+
+  function exitPoint(cx: number, cy: number, dx: number, dy: number) {
+    let t = Infinity;
+    if (dx > 0) t = Math.min(t, halfW / dx);
+    else if (dx < 0) t = Math.min(t, -halfW / dx);
+    if (dy > 0) t = Math.min(t, halfH / dy);
+    else if (dy < 0) t = Math.min(t, -halfH / dy);
+    if (!isFinite(t) || t <= 0) return { x: cx, y: cy };
+    return { x: cx + t * dx, y: cy + t * dy };
+  }
+
+  const sEdge = exitPoint(sx, sy, tx - sx, ty - sy);
+  const tEdge = exitPoint(tx, ty, sx - tx, sy - ty);
+
+  return {
+    x1: (sEdge.x / size.width) * 100,
+    y1: (sEdge.y / size.height) * 100,
+    x2: (tEdge.x / size.width) * 100,
+    y2: (tEdge.y / size.height) * 100,
+  };
+}
+
 export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewPageProps) {
-  const [graph, setGraph] = useState<StoreOverviewGraph>({ nodes: [], edges: [], settings: { columnOrder: DEFAULT_GRAPH_COLUMN_TYPES } });
+  const graphContainerRef = useRef<HTMLDivElement>(null);
+  const [graphSize, setGraphSize] = useState({ width: 1180, height: 620 });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [activeType, setActiveType] = useState<StoreOverviewNodeType | 'all'>('all');
   const [newType, setNewType] = useState<StoreOverviewNodeType>('store');
@@ -141,6 +175,18 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
   useEffect(() => {
     void refreshGraph(false);
+  }, []);
+
+  useEffect(() => {
+    const element = graphContainerRef.current;
+    if (!element) return;
+    const update = () => {
+      setGraphSize({ width: element.clientWidth, height: element.clientHeight });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
   }, []);
 
   const nodeMap = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
@@ -702,7 +748,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                   </div>
                 </div>
               ) : (
-                <div className="relative h-full min-w-[1180px]">
+                <div ref={graphContainerRef} className="relative h-full min-w-[1180px]">
                   {/* 未激活的连线：放在节点后面 */}
                   <svg className="pointer-events-none absolute inset-0 size-full">
                     {normalizedEdges.map(({ edge, source, target }) => {
@@ -711,13 +757,14 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       if (!a || !b) return null;
                       const active = !selectedNode || relatedEdgeIds.has(edge.id);
                       if (active) return null;
+                      const endpoints = getEdgeEndpoints(a, b, graphSize);
                       return (
                         <line
                           key={edge.id}
-                          x1={`${a.x}%`}
-                          y1={`${a.y}%`}
-                          x2={`${b.x}%`}
-                          y2={`${b.y}%`}
+                          x1={`${endpoints.x1}%`}
+                          y1={`${endpoints.y1}%`}
+                          x2={`${endpoints.x2}%`}
+                          y2={`${endpoints.y2}%`}
                           stroke="#cbd5e1"
                           strokeWidth={1.5}
                           strokeLinecap="round"
@@ -820,13 +867,14 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       if (!a || !b) return null;
                       const active = !selectedNode || relatedEdgeIds.has(edge.id);
                       if (!active) return null;
+                      const endpoints = getEdgeEndpoints(a, b, graphSize);
                       return (
                         <g key={edge.id}>
                           <line
-                            x1={`${a.x}%`}
-                            y1={`${a.y}%`}
-                            x2={`${b.x}%`}
-                            y2={`${b.y}%`}
+                            x1={`${endpoints.x1}%`}
+                            y1={`${endpoints.y1}%`}
+                            x2={`${endpoints.x2}%`}
+                            y2={`${endpoints.y2}%`}
                             stroke="transparent"
                             strokeWidth={14}
                             strokeLinecap="round"
@@ -835,10 +883,10 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                             onClick={() => void handleDeleteGraphEdge(edge, source, target)}
                           />
                           <line
-                            x1={`${a.x}%`}
-                            y1={`${a.y}%`}
-                            x2={`${b.x}%`}
-                            y2={`${b.y}%`}
+                            x1={`${endpoints.x1}%`}
+                            y1={`${endpoints.y1}%`}
+                            x2={`${endpoints.x2}%`}
+                            y2={`${endpoints.y2}%`}
                             stroke="#10b981"
                             strokeWidth={3}
                             strokeLinecap="round"
