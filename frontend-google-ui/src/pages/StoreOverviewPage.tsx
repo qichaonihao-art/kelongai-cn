@@ -148,42 +148,29 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     const edgeIds = new Set<number>();
     if (!selectedNode) return { nodeIds, edgeIds };
 
-    nodeIds.add(selectedNode.id);
     const adjacency = new Map<number, { node: StoreOverviewNode; edgeId: number }[]>();
     normalizedEdges.forEach(({ edge, source, target }) => {
       adjacency.set(source.id, [...(adjacency.get(source.id) || []), { node: target, edgeId: edge.id }]);
       adjacency.set(target.id, [...(adjacency.get(target.id) || []), { node: source, edgeId: edge.id }]);
     });
 
-    const typeIndex = new Map(graphColumnTypes.map((type, index) => [type, index]));
-    const selectedIndex = typeIndex.get(selectedNode.type) ?? 0;
+    const visited = new Set<number>([selectedNode.id]);
+    const queue = [selectedNode.id];
+    nodeIds.add(selectedNode.id);
 
-    const walk = (direction: -1 | 1) => {
-      const visited = new Set<number>([selectedNode.id]);
-      let frontier = [{ id: selectedNode.id, index: selectedIndex }];
-      while (frontier.length > 0) {
-        const nextFrontier: { id: number; index: number }[] = [];
-        frontier.forEach(({ id, index }) => {
-          (adjacency.get(id) || []).forEach(({ node, edgeId }) => {
-            if (visited.has(node.id)) return;
-            const nextIndex = typeIndex.get(node.type);
-            if (nextIndex === undefined) return;
-            if (direction === -1 && nextIndex >= index) return;
-            if (direction === 1 && nextIndex <= index) return;
-            visited.add(node.id);
-            nodeIds.add(node.id);
-            edgeIds.add(edgeId);
-            nextFrontier.push({ id: node.id, index: nextIndex });
-          });
-        });
-        frontier = nextFrontier;
-      }
-    };
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      (adjacency.get(id) || []).forEach(({ node, edgeId }) => {
+        if (visited.has(node.id)) return;
+        visited.add(node.id);
+        nodeIds.add(node.id);
+        edgeIds.add(edgeId);
+        queue.push(node.id);
+      });
+    }
 
-    walk(-1);
-    walk(1);
     return { nodeIds, edgeIds };
-  }, [graphColumnTypes, normalizedEdges, selectedNode]);
+  }, [normalizedEdges, selectedNode]);
 
   const relatedNodeIds = relatedGraph.nodeIds;
   const relatedEdgeIds = relatedGraph.edgeIds;
@@ -213,7 +200,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     graphColumns.forEach((column) => {
       const items = nodesByType.get(column.type) || [];
       const gap = Math.max(11, 72 / Math.max(items.length, 1));
-      const start = Math.max(10, 50 - ((items.length - 1) * gap) / 2);
+      const start = Math.max(16, 50 - ((items.length - 1) * gap) / 2);
       items.forEach((node, index) => {
         positions.set(node.id, { x: column.x, y: start + index * gap, node });
       });
