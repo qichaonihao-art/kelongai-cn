@@ -132,7 +132,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   const [editName, setEditName] = useState('');
   const [editNote, setEditNote] = useState('');
   const [bindTargetId, setBindTargetId] = useState<Record<string, string>>({});
-  const [isOverviewMode, setIsOverviewMode] = useState(false);
+  const [isOverviewMode, setIsOverviewMode] = useState(true);
   const [isConnectMode, setIsConnectMode] = useState(false);
   const [connectSourceId, setConnectSourceId] = useState<number | null>(null);
   const [graphColumnTypes, setGraphColumnTypes] = useState<StoreOverviewNodeType[]>(DEFAULT_GRAPH_COLUMN_TYPES);
