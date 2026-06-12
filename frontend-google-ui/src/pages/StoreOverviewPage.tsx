@@ -735,7 +735,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
               ) : (
                 <div className="relative h-full min-w-[1180px]">
                   {/* 未激活的连线：放在节点后面 */}
-                  <svg className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
                     {normalizedEdges.map(({ edge, source, target }) => {
                       const a = graphNodes.get(source.id);
                       const b = graphNodes.get(target.id);
@@ -761,7 +761,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                   </svg>
 
                   {/* 激活的连线同样放在节点下面，节点卡片负责盖住线头 */}
-                  <svg className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
                     {normalizedEdges.map(({ edge, source, target }) => {
                       const a = graphNodes.get(source.id);
                       const b = graphNodes.get(target.id);
@@ -922,7 +922,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                     })}
 
                   {selectedNode && (
-                    <svg className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
                       {normalizedEdges.map(({ edge, source, target }) => {
                         if (!directEdgeIds.has(edge.id)) return null;
                         const a = graphNodes.get(source.id);
