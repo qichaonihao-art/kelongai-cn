@@ -183,6 +183,13 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
       frontier = nextFrontier;
     }
 
+    // 补亮已被点亮节点之间的跨层级边（例如两个商品都连到同一个商家）
+    normalizedEdges.forEach(({ edge, source, target }) => {
+      if (!nodeIds.has(source.id) || !nodeIds.has(target.id)) return;
+      if (HIGHLIGHT_LEVEL[source.type] === HIGHLIGHT_LEVEL[target.type]) return;
+      edgeIds.add(edge.id);
+    });
+
     return { nodeIds, edgeIds };
   }, [normalizedEdges, selectedNode]);
 
