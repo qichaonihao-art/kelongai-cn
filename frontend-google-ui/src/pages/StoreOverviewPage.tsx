@@ -94,8 +94,8 @@ function getEdgePath(
   source: { x: number; y: number },
   target: { x: number; y: number }
 ) {
-  const halfW = 6.4;
-  const halfH = 6.3;
+  const halfW = 6.35;
+  const halfH = 4.5;
 
   function edgePoint(from: { x: number; y: number }, to: { x: number; y: number }) {
     const dx = to.x - from.x;
