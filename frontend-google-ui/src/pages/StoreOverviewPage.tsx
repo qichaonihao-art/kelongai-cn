@@ -703,37 +703,26 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                 </div>
               ) : (
                 <div className="relative h-full min-w-[1180px]">
-                  <svg className="absolute inset-0 size-full">
+                  {/* 未激活的连线：放在节点后面 */}
+                  <svg className="pointer-events-none absolute inset-0 size-full">
                     {normalizedEdges.map(({ edge, source, target }) => {
                       const a = graphNodes.get(source.id);
                       const b = graphNodes.get(target.id);
                       if (!a || !b) return null;
                       const active = !selectedNode || relatedEdgeIds.has(edge.id);
+                      if (active) return null;
                       return (
-                        <g key={edge.id}>
-                          <line
-                            x1={`${a.x}%`}
-                            y1={`${a.y}%`}
-                            x2={`${b.x}%`}
-                            y2={`${b.y}%`}
-                            stroke="transparent"
-                            strokeWidth={14}
-                            strokeLinecap="round"
-                            className="cursor-pointer"
-                            onClick={() => void handleDeleteGraphEdge(edge, source, target)}
-                          />
-                          <line
-                            x1={`${a.x}%`}
-                            y1={`${a.y}%`}
-                            x2={`${b.x}%`}
-                            y2={`${b.y}%`}
-                            stroke={active ? '#10b981' : '#cbd5e1'}
-                            strokeWidth={active ? 3 : 1.5}
-                            strokeLinecap="round"
-                            opacity={active ? 0.88 : 0.28}
-                            className="pointer-events-none"
-                          />
-                        </g>
+                        <line
+                          key={edge.id}
+                          x1={`${a.x}%`}
+                          y1={`${a.y}%`}
+                          x2={`${b.x}%`}
+                          y2={`${b.y}%`}
+                          stroke="#cbd5e1"
+                          strokeWidth={1.5}
+                          strokeLinecap="round"
+                          opacity={0.28}
+                        />
                       );
                     })}
                   </svg>
@@ -823,6 +812,43 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       </button>
                     );
                   })}
+
+                  {/* 激活的连线：放在节点上面，避免被节点卡片挡住 */}
+                  <svg className="absolute inset-0 size-full">
+                    {normalizedEdges.map(({ edge, source, target }) => {
+                      const a = graphNodes.get(source.id);
+                      const b = graphNodes.get(target.id);
+                      if (!a || !b) return null;
+                      const active = !selectedNode || relatedEdgeIds.has(edge.id);
+                      if (!active) return null;
+                      return (
+                        <g key={edge.id}>
+                          <line
+                            x1={`${a.x}%`}
+                            y1={`${a.y}%`}
+                            x2={`${b.x}%`}
+                            y2={`${b.y}%`}
+                            stroke="transparent"
+                            strokeWidth={14}
+                            strokeLinecap="round"
+                            className="cursor-pointer"
+                            onClick={() => void handleDeleteGraphEdge(edge, source, target)}
+                          />
+                          <line
+                            x1={`${a.x}%`}
+                            y1={`${a.y}%`}
+                            x2={`${b.x}%`}
+                            y2={`${b.y}%`}
+                            stroke="#10b981"
+                            strokeWidth={3}
+                            strokeLinecap="round"
+                            opacity={0.88}
+                            className="pointer-events-none"
+                          />
+                        </g>
+                      );
+                    })}
+                  </svg>
                 </div>
               )}
             </div>
