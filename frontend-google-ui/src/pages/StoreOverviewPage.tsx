@@ -62,7 +62,6 @@ const NODE_TYPES: {
 const TYPE_META = Object.fromEntries(NODE_TYPES.map((item) => [item.type, item])) as Record<StoreOverviewNodeType, typeof NODE_TYPES[number]>;
 const STORE_RELATION_TYPES: StoreOverviewNodeType[] = ['product', 'video', 'adq', 'supplier'];
 const DEFAULT_GRAPH_COLUMN_TYPES: StoreOverviewNodeType[] = ['video', 'adq', 'store', 'supplier', 'product'];
-const HIGHLIGHT_TYPE_ORDER: StoreOverviewNodeType[] = ['video', 'adq', 'store', 'product', 'supplier'];
 
 function normalizeGraphColumnTypes(value: unknown): StoreOverviewNodeType[] {
   const parsed = Array.isArray(value) ? value : [];
@@ -149,37 +148,19 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     const edgeIds = new Set<number>();
     if (!selectedNode) return { nodeIds, edgeIds };
 
+    nodeIds.add(selectedNode.id);
     const adjacency = new Map<number, { node: StoreOverviewNode; edgeId: number }[]>();
     normalizedEdges.forEach(({ edge, source, target }) => {
       adjacency.set(source.id, [...(adjacency.get(source.id) || []), { node: target, edgeId: edge.id }]);
       adjacency.set(target.id, [...(adjacency.get(target.id) || []), { node: source, edgeId: edge.id }]);
     });
 
-    const typeIndex = new Map(HIGHLIGHT_TYPE_ORDER.map((type, index) => [type, index]));
-    const selectedIndex = typeIndex.get(selectedNode.type) ?? 0;
-
-    const visited = new Set<number>([selectedNode.id]);
-    const queue: { id: number; depth: number; index: number }[] = [
-      { id: selectedNode.id, depth: 0, index: selectedIndex },
-    ];
-    nodeIds.add(selectedNode.id);
-
-    while (queue.length > 0) {
-      const { id, depth, index } = queue.shift()!;
-      (adjacency.get(id) || []).forEach(({ node, edgeId }) => {
-        if (visited.has(node.id)) return;
-        const nextIndex = typeIndex.get(node.type);
-        if (nextIndex === undefined) return;
-        // 第一跳：任意方向都亮；第二跳开始只往层级更后的方向走
-        if (depth >= 1 && nextIndex <= index) return;
-        visited.add(node.id);
-        nodeIds.add(node.id);
-        edgeIds.add(edgeId);
-        if (depth < 2) {
-          queue.push({ id: node.id, depth: depth + 1, index: nextIndex });
-        }
-      });
-    }
+    (adjacency.get(selectedNode.id) || []).forEach(({ node, edgeId }) => {
+      // 只点亮与选中节点不同类型的一级关联项目
+      if (node.type === selectedNode.type) return;
+      nodeIds.add(node.id);
+      edgeIds.add(edgeId);
+    });
 
     return { nodeIds, edgeIds };
   }, [normalizedEdges, selectedNode]);
