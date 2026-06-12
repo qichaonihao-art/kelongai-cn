@@ -55,7 +55,7 @@ const NODE_TYPES: {
   { type: 'video', label: '视频号', shortLabel: '视频号', icon: Radio, tone: 'bg-sky-500 text-white', soft: 'bg-sky-50 text-sky-700 border-sky-100', column: 0 },
   { type: 'adq', label: 'ADQ', shortLabel: 'ADQ', icon: Megaphone, tone: 'bg-violet-500 text-white', soft: 'bg-violet-50 text-violet-700 border-violet-100', column: 1 },
   { type: 'store', label: '店铺/小店广告', shortLabel: '店铺', icon: Store, tone: 'bg-emerald-500 text-white', soft: 'bg-emerald-50 text-emerald-700 border-emerald-100', column: 2 },
-  { type: 'supplier', label: '发货商家', shortLabel: '商家', icon: Truck, tone: 'bg-orange-500 text-white', soft: 'bg-orange-50 text-orange-700 border-orange-100', column: 3 },
+  { type: 'supplier', label: '商家', shortLabel: '商家', icon: Truck, tone: 'bg-orange-500 text-white', soft: 'bg-orange-50 text-orange-700 border-orange-100', column: 3 },
   { type: 'product', label: '商品', shortLabel: '商品', icon: Boxes, tone: 'bg-rose-500 text-white', soft: 'bg-rose-50 text-rose-700 border-rose-100', column: 4 },
 ];
 
@@ -695,18 +695,6 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                 </div>
               ) : (
                 <div className="relative h-full min-w-[1180px]">
-                  {graphColumns.map((column) => (
-                    <div
-                      key={`column-bg-${column.type}`}
-                      className="pointer-events-none absolute top-14 bottom-6 rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50/30"
-                      style={{
-                        left: `${column.x}%`,
-                        width: '196px',
-                        transform: 'translateX(-50%)',
-                      }}
-                    />
-                  ))}
-
                   <svg className="absolute inset-0 size-full">
                     {normalizedEdges.map(({ edge, source, target }) => {
                       const a = graphNodes.get(source.id);
