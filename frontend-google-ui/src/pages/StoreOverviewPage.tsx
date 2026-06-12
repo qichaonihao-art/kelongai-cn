@@ -62,14 +62,6 @@ const NODE_TYPES: {
 const TYPE_META = Object.fromEntries(NODE_TYPES.map((item) => [item.type, item])) as Record<StoreOverviewNodeType, typeof NODE_TYPES[number]>;
 const STORE_RELATION_TYPES: StoreOverviewNodeType[] = ['product', 'video', 'adq', 'supplier'];
 const DEFAULT_GRAPH_COLUMN_TYPES: StoreOverviewNodeType[] = ['video', 'adq', 'store', 'supplier', 'product'];
-const HIGHLIGHT_LEVEL: Record<StoreOverviewNodeType, number> = {
-  store: 0,
-  video: 1,
-  product: 1,
-  adq: 2,
-  supplier: 2,
-};
-
 function normalizeGraphColumnTypes(value: unknown): StoreOverviewNodeType[] {
   const parsed = Array.isArray(value) ? value : [];
   const valid = parsed.filter((type): type is StoreOverviewNodeType => DEFAULT_GRAPH_COLUMN_TYPES.includes(type));
@@ -174,36 +166,53 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
       adjacency.set(target.id, [...(adjacency.get(target.id) || []), { node: source, edgeId: edge.id }]);
     });
 
-    const selectedLevel = HIGHLIGHT_LEVEL[selectedNode.type];
-
+    const typeIndex = new Map(graphColumnTypes.map((type, index) => [type, index]));
+    const selectedIndex = typeIndex.get(selectedNode.type) ?? 0;
     const visited = new Set<number>([selectedNode.id]);
-    let frontier = [{ id: selectedNode.id, level: selectedLevel }];
+    let frontier: { id: number; index: number; direction: -1 | 1 }[] = [];
+
+    (adjacency.get(selectedNode.id) || []).forEach(({ node, edgeId }) => {
+      const nextIndex = typeIndex.get(node.type);
+      if (nextIndex === undefined || nextIndex === selectedIndex) return;
+      visited.add(node.id);
+      nodeIds.add(node.id);
+      edgeIds.add(edgeId);
+      frontier.push({
+        id: node.id,
+        index: nextIndex,
+        direction: nextIndex < selectedIndex ? -1 : 1,
+      });
+    });
+
     while (frontier.length > 0) {
-      const nextFrontier: { id: number; level: number }[] = [];
-      frontier.forEach(({ id, level }) => {
+      const nextFrontier: { id: number; index: number; direction: -1 | 1 }[] = [];
+      frontier.forEach(({ id, index, direction }) => {
         (adjacency.get(id) || []).forEach(({ node, edgeId }) => {
           if (visited.has(node.id)) return;
-          const nextLevel = HIGHLIGHT_LEVEL[node.type];
-          // 只往层级更高的方向走，避免反向/同类型乱连
-          if (nextLevel <= level) return;
+          const nextIndex = typeIndex.get(node.type);
+          if (nextIndex === undefined) return;
+          if (direction === -1 && nextIndex >= index) return;
+          if (direction === 1 && nextIndex <= index) return;
           visited.add(node.id);
           nodeIds.add(node.id);
           edgeIds.add(edgeId);
-          nextFrontier.push({ id: node.id, level: nextLevel });
+          nextFrontier.push({ id: node.id, index: nextIndex, direction });
         });
       });
       frontier = nextFrontier;
     }
 
-    // 补亮已被点亮节点之间的跨层级边（例如两个商品都连到同一个商家）
+    // 补亮已被点亮节点之间、且方向不回头的跨类目边。
     normalizedEdges.forEach(({ edge, source, target }) => {
       if (!nodeIds.has(source.id) || !nodeIds.has(target.id)) return;
-      if (HIGHLIGHT_LEVEL[source.type] === HIGHLIGHT_LEVEL[target.type]) return;
+      const sourceIndex = typeIndex.get(source.type);
+      const targetIndex = typeIndex.get(target.type);
+      if (sourceIndex === undefined || targetIndex === undefined || sourceIndex === targetIndex) return;
       edgeIds.add(edge.id);
     });
 
     return { nodeIds, edgeIds };
-  }, [normalizedEdges, selectedNode]);
+  }, [graphColumnTypes, normalizedEdges, selectedNode]);
 
   const relatedNodeIds = relatedGraph.nodeIds;
   const relatedEdgeIds = relatedGraph.edgeIds;
