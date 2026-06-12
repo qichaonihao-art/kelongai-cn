@@ -290,7 +290,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
       adjacency.get(target.id)?.add(source.id);
     });
 
-    const colorsByNode = new Map<number, string[]>();
+    const dotsByNode = new Map<number, { color: string; active: boolean }[]>();
     const visited = new Set<number>();
     let groupIndex = 0;
 
@@ -299,21 +299,30 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
       const color = PRODUCT_VIDEO_DOT_COLORS[groupIndex % PRODUCT_VIDEO_DOT_COLORS.length];
       groupIndex += 1;
       const stack = [startId];
+      const groupNodeIds: number[] = [];
       visited.add(startId);
 
       while (stack.length > 0) {
         const id = stack.pop()!;
-        colorsByNode.set(id, [...(colorsByNode.get(id) || []), color]);
+        groupNodeIds.push(id);
         adjacency.get(id)?.forEach((nextId) => {
           if (visited.has(nextId)) return;
           visited.add(nextId);
           stack.push(nextId);
         });
       }
+
+      groupNodeIds.forEach((id) => {
+        const active = isProductVideoMode || !selectedNode || (
+          relatedNodeIds.has(id)
+          && Array.from(adjacency.get(id) || []).some((nextId) => relatedNodeIds.has(nextId))
+        );
+        dotsByNode.set(id, [...(dotsByNode.get(id) || []), { color, active }]);
+      });
     });
 
-    return colorsByNode;
-  }, [productVideoEdges]);
+    return dotsByNode;
+  }, [isProductVideoMode, productVideoEdges, relatedNodeIds, selectedNode]);
 
   const visibleNodes = useMemo(() => {
     return graph.nodes.filter((node) => {
@@ -622,9 +631,6 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     }, `已连接“${source.name}”和“${node.name}”`);
   }
 
-  const totalStores = graph.nodes.filter((node) => node.type === 'store').length;
-  const graphRelationCount = isProductVideoMode ? productVideoEdges.length : normalizedEdges.length;
-
   return (
     <div className="min-h-screen bg-[#f3f6fb] text-slate-900">
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/85 backdrop-blur-md">
@@ -642,15 +648,71 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
             </button>
             <ModuleQuickNav current="collection" onNavigate={onNavigate} />
           </div>
-          <button
-            type="button"
-            onClick={() => void refreshGraph(true)}
-            disabled={isLoading || isSaving}
-            className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-60"
-          >
-            <RefreshCw className={cn('size-3.5', isLoading && 'animate-spin')} />
-            刷新同步
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void refreshGraph(true)}
+              disabled={isLoading || isSaving}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-60"
+            >
+              <RefreshCw className={cn('size-3.5', isLoading && 'animate-spin')} />
+              刷新同步
+            </button>
+            <div className="hidden items-center gap-2 text-[11px] font-bold text-slate-400 lg:flex">
+              <Link2 className="size-3.5" />
+              {isProductVideoMode ? '连接商品和视频号' : isConnectMode ? '先点起点，再点终点' : '点击节点查看关联'}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setIsConnectMode((value) => !value);
+                setIsProductVideoMode(false);
+                setConnectSourceId(null);
+                setNotice('');
+                setError('');
+              }}
+              className={cn(
+                'inline-flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-black shadow-sm transition-colors',
+                isConnectMode
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+              )}
+            >
+              <Link2 className="size-3.5" />
+              {isConnectMode ? '连线中' : '手动连线'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsProductVideoMode((value) => {
+                  const next = !value;
+                  setIsConnectMode(next);
+                  setConnectSourceId(null);
+                  setSelectedId(null);
+                  setNotice(next ? '商品视频号模式：先点商品或视频号，再点对应项目' : '');
+                  setError('');
+                  return next;
+                });
+              }}
+              className={cn(
+                'inline-flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-black shadow-sm transition-colors',
+                isProductVideoMode
+                  ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+              )}
+            >
+              <Radio className="size-3.5" />
+              {isProductVideoMode ? '退出商品视频号' : '商品视频号'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsOverviewMode((value) => !value)}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-black text-slate-600 shadow-sm transition-colors hover:bg-slate-50"
+            >
+              {isOverviewMode ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+              {isOverviewMode ? '恢复编辑' : '只看总览'}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -813,74 +875,9 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
           )}
 
           <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-              <div>
-                <h2 className="text-sm font-black text-slate-900">图谱视图</h2>
-                <p className="text-[11px] font-medium text-slate-400">
-                  {isProductVideoMode ? `${graphRelationCount} 组商品视频号对应` : `${totalStores} 个店铺，${graphRelationCount} 条关联线`}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="hidden items-center gap-2 text-[11px] font-bold text-slate-400 sm:flex">
-                  <Link2 className="size-3.5" />
-                  {isProductVideoMode ? '连接商品和视频号' : isConnectMode ? '先点起点，再点终点' : '点击节点查看关联'}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsConnectMode((value) => !value);
-                    setIsProductVideoMode(false);
-                    setConnectSourceId(null);
-                    setNotice('');
-                    setError('');
-                  }}
-                  className={cn(
-                    'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[11px] font-black shadow-sm transition-colors',
-                    isConnectMode
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                  )}
-                >
-                  <Link2 className="size-3.5" />
-                  {isConnectMode ? '连线中' : '手动连线'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsProductVideoMode((value) => {
-                      const next = !value;
-                      setIsConnectMode(next);
-                      setConnectSourceId(null);
-                      setSelectedId(null);
-                      setNotice(next ? '商品视频号模式：先点商品或视频号，再点对应项目' : '');
-                      setError('');
-                      return next;
-                    });
-                  }}
-                  className={cn(
-                    'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[11px] font-black shadow-sm transition-colors',
-                    isProductVideoMode
-                      ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
-                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                  )}
-                >
-                  <Radio className="size-3.5" />
-                  {isProductVideoMode ? '退出商品视频号' : '商品视频号'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsOverviewMode((value) => !value)}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-black text-slate-600 shadow-sm transition-colors hover:bg-slate-50"
-                >
-                  {isOverviewMode ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-                  {isOverviewMode ? '恢复编辑' : '只看总览'}
-                </button>
-              </div>
-            </div>
-
             <div className={cn(
               'relative overflow-auto bg-slate-50',
-              isOverviewMode ? 'h-[calc(100vh-250px)] min-h-[720px]' : 'h-[620px]'
+              isOverviewMode ? 'h-[calc(100vh-190px)] min-h-[760px]' : 'h-[680px]'
             )}>
               {isLoading ? (
                 <div className="flex h-full items-center justify-center text-sm font-bold text-slate-400">
@@ -1037,11 +1034,14 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                         >
                           {(productVideoDotMap.get(node.id)?.length || 0) > 0 && (
                             <span className="absolute right-2 top-2 flex max-w-[56px] flex-wrap justify-end gap-1">
-                              {productVideoDotMap.get(node.id)?.slice(0, 4).map((color, index) => (
+                              {productVideoDotMap.get(node.id)?.slice(0, 4).map((dot, index) => (
                                 <span
-                                  key={`${color}-${index}`}
-                                  className="size-2.5 rounded-full border border-white shadow-sm"
-                                  style={{ backgroundColor: color }}
+                                  key={`${dot.color}-${index}`}
+                                  className={cn(
+                                    'size-2.5 rounded-full border border-white shadow-sm',
+                                    !dot.active && 'opacity-60'
+                                  )}
+                                  style={{ backgroundColor: dot.active ? dot.color : '#cbd5e1' }}
                                 />
                               ))}
                             </span>
@@ -1084,11 +1084,14 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                         >
                           {(productVideoDotMap.get(node.id)?.length || 0) > 0 && (
                             <span className="absolute right-2 top-2 flex max-w-[56px] flex-wrap justify-end gap-1">
-                              {productVideoDotMap.get(node.id)?.slice(0, 4).map((color, index) => (
+                              {productVideoDotMap.get(node.id)?.slice(0, 4).map((dot, index) => (
                                 <span
-                                  key={`${color}-${index}`}
-                                  className="size-2.5 rounded-full border border-white shadow-sm"
-                                  style={{ backgroundColor: color }}
+                                  key={`${dot.color}-${index}`}
+                                  className={cn(
+                                    'size-2.5 rounded-full border border-white shadow-sm',
+                                    !dot.active && 'opacity-60'
+                                  )}
+                                  style={{ backgroundColor: dot.active ? dot.color : '#cbd5e1' }}
                                 />
                               ))}
                             </span>
