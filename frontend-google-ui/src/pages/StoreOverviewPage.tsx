@@ -62,6 +62,19 @@ const NODE_TYPES: {
 const TYPE_META = Object.fromEntries(NODE_TYPES.map((item) => [item.type, item])) as Record<StoreOverviewNodeType, typeof NODE_TYPES[number]>;
 const STORE_RELATION_TYPES: StoreOverviewNodeType[] = ['product', 'video', 'adq', 'supplier'];
 const DEFAULT_GRAPH_COLUMN_TYPES: StoreOverviewNodeType[] = ['video', 'adq', 'store', 'supplier', 'product'];
+const PRODUCT_VIDEO_RELATION = 'product_video';
+const PRODUCT_VIDEO_DOT_COLORS = [
+  '#ef4444',
+  '#f97316',
+  '#eab308',
+  '#22c55e',
+  '#06b6d4',
+  '#3b82f6',
+  '#8b5cf6',
+  '#ec4899',
+  '#14b8a6',
+  '#f43f5e',
+];
 function normalizeGraphColumnTypes(value: unknown): StoreOverviewNodeType[] {
   const parsed = Array.isArray(value) ? value : [];
   const valid = parsed.filter((type): type is StoreOverviewNodeType => DEFAULT_GRAPH_COLUMN_TYPES.includes(type));
@@ -134,6 +147,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   const [bindTargetId, setBindTargetId] = useState<Record<string, string>>({});
   const [isOverviewMode, setIsOverviewMode] = useState(true);
   const [isConnectMode, setIsConnectMode] = useState(false);
+  const [isProductVideoMode, setIsProductVideoMode] = useState(false);
   const [connectSourceId, setConnectSourceId] = useState<number | null>(null);
   const [graphColumnTypes, setGraphColumnTypes] = useState<StoreOverviewNodeType[]>(DEFAULT_GRAPH_COLUMN_TYPES);
   const [draggingColumnType, setDraggingColumnType] = useState<StoreOverviewNodeType | null>(null);
@@ -185,9 +199,24 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
   const nodeMap = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
   const selectedNode = selectedId ? nodeMap.get(selectedId) || null : null;
-  const normalizedEdges = useMemo(
+  const allNormalizedEdges = useMemo(
     () => graph.edges.map((edge) => normalizeEdge(edge, nodeMap)).filter((item): item is NonNullable<typeof item> => Boolean(item)),
     [graph.edges, nodeMap]
+  );
+  const productVideoEdges = useMemo(
+    () => allNormalizedEdges.filter(({ edge, source, target }) => (
+      edge.relation_type === PRODUCT_VIDEO_RELATION
+      || (source.type === 'product' && target.type === 'video')
+      || (source.type === 'video' && target.type === 'product')
+    )),
+    [allNormalizedEdges]
+  );
+  const normalizedEdges = useMemo(
+    () => allNormalizedEdges.filter(({ edge, source, target }) => (
+      edge.relation_type !== PRODUCT_VIDEO_RELATION
+      && !((source.type === 'product' && target.type === 'video') || (source.type === 'video' && target.type === 'product'))
+    )),
+    [allNormalizedEdges]
   );
 
   const relatedGraph = useMemo(() => {
@@ -252,10 +281,46 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
   const relatedNodeIds = relatedGraph.nodeIds;
   const relatedEdgeIds = relatedGraph.edgeIds;
+  const productVideoDotMap = useMemo(() => {
+    const adjacency = new Map<number, Set<number>>();
+    productVideoEdges.forEach(({ source, target }) => {
+      if (!adjacency.has(source.id)) adjacency.set(source.id, new Set());
+      if (!adjacency.has(target.id)) adjacency.set(target.id, new Set());
+      adjacency.get(source.id)?.add(target.id);
+      adjacency.get(target.id)?.add(source.id);
+    });
+
+    const colorsByNode = new Map<number, string[]>();
+    const visited = new Set<number>();
+    let groupIndex = 0;
+
+    adjacency.forEach((_, startId) => {
+      if (visited.has(startId)) return;
+      const color = PRODUCT_VIDEO_DOT_COLORS[groupIndex % PRODUCT_VIDEO_DOT_COLORS.length];
+      groupIndex += 1;
+      const stack = [startId];
+      visited.add(startId);
+
+      while (stack.length > 0) {
+        const id = stack.pop()!;
+        colorsByNode.set(id, [...(colorsByNode.get(id) || []), color]);
+        adjacency.get(id)?.forEach((nextId) => {
+          if (visited.has(nextId)) return;
+          visited.add(nextId);
+          stack.push(nextId);
+        });
+      }
+    });
+
+    return colorsByNode;
+  }, [productVideoEdges]);
 
   const visibleNodes = useMemo(() => {
-    return graph.nodes.filter((node) => activeType === 'all' || node.type === activeType);
-  }, [activeType, graph.nodes]);
+    return graph.nodes.filter((node) => {
+      if (isProductVideoMode) return node.type === 'product' || node.type === 'video';
+      return activeType === 'all' || node.type === activeType;
+    });
+  }, [activeType, graph.nodes, isProductVideoMode]);
 
   const nodesByType = useMemo(() => {
     const data = new Map<StoreOverviewNodeType, StoreOverviewNode[]>();
@@ -266,12 +331,15 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   }, [visibleNodes]);
 
   const graphColumns = useMemo(() => {
-    return graphColumnTypes.map((type, index) => ({
+    const visibleColumnTypes = isProductVideoMode
+      ? graphColumnTypes.filter((type) => type === 'video' || type === 'product')
+      : graphColumnTypes;
+    return visibleColumnTypes.map((type, index) => ({
       type,
       label: TYPE_META[type].label,
-      x: ((index + 0.5) / graphColumnTypes.length) * 100,
+      x: ((index + 0.5) / visibleColumnTypes.length) * 100,
     }));
-  }, [graphColumnTypes]);
+  }, [graphColumnTypes, isProductVideoMode]);
 
   const graphNodes = useMemo(() => {
     const positions = new Map<number, { x: number; y: number; node: StoreOverviewNode }>();
@@ -326,6 +394,13 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   function getAvailableTargets(storeId: number, type: StoreOverviewNodeType) {
     const linkedIds = new Set(getStoreEdges(storeId, type).map(({ related }) => related.id));
     return graph.nodes.filter((node) => node.type === type && !linkedIds.has(node.id));
+  }
+
+  function hasProductVideoEdge(sourceId: number, targetId: number) {
+    return productVideoEdges.some(({ source, target }) => (
+      (source.id === sourceId && target.id === targetId)
+      || (source.id === targetId && target.id === sourceId)
+    ));
   }
 
   async function runAction(action: () => Promise<void>, successText?: string) {
@@ -471,9 +546,17 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     void persistGraphColumnTypes(next);
   }
 
+  const graphLineEdges = isProductVideoMode ? productVideoEdges : normalizedEdges;
+
   async function handleGraphNodeClick(node: StoreOverviewNode) {
     if (!isConnectMode) {
       setSelectedId(node.id);
+      return;
+    }
+
+    if (isProductVideoMode && node.type !== 'product' && node.type !== 'video') {
+      setError('商品视频号模式下只能选择商品或视频号');
+      setNotice('');
       return;
     }
 
@@ -504,6 +587,33 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
       return;
     }
 
+    if (isProductVideoMode) {
+      const isProductVideoPair = [source.type, node.type].includes('product') && [source.type, node.type].includes('video');
+      if (!isProductVideoPair) {
+        setError('商品视频号模式下只能连接商品和视频号');
+        setNotice('');
+        return;
+      }
+
+      await runAction(async () => {
+        if (hasProductVideoEdge(source.id, node.id)) {
+          setConnectSourceId(null);
+          setSelectedId(node.id);
+          return;
+        }
+        await createStoreOverviewEdge({ sourceId: source.id, targetId: node.id, relationType: PRODUCT_VIDEO_RELATION });
+        setConnectSourceId(null);
+        setSelectedId(node.id);
+      }, `已对应“${source.name}”和“${node.name}”`);
+      return;
+    }
+
+    if ([source.type, node.type].includes('product') && [source.type, node.type].includes('video')) {
+      setError('商品和视频号的对应关系请使用“商品视频号”模式编辑');
+      setNotice('');
+      return;
+    }
+
     const relationType = source.type === 'store' ? node.type : source.type;
     await runAction(async () => {
       await createStoreOverviewEdge({ sourceId: source.id, targetId: node.id, relationType });
@@ -513,6 +623,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   }
 
   const totalStores = graph.nodes.filter((node) => node.type === 'store').length;
+  const graphRelationCount = isProductVideoMode ? productVideoEdges.length : normalizedEdges.length;
 
   return (
     <div className="min-h-screen bg-[#f3f6fb] text-slate-900">
@@ -705,17 +816,20 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
               <div>
                 <h2 className="text-sm font-black text-slate-900">图谱视图</h2>
-                <p className="text-[11px] font-medium text-slate-400">{totalStores} 个店铺，{graph.edges.length} 条关联线</p>
+                <p className="text-[11px] font-medium text-slate-400">
+                  {isProductVideoMode ? `${graphRelationCount} 组商品视频号对应` : `${totalStores} 个店铺，${graphRelationCount} 条关联线`}
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <div className="hidden items-center gap-2 text-[11px] font-bold text-slate-400 sm:flex">
                   <Link2 className="size-3.5" />
-                  {isConnectMode ? '先点起点，再点终点' : '点击节点查看关联'}
+                  {isProductVideoMode ? '连接商品和视频号' : isConnectMode ? '先点起点，再点终点' : '点击节点查看关联'}
                 </div>
                 <button
                   type="button"
                   onClick={() => {
                     setIsConnectMode((value) => !value);
+                    setIsProductVideoMode(false);
                     setConnectSourceId(null);
                     setNotice('');
                     setError('');
@@ -729,6 +843,29 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                 >
                   <Link2 className="size-3.5" />
                   {isConnectMode ? '连线中' : '手动连线'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProductVideoMode((value) => {
+                      const next = !value;
+                      setIsConnectMode(next);
+                      setConnectSourceId(null);
+                      setSelectedId(null);
+                      setNotice(next ? '商品视频号模式：先点商品或视频号，再点对应项目' : '');
+                      setError('');
+                      return next;
+                    });
+                  }}
+                  className={cn(
+                    'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[11px] font-black shadow-sm transition-colors',
+                    isProductVideoMode
+                      ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  )}
+                >
+                  <Radio className="size-3.5" />
+                  {isProductVideoMode ? '退出商品视频号' : '商品视频号'}
                 </button>
                 <button
                   type="button"
@@ -762,11 +899,11 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                 <div ref={graphContainerRef} className="relative h-full min-w-[1180px]">
                   {/* 未激活的连线：放在节点后面 */}
                   <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
-                    {normalizedEdges.map(({ edge, source, target }) => {
+                    {graphLineEdges.map(({ edge, source, target }) => {
                       const a = graphNodes.get(source.id);
                       const b = graphNodes.get(target.id);
                       if (!a || !b) return null;
-                      const active = !selectedNode || relatedEdgeIds.has(edge.id);
+                      const active = isProductVideoMode || !selectedNode || relatedEdgeIds.has(edge.id);
                       if (active) return null;
                       const path = getEdgePath(a, b, graphSize);
                       return (
@@ -788,11 +925,11 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
                   {/* 激活的连线同样放在节点下面，节点卡片负责盖住线头 */}
                   <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
-                    {normalizedEdges.map(({ edge, source, target }) => {
+                    {graphLineEdges.map(({ edge, source, target }) => {
                       const a = graphNodes.get(source.id);
                       const b = graphNodes.get(target.id);
                       if (!a || !b) return null;
-                      const active = !selectedNode || relatedEdgeIds.has(edge.id);
+                      const active = isProductVideoMode || !selectedNode || relatedEdgeIds.has(edge.id);
                       if (!active) return null;
                       const path = getEdgePath(a, b, graphSize);
                       return (
@@ -881,7 +1018,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
                   {Array.from(graphNodes.values())
                     .filter(({ node }) => {
-                      const related = !selectedNode || relatedNodeIds.has(node.id);
+                      const related = isProductVideoMode || !selectedNode || relatedNodeIds.has(node.id);
                       return !related;
                     })
                     .map(({ node, x, y }) => {
@@ -898,6 +1035,17 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                           )}
                           style={{ left: `${x}%`, top: `${y}%` }}
                         >
+                          {(productVideoDotMap.get(node.id)?.length || 0) > 0 && (
+                            <span className="absolute right-2 top-2 flex max-w-[56px] flex-wrap justify-end gap-1">
+                              {productVideoDotMap.get(node.id)?.slice(0, 4).map((color, index) => (
+                                <span
+                                  key={`${color}-${index}`}
+                                  className="size-2.5 rounded-full border border-white shadow-sm"
+                                  style={{ backgroundColor: color }}
+                                />
+                              ))}
+                            </span>
+                          )}
                           <div className="flex items-center gap-2">
                             <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-xl', meta.tone)}>
                               <Icon className="size-4" />
@@ -913,7 +1061,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
                   {Array.from(graphNodes.values())
                     .filter(({ node }) => {
-                      const related = !selectedNode || relatedNodeIds.has(node.id);
+                      const related = isProductVideoMode || !selectedNode || relatedNodeIds.has(node.id);
                       return related;
                     })
                     .map(({ node, x, y }) => {
@@ -934,6 +1082,17 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                           )}
                           style={{ left: `${x}%`, top: `${y}%` }}
                         >
+                          {(productVideoDotMap.get(node.id)?.length || 0) > 0 && (
+                            <span className="absolute right-2 top-2 flex max-w-[56px] flex-wrap justify-end gap-1">
+                              {productVideoDotMap.get(node.id)?.slice(0, 4).map((color, index) => (
+                                <span
+                                  key={`${color}-${index}`}
+                                  className="size-2.5 rounded-full border border-white shadow-sm"
+                                  style={{ backgroundColor: color }}
+                                />
+                              ))}
+                            </span>
+                          )}
                           <div className="flex items-center gap-2">
                             <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-xl', meta.tone)}>
                               <Icon className="size-4" />
