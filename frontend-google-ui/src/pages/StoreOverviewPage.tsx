@@ -146,14 +146,35 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   const relatedNodeIds = useMemo(() => {
     if (!selectedNode) return new Set<number>();
     const ids = new Set<number>([selectedNode.id]);
-    normalizedEdges.forEach(({ source, target }) => {
-      if (source.id === selectedNode.id || target.id === selectedNode.id) {
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      normalizedEdges.forEach(({ source, target }) => {
+        const touchesHighlightedNode = ids.has(source.id) || ids.has(target.id);
+        if (!touchesHighlightedNode) return;
+        const beforeSize = ids.size;
         ids.add(source.id);
         ids.add(target.id);
+        if (ids.size !== beforeSize) {
+          changed = true;
+        }
+      });
+    }
+
+    return ids;
+  }, [normalizedEdges, selectedNode]);
+
+  const relatedEdgeIds = useMemo(() => {
+    if (!selectedNode) return new Set<number>();
+    const ids = new Set<number>();
+    normalizedEdges.forEach(({ edge, source, target }) => {
+      if (relatedNodeIds.has(source.id) && relatedNodeIds.has(target.id)) {
+        ids.add(edge.id);
       }
     });
     return ids;
-  }, [normalizedEdges, selectedNode]);
+  }, [normalizedEdges, relatedNodeIds, selectedNode]);
 
   const visibleNodes = useMemo(() => {
     return graph.nodes.filter((node) => activeType === 'all' || node.type === activeType);
@@ -397,6 +418,12 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     if (!source) {
       setConnectSourceId(node.id);
       setSelectedId(node.id);
+      return;
+    }
+
+    if (source.type === node.type) {
+      setError(`同一类目内不需要互相连线，请选择其他类目的项目。`);
+      setNotice('');
       return;
     }
 
@@ -661,7 +688,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       const a = graphNodes.get(source.id);
                       const b = graphNodes.get(target.id);
                       if (!a || !b) return null;
-                      const active = !selectedNode || relatedNodeIds.has(source.id) && relatedNodeIds.has(target.id);
+                      const active = !selectedNode || relatedEdgeIds.has(edge.id);
                       return (
                         <g key={edge.id}>
                           <line

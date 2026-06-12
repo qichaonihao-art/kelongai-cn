@@ -1364,6 +1364,11 @@ function dbInsertStoreOverviewEdge({ sourceId, targetId, relationType, note }) {
     error.statusCode = 400;
     throw error;
   }
+  if (source.type === target.type) {
+    const error = new Error('同一类目内不需要互相连线，请选择其他类目的项目');
+    error.statusCode = 400;
+    throw error;
+  }
   const normalizedSourceId = Math.min(source.id, target.id);
   const normalizedTargetId = Math.max(source.id, target.id);
   const normalizedRelationType = relationType || `${source.type}_${target.type}`;
