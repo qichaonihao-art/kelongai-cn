@@ -640,6 +640,23 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
   return (
     <div className="min-h-screen bg-[#f3f6fb] text-slate-900">
+      <style>
+        {`
+          @keyframes storeOverviewDotPulse {
+            0%, 100% {
+              transform: scale(1);
+              box-shadow: 0 0 0 0 rgba(15, 23, 42, 0.16);
+            }
+            50% {
+              transform: scale(1.24);
+              box-shadow: 0 0 0 4px rgba(15, 23, 42, 0);
+            }
+          }
+          .store-overview-dot-pulse {
+            animation: storeOverviewDotPulse 1.8s ease-in-out infinite;
+          }
+        `}
+      </style>
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/85 backdrop-blur-md">
         <div className="flex h-14 items-center justify-between gap-4 px-5">
           <div className="flex items-center gap-3">
@@ -1039,6 +1056,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                                   key={`${dot.color}-${index}`}
                                   className={cn(
                                     'size-2.5 rounded-full border border-white shadow-sm',
+                                    dot.active && 'store-overview-dot-pulse',
                                     !dot.active && 'opacity-60'
                                   )}
                                   style={{ backgroundColor: dot.active ? dot.color : '#cbd5e1' }}
@@ -1089,6 +1107,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                                   key={`${dot.color}-${index}`}
                                   className={cn(
                                     'size-2.5 rounded-full border border-white shadow-sm',
+                                    dot.active && 'store-overview-dot-pulse',
                                     !dot.active && 'opacity-60'
                                   )}
                                   style={{ backgroundColor: dot.active ? dot.color : '#cbd5e1' }}
