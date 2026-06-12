@@ -5,8 +5,11 @@ import {
   Building2,
   Check,
   Link2,
+  ListPlus,
   Loader2,
+  Maximize2,
   Megaphone,
+  Minimize2,
   Plus,
   Radio,
   RefreshCw,
@@ -83,9 +86,12 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   const [newType, setNewType] = useState<StoreOverviewNodeType>('store');
   const [newName, setNewName] = useState('');
   const [newNote, setNewNote] = useState('');
+  const [createMode, setCreateMode] = useState<'single' | 'batch'>('batch');
+  const [batchNames, setBatchNames] = useState('');
   const [editName, setEditName] = useState('');
   const [editNote, setEditNote] = useState('');
   const [bindTargetId, setBindTargetId] = useState<Record<string, string>>({});
+  const [isOverviewMode, setIsOverviewMode] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
@@ -211,6 +217,28 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     }, '项目已新增');
   }
 
+  async function handleCreateBatchNodes() {
+    const names = Array.from(new Set(
+      batchNames
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    ));
+    if (names.length === 0) {
+      setError(`请先填写${TYPE_META[newType].label}名称，每行一个`);
+      return;
+    }
+
+    await runAction(async () => {
+      let lastNode: StoreOverviewNode | null = null;
+      for (const name of names) {
+        lastNode = await createStoreOverviewNode({ type: newType, name });
+      }
+      setSelectedId(lastNode?.id || null);
+      setBatchNames('');
+    }, `已批量新增 ${names.length} 个${TYPE_META[newType].label}`);
+  }
+
   async function handleSaveSelected() {
     if (!selectedNode) return;
     const name = editName.trim();
@@ -318,11 +346,15 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
           </div>
         )}
 
-        <section className="grid min-h-[680px] gap-4 xl:grid-cols-[300px_minmax(0,1fr)_360px]">
+        <section className={cn(
+          'grid min-h-[680px] gap-4',
+          isOverviewMode ? 'grid-cols-1' : 'xl:grid-cols-[300px_minmax(0,1fr)_360px]'
+        )}>
+          {!isOverviewMode && (
           <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-black text-slate-900">新增项目</h2>
-              <Plus className="size-4 text-slate-400" />
+              <ListPlus className="size-4 text-slate-400" />
             </div>
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
@@ -341,28 +373,77 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                   </button>
                 ))}
               </div>
-              <input
-                value={newName}
-                onChange={(event) => setNewName(event.target.value)}
-                placeholder={`${TYPE_META[newType].label}名称`}
-                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold outline-none transition-colors focus:border-emerald-400"
-              />
-              <textarea
-                value={newNote}
-                onChange={(event) => setNewNote(event.target.value)}
-                placeholder="备注，可不填"
-                rows={3}
-                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium outline-none transition-colors focus:border-emerald-400"
-              />
-              <button
-                type="button"
-                onClick={() => void handleCreateNode()}
-                disabled={isSaving}
-                className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 text-xs font-black text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
-              >
-                {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                新增到图谱
-              </button>
+              <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => setCreateMode('batch')}
+                  className={cn(
+                    'h-8 rounded-lg text-xs font-black transition-all',
+                    createMode === 'batch' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  )}
+                >
+                  批量新增
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateMode('single')}
+                  className={cn(
+                    'h-8 rounded-lg text-xs font-black transition-all',
+                    createMode === 'single' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  )}
+                >
+                  单个新增
+                </button>
+              </div>
+
+              {createMode === 'batch' ? (
+                <>
+                  <textarea
+                    value={batchNames}
+                    onChange={(event) => setBatchNames(event.target.value)}
+                    placeholder={`一行一个${TYPE_META[newType].label}名称\n例如：\n${TYPE_META[newType].label}1\n${TYPE_META[newType].label}2\n${TYPE_META[newType].label}3`}
+                    rows={8}
+                    className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold leading-5 outline-none transition-colors placeholder:text-slate-300 focus:border-emerald-400"
+                  />
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] leading-4 text-slate-500">
+                    当前将新增 {batchNames.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).length} 个{TYPE_META[newType].label}，系统会自动忽略空行和本次重复名称。
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleCreateBatchNodes()}
+                    disabled={isSaving}
+                    className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 text-xs font-black text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
+                  >
+                    {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <ListPlus className="size-3.5" />}
+                    批量新增{TYPE_META[newType].label}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <input
+                    value={newName}
+                    onChange={(event) => setNewName(event.target.value)}
+                    placeholder={`${TYPE_META[newType].label}名称`}
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold outline-none transition-colors focus:border-emerald-400"
+                  />
+                  <textarea
+                    value={newNote}
+                    onChange={(event) => setNewNote(event.target.value)}
+                    placeholder="备注，可不填"
+                    rows={3}
+                    className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium outline-none transition-colors focus:border-emerald-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleCreateNode()}
+                    disabled={isSaving}
+                    className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 text-xs font-black text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
+                  >
+                    {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                    新增到图谱
+                  </button>
+                </>
+              )}
             </div>
 
             <div className="mt-6 border-t border-slate-100 pt-4">
@@ -390,6 +471,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
               </div>
             </div>
           </aside>
+          )}
 
           <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
@@ -397,13 +479,26 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                 <h2 className="text-sm font-black text-slate-900">图谱视图</h2>
                 <p className="text-[11px] font-medium text-slate-400">{totalStores} 个店铺，{graph.edges.length} 条关联线</p>
               </div>
-              <div className="flex items-center gap-2 text-[11px] font-bold text-slate-400">
-                <Link2 className="size-3.5" />
-                点击节点查看关联
+              <div className="flex items-center gap-2">
+                <div className="hidden items-center gap-2 text-[11px] font-bold text-slate-400 sm:flex">
+                  <Link2 className="size-3.5" />
+                  点击节点查看关联
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsOverviewMode((value) => !value)}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-black text-slate-600 shadow-sm transition-colors hover:bg-slate-50"
+                >
+                  {isOverviewMode ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+                  {isOverviewMode ? '恢复编辑' : '只看总览'}
+                </button>
               </div>
             </div>
 
-            <div className="relative h-[620px] overflow-auto bg-[linear-gradient(#eef2f7_1px,transparent_1px),linear-gradient(90deg,#eef2f7_1px,transparent_1px)] bg-[size:28px_28px]">
+            <div className={cn(
+              'relative overflow-auto bg-[linear-gradient(#eef2f7_1px,transparent_1px),linear-gradient(90deg,#eef2f7_1px,transparent_1px)] bg-[size:28px_28px]',
+              isOverviewMode ? 'h-[calc(100vh-250px)] min-h-[720px]' : 'h-[620px]'
+            )}>
               {isLoading ? (
                 <div className="flex h-full items-center justify-center text-sm font-bold text-slate-400">
                   <Loader2 className="mr-2 size-5 animate-spin" />
@@ -485,6 +580,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
             </div>
           </section>
 
+          {!isOverviewMode && (
           <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             {!selectedNode ? (
               <div className="flex h-full min-h-[360px] items-center justify-center text-center">
@@ -647,6 +743,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
               </div>
             )}
           </aside>
+          )}
         </section>
       </main>
       <SiteFooter />
