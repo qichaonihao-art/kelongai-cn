@@ -216,6 +216,16 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
   const relatedNodeIds = relatedGraph.nodeIds;
   const relatedEdgeIds = relatedGraph.edgeIds;
+  const directEdgeIds = useMemo(() => {
+    const ids = new Set<number>();
+    if (!selectedNode) return ids;
+    normalizedEdges.forEach(({ edge, source, target }) => {
+      if (source.id === selectedNode.id || target.id === selectedNode.id) {
+        ids.add(edge.id);
+      }
+    });
+    return ids;
+  }, [normalizedEdges, selectedNode]);
 
   const visibleNodes = useMemo(() => {
     return graph.nodes.filter((node) => activeType === 'all' || node.type === activeType);
@@ -910,6 +920,32 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                         </button>
                       );
                     })}
+
+                  {selectedNode && (
+                    <svg className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                      {normalizedEdges.map(({ edge, source, target }) => {
+                        if (!directEdgeIds.has(edge.id)) return null;
+                        const a = graphNodes.get(source.id);
+                        const b = graphNodes.get(target.id);
+                        if (!a || !b) return null;
+                        const path = getEdgePath(a, b);
+                        return (
+                          <path
+                            key={edge.id}
+                            d={path}
+                            stroke="#059669"
+                            strokeWidth={4}
+                            strokeLinecap="round"
+                            fill="none"
+                            vectorEffect="non-scaling-stroke"
+                            opacity={0.96}
+                          >
+                            <title>{source.name} → {target.name}</title>
+                          </path>
+                        );
+                      })}
+                    </svg>
+                  )}
                 </div>
               )}
             </div>
