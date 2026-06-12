@@ -108,8 +108,8 @@ function getEdgePath(
   target: { x: number; y: number },
   size: { width: number; height: number }
 ) {
-  const cardW = 150;
-  const cardH = 56;
+  const cardW = 130;
+  const cardH = 46;
   const halfW = size.width ? (cardW / 2 / size.width) * 100 : 6.35;
   const halfH = size.height ? (cardH / 2 / size.height) * 100 : 4.5;
 
