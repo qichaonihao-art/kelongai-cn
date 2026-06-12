@@ -354,8 +354,8 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     const positions = new Map<number, { x: number; y: number; node: StoreOverviewNode }>();
     graphColumns.forEach((column) => {
       const items = nodesByType.get(column.type) || [];
-      const gap = Math.max(11, 72 / Math.max(items.length, 1));
-      const start = Math.max(16, 50 - ((items.length - 1) * gap) / 2);
+      const gap = Math.max(10, 68 / Math.max(items.length, 1));
+      const start = Math.max(22, 54 - ((items.length - 1) * gap) / 2);
       items.forEach((node, index) => {
         positions.set(node.id, { x: column.x, y: start + index * gap, node });
       });
@@ -726,14 +726,6 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
             </div>
             <h1 className="mt-0.5 text-lg font-black tracking-tight text-slate-950">店铺关系图谱</h1>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-1.5 text-center">
-            {NODE_TYPES.map(({ type, label, soft }) => (
-              <div key={type} className={cn('inline-flex items-center gap-1.5 rounded-full border px-2 py-1', soft)}>
-                <span className="text-xs font-black">{graph.nodes.filter((node) => node.type === type).length}</span>
-                <span className="text-[10px] font-bold">{label}</span>
-              </div>
-            ))}
-          </div>
         </section>
         )}
 
@@ -894,6 +886,18 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                 </div>
               ) : (
                 <div ref={graphContainerRef} className="relative h-full min-w-[1180px]">
+                  <div className="pointer-events-none absolute left-1/2 top-3 z-10 flex -translate-x-1/2 flex-wrap justify-center gap-2">
+                    {NODE_TYPES.map(({ type, label, soft }) => (
+                      <div
+                        key={type}
+                        className={cn('inline-flex h-8 items-center gap-2 rounded-full border px-3 shadow-sm backdrop-blur-sm', soft)}
+                      >
+                        <span className="text-sm font-black">{graph.nodes.filter((node) => node.type === type).length}</span>
+                        <span className="text-xs font-black">{label}</span>
+                      </div>
+                    ))}
+                  </div>
+
                   {/* 未激活的连线：放在节点后面 */}
                   <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
                     {graphLineEdges.map(({ edge, source, target }) => {
@@ -974,7 +978,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                         onDoubleClick={() => void persistGraphColumnTypes(DEFAULT_GRAPH_COLUMN_TYPES)}
                         title="拖动可调整整列顺序，双击恢复默认顺序，也可以点左右箭头移动"
                         className={cn(
-                          'absolute top-3 flex cursor-grab items-center gap-1.5 rounded-2xl border-2 px-2.5 py-1.5 text-sm font-black shadow-lg transition-all active:cursor-grabbing',
+                          'absolute top-12 flex cursor-grab items-center gap-1.5 rounded-2xl border-2 px-2.5 py-1.5 text-sm font-black shadow-lg transition-all active:cursor-grabbing',
                           draggingColumnType === column.type
                             ? 'border-emerald-200 bg-emerald-50 text-emerald-700 opacity-70'
                             : cn('bg-opacity-90 backdrop-blur-sm hover:opacity-90', meta.soft)
