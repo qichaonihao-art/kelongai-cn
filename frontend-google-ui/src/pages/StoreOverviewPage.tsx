@@ -149,7 +149,6 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     const edgeIds = new Set<number>();
     if (!selectedNode) return { nodeIds, edgeIds };
 
-    nodeIds.add(selectedNode.id);
     const adjacency = new Map<number, { node: StoreOverviewNode; edgeId: number }[]>();
     normalizedEdges.forEach(({ edge, source, target }) => {
       adjacency.set(source.id, [...(adjacency.get(source.id) || []), { node: target, edgeId: edge.id }]);
@@ -159,30 +158,29 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     const typeIndex = new Map(HIGHLIGHT_TYPE_ORDER.map((type, index) => [type, index]));
     const selectedIndex = typeIndex.get(selectedNode.type) ?? 0;
 
-    const walk = (direction: -1 | 1) => {
-      const visited = new Set<number>([selectedNode.id]);
-      let frontier = [{ id: selectedNode.id, index: selectedIndex }];
-      while (frontier.length > 0) {
-        const nextFrontier: { id: number; index: number }[] = [];
-        frontier.forEach(({ id, index }) => {
-          (adjacency.get(id) || []).forEach(({ node, edgeId }) => {
-            if (visited.has(node.id)) return;
-            const nextIndex = typeIndex.get(node.type);
-            if (nextIndex === undefined) return;
-            if (direction === -1 && nextIndex >= index) return;
-            if (direction === 1 && nextIndex <= index) return;
-            visited.add(node.id);
-            nodeIds.add(node.id);
-            edgeIds.add(edgeId);
-            nextFrontier.push({ id: node.id, index: nextIndex });
-          });
-        });
-        frontier = nextFrontier;
-      }
-    };
+    const visited = new Set<number>([selectedNode.id]);
+    const queue: { id: number; depth: number; index: number }[] = [
+      { id: selectedNode.id, depth: 0, index: selectedIndex },
+    ];
+    nodeIds.add(selectedNode.id);
 
-    walk(-1);
-    walk(1);
+    while (queue.length > 0) {
+      const { id, depth, index } = queue.shift()!;
+      (adjacency.get(id) || []).forEach(({ node, edgeId }) => {
+        if (visited.has(node.id)) return;
+        const nextIndex = typeIndex.get(node.type);
+        if (nextIndex === undefined) return;
+        // 第一跳：任意方向都亮；第二跳开始只往层级更后的方向走
+        if (depth >= 1 && nextIndex <= index) return;
+        visited.add(node.id);
+        nodeIds.add(node.id);
+        edgeIds.add(edgeId);
+        if (depth < 2) {
+          queue.push({ id: node.id, depth: depth + 1, index: nextIndex });
+        }
+      });
+    }
+
     return { nodeIds, edgeIds };
   }, [normalizedEdges, selectedNode]);
 
