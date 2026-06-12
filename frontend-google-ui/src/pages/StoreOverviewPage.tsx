@@ -62,6 +62,7 @@ const NODE_TYPES: {
 const TYPE_META = Object.fromEntries(NODE_TYPES.map((item) => [item.type, item])) as Record<StoreOverviewNodeType, typeof NODE_TYPES[number]>;
 const STORE_RELATION_TYPES: StoreOverviewNodeType[] = ['product', 'video', 'adq', 'supplier'];
 const DEFAULT_GRAPH_COLUMN_TYPES: StoreOverviewNodeType[] = ['video', 'adq', 'store', 'supplier', 'product'];
+const HIGHLIGHT_TYPE_ORDER: StoreOverviewNodeType[] = ['video', 'adq', 'store', 'product', 'supplier'];
 
 function normalizeGraphColumnTypes(value: unknown): StoreOverviewNodeType[] {
   const parsed = Array.isArray(value) ? value : [];
@@ -148,27 +149,40 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     const edgeIds = new Set<number>();
     if (!selectedNode) return { nodeIds, edgeIds };
 
+    nodeIds.add(selectedNode.id);
     const adjacency = new Map<number, { node: StoreOverviewNode; edgeId: number }[]>();
     normalizedEdges.forEach(({ edge, source, target }) => {
       adjacency.set(source.id, [...(adjacency.get(source.id) || []), { node: target, edgeId: edge.id }]);
       adjacency.set(target.id, [...(adjacency.get(target.id) || []), { node: source, edgeId: edge.id }]);
     });
 
-    const visited = new Set<number>([selectedNode.id]);
-    const queue = [selectedNode.id];
-    nodeIds.add(selectedNode.id);
+    const typeIndex = new Map(HIGHLIGHT_TYPE_ORDER.map((type, index) => [type, index]));
+    const selectedIndex = typeIndex.get(selectedNode.type) ?? 0;
 
-    while (queue.length > 0) {
-      const id = queue.shift()!;
-      (adjacency.get(id) || []).forEach(({ node, edgeId }) => {
-        if (visited.has(node.id)) return;
-        visited.add(node.id);
-        nodeIds.add(node.id);
-        edgeIds.add(edgeId);
-        queue.push(node.id);
-      });
-    }
+    const walk = (direction: -1 | 1) => {
+      const visited = new Set<number>([selectedNode.id]);
+      let frontier = [{ id: selectedNode.id, index: selectedIndex }];
+      while (frontier.length > 0) {
+        const nextFrontier: { id: number; index: number }[] = [];
+        frontier.forEach(({ id, index }) => {
+          (adjacency.get(id) || []).forEach(({ node, edgeId }) => {
+            if (visited.has(node.id)) return;
+            const nextIndex = typeIndex.get(node.type);
+            if (nextIndex === undefined) return;
+            if (direction === -1 && nextIndex >= index) return;
+            if (direction === 1 && nextIndex <= index) return;
+            visited.add(node.id);
+            nodeIds.add(node.id);
+            edgeIds.add(edgeId);
+            nextFrontier.push({ id: node.id, index: nextIndex });
+          });
+        });
+        frontier = nextFrontier;
+      }
+    };
 
+    walk(-1);
+    walk(1);
     return { nodeIds, edgeIds };
   }, [normalizedEdges, selectedNode]);
 
