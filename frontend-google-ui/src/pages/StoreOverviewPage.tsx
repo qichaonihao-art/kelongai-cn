@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -100,45 +100,17 @@ function normalizeEdge(edge: StoreOverviewEdge, nodeMap: Map<number, StoreOvervi
 
 function getEdgeEndpoints(
   source: { x: number; y: number },
-  target: { x: number; y: number },
-  size: { width: number; height: number }
+  target: { x: number; y: number }
 ) {
-  const halfW = 75;
-  const halfH = 39;
-  const inset = 2;
-  if (!size.width || !size.height) {
-    return { x1: source.x, y1: source.y, x2: target.x, y2: target.y };
-  }
-  const sx = (source.x / 100) * size.width;
-  const sy = (source.y / 100) * size.height;
-  const tx = (target.x / 100) * size.width;
-  const ty = (target.y / 100) * size.height;
-
-  function exitPoint(cx: number, cy: number, dx: number, dy: number) {
-    let t = Infinity;
-    if (dx > 0) t = Math.min(t, halfW / dx);
-    else if (dx < 0) t = Math.min(t, -halfW / dx);
-    if (dy > 0) t = Math.min(t, halfH / dy);
-    else if (dy < 0) t = Math.min(t, -halfH / dy);
-    if (!isFinite(t) || t <= 0) return { x: cx, y: cy };
-    const adjustedT = Math.max(0, t - inset / Math.hypot(dx, dy));
-    return { x: cx + adjustedT * dx, y: cy + adjustedT * dy };
-  }
-
-  const sEdge = exitPoint(sx, sy, tx - sx, ty - sy);
-  const tEdge = exitPoint(tx, ty, sx - tx, sy - ty);
-
   return {
-    x1: (sEdge.x / size.width) * 100,
-    y1: (sEdge.y / size.height) * 100,
-    x2: (tEdge.x / size.width) * 100,
-    y2: (tEdge.y / size.height) * 100,
+    x1: source.x,
+    y1: source.y,
+    x2: target.x,
+    y2: target.y,
   };
 }
 
 export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewPageProps) {
-  const graphContainerRef = useRef<HTMLDivElement>(null);
-  const [graphSize, setGraphSize] = useState({ width: 1180, height: 620 });
   const [graph, setGraph] = useState<StoreOverviewGraph>({ nodes: [], edges: [], settings: { columnOrder: DEFAULT_GRAPH_COLUMN_TYPES } });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [activeType, setActiveType] = useState<StoreOverviewNodeType | 'all'>('all');
@@ -181,24 +153,6 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
   useEffect(() => {
     void refreshGraph(false);
-  }, []);
-
-  useEffect(() => {
-    const element = graphContainerRef.current;
-    if (!element) return;
-    const update = () => {
-      const width = element.clientWidth;
-      const height = element.clientHeight;
-      setGraphSize((current) => {
-        if (current.width === width && current.height === height) return current;
-        return { width, height };
-      });
-    };
-    update();
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
   }, []);
 
   const nodeMap = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
@@ -760,7 +714,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                   </div>
                 </div>
               ) : (
-                <div ref={graphContainerRef} className="relative h-full min-w-[1180px]">
+                <div className="relative h-full min-w-[1180px]">
                   {/* 未激活的连线：放在节点后面 */}
                   <svg className="pointer-events-none absolute inset-0 size-full">
                     {normalizedEdges.map(({ edge, source, target }) => {
@@ -769,7 +723,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       if (!a || !b) return null;
                       const active = !selectedNode || relatedEdgeIds.has(edge.id);
                       if (active) return null;
-                      const endpoints = getEdgeEndpoints(a, b, graphSize);
+                      const endpoints = getEdgeEndpoints(a, b);
                       return (
                         <line
                           key={edge.id}
@@ -879,7 +833,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       if (!a || !b) return null;
                       const active = !selectedNode || relatedEdgeIds.has(edge.id);
                       if (!active) return null;
-                      const endpoints = getEdgeEndpoints(a, b, graphSize);
+                      const endpoints = getEdgeEndpoints(a, b);
                       return (
                         <g key={edge.id}>
                           <line
