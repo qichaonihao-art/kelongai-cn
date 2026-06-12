@@ -117,15 +117,12 @@ function getEdgePath(
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     if (!dx && !dy) return from;
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      return {
-        x: from.x + (dx > 0 ? halfW : -halfW),
-        y: from.y,
-      };
-    }
+    const tx = dx ? halfW / Math.abs(dx) : Infinity;
+    const ty = dy ? halfH / Math.abs(dy) : Infinity;
+    const t = Math.min(tx, ty);
     return {
-      x: from.x,
-      y: from.y + (dy > 0 ? halfH : -halfH),
+      x: from.x + dx * t,
+      y: from.y + dy * t,
     };
   }
 
