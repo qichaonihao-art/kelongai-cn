@@ -50,10 +50,18 @@ const NODE_TYPES: {
   column: number;
 }[] = [
   { type: 'video', label: '视频号', shortLabel: '视频号', icon: Radio, tone: 'bg-sky-500 text-white', soft: 'bg-sky-50 text-sky-700 border-sky-100', column: 0 },
-  { type: 'adq', label: 'ADQ', shortLabel: 'ADQ', icon: Megaphone, tone: 'bg-violet-500 text-white', soft: 'bg-violet-50 text-violet-700 border-violet-100', column: 0 },
-  { type: 'store', label: '店铺', shortLabel: '店铺', icon: Store, tone: 'bg-emerald-500 text-white', soft: 'bg-emerald-50 text-emerald-700 border-emerald-100', column: 1 },
-  { type: 'supplier', label: '发货商家', shortLabel: '商家', icon: Truck, tone: 'bg-orange-500 text-white', soft: 'bg-orange-50 text-orange-700 border-orange-100', column: 2 },
-  { type: 'product', label: '商品', shortLabel: '商品', icon: Boxes, tone: 'bg-rose-500 text-white', soft: 'bg-rose-50 text-rose-700 border-rose-100', column: 2 },
+  { type: 'adq', label: 'ADQ', shortLabel: 'ADQ', icon: Megaphone, tone: 'bg-violet-500 text-white', soft: 'bg-violet-50 text-violet-700 border-violet-100', column: 1 },
+  { type: 'store', label: '店铺', shortLabel: '店铺', icon: Store, tone: 'bg-emerald-500 text-white', soft: 'bg-emerald-50 text-emerald-700 border-emerald-100', column: 2 },
+  { type: 'supplier', label: '发货商家', shortLabel: '商家', icon: Truck, tone: 'bg-orange-500 text-white', soft: 'bg-orange-50 text-orange-700 border-orange-100', column: 3 },
+  { type: 'product', label: '商品', shortLabel: '商品', icon: Boxes, tone: 'bg-rose-500 text-white', soft: 'bg-rose-50 text-rose-700 border-rose-100', column: 4 },
+];
+
+const GRAPH_COLUMNS: { type: StoreOverviewNodeType; label: string; x: number }[] = [
+  { type: 'video', label: '视频号', x: 10 },
+  { type: 'adq', label: 'ADQ', x: 30 },
+  { type: 'store', label: '店铺', x: 50 },
+  { type: 'supplier', label: '发货商家', x: 70 },
+  { type: 'product', label: '商品', x: 90 },
 ];
 
 const TYPE_META = Object.fromEntries(NODE_TYPES.map((item) => [item.type, item])) as Record<StoreOverviewNodeType, typeof NODE_TYPES[number]>;
@@ -92,6 +100,8 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   const [editNote, setEditNote] = useState('');
   const [bindTargetId, setBindTargetId] = useState<Record<string, string>>({});
   const [isOverviewMode, setIsOverviewMode] = useState(false);
+  const [isConnectMode, setIsConnectMode] = useState(false);
+  const [connectSourceId, setConnectSourceId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
@@ -152,14 +162,12 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
   const graphNodes = useMemo(() => {
     const positions = new Map<number, { x: number; y: number; node: StoreOverviewNode }>();
-    const columnTypeGroups: StoreOverviewNodeType[][] = [['video', 'adq'], ['store'], ['supplier', 'product']];
-    const columnX = [18, 50, 82];
-    columnTypeGroups.forEach((types, columnIndex) => {
-      const items = types.flatMap((type) => nodesByType.get(type) || []);
+    GRAPH_COLUMNS.forEach((column) => {
+      const items = nodesByType.get(column.type) || [];
       const gap = Math.max(11, 72 / Math.max(items.length, 1));
       const start = Math.max(10, 50 - ((items.length - 1) * gap) / 2);
       items.forEach((node, index) => {
-        positions.set(node.id, { x: columnX[columnIndex], y: start + index * gap, node });
+        positions.set(node.id, { x: column.x, y: start + index * gap, node });
       });
     });
     return positions;
@@ -174,6 +182,12 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     setEditName(selectedNode.name);
     setEditNote(selectedNode.note || '');
   }, [selectedNode]);
+
+  useEffect(() => {
+    if (!isConnectMode) {
+      setConnectSourceId(null);
+    }
+  }, [isConnectMode]);
 
   function getStoreEdges(storeId: number, type?: StoreOverviewNodeType) {
     return normalizedEdges.filter(({ store, related }) => store.id === storeId && (!type || related.type === type));
@@ -285,6 +299,47 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     }, '关联已取消');
   }
 
+  async function handleGraphNodeClick(node: StoreOverviewNode) {
+    if (!isConnectMode) {
+      setSelectedId(node.id);
+      return;
+    }
+
+    if (!connectSourceId) {
+      setConnectSourceId(node.id);
+      setSelectedId(node.id);
+      setNotice(`已选择“${node.name}”，再点击另一个项目即可连线`);
+      setError('');
+      return;
+    }
+
+    if (connectSourceId === node.id) {
+      setConnectSourceId(null);
+      setNotice('已取消当前连线起点');
+      return;
+    }
+
+    const source = nodeMap.get(connectSourceId);
+    if (!source) {
+      setConnectSourceId(node.id);
+      setSelectedId(node.id);
+      return;
+    }
+
+    if (source.type !== 'store' && node.type !== 'store') {
+      setError('当前图谱以店铺为中心，手动连线必须连接一个店铺。');
+      setNotice('');
+      return;
+    }
+
+    const relationType = source.type === 'store' ? node.type : source.type;
+    await runAction(async () => {
+      await createStoreOverviewEdge({ sourceId: source.id, targetId: node.id, relationType });
+      setConnectSourceId(null);
+      setSelectedId(node.id);
+    }, `已连接“${source.name}”和“${node.name}”`);
+  }
+
   const totalStores = graph.nodes.filter((node) => node.type === 'store').length;
 
   return (
@@ -316,21 +371,20 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[1500px] flex-col gap-4 p-4">
-        <section className="flex flex-wrap items-end justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div>
-            <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-600">
-              <Building2 className="size-4" />
+      <main className="mx-auto flex w-full max-w-[1500px] flex-col gap-3 p-3">
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-600">
+              <Building2 className="size-3.5" />
               店铺总览
             </div>
-            <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950">店铺关系图谱</h1>
-            <p className="mt-1 text-xs font-medium text-slate-500">以店铺为中心，把商品、视频号、ADQ 和发货商家串起来，多设备数据同步。</p>
+            <h1 className="mt-0.5 text-lg font-black tracking-tight text-slate-950">店铺关系图谱</h1>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center sm:grid-cols-5">
+          <div className="flex flex-wrap items-center justify-end gap-1.5 text-center">
             {NODE_TYPES.map(({ type, label, soft }) => (
-              <div key={type} className={cn('rounded-xl border px-3 py-2', soft)}>
-                <div className="text-base font-black">{graph.nodes.filter((node) => node.type === type).length}</div>
-                <div className="text-[10px] font-bold">{label}</div>
+              <div key={type} className={cn('inline-flex items-center gap-1.5 rounded-full border px-2 py-1', soft)}>
+                <span className="text-xs font-black">{graph.nodes.filter((node) => node.type === type).length}</span>
+                <span className="text-[10px] font-bold">{label}</span>
               </div>
             ))}
           </div>
@@ -482,8 +536,26 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
               <div className="flex items-center gap-2">
                 <div className="hidden items-center gap-2 text-[11px] font-bold text-slate-400 sm:flex">
                   <Link2 className="size-3.5" />
-                  点击节点查看关联
+                  {isConnectMode ? '先点起点，再点终点' : '点击节点查看关联'}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsConnectMode((value) => !value);
+                    setConnectSourceId(null);
+                    setNotice('');
+                    setError('');
+                  }}
+                  className={cn(
+                    'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[11px] font-black shadow-sm transition-colors',
+                    isConnectMode
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  )}
+                >
+                  <Link2 className="size-3.5" />
+                  {isConnectMode ? '连线中' : '手动连线'}
+                </button>
                 <button
                   type="button"
                   onClick={() => setIsOverviewMode((value) => !value)}
@@ -513,7 +585,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                   </div>
                 </div>
               ) : (
-                <div className="relative h-full min-w-[860px]">
+                <div className="relative h-full min-w-[1180px]">
                   <svg className="pointer-events-none absolute inset-0 size-full">
                     {normalizedEdges.map(({ edge, store, related }) => {
                       const a = graphNodes.get(store.id);
@@ -536,13 +608,13 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                     })}
                   </svg>
 
-                  {[0, 1, 2].map((column) => (
+                  {GRAPH_COLUMNS.map((column) => (
                     <div
-                      key={column}
+                      key={column.type}
                       className="absolute top-3 rounded-full bg-white/80 px-3 py-1 text-[10px] font-black text-slate-400 shadow-sm"
-                      style={{ left: `${[18, 50, 82][column]}%`, transform: 'translateX(-50%)' }}
+                      style={{ left: `${column.x}%`, transform: 'translateX(-50%)' }}
                     >
-                      {column === 0 ? '流量 / 投放' : column === 1 ? '店铺中心' : '履约 / 商品'}
+                      {column.label}
                     </div>
                   ))}
 
@@ -550,15 +622,18 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                     const meta = TYPE_META[node.type];
                     const Icon = meta.icon;
                     const selected = selectedNode?.id === node.id;
+                    const connectSource = connectSourceId === node.id;
                     const related = !selectedNode || relatedNodeIds.has(node.id);
                     return (
                       <button
                         key={node.id}
                         type="button"
-                        onClick={() => setSelectedId(node.id)}
+                        onClick={() => void handleGraphNodeClick(node)}
                         className={cn(
                           'absolute w-[150px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-3 text-left shadow-sm transition-all hover:-translate-y-[calc(50%+2px)] hover:shadow-lg',
                           selected ? 'border-emerald-300 ring-4 ring-emerald-100' : 'border-slate-200',
+                          connectSource && 'border-amber-300 ring-4 ring-amber-100',
+                          isConnectMode && !connectSource && 'cursor-crosshair',
                           !related && 'opacity-25 grayscale'
                         )}
                         style={{ left: `${x}%`, top: `${y}%` }}
