@@ -104,7 +104,8 @@ function getEdgeEndpoints(
   size: { width: number; height: number }
 ) {
   const halfW = 75;
-  const halfH = 28;
+  const halfH = 39;
+  const inset = 2;
   if (!size.width || !size.height) {
     return { x1: source.x, y1: source.y, x2: target.x, y2: target.y };
   }
@@ -120,7 +121,8 @@ function getEdgeEndpoints(
     if (dy > 0) t = Math.min(t, halfH / dy);
     else if (dy < 0) t = Math.min(t, -halfH / dy);
     if (!isFinite(t) || t <= 0) return { x: cx, y: cy };
-    return { x: cx + t * dx, y: cy + t * dy };
+    const adjustedT = Math.max(0, t - inset / Math.hypot(dx, dy));
+    return { x: cx + adjustedT * dx, y: cy + adjustedT * dy };
   }
 
   const sEdge = exitPoint(sx, sy, tx - sx, ty - sy);
