@@ -814,7 +814,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                   })}
 
                   {/* 激活的连线：放在节点上面，避免被节点卡片挡住 */}
-                  <svg className="absolute inset-0 size-full">
+                  <svg className="pointer-events-none absolute inset-0 size-full">
                     {normalizedEdges.map(({ edge, source, target }) => {
                       const a = graphNodes.get(source.id);
                       const b = graphNodes.get(target.id);
@@ -832,6 +832,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                             strokeWidth={14}
                             strokeLinecap="round"
                             className="cursor-pointer"
+                            style={{ pointerEvents: 'stroke' }}
                             onClick={() => void handleDeleteGraphEdge(edge, source, target)}
                           />
                           <line
@@ -843,7 +844,6 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                             strokeWidth={3}
                             strokeLinecap="round"
                             opacity={0.88}
-                            className="pointer-events-none"
                           />
                         </g>
                       );
