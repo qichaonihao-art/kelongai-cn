@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   Boxes,
   Building2,
   Check,
@@ -313,6 +315,12 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     }, '关联已取消');
   }
 
+  async function handleDeleteGraphEdge(edge: StoreOverviewEdge, store: StoreOverviewNode, related: StoreOverviewNode) {
+    const confirmed = window.confirm(`确定删除“${store.name}”和“${related.name}”之间的连线吗？`);
+    if (!confirmed) return;
+    await handleDeleteEdge(edge.id);
+  }
+
   async function persistGraphColumnTypes(next: StoreOverviewNodeType[]) {
     const normalized = normalizeGraphColumnTypes(next);
     setGraphColumnTypes(normalized);
@@ -342,6 +350,15 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     })();
     void persistGraphColumnTypes(next);
     setDraggingColumnType(null);
+  }
+
+  function moveGraphColumn(type: StoreOverviewNodeType, direction: -1 | 1) {
+    const index = graphColumnTypes.indexOf(type);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= graphColumnTypes.length) return;
+    const next = [...graphColumnTypes];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    void persistGraphColumnTypes(next);
   }
 
   async function handleGraphNodeClick(node: StoreOverviewNode) {
@@ -417,6 +434,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
       </header>
 
       <main className="mx-auto flex w-full max-w-[1500px] flex-col gap-3 p-3">
+        {!isOverviewMode && (
         <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-600">
@@ -434,6 +452,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
             ))}
           </div>
         </section>
+        )}
 
         {(error || notice) && (
           <div className={cn(
@@ -613,7 +632,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
             </div>
 
             <div className={cn(
-              'relative overflow-auto bg-[linear-gradient(#eef2f7_1px,transparent_1px),linear-gradient(90deg,#eef2f7_1px,transparent_1px)] bg-[size:28px_28px]',
+              'relative overflow-auto bg-slate-50',
               isOverviewMode ? 'h-[calc(100vh-250px)] min-h-[720px]' : 'h-[620px]'
             )}>
               {isLoading ? (
@@ -631,24 +650,37 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                 </div>
               ) : (
                 <div className="relative h-full min-w-[1180px]">
-                  <svg className="pointer-events-none absolute inset-0 size-full">
+                  <svg className="absolute inset-0 size-full">
                     {normalizedEdges.map(({ edge, store, related }) => {
                       const a = graphNodes.get(store.id);
                       const b = graphNodes.get(related.id);
                       if (!a || !b) return null;
                       const active = !selectedNode || relatedNodeIds.has(store.id) && relatedNodeIds.has(related.id);
                       return (
-                        <line
-                          key={edge.id}
-                          x1={`${a.x}%`}
-                          y1={`${a.y}%`}
-                          x2={`${b.x}%`}
-                          y2={`${b.y}%`}
-                          stroke={active ? '#10b981' : '#cbd5e1'}
-                          strokeWidth={active ? 3 : 1.5}
-                          strokeLinecap="round"
-                          opacity={active ? 0.88 : 0.28}
-                        />
+                        <g key={edge.id}>
+                          <line
+                            x1={`${a.x}%`}
+                            y1={`${a.y}%`}
+                            x2={`${b.x}%`}
+                            y2={`${b.y}%`}
+                            stroke="transparent"
+                            strokeWidth={14}
+                            strokeLinecap="round"
+                            className="cursor-pointer"
+                            onClick={() => void handleDeleteGraphEdge(edge, store, related)}
+                          />
+                          <line
+                            x1={`${a.x}%`}
+                            y1={`${a.y}%`}
+                            x2={`${b.x}%`}
+                            y2={`${b.y}%`}
+                            stroke={active ? '#10b981' : '#cbd5e1'}
+                            strokeWidth={active ? 3 : 1.5}
+                            strokeLinecap="round"
+                            opacity={active ? 0.88 : 0.28}
+                            className="pointer-events-none"
+                          />
+                        </g>
                       );
                     })}
                   </svg>
@@ -662,16 +694,40 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       onDragOver={(event) => event.preventDefault()}
                       onDrop={() => handleColumnDrop(column.type)}
                       onDoubleClick={() => void persistGraphColumnTypes(DEFAULT_GRAPH_COLUMN_TYPES)}
-                      title="拖动可调整整列顺序，双击恢复默认顺序"
+                      title="拖动可调整整列顺序，双击恢复默认顺序，也可以点左右箭头移动"
                       className={cn(
-                        'absolute top-3 cursor-grab rounded-full border px-3 py-1 text-[10px] font-black shadow-sm transition-all active:cursor-grabbing',
+                        'absolute top-3 flex cursor-grab items-center gap-1 rounded-full border px-1.5 py-1 text-[10px] font-black shadow-sm transition-all active:cursor-grabbing',
                         draggingColumnType === column.type
                           ? 'border-emerald-200 bg-emerald-50 text-emerald-700 opacity-70'
                           : 'border-slate-100 bg-white/85 text-slate-500 hover:border-emerald-200 hover:text-emerald-700'
                       )}
                       style={{ left: `${column.x}%`, transform: 'translateX(-50%)' }}
                     >
-                      {column.label}
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          moveGraphColumn(column.type, -1);
+                        }}
+                        disabled={graphColumnTypes.indexOf(column.type) === 0}
+                        className="flex size-4 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-20"
+                        title="整列左移"
+                      >
+                        <ChevronLeft className="size-3" />
+                      </button>
+                      <span className="px-1">{column.label}</span>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          moveGraphColumn(column.type, 1);
+                        }}
+                        disabled={graphColumnTypes.indexOf(column.type) === graphColumnTypes.length - 1}
+                        className="flex size-4 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-20"
+                        title="整列右移"
+                      >
+                        <ChevronRight className="size-3" />
+                      </button>
                     </div>
                   ))}
 
