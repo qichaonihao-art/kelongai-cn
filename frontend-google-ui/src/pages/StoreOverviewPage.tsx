@@ -105,6 +105,9 @@ function getEdgeEndpoints(
 ) {
   const halfW = 75;
   const halfH = 34;
+  if (!size.width || !size.height) {
+    return { x1: source.x, y1: source.y, x2: target.x, y2: target.y };
+  }
   const sx = (source.x / 100) * size.width;
   const sy = (source.y / 100) * size.height;
   const tx = (target.x / 100) * size.width;
@@ -181,9 +184,15 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     const element = graphContainerRef.current;
     if (!element) return;
     const update = () => {
-      setGraphSize({ width: element.clientWidth, height: element.clientHeight });
+      const width = element.clientWidth;
+      const height = element.clientHeight;
+      setGraphSize((current) => {
+        if (current.width === width && current.height === height) return current;
+        return { width, height };
+      });
     };
     update();
+    if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(update);
     observer.observe(element);
     return () => observer.disconnect();
