@@ -1,4 +1,4 @@
-import { Mic2, Wand2, LogOut, Download, Database, Image, Crown } from "lucide-react";
+import { Mic2, Wand2, LogOut, Download, Network, Image, Crown } from "lucide-react";
 import SiteFooter from "@/src/components/SiteFooter";
 import { motion } from "motion/react";
 
@@ -51,13 +51,13 @@ const modules = [
   },
   {
     id: 'collection' as const,
-    title: '数据采集',
-    desc: '批量采集与管理数据，高效整合信息资源',
-    icon: Database,
+    title: '店铺总览',
+    desc: '店铺、商品、视频号、ADQ 与发货商家关系图谱',
+    icon: Network,
     color: 'rose',
-    gradient: 'from-rose-500 to-pink-600',
-    bgLight: 'bg-rose-50/50',
-    borderHover: 'hover:border-rose-300/60',
+    gradient: 'from-emerald-500 to-cyan-600',
+    bgLight: 'bg-emerald-50/50',
+    borderHover: 'hover:border-emerald-300/60',
   },
   {
     id: 'topmodel' as const,

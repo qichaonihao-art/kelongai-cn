@@ -1027,6 +1027,32 @@ function getCollectionDb() {
 
       CREATE INDEX IF NOT EXISTS idx_image_tasks_status ON image_generation_tasks(status);
       CREATE INDEX IF NOT EXISTS idx_image_tasks_created ON image_generation_tasks(created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS store_overview_nodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS store_overview_edges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id INTEGER NOT NULL,
+        target_id INTEGER NOT NULL,
+        relation_type TEXT NOT NULL DEFAULT 'linked',
+        note TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        FOREIGN KEY (source_id) REFERENCES store_overview_nodes(id) ON DELETE CASCADE,
+        FOREIGN KEY (target_id) REFERENCES store_overview_nodes(id) ON DELETE CASCADE,
+        UNIQUE(source_id, target_id, relation_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_store_overview_nodes_type ON store_overview_nodes(type);
+      CREATE INDEX IF NOT EXISTS idx_store_overview_edges_source ON store_overview_edges(source_id);
+      CREATE INDEX IF NOT EXISTS idx_store_overview_edges_target ON store_overview_edges(target_id);
     `);
 
     // Migration: add reference_images column if it doesn't exist (existing tables before this column was added)
@@ -1202,6 +1228,122 @@ function dbCountImageTasks() {
 function dbDeleteImageTask(id) {
   const db = getCollectionDb();
   const stmt = db.prepare('DELETE FROM image_generation_tasks WHERE id = ?');
+  stmt.run(id);
+}
+
+// --- Store Overview Database ---
+
+const STORE_OVERVIEW_NODE_TYPES = new Set(['store', 'product', 'video', 'adq', 'supplier']);
+
+function normalizeStoreOverviewNode(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    type: row.type,
+    name: row.name,
+    note: row.note || '',
+    created_at: Number(row.created_at || 0),
+    updated_at: Number(row.updated_at || 0),
+  };
+}
+
+function normalizeStoreOverviewEdge(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    source_id: Number(row.source_id),
+    target_id: Number(row.target_id),
+    relation_type: row.relation_type || 'linked',
+    note: row.note || '',
+    created_at: Number(row.created_at || 0),
+    updated_at: Number(row.updated_at || 0),
+  };
+}
+
+function dbGetStoreOverviewGraph() {
+  const db = getCollectionDb();
+  const nodes = db.prepare('SELECT * FROM store_overview_nodes ORDER BY type, created_at, id').all().map(normalizeStoreOverviewNode);
+  const edges = db.prepare('SELECT * FROM store_overview_edges ORDER BY created_at, id').all().map(normalizeStoreOverviewEdge);
+  return { nodes, edges };
+}
+
+function dbGetStoreOverviewNodeById(id) {
+  const db = getCollectionDb();
+  return normalizeStoreOverviewNode(db.prepare('SELECT * FROM store_overview_nodes WHERE id = ?').get(id));
+}
+
+function dbInsertStoreOverviewNode({ type, name, note }) {
+  const db = getCollectionDb();
+  const stmt = db.prepare(`
+    INSERT INTO store_overview_nodes (type, name, note, created_at, updated_at)
+    VALUES (?, ?, ?, unixepoch(), unixepoch())
+  `);
+  const result = stmt.run(type, name, note || '');
+  return dbGetStoreOverviewNodeById(Number(result.lastInsertRowid));
+}
+
+function dbUpdateStoreOverviewNode(id, { name, note }) {
+  const db = getCollectionDb();
+  const stmt = db.prepare('UPDATE store_overview_nodes SET name = ?, note = ?, updated_at = unixepoch() WHERE id = ?');
+  stmt.run(name, note || '', id);
+  return dbGetStoreOverviewNodeById(id);
+}
+
+function dbDeleteStoreOverviewNode(id) {
+  const db = getCollectionDb();
+  const deleteEdges = db.prepare('DELETE FROM store_overview_edges WHERE source_id = ? OR target_id = ?');
+  deleteEdges.run(id, id);
+  const deleteNode = db.prepare('DELETE FROM store_overview_nodes WHERE id = ?');
+  deleteNode.run(id);
+}
+
+function dbGetStoreOverviewEdgeById(id) {
+  const db = getCollectionDb();
+  return normalizeStoreOverviewEdge(db.prepare('SELECT * FROM store_overview_edges WHERE id = ?').get(id));
+}
+
+function dbInsertStoreOverviewEdge({ sourceId, targetId, relationType, note }) {
+  const db = getCollectionDb();
+  const source = dbGetStoreOverviewNodeById(sourceId);
+  const target = dbGetStoreOverviewNodeById(targetId);
+  if (!source || !target) {
+    const error = new Error('关联的项目不存在');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (source.id === target.id) {
+    const error = new Error('不能把项目关联到自己');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (source.type !== 'store' && target.type !== 'store') {
+    const error = new Error('第一版图谱要求关联线必须连接一个店铺');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedSourceId = source.type === 'store' ? source.id : target.id;
+  const normalizedTargetId = source.type === 'store' ? target.id : source.id;
+  const normalizedTarget = source.type === 'store' ? target : source;
+  const normalizedRelationType = relationType || normalizedTarget.type || 'linked';
+  const existing = db.prepare(`
+    SELECT * FROM store_overview_edges
+    WHERE source_id = ? AND target_id = ? AND relation_type = ?
+    LIMIT 1
+  `).get(normalizedSourceId, normalizedTargetId, normalizedRelationType);
+  if (existing) return normalizeStoreOverviewEdge(existing);
+
+  const stmt = db.prepare(`
+    INSERT INTO store_overview_edges (source_id, target_id, relation_type, note, created_at, updated_at)
+    VALUES (?, ?, ?, ?, unixepoch(), unixepoch())
+  `);
+  const result = stmt.run(normalizedSourceId, normalizedTargetId, normalizedRelationType, note || '');
+  return dbGetStoreOverviewEdgeById(Number(result.lastInsertRowid));
+}
+
+function dbDeleteStoreOverviewEdge(id) {
+  const db = getCollectionDb();
+  const stmt = db.prepare('DELETE FROM store_overview_edges WHERE id = ?');
   stmt.run(id);
 }
 
@@ -1480,6 +1622,113 @@ async function handleGetArticles(req, res) {
     sendJson(res, 200, { ok: true, articles, total, limit, offset });
   } catch (error) {
     sendJson(res, 500, { error: error.message || '获取文章列表失败' });
+  }
+}
+
+// --- Store Overview Route Handlers ---
+
+async function handleGetStoreOverviewGraph(req, res) {
+  try {
+    sendJson(res, 200, { ok: true, ...dbGetStoreOverviewGraph() });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '获取店铺总览失败' });
+  }
+}
+
+async function handleCreateStoreOverviewNode(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const type = String(body.type || '').trim();
+    const name = String(body.name || '').trim();
+    const note = String(body.note || '').trim();
+
+    if (!STORE_OVERVIEW_NODE_TYPES.has(type)) {
+      sendJson(res, 400, { error: '项目类型不正确' });
+      return;
+    }
+    if (!name) {
+      sendJson(res, 400, { error: '项目名称不能为空' });
+      return;
+    }
+
+    const node = dbInsertStoreOverviewNode({ type, name, note });
+    sendJson(res, 200, { ok: true, node });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '新增项目失败' });
+  }
+}
+
+async function handleUpdateStoreOverviewNode(req, res, id) {
+  try {
+    const nodeId = Number(id);
+    const existing = dbGetStoreOverviewNodeById(nodeId);
+    if (!existing) {
+      sendJson(res, 404, { error: '项目不存在' });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const name = String(body.name || '').trim();
+    const note = String(body.note || '').trim();
+    if (!name) {
+      sendJson(res, 400, { error: '项目名称不能为空' });
+      return;
+    }
+
+    const node = dbUpdateStoreOverviewNode(nodeId, { name, note });
+    sendJson(res, 200, { ok: true, node });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '更新项目失败' });
+  }
+}
+
+async function handleDeleteStoreOverviewNode(req, res, id) {
+  try {
+    const nodeId = Number(id);
+    const existing = dbGetStoreOverviewNodeById(nodeId);
+    if (!existing) {
+      sendJson(res, 404, { error: '项目不存在' });
+      return;
+    }
+    dbDeleteStoreOverviewNode(nodeId);
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '删除项目失败' });
+  }
+}
+
+async function handleCreateStoreOverviewEdge(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const sourceId = Number(body.sourceId);
+    const targetId = Number(body.targetId);
+    const relationType = String(body.relationType || '').trim();
+    const note = String(body.note || '').trim();
+
+    if (!sourceId || !targetId) {
+      sendJson(res, 400, { error: '请选择需要关联的两个项目' });
+      return;
+    }
+
+    const edge = dbInsertStoreOverviewEdge({ sourceId, targetId, relationType, note });
+    sendJson(res, 200, { ok: true, edge });
+  } catch (error) {
+    sendJson(res, error.statusCode || 500, { error: error.message || '新增关联失败' });
+  }
+}
+
+async function handleDeleteStoreOverviewEdge(req, res, id) {
+  try {
+    const edgeId = Number(id);
+    const existing = dbGetStoreOverviewEdgeById(edgeId);
+    if (!existing) {
+      sendJson(res, 404, { error: '关联不存在' });
+      return;
+    }
+    dbDeleteStoreOverviewEdge(edgeId);
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '删除关联失败' });
   }
 }
 
@@ -11921,6 +12170,40 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/collection/articles') {
     await handleGetArticles(req, res);
+    return;
+  }
+
+  // Store overview routes
+  if (req.method === 'GET' && url.pathname === '/api/store-overview/graph') {
+    await handleGetStoreOverviewGraph(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/store-overview/nodes') {
+    await handleCreateStoreOverviewNode(req, res);
+    return;
+  }
+
+  if (req.method === 'PATCH' && url.pathname.startsWith('/api/store-overview/nodes/')) {
+    const id = url.pathname.replace(/^\/api\/store-overview\/nodes\//, '');
+    await handleUpdateStoreOverviewNode(req, res, id);
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/store-overview/nodes/')) {
+    const id = url.pathname.replace(/^\/api\/store-overview\/nodes\//, '');
+    await handleDeleteStoreOverviewNode(req, res, id);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/store-overview/edges') {
+    await handleCreateStoreOverviewEdge(req, res);
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/store-overview/edges/')) {
+    const id = url.pathname.replace(/^\/api\/store-overview\/edges\//, '');
+    await handleDeleteStoreOverviewEdge(req, res, id);
     return;
   }
 

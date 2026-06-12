@@ -9,7 +9,7 @@ import HomePage from './pages/HomePage';
 import VoiceCloningPage from './pages/VoiceCloningPage';
 import CreativeCreationPage from './pages/CreativeCreationPage';
 import DouyinDownloaderPage from './pages/DouyinDownloaderPage';
-import DataCollectionPage from './pages/DataCollectionPage';
+import StoreOverviewPage from './pages/StoreOverviewPage';
 import ImageGenerationPage from './pages/ImageGenerationPage';
 import TopModelPage from './pages/TopModelPage';
 import UniversalExtractorPage from './pages/UniversalExtractorPage';
@@ -101,7 +101,7 @@ export default function App() {
         />
       )}
       {currentPage === 'collection' && (
-        <DataCollectionPage
+        <StoreOverviewPage
           onBack={handleBackToHome}
           onNavigate={handleNavigate}
         />
