@@ -695,23 +695,17 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                 </div>
               ) : (
                 <div className="relative h-full min-w-[1180px]">
-                  {graphColumns.map((column) => {
-                    const meta = TYPE_META[column.type];
-                    return (
-                      <div
-                        key={`column-bg-${column.type}`}
-                        className={cn(
-                          'pointer-events-none absolute top-14 bottom-6 rounded-3xl border-2 border-dashed bg-opacity-30',
-                          meta.soft
-                        )}
-                        style={{
-                          left: `${column.x}%`,
-                          width: '196px',
-                          transform: 'translateX(-50%)',
-                        }}
-                      />
-                    );
-                  })}
+                  {graphColumns.map((column) => (
+                    <div
+                      key={`column-bg-${column.type}`}
+                      className="pointer-events-none absolute top-14 bottom-6 rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50/30"
+                      style={{
+                        left: `${column.x}%`,
+                        width: '196px',
+                        transform: 'translateX(-50%)',
+                      }}
+                    />
+                  ))}
 
                   <svg className="absolute inset-0 size-full">
                     {normalizedEdges.map(({ edge, source, target }) => {
