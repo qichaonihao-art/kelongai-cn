@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
 import { createReadStream, existsSync } from 'node:fs';
@@ -12,10 +11,12 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
+import { config as loadDotenv } from 'dotenv';
 import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+loadDotenv({ path: path.join(__dirname, '.env') });
 const LEGACY_FRONTEND_DIR = path.join(__dirname, 'ai');
 const REACT_FRONTEND_DIR = path.join(__dirname, '..', 'frontend-google-ui', 'dist');
 const FRONTEND_MODE = String(process.env.FRONTEND_MODE || 'legacy').trim().toLowerCase();
@@ -41,7 +42,7 @@ const APIMART_IMAGE_FETCH_TIMEOUT_MS = 45 * 1000;
 const APIMART_IMAGE_RETRY_DELAYS_MS = [1000];
 const APIMART_CHAT_FETCH_TIMEOUT_MS = 8 * 60 * 1000;
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
-const RUNTIME_STATE_DIR = path.join(__dirname, '.runtime-state');
+const RUNTIME_STATE_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || path.join(__dirname, '.runtime-state'));
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
 const VOICE_ARCHIVE_FILE = path.join(RUNTIME_STATE_DIR, 'voice-archive.json');
 const VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS = 15 * 1000;
@@ -1729,6 +1730,24 @@ async function handleDeleteStoreOverviewEdge(req, res, id) {
     sendJson(res, 200, { ok: true });
   } catch (error) {
     sendJson(res, 500, { error: error.message || '删除关联失败' });
+  }
+}
+
+async function handleStoreOverviewDebug(req, res) {
+  try {
+    const db = getCollectionDb();
+    const nodeCount = db.prepare('SELECT COUNT(*) as count FROM store_overview_nodes').get()?.count || 0;
+    const edgeCount = db.prepare('SELECT COUNT(*) as count FROM store_overview_edges').get()?.count || 0;
+    sendJson(res, 200, {
+      ok: true,
+      runtimeStateDir: RUNTIME_STATE_DIR,
+      collectionDbPath: COLLECTION_DB_PATH,
+      collectionDbExists: existsSync(COLLECTION_DB_PATH),
+      nodeCount,
+      edgeCount,
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '读取店铺总览调试信息失败' });
   }
 }
 
@@ -12176,6 +12195,11 @@ const server = createServer(async (req, res) => {
   // Store overview routes
   if (req.method === 'GET' && url.pathname === '/api/store-overview/graph') {
     await handleGetStoreOverviewGraph(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/store-overview/debug') {
+    await handleStoreOverviewDebug(req, res);
     return;
   }
 
