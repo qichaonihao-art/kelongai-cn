@@ -28,6 +28,7 @@ import {
   deleteStoreOverviewEdge,
   deleteStoreOverviewNode,
   getStoreOverviewGraph,
+  updateStoreOverviewSettings,
   updateStoreOverviewNode,
   type StoreOverviewEdge,
   type StoreOverviewGraph,
@@ -56,16 +57,18 @@ const NODE_TYPES: {
   { type: 'product', label: '商品', shortLabel: '商品', icon: Boxes, tone: 'bg-rose-500 text-white', soft: 'bg-rose-50 text-rose-700 border-rose-100', column: 4 },
 ];
 
-const GRAPH_COLUMNS: { type: StoreOverviewNodeType; label: string; x: number }[] = [
-  { type: 'video', label: '视频号', x: 10 },
-  { type: 'adq', label: 'ADQ', x: 30 },
-  { type: 'store', label: '店铺', x: 50 },
-  { type: 'supplier', label: '发货商家', x: 70 },
-  { type: 'product', label: '商品', x: 90 },
-];
-
 const TYPE_META = Object.fromEntries(NODE_TYPES.map((item) => [item.type, item])) as Record<StoreOverviewNodeType, typeof NODE_TYPES[number]>;
 const STORE_RELATION_TYPES: StoreOverviewNodeType[] = ['product', 'video', 'adq', 'supplier'];
+const DEFAULT_GRAPH_COLUMN_TYPES: StoreOverviewNodeType[] = ['video', 'adq', 'store', 'supplier', 'product'];
+
+function normalizeGraphColumnTypes(value: unknown): StoreOverviewNodeType[] {
+  const parsed = Array.isArray(value) ? value : [];
+  const valid = parsed.filter((type): type is StoreOverviewNodeType => DEFAULT_GRAPH_COLUMN_TYPES.includes(type));
+  return [
+    ...valid,
+    ...DEFAULT_GRAPH_COLUMN_TYPES.filter((type) => !valid.includes(type)),
+  ];
+}
 
 function formatTime(seconds: number) {
   if (!seconds) return '';
@@ -88,7 +91,7 @@ function normalizeEdge(edge: StoreOverviewEdge, nodeMap: Map<number, StoreOvervi
 }
 
 export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewPageProps) {
-  const [graph, setGraph] = useState<StoreOverviewGraph>({ nodes: [], edges: [] });
+  const [graph, setGraph] = useState<StoreOverviewGraph>({ nodes: [], edges: [], settings: { columnOrder: DEFAULT_GRAPH_COLUMN_TYPES } });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [activeType, setActiveType] = useState<StoreOverviewNodeType | 'all'>('all');
   const [newType, setNewType] = useState<StoreOverviewNodeType>('store');
@@ -102,6 +105,8 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   const [isOverviewMode, setIsOverviewMode] = useState(false);
   const [isConnectMode, setIsConnectMode] = useState(false);
   const [connectSourceId, setConnectSourceId] = useState<number | null>(null);
+  const [graphColumnTypes, setGraphColumnTypes] = useState<StoreOverviewNodeType[]>(DEFAULT_GRAPH_COLUMN_TYPES);
+  const [draggingColumnType, setDraggingColumnType] = useState<StoreOverviewNodeType | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
@@ -113,6 +118,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     try {
       const nextGraph = await getStoreOverviewGraph();
       setGraph(nextGraph);
+      setGraphColumnTypes(normalizeGraphColumnTypes(nextGraph.settings?.columnOrder));
       setSelectedId((current) => {
         if (!keepSelection) return nextGraph.nodes[0]?.id || null;
         if (current && nextGraph.nodes.some((node) => node.id === current)) return current;
@@ -160,9 +166,17 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     return data;
   }, [visibleNodes]);
 
+  const graphColumns = useMemo(() => {
+    return graphColumnTypes.map((type, index) => ({
+      type,
+      label: TYPE_META[type].label,
+      x: ((index + 0.5) / graphColumnTypes.length) * 100,
+    }));
+  }, [graphColumnTypes]);
+
   const graphNodes = useMemo(() => {
     const positions = new Map<number, { x: number; y: number; node: StoreOverviewNode }>();
-    GRAPH_COLUMNS.forEach((column) => {
+    graphColumns.forEach((column) => {
       const items = nodesByType.get(column.type) || [];
       const gap = Math.max(11, 72 / Math.max(items.length, 1));
       const start = Math.max(10, 50 - ((items.length - 1) * gap) / 2);
@@ -171,7 +185,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
       });
     });
     return positions;
-  }, [nodesByType]);
+  }, [graphColumns, nodesByType]);
 
   useEffect(() => {
     if (!selectedNode) {
@@ -297,6 +311,37 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     await runAction(async () => {
       await deleteStoreOverviewEdge(edgeId);
     }, '关联已取消');
+  }
+
+  async function persistGraphColumnTypes(next: StoreOverviewNodeType[]) {
+    const normalized = normalizeGraphColumnTypes(next);
+    setGraphColumnTypes(normalized);
+    try {
+      const settings = await updateStoreOverviewSettings({ columnOrder: normalized });
+      setGraphColumnTypes(normalizeGraphColumnTypes(settings.columnOrder));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存图谱列顺序失败');
+    }
+  }
+
+  function handleColumnDrop(targetType: StoreOverviewNodeType) {
+    if (!draggingColumnType || draggingColumnType === targetType) {
+      setDraggingColumnType(null);
+      return;
+    }
+
+    const previous = graphColumnTypes;
+    const next = (() => {
+      const fromIndex = previous.indexOf(draggingColumnType);
+      const toIndex = previous.indexOf(targetType);
+      if (fromIndex < 0 || toIndex < 0) return previous;
+      const reordered = [...previous];
+      const [moved] = reordered.splice(fromIndex, 1);
+      reordered.splice(toIndex, 0, moved);
+      return reordered;
+    })();
+    void persistGraphColumnTypes(next);
+    setDraggingColumnType(null);
   }
 
   async function handleGraphNodeClick(node: StoreOverviewNode) {
@@ -608,10 +653,22 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                     })}
                   </svg>
 
-                  {GRAPH_COLUMNS.map((column) => (
+                  {graphColumns.map((column) => (
                     <div
                       key={column.type}
-                      className="absolute top-3 rounded-full bg-white/80 px-3 py-1 text-[10px] font-black text-slate-400 shadow-sm"
+                      draggable
+                      onDragStart={() => setDraggingColumnType(column.type)}
+                      onDragEnd={() => setDraggingColumnType(null)}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={() => handleColumnDrop(column.type)}
+                      onDoubleClick={() => void persistGraphColumnTypes(DEFAULT_GRAPH_COLUMN_TYPES)}
+                      title="拖动可调整整列顺序，双击恢复默认顺序"
+                      className={cn(
+                        'absolute top-3 cursor-grab rounded-full border px-3 py-1 text-[10px] font-black shadow-sm transition-all active:cursor-grabbing',
+                        draggingColumnType === column.type
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700 opacity-70'
+                          : 'border-slate-100 bg-white/85 text-slate-500 hover:border-emerald-200 hover:text-emerald-700'
+                      )}
                       style={{ left: `${column.x}%`, transform: 'translateX(-50%)' }}
                     >
                       {column.label}

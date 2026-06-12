@@ -1051,6 +1051,12 @@ function getCollectionDb() {
         UNIQUE(source_id, target_id, relation_type)
       );
 
+      CREATE TABLE IF NOT EXISTS store_overview_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
       CREATE INDEX IF NOT EXISTS idx_store_overview_nodes_type ON store_overview_nodes(type);
       CREATE INDEX IF NOT EXISTS idx_store_overview_edges_source ON store_overview_edges(source_id);
       CREATE INDEX IF NOT EXISTS idx_store_overview_edges_target ON store_overview_edges(target_id);
@@ -1235,6 +1241,7 @@ function dbDeleteImageTask(id) {
 // --- Store Overview Database ---
 
 const STORE_OVERVIEW_NODE_TYPES = new Set(['store', 'product', 'video', 'adq', 'supplier']);
+const STORE_OVERVIEW_DEFAULT_COLUMN_ORDER = ['video', 'adq', 'store', 'supplier', 'product'];
 
 function normalizeStoreOverviewNode(row) {
   if (!row) return null;
@@ -1265,7 +1272,47 @@ function dbGetStoreOverviewGraph() {
   const db = getCollectionDb();
   const nodes = db.prepare('SELECT * FROM store_overview_nodes ORDER BY type, created_at, id').all().map(normalizeStoreOverviewNode);
   const edges = db.prepare('SELECT * FROM store_overview_edges ORDER BY created_at, id').all().map(normalizeStoreOverviewEdge);
-  return { nodes, edges };
+  return { nodes, edges, settings: dbGetStoreOverviewSettings() };
+}
+
+function normalizeStoreOverviewColumnOrder(value) {
+  const parsed = Array.isArray(value) ? value : parseJsonString(value, []);
+  const valid = Array.isArray(parsed)
+    ? parsed.filter((type) => STORE_OVERVIEW_NODE_TYPES.has(String(type)))
+    : [];
+  return [
+    ...valid,
+    ...STORE_OVERVIEW_DEFAULT_COLUMN_ORDER.filter((type) => !valid.includes(type)),
+  ];
+}
+
+function dbGetStoreOverviewSetting(key, fallback) {
+  const db = getCollectionDb();
+  const row = db.prepare('SELECT value FROM store_overview_settings WHERE key = ?').get(key);
+  if (!row) return fallback;
+  return row.value;
+}
+
+function dbSetStoreOverviewSetting(key, value) {
+  const db = getCollectionDb();
+  const stmt = db.prepare(`
+    INSERT INTO store_overview_settings (key, value, updated_at)
+    VALUES (?, ?, unixepoch())
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = unixepoch()
+  `);
+  stmt.run(key, value);
+}
+
+function dbGetStoreOverviewSettings() {
+  return {
+    columnOrder: normalizeStoreOverviewColumnOrder(dbGetStoreOverviewSetting('columnOrder', JSON.stringify(STORE_OVERVIEW_DEFAULT_COLUMN_ORDER))),
+  };
+}
+
+function dbUpdateStoreOverviewSettings({ columnOrder }) {
+  const normalizedColumnOrder = normalizeStoreOverviewColumnOrder(columnOrder);
+  dbSetStoreOverviewSetting('columnOrder', JSON.stringify(normalizedColumnOrder));
+  return dbGetStoreOverviewSettings();
 }
 
 function dbGetStoreOverviewNodeById(id) {
@@ -1636,6 +1683,18 @@ async function handleGetStoreOverviewGraph(req, res) {
   }
 }
 
+async function handleUpdateStoreOverviewSettings(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const settings = dbUpdateStoreOverviewSettings({
+      columnOrder: Array.isArray(body.columnOrder) ? body.columnOrder : undefined,
+    });
+    sendJson(res, 200, { ok: true, settings });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '保存店铺总览设置失败' });
+  }
+}
+
 async function handleCreateStoreOverviewNode(req, res) {
   try {
     const body = await readRequestBody(req);
@@ -1738,6 +1797,7 @@ async function handleStoreOverviewDebug(req, res) {
     const db = getCollectionDb();
     const nodeCount = db.prepare('SELECT COUNT(*) as count FROM store_overview_nodes').get()?.count || 0;
     const edgeCount = db.prepare('SELECT COUNT(*) as count FROM store_overview_edges').get()?.count || 0;
+    const settings = dbGetStoreOverviewSettings();
     sendJson(res, 200, {
       ok: true,
       runtimeStateDir: RUNTIME_STATE_DIR,
@@ -1745,6 +1805,7 @@ async function handleStoreOverviewDebug(req, res) {
       collectionDbExists: existsSync(COLLECTION_DB_PATH),
       nodeCount,
       edgeCount,
+      settings,
     });
   } catch (error) {
     sendJson(res, 500, { error: error.message || '读取店铺总览调试信息失败' });
@@ -12200,6 +12261,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/store-overview/debug') {
     await handleStoreOverviewDebug(req, res);
+    return;
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/store-overview/settings') {
+    await handleUpdateStoreOverviewSettings(req, res);
     return;
   }
 

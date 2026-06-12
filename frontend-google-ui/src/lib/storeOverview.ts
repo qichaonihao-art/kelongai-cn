@@ -22,6 +22,11 @@ export interface StoreOverviewEdge {
 export interface StoreOverviewGraph {
   nodes: StoreOverviewNode[];
   edges: StoreOverviewEdge[];
+  settings: StoreOverviewSettings;
+}
+
+export interface StoreOverviewSettings {
+  columnOrder: StoreOverviewNodeType[];
 }
 
 async function parseJsonSafely(response: Response) {
@@ -49,6 +54,25 @@ export async function getStoreOverviewGraph(): Promise<StoreOverviewGraph> {
   return {
     nodes: Array.isArray(json?.nodes) ? json.nodes : [],
     edges: Array.isArray(json?.edges) ? json.edges : [],
+    settings: {
+      columnOrder: Array.isArray(json?.settings?.columnOrder) ? json.settings.columnOrder : [],
+    },
+  };
+}
+
+export async function updateStoreOverviewSettings(input: Partial<StoreOverviewSettings>): Promise<StoreOverviewSettings> {
+  const response = await fetch('/api/store-overview/settings', {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const json = await parseJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(buildErrorMessage(json, '保存店铺总览设置失败'));
+  }
+  return {
+    columnOrder: Array.isArray(json?.settings?.columnOrder) ? json.settings.columnOrder : [],
   };
 }
 
