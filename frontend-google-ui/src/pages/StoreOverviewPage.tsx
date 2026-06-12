@@ -780,40 +780,39 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                     );
                   })}
 
-                  {Array.from(graphNodes.values()).map(({ node, x, y }) => {
-                    const meta = TYPE_META[node.type];
-                    const Icon = meta.icon;
-                    const selected = selectedNode?.id === node.id;
-                    const connectSource = connectSourceId === node.id;
-                    const related = !selectedNode || relatedNodeIds.has(node.id);
-                    return (
-                      <button
-                        key={node.id}
-                        type="button"
-                        onClick={() => void handleGraphNodeClick(node)}
-                        className={cn(
-                          'absolute w-[150px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-3 text-left shadow-sm transition-all hover:-translate-y-[calc(50%+2px)] hover:shadow-lg',
-                          selected ? 'border-emerald-300 ring-4 ring-emerald-100' : 'border-slate-200',
-                          connectSource && 'border-amber-300 ring-4 ring-amber-100',
-                          isConnectMode && !connectSource && 'cursor-crosshair',
-                          !related && 'opacity-25 grayscale'
-                        )}
-                        style={{ left: `${x}%`, top: `${y}%` }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-xl', meta.tone)}>
-                            <Icon className="size-4" />
-                          </span>
-                          <span className="min-w-0">
-                            <span className="block truncate text-xs font-black text-slate-900">{node.name}</span>
-                            <span className="block text-[10px] font-bold text-slate-400">{meta.shortLabel}</span>
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
+                  {Array.from(graphNodes.values())
+                    .filter(({ node }) => {
+                      const related = !selectedNode || relatedNodeIds.has(node.id);
+                      return !related;
+                    })
+                    .map(({ node, x, y }) => {
+                      const meta = TYPE_META[node.type];
+                      const Icon = meta.icon;
+                      return (
+                        <button
+                          key={node.id}
+                          type="button"
+                          onClick={() => void handleGraphNodeClick(node)}
+                          className={cn(
+                            'absolute w-[150px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm opacity-25 grayscale transition-all',
+                            isConnectMode && connectSourceId !== node.id && 'cursor-crosshair'
+                          )}
+                          style={{ left: `${x}%`, top: `${y}%` }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-xl', meta.tone)}>
+                              <Icon className="size-4" />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block truncate text-xs font-black text-slate-900">{node.name}</span>
+                              <span className="block text-[10px] font-bold text-slate-400">{meta.shortLabel}</span>
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
 
-                  {/* 激活的连线：放在节点上面，避免被节点卡片挡住 */}
+                  {/* 激活的连线：放在非激活节点上面、激活节点下面 */}
                   <svg className="pointer-events-none absolute inset-0 size-full">
                     {normalizedEdges.map(({ edge, source, target }) => {
                       const a = graphNodes.get(source.id);
@@ -849,6 +848,42 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       );
                     })}
                   </svg>
+
+                  {Array.from(graphNodes.values())
+                    .filter(({ node }) => {
+                      const related = !selectedNode || relatedNodeIds.has(node.id);
+                      return related;
+                    })
+                    .map(({ node, x, y }) => {
+                      const meta = TYPE_META[node.type];
+                      const Icon = meta.icon;
+                      const selected = selectedNode?.id === node.id;
+                      const connectSource = connectSourceId === node.id;
+                      return (
+                        <button
+                          key={node.id}
+                          type="button"
+                          onClick={() => void handleGraphNodeClick(node)}
+                          className={cn(
+                            'absolute w-[150px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-3 text-left shadow-sm transition-all hover:-translate-y-[calc(50%+2px)] hover:shadow-lg',
+                            selected ? 'border-emerald-300 ring-4 ring-emerald-100' : 'border-slate-200',
+                            connectSource && 'border-amber-300 ring-4 ring-amber-100',
+                            isConnectMode && !connectSource && 'cursor-crosshair'
+                          )}
+                          style={{ left: `${x}%`, top: `${y}%` }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-xl', meta.tone)}>
+                              <Icon className="size-4" />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block truncate text-xs font-black text-slate-900">{node.name}</span>
+                              <span className="block text-[10px] font-bold text-slate-400">{meta.shortLabel}</span>
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
                 </div>
               )}
             </div>
