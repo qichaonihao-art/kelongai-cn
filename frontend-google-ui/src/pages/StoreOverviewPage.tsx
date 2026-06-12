@@ -104,7 +104,7 @@ function getEdgeEndpoints(
   size: { width: number; height: number }
 ) {
   const halfW = 75;
-  const halfH = 34;
+  const halfH = 28;
   if (!size.width || !size.height) {
     return { x1: source.x, y1: source.y, x2: target.x, y2: target.y };
   }
