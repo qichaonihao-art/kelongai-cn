@@ -108,31 +108,24 @@ function getEdgePath(
   target: { x: number; y: number },
   size: { width: number; height: number }
 ) {
-  const cardW = 130;
-  const cardH = 46;
+  const cardW = 150;
   const halfW = size.width ? (cardW / 2 / size.width) * 100 : 6.35;
-  const halfH = size.height ? (cardH / 2 / size.height) * 100 : 4.5;
 
-  function edgePoint(from: { x: number; y: number }, to: { x: number; y: number }) {
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    if (!dx && !dy) return from;
-    const tx = dx ? halfW / Math.abs(dx) : Infinity;
-    const ty = dy ? halfH / Math.abs(dy) : Infinity;
-    const t = Math.min(tx, ty);
+  function sidePoint(from: { x: number; y: number }, to: { x: number; y: number }) {
+    const toRight = to.x >= from.x;
     return {
-      x: from.x + dx * t,
-      y: from.y + dy * t,
+      x: from.x + (toRight ? halfW : -halfW),
+      y: from.y,
     };
   }
 
-  const start = edgePoint(source, target);
-  const end = edgePoint(target, source);
+  const start = sidePoint(source, target);
+  const end = sidePoint(target, source);
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const direction = dx >= 0 ? 1 : -1;
-  const horizontalPull = Math.max(5, Math.min(12, Math.abs(dx) * 0.3));
-  const verticalNudge = Math.max(-3, Math.min(3, dy * 0.08));
+  const horizontalPull = Math.max(7, Math.min(14, Math.abs(dx) * 0.32));
+  const verticalNudge = Math.max(-2, Math.min(2, dy * 0.05));
   const c1x = start.x + direction * horizontalPull;
   const c2x = end.x - direction * horizontalPull;
   return `M ${start.x} ${start.y} C ${c1x} ${start.y + verticalNudge}, ${c2x} ${end.y - verticalNudge}, ${end.x} ${end.y}`;
@@ -912,6 +905,11 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                 <div ref={graphContainerRef} className="relative h-full min-w-[1180px]">
                   {/* 未激活的连线：放在节点后面 */}
                   <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <defs>
+                      <marker id="store-overview-arrow-muted" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse" markerUnits="strokeWidth">
+                        <path d="M 0 0 L 8 4 L 0 8 z" fill="#e2e8f0" />
+                      </marker>
+                    </defs>
                     {graphLineEdges.map(({ edge, source, target }) => {
                       const a = graphNodes.get(source.id);
                       const b = graphNodes.get(target.id);
@@ -929,6 +927,8 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                           fill="none"
                           vectorEffect="non-scaling-stroke"
                           opacity={0.12}
+                          markerStart="url(#store-overview-arrow-muted)"
+                          markerEnd="url(#store-overview-arrow-muted)"
                         >
                           <title>{source.name} → {target.name}</title>
                         </path>
@@ -938,6 +938,11 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
                   {/* 激活的连线同样放在节点下面，节点卡片负责盖住线头 */}
                   <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <defs>
+                      <marker id="store-overview-arrow-active" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse" markerUnits="strokeWidth">
+                        <path d="M 0 0 L 8 4 L 0 8 z" fill="#10b981" />
+                      </marker>
+                    </defs>
                     {graphLineEdges.map(({ edge, source, target }) => {
                       const a = graphNodes.get(source.id);
                       const b = graphNodes.get(target.id);
@@ -968,6 +973,8 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                             fill="none"
                             vectorEffect="non-scaling-stroke"
                             opacity={0.88}
+                            markerStart="url(#store-overview-arrow-active)"
+                            markerEnd="url(#store-overview-arrow-active)"
                           >
                             <title>{source.name} → {target.name}</title>
                           </path>
