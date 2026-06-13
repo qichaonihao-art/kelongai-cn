@@ -75,6 +75,14 @@ const PRODUCT_VIDEO_DOT_COLORS = [
   '#14b8a6',
   '#f43f5e',
 ];
+function getDefaultSelectedNodeId(nodes: StoreOverviewNode[]) {
+  return (
+    nodes.find((node) => node.type === 'store' && node.name.includes('瑞春'))?.id
+    || nodes[0]?.id
+    || null
+  );
+}
+
 function normalizeGraphColumnTypes(value: unknown): StoreOverviewNodeType[] {
   const parsed = Array.isArray(value) ? value : [];
   const valid = parsed.filter((type): type is StoreOverviewNodeType => DEFAULT_GRAPH_COLUMN_TYPES.includes(type));
@@ -164,9 +172,9 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
       setGraph(nextGraph);
       setGraphColumnTypes(normalizeGraphColumnTypes(nextGraph.settings?.columnOrder));
       setSelectedId((current) => {
-        if (!keepSelection) return nextGraph.nodes[0]?.id || null;
+        if (!keepSelection) return getDefaultSelectedNodeId(nextGraph.nodes);
         if (current && nextGraph.nodes.some((node) => node.id === current)) return current;
-        return nextGraph.nodes[0]?.id || null;
+        return getDefaultSelectedNodeId(nextGraph.nodes);
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载店铺总览失败');
@@ -281,6 +289,14 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
   const relatedNodeIds = relatedGraph.nodeIds;
   const relatedEdgeIds = relatedGraph.edgeIds;
+  const connectedMainNodeIds = useMemo(() => {
+    const ids = new Set<number>();
+    normalizedEdges.forEach(({ source, target }) => {
+      ids.add(source.id);
+      ids.add(target.id);
+    });
+    return ids;
+  }, [normalizedEdges]);
   const productVideoDotMap = useMemo(() => {
     const adjacency = new Map<number, Set<number>>();
     productVideoEdges.forEach(({ source, target }) => {
@@ -1045,6 +1061,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                     .map(({ node, x, y }) => {
                       const meta = TYPE_META[node.type];
                       const Icon = meta.icon;
+                      const idle = !connectedMainNodeIds.has(node.id);
                       return (
                         <button
                           key={node.id}
@@ -1080,6 +1097,11 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                               <span className="block text-[10px] font-bold text-slate-400">{meta.shortLabel}</span>
                             </span>
                           </div>
+                          {idle && (
+                            <span className="absolute bottom-2 right-3 text-[10px] font-black text-slate-300">
+                              空闲
+                            </span>
+                          )}
                         </button>
                       );
                     })}
@@ -1094,6 +1116,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       const Icon = meta.icon;
                       const selected = selectedNode?.id === node.id;
                       const connectSource = connectSourceId === node.id;
+                      const idle = !connectedMainNodeIds.has(node.id);
                       return (
                         <button
                           key={node.id}
@@ -1131,6 +1154,11 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                               <span className="block text-[10px] font-bold text-slate-400">{meta.shortLabel}</span>
                             </span>
                           </div>
+                          {idle && (
+                            <span className="absolute bottom-2 right-3 text-[10px] font-black text-slate-300">
+                              空闲
+                            </span>
+                          )}
                         </button>
                       );
                     })}
