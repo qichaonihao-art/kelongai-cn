@@ -77,7 +77,7 @@ const PRODUCT_VIDEO_DOT_COLORS = [
 ];
 function getDefaultSelectedNodeId(nodes: StoreOverviewNode[]) {
   return (
-    nodes.find((node) => node.type === 'store' && node.name.includes('瑞春'))?.id
+    nodes.find((node) => node.type === 'store' && /[锐瑞]春/.test(node.name))?.id
     || nodes[0]?.id
     || null
   );
@@ -664,6 +664,19 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
           .store-overview-dot-pulse {
             animation: storeOverviewDotPulse 1.8s ease-in-out infinite;
           }
+          @keyframes storeOverviewIdlePulse {
+            0%, 100% {
+              opacity: 0.72;
+              transform: scale(1);
+            }
+            50% {
+              opacity: 1;
+              transform: scale(1.05);
+            }
+          }
+          .store-overview-idle-pulse {
+            animation: storeOverviewIdlePulse 2.2s ease-in-out infinite;
+          }
         `}
       </style>
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/85 backdrop-blur-md">
@@ -1098,7 +1111,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                             </span>
                           </div>
                           {idle && (
-                            <span className="absolute bottom-2 right-3 text-[10px] font-black text-slate-300">
+                            <span className="store-overview-idle-pulse absolute bottom-2 right-2 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-500">
                               空闲
                             </span>
                           )}
@@ -1155,7 +1168,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                             </span>
                           </div>
                           {idle && (
-                            <span className="absolute bottom-2 right-3 text-[10px] font-black text-slate-300">
+                            <span className="store-overview-idle-pulse absolute bottom-2 right-2 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-500">
                               空闲
                             </span>
                           )}
