@@ -121,7 +121,14 @@ function getEdgePath(
 
   const start = sidePoint(source, target);
   const end = sidePoint(target, source);
-  return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const direction = dx >= 0 ? 1 : -1;
+  const horizontalPull = Math.max(7, Math.min(14, Math.abs(dx) * 0.32));
+  const verticalNudge = Math.max(-2, Math.min(2, dy * 0.05));
+  const c1x = start.x + direction * horizontalPull;
+  const c2x = end.x - direction * horizontalPull;
+  return `M ${start.x} ${start.y} C ${c1x} ${start.y + verticalNudge}, ${c2x} ${end.y - verticalNudge}, ${end.x} ${end.y}`;
 }
 
 export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewPageProps) {
