@@ -1116,7 +1116,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                           {idle && (
                             <span
                               className="store-overview-idle-pulse pointer-events-none absolute rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-black text-sky-500"
-                              style={{ left: `${x}%`, top: `${y}%`, transform: 'translate(39px, 10px)' }}
+                              style={{ left: `${x}%`, top: `${y}%`, transform: 'translate(42px, 14px)' }}
                             >
                               空闲
                             </span>
