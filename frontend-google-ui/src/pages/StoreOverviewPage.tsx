@@ -1081,7 +1081,8 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                           type="button"
                           onClick={() => void handleGraphNodeClick(node)}
                           className={cn(
-                            'absolute w-[150px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm opacity-25 grayscale transition-all',
+                            'absolute w-[150px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm grayscale transition-all',
+                            idle ? 'opacity-75' : 'opacity-25',
                             isConnectMode && connectSourceId !== node.id && 'cursor-crosshair'
                           )}
                           style={{ left: `${x}%`, top: `${y}%` }}
@@ -1168,7 +1169,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                             </span>
                           </div>
                           {idle && (
-                            <span className="store-overview-idle-pulse absolute bottom-2 right-2 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-500">
+                            <span className="absolute bottom-2 right-2 rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-black text-slate-400">
                               空闲
                             </span>
                           )}
