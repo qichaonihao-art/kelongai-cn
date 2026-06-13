@@ -666,18 +666,18 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
           }
           @keyframes storeOverviewIdlePulse {
             0%, 100% {
-              opacity: 0.78;
+              opacity: 0.82;
               transform: scale(1);
-              box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.24);
+              box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.24);
             }
             50% {
               opacity: 1;
-              transform: scale(1.08);
-              box-shadow: 0 0 0 4px rgba(14, 165, 233, 0);
+              transform: scale(1.06);
+              box-shadow: 0 0 0 4px rgba(245, 158, 11, 0);
             }
           }
           .store-overview-idle-pulse {
-            animation: storeOverviewIdlePulse 2.2s ease-in-out infinite;
+            animation: storeOverviewIdlePulse 2s ease-in-out infinite;
           }
         `}
       </style>
@@ -1078,50 +1078,46 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       const Icon = meta.icon;
                       const idle = !connectedMainNodeIds.has(node.id);
                       return (
-                        <div key={node.id}>
-                          <button
-                            type="button"
-                            onClick={() => void handleGraphNodeClick(node)}
-                            className={cn(
-                              'absolute w-[150px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm opacity-25 grayscale transition-all',
-                              isConnectMode && connectSourceId !== node.id && 'cursor-crosshair'
-                            )}
-                            style={{ left: `${x}%`, top: `${y}%` }}
-                          >
-                            {(productVideoDotMap.get(node.id)?.length || 0) > 0 && (
-                              <span className="absolute right-2 top-2 flex max-w-[56px] flex-wrap justify-end gap-1">
-                                {productVideoDotMap.get(node.id)?.slice(0, 4).map((dot, index) => (
-                                  <span
-                                    key={`${dot.color}-${index}`}
-                                    className={cn(
-                                      'size-2.5 rounded-full border border-white shadow-sm',
-                                      dot.active && 'store-overview-dot-pulse',
-                                      !dot.active && 'opacity-60'
-                                    )}
-                                    style={{ backgroundColor: dot.active ? dot.color : '#cbd5e1' }}
-                                  />
-                                ))}
-                              </span>
-                            )}
-                            <div className="flex items-center gap-2">
-                              <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-xl', meta.tone)}>
-                                <Icon className="size-4" />
-                              </span>
-                              <span className="min-w-0">
-                                <span className="block truncate text-xs font-black text-slate-900">{node.name}</span>
-                                <span className="block text-[10px] font-bold text-slate-400">{meta.shortLabel}</span>
-                              </span>
-                            </div>
-                          </button>
+                        <button
+                          key={node.id}
+                          type="button"
+                          onClick={() => void handleGraphNodeClick(node)}
+                          className={cn(
+                            'absolute w-[150px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm opacity-25 grayscale transition-all',
+                            isConnectMode && connectSourceId !== node.id && 'cursor-crosshair'
+                          )}
+                          style={{ left: `${x}%`, top: `${y}%` }}
+                        >
+                          {(productVideoDotMap.get(node.id)?.length || 0) > 0 && (
+                            <span className="absolute right-2 top-2 flex max-w-[56px] flex-wrap justify-end gap-1">
+                              {productVideoDotMap.get(node.id)?.slice(0, 4).map((dot, index) => (
+                                <span
+                                  key={`${dot.color}-${index}`}
+                                  className={cn(
+                                    'size-2.5 rounded-full border border-white shadow-sm',
+                                    dot.active && 'store-overview-dot-pulse',
+                                    !dot.active && 'opacity-60'
+                                  )}
+                                  style={{ backgroundColor: dot.active ? dot.color : '#cbd5e1' }}
+                                />
+                              ))}
+                            </span>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-xl', meta.tone)}>
+                              <Icon className="size-4" />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block truncate text-xs font-black text-slate-900">{node.name}</span>
+                              <span className="block text-[10px] font-bold text-slate-400">{meta.shortLabel}</span>
+                            </span>
+                          </div>
                           {idle && (
-                            <span
-                              className="store-overview-idle-pulse pointer-events-none absolute rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-black text-sky-500"
-                              style={{ left: `${x}%`, top: `${y}%`, transform: 'translate(42px, 14px)' }}
-                            >
+                            <span className="store-overview-idle-pulse absolute bottom-2 right-2 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-500">
                               空闲
                             </span>
                           )}
-                        </div>
+                        </button>
                       );
                     })}
 
@@ -1174,7 +1170,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                             </span>
                           </div>
                           {idle && (
-                            <span className="absolute bottom-2 right-2 rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-black text-slate-400">
+                            <span className="store-overview-idle-pulse absolute bottom-2 right-2 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-500">
                               空闲
                             </span>
                           )}
