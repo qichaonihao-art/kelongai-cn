@@ -1078,46 +1078,52 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       const Icon = meta.icon;
                       const idle = !connectedMainNodeIds.has(node.id);
                       return (
-                        <button
-                          key={node.id}
-                          type="button"
-                          onClick={() => void handleGraphNodeClick(node)}
-                          className={cn(
-                            'absolute w-[150px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm opacity-25 grayscale transition-all',
-                            isConnectMode && connectSourceId !== node.id && 'cursor-crosshair'
-                          )}
-                          style={{ left: `${x}%`, top: `${y}%` }}
-                        >
-                          {(productVideoDotMap.get(node.id)?.length || 0) > 0 && (
-                            <span className="absolute right-2 top-2 flex max-w-[56px] flex-wrap justify-end gap-1">
-                              {productVideoDotMap.get(node.id)?.slice(0, 4).map((dot, index) => (
-                                <span
-                                  key={`${dot.color}-${index}`}
-                                  className={cn(
-                                    'size-2.5 rounded-full border border-white shadow-sm',
-                                    dot.active && 'store-overview-dot-pulse',
-                                    !dot.active && 'opacity-60'
-                                  )}
-                                  style={{ backgroundColor: dot.active ? dot.color : '#cbd5e1' }}
-                                />
-                              ))}
-                            </span>
-                          )}
-                          <div className="flex items-center gap-2">
-                            <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-xl', meta.tone)}>
-                              <Icon className="size-4" />
-                            </span>
-                            <span className="min-w-0">
-                              <span className="block truncate text-xs font-black text-slate-900">{node.name}</span>
-                              <span className="block text-[10px] font-bold text-slate-400">{meta.shortLabel}</span>
-                            </span>
-                          </div>
+                        <div key={node.id}>
+                          <button
+                            type="button"
+                            onClick={() => void handleGraphNodeClick(node)}
+                            className={cn(
+                              'absolute w-[150px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm opacity-25 grayscale transition-all',
+                              isConnectMode && connectSourceId !== node.id && 'cursor-crosshair'
+                            )}
+                            style={{ left: `${x}%`, top: `${y}%` }}
+                          >
+                            {(productVideoDotMap.get(node.id)?.length || 0) > 0 && (
+                              <span className="absolute right-2 top-2 flex max-w-[56px] flex-wrap justify-end gap-1">
+                                {productVideoDotMap.get(node.id)?.slice(0, 4).map((dot, index) => (
+                                  <span
+                                    key={`${dot.color}-${index}`}
+                                    className={cn(
+                                      'size-2.5 rounded-full border border-white shadow-sm',
+                                      dot.active && 'store-overview-dot-pulse',
+                                      !dot.active && 'opacity-60'
+                                    )}
+                                    style={{ backgroundColor: dot.active ? dot.color : '#cbd5e1' }}
+                                  />
+                                ))}
+                              </span>
+                            )}
+                            <div className="flex items-center gap-2">
+                              <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-xl', meta.tone)}>
+                                <Icon className="size-4" />
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block truncate text-xs font-black text-slate-900">{node.name}</span>
+                                <span className="block text-[10px] font-bold text-slate-400">{meta.shortLabel}</span>
+                              </span>
+                            </div>
+                          </button>
                           {idle && (
-                            <span className="store-overview-idle-pulse absolute bottom-2 right-2 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-500">
-                              空闲
+                            <span
+                              className="pointer-events-none absolute h-[62px] w-[150px] -translate-x-1/2 -translate-y-1/2"
+                              style={{ left: `${x}%`, top: `${y}%` }}
+                            >
+                              <span className="store-overview-idle-pulse absolute bottom-2 right-2 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-500">
+                                空闲
+                              </span>
                             </span>
                           )}
-                        </button>
+                        </div>
                       );
                     })}
 
