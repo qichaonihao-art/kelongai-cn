@@ -8,6 +8,8 @@
 
 当前原则仍然是：以 `frontend-google-ui` 现有 UI 为唯一基准，只给现有模块接真实能力，不把旧前端的大量面板搬回来。
 
+> 服务器运行状态数据有独立保护要求。维护、部署或迁移前必须先阅读 [`RUNTIME_STATE_PROTECTION.md`](RUNTIME_STATE_PROTECTION.md)，重点保护声音克隆历史音色档案 `/www/wwwroot/kelongai-runtime-state/voice-archive.json`。
+
 ## 当前完成情况
 
 ### 已真实可用
@@ -170,8 +172,11 @@ cp legacy-project/.env.example legacy-project/.env
 - `VOLCENGINE_SPEAKER_ID_POOL`
   - 可选，多个真实可用的火山 `speaker_id`，用逗号或空白分隔
   - 新版前端创建火山音色时，服务端会从这里自动挑一个全站未占用的槽位
-  - 槽位占用由服务端统一记录 owner（前端每个浏览器会生成自己的 `deviceId`），记录文件默认写到 `legacy-project/.runtime-state/volc-speaker-ownership.json`
-  - 前端“我的音色”历史仍然只保存在当前浏览器 `localStorage`，不会跨电脑互相显示
+- `RUNTIME_STATE_DIR`
+  - 生产环境必须配置为 `/www/wwwroot/kelongai-runtime-state`
+  - 声音克隆“我的音色”历史由服务端统一读取 `voice-archive.json`，用于多设备同步
+  - 火山槽位占用由服务端统一记录 owner，写入同一状态目录下的 `volc-speaker-ownership.json`
+  - 维护时不要删除或清空这个目录，详见 [`RUNTIME_STATE_PROTECTION.md`](RUNTIME_STATE_PROTECTION.md)
 
 ### Mock 开关
 
@@ -257,3 +262,4 @@ http://127.0.0.1:3000
 - 创意创作接口封装：[`frontend-google-ui/src/lib/creative.ts`](frontend-google-ui/src/lib/creative.ts)
 - 后端主入口：[`legacy-project/server.mjs`](legacy-project/server.mjs)
 - 部署说明：[`legacy-project/DEPLOY.md`](legacy-project/DEPLOY.md)
+- 运行状态数据保护：[`RUNTIME_STATE_PROTECTION.md`](RUNTIME_STATE_PROTECTION.md)

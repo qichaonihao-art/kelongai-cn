@@ -128,6 +128,44 @@ http://127.0.0.1:3000
 
 ## 四、服务器部署
 
+### 0. 运行状态数据保护（必须先看）
+
+生产环境运行状态目录统一为：
+
+```text
+/www/wwwroot/kelongai-runtime-state
+```
+
+声音克隆历史音色依赖：
+
+```text
+/www/wwwroot/kelongai-runtime-state/voice-archive.json
+```
+
+这个文件不能删除、不能清空、不能被部署流程覆盖。店铺总览、声音克隆、视频解析等任何模块维护时，都不要动 `/www/wwwroot/kelongai-runtime-state`。
+
+部署前先确认 `.env`：
+
+```bash
+grep '^RUNTIME_STATE_DIR=' /www/wwwroot/kelongai-cn/legacy-project/.env
+```
+
+生产环境应输出：
+
+```bash
+RUNTIME_STATE_DIR=/www/wwwroot/kelongai-runtime-state
+```
+
+涉及 `.env`、`server.mjs`、PM2、部署脚本、运行目录迁移时，先备份：
+
+```bash
+mkdir -p /www/wwwroot/kelongai-runtime-state-backups
+tar -czf /www/wwwroot/kelongai-runtime-state-backups/runtime-state-$(date +%F-%H%M%S).tar.gz \
+  -C /www/wwwroot kelongai-runtime-state
+```
+
+完整说明见仓库根目录 [`../RUNTIME_STATE_PROTECTION.md`](../RUNTIME_STATE_PROTECTION.md)。
+
 ### 1. 服务器准备
 
 - Node.js 18+，建议 Node.js 20+
