@@ -113,8 +113,9 @@ type HistoryPreviewItem = UploadHistoryPreviewItem & {
 
 const MAX_VIDEO_SIZE_BYTES = 150 * 1024 * 1024;
 const MAX_SAVED_CREATIVE_SESSIONS = 8;
-const MAX_SEEDANCE_HISTORY_ITEMS = 30;
-const SEEDANCE_HISTORY_MAX_AGE_HOURS = 24;
+const MAX_SEEDANCE_HISTORY_ITEMS = 300;
+const SEEDANCE_HISTORY_MAX_AGE_DAYS = 30;
+const SEEDANCE_HISTORY_MAX_AGE_MS = SEEDANCE_HISTORY_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
@@ -458,6 +459,66 @@ function formatSessionTime(value: string) {
   });
 }
 
+function toISODate(value: string | number | Date): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatHistoryDate(dateString: string): string {
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return dateString;
+
+  const now = new Date();
+  const today = toISODate(now);
+  const yesterday = toISODate(new Date(now.getTime() - 86400000));
+
+  if (dateString === today) return '今天';
+  if (dateString === yesterday) return '昨天';
+
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
+function getSeedanceHistoryByDate(items: SeedanceHistoryItem[]) {
+  const groups = new Map<string, SeedanceHistoryItem[]>();
+  items.forEach((item) => {
+    const date = toISODate(item.savedAt);
+    if (!date) return;
+    const existing = groups.get(date) || [];
+    existing.push(item);
+    groups.set(date, existing);
+  });
+  groups.forEach((list) => {
+    list.sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
+  });
+  return groups;
+}
+
+function getLast30Days(): { date: string; label: string; dayName: string; dayNumber: number }[] {
+  const days: { date: string; label: string; dayName: string; dayNumber: number }[] = [];
+  const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+  const now = new Date();
+  for (let i = 29; i >= 0; i--) {
+    const date = new Date(now.getTime() - i * 86400000);
+    const dateString = toISODate(date);
+    days.push({
+      date: dateString,
+      label: formatHistoryDate(dateString),
+      dayName: dayNames[date.getDay()],
+      dayNumber: date.getDate(),
+    });
+  }
+  return days;
+}
+
+function isSeedanceVideoExpired(savedAt: string): boolean {
+  const savedTime = new Date(savedAt).getTime();
+  return Date.now() - savedTime > 24 * 60 * 60 * 1000;
+}
+
 function getSeedanceTaskTime(task: SeedanceTaskResult) {
   return task.createdAt && task.createdAt > 0 ? task.createdAt : Math.floor(Date.now() / 1000);
 }
@@ -514,7 +575,7 @@ function loadSeedanceHistory() {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
 
-    const maxAgeMs = SEEDANCE_HISTORY_MAX_AGE_HOURS * 60 * 60 * 1000;
+    const maxAgeMs = SEEDANCE_HISTORY_MAX_AGE_MS;
     const now = Date.now();
 
     const filtered = parsed
@@ -822,11 +883,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [seedanceError, setSeedanceError] = useState("");
   const [seedanceTask, setSeedanceTask] = useState<SeedanceTaskResult | null>(null);
   const [seedanceHistory, setSeedanceHistory] = useState<SeedanceHistoryItem[]>(loadSeedanceHistory);
+  const [selectedHistoryDate, setSelectedHistoryDate] = useState<string>('');
   const [showSeedanceSettings, setShowSeedanceSettings] = useState(false);
   const [seedanceClock, setSeedanceClock] = useState(Date.now());
   const [seedanceVideoModal, setSeedanceVideoModal] = useState(false);
   const [seedanceModalItem, setSeedanceModalItem] = useState<SeedanceHistoryItem | null>(null);
-  const [isHistoryFolded, setIsHistoryFolded] = useState(true);
   const [showAtMenu, setShowAtMenu] = useState(false);
   const [atMenuFilter, setAtMenuFilter] = useState("");
   const [atMenuSelectedIndex, setAtMenuSelectedIndex] = useState(0);
@@ -1005,6 +1066,15 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
     window.localStorage.setItem(SEEDANCE_HISTORY_STORAGE_KEY, JSON.stringify(seedanceHistory));
   }, [seedanceHistory]);
+
+  useEffect(() => {
+    if (selectedHistoryDate) return;
+    const grouped = getSeedanceHistoryByDate(seedanceHistory);
+    const firstDate = Array.from(grouped.keys())[0];
+    if (firstDate) {
+      setSelectedHistoryDate(firstDate);
+    }
+  }, [seedanceHistory, selectedHistoryDate]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -3402,7 +3472,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <div className="text-xs font-black text-slate-800">生成历史</div>
-                    <div className="mt-0.5 text-[11px] text-slate-400">保存最近 {MAX_SEEDANCE_HISTORY_ITEMS} 个 Seedance 任务</div>
+                    <div className="mt-0.5 text-[11px] text-slate-400">保存最近 {SEEDANCE_HISTORY_MAX_AGE_DAYS} 天的 Seedance 任务</div>
                   </div>
                   <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-slate-400 ring-1 ring-slate-200">
                     {seedanceHistory.length} 条
@@ -3417,198 +3487,145 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {/* 最近一条始终展开 */}
+                  <div className="space-y-3">
+                    {/* 最近 30 天日期选择器 */}
                     {(() => {
-                      const latest = seedanceHistory[0];
+                      const historyByDate = getSeedanceHistoryByDate(seedanceHistory);
+                      const days = getLast30Days();
                       return (
-                        <div key={latest.taskId} className="rounded-xl border border-slate-300 bg-white p-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-xs font-black text-slate-700">
-                                {latest.prompt.replace(/\s+/g, ' ').slice(0, 48) || 'Seedance 视频任务'}
-                              </div>
-                              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-slate-400">
-                                <span>{formatSessionTime(latest.savedAt)}</span>
-                                <span>{latest.ratio}</span>
-                                <span>{latest.duration} 秒</span>
-                                <span>{getSeedanceStatusLabel(latest.status, !!latest.videoUrl)}</span>
-                                {latest.elapsedSeconds !== undefined && latest.elapsedSeconds > 0 && (
-                                  <span className="text-emerald-600">
-                                    生成耗时 {formatElapsedDuration(latest.elapsedSeconds)}
+                        <>
+                          <div className="flex gap-1.5 overflow-x-auto rounded-xl border border-slate-300 bg-white p-2 scrollbar-thin">
+                            {days.map((day) => {
+                              const count = historyByDate.get(day.date)?.length || 0;
+                              const selected = selectedHistoryDate === day.date;
+                              return (
+                                <button
+                                  key={day.date}
+                                  type="button"
+                                  onClick={() => setSelectedHistoryDate(day.date)}
+                                  className={cn(
+                                    'flex shrink-0 flex-col items-center justify-center rounded-lg border px-2 py-1.5 text-center transition-all',
+                                    selected
+                                      ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                                  )}
+                                  style={{ width: '52px' }}
+                                >
+                                  <span className="text-[9px] font-bold leading-none opacity-80">{day.dayName}</span>
+                                  <span className="mt-0.5 text-sm font-black leading-none">{day.dayNumber}</span>
+                                  <span
+                                    className={cn(
+                                      'mt-1 h-1.5 w-1.5 rounded-full',
+                                      count > 0 ? 'bg-emerald-500' : 'bg-slate-200'
+                                    )}
+                                  />
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* 选中日期详情 */}
+                          {selectedHistoryDate && (
+                            <div className="rounded-xl border border-slate-300 bg-white p-3">
+                              <div className="mb-2 flex items-center justify-between">
+                                <div className="text-xs font-black text-slate-800">
+                                  {formatHistoryDate(selectedHistoryDate)}
+                                  <span className="ml-1.5 text-[10px] font-medium text-slate-400">
+                                    {historyByDate.get(selectedHistoryDate)?.length || 0} 条记录
                                   </span>
+                                </div>
+                              </div>
+
+                              <div className="space-y-2">
+                                {(historyByDate.get(selectedHistoryDate) || []).length === 0 ? (
+                                  <div className="py-4 text-center text-xs text-slate-400">这一天还没有生成记录</div>
+                                ) : (
+                                  (historyByDate.get(selectedHistoryDate) || []).map((item) => {
+                                    const expired = isSeedanceVideoExpired(item.savedAt);
+                                    return (
+                                      <div key={item.taskId} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0 flex-1">
+                                            <div className="line-clamp-2 text-xs font-black text-slate-700">
+                                              {item.prompt.replace(/\s+/g, ' ').trim() || 'Seedance 视频任务'}
+                                            </div>
+                                            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-slate-400">
+                                              <span>{formatSessionTime(item.savedAt)}</span>
+                                              <span>{item.ratio}</span>
+                                              <span>{item.duration} 秒</span>
+                                              <span>{getSeedanceStatusLabel(item.status, !!item.videoUrl)}</span>
+                                              {item.elapsedSeconds !== undefined && item.elapsedSeconds > 0 && (
+                                                <span className="text-emerald-600">
+                                                  生成耗时 {formatElapsedDuration(item.elapsedSeconds)}
+                                                </span>
+                                              )}
+                                              {expired && <span className="text-amber-600">视频链接已过期</span>}
+                                            </div>
+                                          </div>
+                                          <div className="flex items-center gap-0.5">
+                                            <button
+                                              type="button"
+                                              onClick={async () => {
+                                                try {
+                                                  await navigator.clipboard.writeText(item.prompt);
+                                                  setCopiedMessageId(item.taskId);
+                                                  setTimeout(() => setCopiedMessageId((current) => (current === item.taskId ? null : current)), 2000);
+                                                } catch {}
+                                              }}
+                                              className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                                              aria-label="复制提示词"
+                                              title="复制提示词"
+                                            >
+                                              {copiedMessageId === item.taskId ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => removeSeedanceHistoryItem(item.taskId)}
+                                              className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
+                                              aria-label="删除生成记录"
+                                            >
+                                              <Trash2 className="size-3.5" />
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleViewSeedanceHistoryItem(item)}
+                                            disabled={expired || !item.videoUrl}
+                                            className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                          >
+                                            {item.videoUrl ? (
+                                              <>
+                                                <Sparkles className="size-3.5" />
+                                                查看视频
+                                              </>
+                                            ) : (
+                                              '查看'
+                                            )}
+                                          </button>
+                                          {item.videoUrl && !expired && (
+                                            <a
+                                              href={item.videoUrl}
+                                              download={`seedance-${item.taskId}.mp4`}
+                                              className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-bold text-white transition-colors hover:bg-emerald-700"
+                                            >
+                                              <Download className="size-3.5" />
+                                              下载
+                                            </a>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })
                                 )}
                               </div>
                             </div>
-                            <div className="flex items-center gap-0.5">
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  try {
-                                    await navigator.clipboard.writeText(latest.prompt);
-                                    setCopiedMessageId(latest.taskId);
-                                    setTimeout(() => setCopiedMessageId((current) => (current === latest.taskId ? null : current)), 2000);
-                                  } catch {}
-                                }}
-                                className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
-                                aria-label="复制提示词"
-                                title="复制提示词"
-                              >
-                                {copiedMessageId === latest.taskId ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => removeSeedanceHistoryItem(latest.taskId)}
-                                className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
-                                aria-label="删除生成记录"
-                              >
-                                <X className="size-3.5" />
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleViewSeedanceHistoryItem(latest)}
-                              className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800"
-                            >
-                              {latest.videoUrl ? (
-                                <>
-                                  <Sparkles className="size-3.5" />
-                                  查看视频
-                                </>
-                              ) : (
-                                '查看'
-                              )}
-                            </button>
-                            {latest.videoUrl && (
-                              <a
-                                href={latest.videoUrl}
-                                download={`seedance-${latest.taskId}.mp4`}
-                                className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-bold text-white transition-colors hover:bg-emerald-700"
-                              >
-                                <Download className="size-3.5" />
-                                下载
-                              </a>
-                            )}
-                          </div>
-                        </div>
+                          )}
+                        </>
                       );
                     })()}
-
-                    {/* 折叠的 older records */}
-                    {seedanceHistory.length > 1 && (
-                      <AnimatePresence initial={false} mode="wait">
-                        {isHistoryFolded ? (
-                          <motion.button
-                            key="expand"
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            transition={{ duration: 0.15 }}
-                            type="button"
-                            onClick={() => setIsHistoryFolded(false)}
-                            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-slate-400 hover:text-slate-700"
-                          >
-                            <ChevronDown className="size-4" />
-                            展开更多 ({seedanceHistory.length - 1} 条)
-                          </motion.button>
-                        ) : (
-                          <motion.div
-                            key="collapse"
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: 'auto' }}
-                            exit={{ opacity: 0, height: 0 }}
-                            transition={{ duration: 0.3, ease: 'easeInOut' }}
-                            className="space-y-2 overflow-hidden"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => setIsHistoryFolded(true)}
-                              className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-500 transition-colors hover:border-slate-400 hover:text-slate-700"
-                            >
-                              <ChevronUp className="size-4" />
-                              收起
-                            </button>
-                            {seedanceHistory.slice(1).map((item) => (
-                              <div key={item.taskId} className="rounded-xl border border-slate-300 bg-white p-3">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0 flex-1">
-                                    <div className="truncate text-xs font-black text-slate-700">
-                                      {item.prompt.replace(/\s+/g, ' ').slice(0, 48) || 'Seedance 视频任务'}
-                                    </div>
-                                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-slate-400">
-                                      <span>{formatSessionTime(item.savedAt)}</span>
-                                      <span>{item.ratio}</span>
-                                      <span>{item.duration} 秒</span>
-                                      <span>{getSeedanceStatusLabel(item.status, !!item.videoUrl)}</span>
-                                      {item.elapsedSeconds !== undefined && item.elapsedSeconds > 0 && (
-                                        <span className="text-emerald-600">
-                                          生成耗时 {formatElapsedDuration(item.elapsedSeconds)}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-0.5">
-                                    <button
-                                      type="button"
-                                      onClick={async () => {
-                                        try {
-                                          await navigator.clipboard.writeText(item.prompt);
-                                          setCopiedMessageId(item.taskId);
-                                          setTimeout(() => setCopiedMessageId((current) => (current === item.taskId ? null : current)), 2000);
-                                        } catch {}
-                                      }}
-                                      className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
-                                      aria-label="复制提示词"
-                                      title="复制提示词"
-                                    >
-                                      {copiedMessageId === item.taskId ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeSeedanceHistoryItem(item.taskId)}
-                                      className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
-                                      aria-label="删除生成记录"
-                                    >
-                                      <X className="size-3.5" />
-                                    </button>
-                                  </div>
-                                </div>
-
-                                <div className="mt-3 flex flex-wrap gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleViewSeedanceHistoryItem(item)}
-                                    className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800"
-                                  >
-                                    {item.videoUrl ? (
-                                      <>
-                                        <Sparkles className="size-3.5" />
-                                        查看视频
-                                      </>
-                                    ) : (
-                                      '查看'
-                                    )}
-                                  </button>
-                                  {item.videoUrl && (
-                                    <a
-                                      href={item.videoUrl}
-                                      download={`seedance-${item.taskId}.mp4`}
-                                      className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-bold text-white transition-colors hover:bg-emerald-700"
-                                    >
-                                      <Download className="size-3.5" />
-                                      下载
-                                    </a>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    )}
                   </div>
                 )}
               </div>
