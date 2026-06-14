@@ -1028,7 +1028,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                         onDoubleClick={() => void persistGraphColumnTypes(DEFAULT_GRAPH_COLUMN_TYPES)}
                         title="拖动可调整整列顺序，双击恢复默认顺序，也可以点左右箭头移动"
                         className={cn(
-                          'absolute top-3 flex cursor-grab items-center gap-1.5 rounded-2xl border px-2.5 py-1.5 text-sm font-black shadow-sm transition-all active:cursor-grabbing',
+                          'absolute top-3 flex w-[200px] cursor-grab items-center justify-between gap-1 rounded-lg border px-2 py-1.5 text-sm font-black shadow-sm transition-all active:cursor-grabbing',
                           draggingColumnType === column.type
                             ? 'border-emerald-200 bg-emerald-50 text-emerald-700 opacity-70'
                             : 'border-slate-200 bg-white/95 text-slate-700 backdrop-blur-sm hover:bg-slate-50'
@@ -1042,15 +1042,15 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                             moveGraphColumn(column.type, -1);
                           }}
                           disabled={graphColumnTypes.indexOf(column.type) === 0}
-                          className="flex size-5 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500 disabled:cursor-not-allowed disabled:opacity-20"
+                          className="flex size-5 shrink-0 items-center justify-center rounded text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500 disabled:cursor-not-allowed disabled:opacity-20"
                           title="整列左移"
                         >
                           <ChevronLeft className="size-3.5" />
                         </button>
-                        <span className="flex min-w-[64px] items-center justify-center gap-1.5 px-1 text-center tracking-wide">
-                          <Icon className="size-3.5 text-slate-500" />
-                          {column.label}
-                          <span className="text-xs text-slate-400">{graph.nodes.filter((node) => node.type === column.type).length}</span>
+                        <span className="flex min-w-0 flex-1 items-center justify-center gap-1.5 px-1 text-center tracking-wide">
+                          <Icon className="size-3.5 shrink-0 text-slate-500" />
+                          <span className="truncate">{column.label}</span>
+                          <span className="shrink-0 text-xs text-slate-400">{graph.nodes.filter((node) => node.type === column.type).length}</span>
                         </span>
                         <button
                           type="button"
@@ -1059,7 +1059,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                             moveGraphColumn(column.type, 1);
                           }}
                           disabled={graphColumnTypes.indexOf(column.type) === graphColumnTypes.length - 1}
-                          className="flex size-5 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500 disabled:cursor-not-allowed disabled:opacity-20"
+                          className="flex size-5 shrink-0 items-center justify-center rounded text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500 disabled:cursor-not-allowed disabled:opacity-20"
                           title="整列右移"
                         >
                           <ChevronRight className="size-3.5" />
