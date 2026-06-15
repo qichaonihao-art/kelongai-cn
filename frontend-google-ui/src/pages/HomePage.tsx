@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Mic2, Wand2, LogOut, Download, Network, Image, Crown } from "lucide-react";
 import SiteFooter from "@/src/components/SiteFooter";
+import { cn } from "@/src/lib/utils";
 import { motion } from "motion/react";
 
 interface HomePageProps {
