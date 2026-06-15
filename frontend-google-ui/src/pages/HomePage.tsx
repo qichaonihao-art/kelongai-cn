@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Mic2, Wand2, LogOut, Download, Network, Image, Crown } from "lucide-react";
 import SiteFooter from "@/src/components/SiteFooter";
 import { motion } from "motion/react";
@@ -71,16 +72,96 @@ const modules = [
   },
 ];
 
-const cultureMottos = [
-  {
-    label: '多试试总没错',
-  },
-  {
-    label: '7+3=七分专注，三分探索',
-  },
-];
+const DEFAULT_CULTURE_MOTTOS = ['多试试总没错', '7+3=七分专注，三分探索'];
+
+function parseCultureMottoDraft(value: string) {
+  const lines = value
+    .split(/\n+/g)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  return lines.length ? lines : DEFAULT_CULTURE_MOTTOS;
+}
+
+async function fetchCultureMottos() {
+  const response = await fetch('/api/home/culture-mottos', { credentials: 'include' });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(json?.error || '读取主页标语失败');
+  }
+  return Array.isArray(json?.mottos) ? parseCultureMottoDraft(json.mottos.join('\n')) : DEFAULT_CULTURE_MOTTOS;
+}
+
+async function updateCultureMottos(mottos: string[]) {
+  const response = await fetch('/api/home/culture-mottos', {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mottos }),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(json?.error || '保存主页标语失败');
+  }
+  return Array.isArray(json?.mottos) ? parseCultureMottoDraft(json.mottos.join('\n')) : mottos;
+}
 
 export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
+  const [cultureMottos, setCultureMottos] = useState<string[]>(DEFAULT_CULTURE_MOTTOS);
+  const [isCultureEditorOpen, setIsCultureEditorOpen] = useState(false);
+  const [cultureDraft, setCultureDraft] = useState(() => DEFAULT_CULTURE_MOTTOS.join('\n'));
+  const [cultureSaveError, setCultureSaveError] = useState("");
+  const [isCultureSaving, setIsCultureSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadServerMottos() {
+      try {
+        const next = await fetchCultureMottos();
+        if (cancelled) return;
+        setCultureMottos(next);
+        setCultureDraft(next.join('\n'));
+      } catch {
+        // Keep defaults if the server is temporarily unavailable.
+      }
+    }
+
+    void loadServerMottos();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function openCultureEditor() {
+    setCultureDraft(cultureMottos.join('\n'));
+    setCultureSaveError("");
+    setIsCultureEditorOpen(true);
+  }
+
+  async function saveCultureMottos() {
+    const next = parseCultureMottoDraft(cultureDraft);
+    setIsCultureSaving(true);
+    setCultureSaveError("");
+    try {
+      const saved = await updateCultureMottos(next);
+      setCultureMottos(saved);
+      setCultureDraft(saved.join('\n'));
+      setIsCultureEditorOpen(false);
+    } catch (error) {
+      setCultureSaveError(error instanceof Error ? error.message : '保存主页标语失败');
+    } finally {
+      setIsCultureSaving(false);
+    }
+  }
+
+  function cancelCultureEdit() {
+    setCultureDraft(cultureMottos.join('\n'));
+    setCultureSaveError("");
+    setIsCultureEditorOpen(false);
+  }
+
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-start p-6 relative">
       <style>{`
@@ -105,22 +186,76 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
           }
         }
       `}</style>
-      <div className="pointer-events-none absolute left-7 top-7 z-10 hidden h-24 w-72 overflow-hidden text-left md:block">
-        <div className="absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-background to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-background to-transparent" />
-        <div
-          className="space-y-2 pl-1"
-          style={{ animation: 'culture-credit-rise 7.5s ease-in-out infinite' }}
-        >
-          {cultureMottos.map((motto) => (
-            <div
-              key={motto.label}
-              className="text-sm font-black tracking-[0.18em] text-slate-700/80 drop-shadow-sm"
-            >
-              {motto.label}
+      <div
+        className="absolute left-7 top-7 z-10 hidden w-80 text-left md:block"
+        onDoubleClick={openCultureEditor}
+        title="双击编辑团队标语"
+      >
+        {isCultureEditorOpen ? (
+          <div
+            className="rounded-2xl border border-white/70 bg-white/75 p-3 shadow-xl shadow-slate-200/60 backdrop-blur-xl"
+            onDoubleClick={(event) => event.stopPropagation()}
+          >
+            <textarea
+              value={cultureDraft}
+              onChange={(event) => setCultureDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                  event.preventDefault();
+                  void saveCultureMottos();
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  cancelCultureEdit();
+                }
+              }}
+              autoFocus
+              rows={4}
+              className="h-28 w-full resize-none rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-xs font-bold leading-5 text-slate-700 outline-none transition-colors focus:border-indigo-300 focus:bg-white"
+            />
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <span className={cn("text-[10px] font-bold", cultureSaveError ? "text-red-400" : "text-slate-400")}>
+                {cultureSaveError || '每行一句，最多 4 行，所有设备同步'}
+              </span>
+              <div className="flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={cancelCultureEdit}
+                  disabled={isCultureSaving}
+                  className="h-7 rounded-full px-3 text-[11px] font-bold text-slate-500 transition-colors hover:bg-slate-100"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveCultureMottos()}
+                  disabled={isCultureSaving}
+                  className="h-7 rounded-full bg-slate-900 px-3 text-[11px] font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isCultureSaving ? '保存中' : '保存'}
+                </button>
+              </div>
             </div>
-          ))}
-        </div>
+          </div>
+        ) : (
+          <div className="h-24 overflow-hidden">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-background to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-background to-transparent" />
+            <div
+              className="pointer-events-none space-y-2 pl-1"
+              style={{ animation: 'culture-credit-rise 7.5s ease-in-out infinite' }}
+            >
+              {cultureMottos.map((motto) => (
+                <div
+                  key={motto}
+                  className="text-sm font-black tracking-[0.18em] text-slate-700/80 drop-shadow-sm"
+                >
+                  {motto}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       <div className="absolute top-5 right-6 z-20">
         <button

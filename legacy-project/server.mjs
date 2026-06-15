@@ -45,6 +45,7 @@ const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || path.join(__dirname, '.runtime-state'));
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
 const VOICE_ARCHIVE_FILE = path.join(RUNTIME_STATE_DIR, 'voice-archive.json');
+const HOME_CULTURE_MOTTOS_FILE = path.join(RUNTIME_STATE_DIR, 'home-culture-mottos.json');
 const VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS = 15 * 1000;
 const COLLECTION_DB_PATH = path.join(RUNTIME_STATE_DIR, 'collection.db');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
@@ -1807,6 +1808,59 @@ async function handleStoreOverviewDebug(req, res) {
     });
   } catch (error) {
     sendJson(res, 500, { error: error.message || '读取店铺总览调试信息失败' });
+  }
+}
+
+const DEFAULT_HOME_CULTURE_MOTTOS = ['多试试总没错', '7+3=七分专注，三分探索'];
+
+function sanitizeHomeCultureMottos(value) {
+  const list = Array.isArray(value) ? value : [];
+  const mottos = list
+    .map((item) => readValue(item))
+    .filter(Boolean)
+    .slice(0, 4);
+  return mottos.length > 0 ? mottos : DEFAULT_HOME_CULTURE_MOTTOS;
+}
+
+async function loadHomeCultureMottos() {
+  try {
+    const raw = await readFile(HOME_CULTURE_MOTTOS_FILE, 'utf8');
+    const parsed = parseJsonString(raw, {});
+    return sanitizeHomeCultureMottos(parsed?.mottos);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.error('[home culture] load_failed', { filePath: HOME_CULTURE_MOTTOS_FILE, message: error?.message || '' });
+    }
+    return DEFAULT_HOME_CULTURE_MOTTOS;
+  }
+}
+
+async function saveHomeCultureMottos(mottos) {
+  await ensureRuntimeStateDir();
+  await writeFile(
+    HOME_CULTURE_MOTTOS_FILE,
+    JSON.stringify({ version: 1, mottos: sanitizeHomeCultureMottos(mottos), updatedAt: new Date().toISOString() }, null, 2),
+    'utf8'
+  );
+}
+
+async function handleGetHomeCultureMottos(req, res) {
+  try {
+    const mottos = await loadHomeCultureMottos();
+    sendJson(res, 200, { ok: true, mottos });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '读取主页标语失败' });
+  }
+}
+
+async function handleUpdateHomeCultureMottos(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const mottos = sanitizeHomeCultureMottos(body?.mottos);
+    await saveHomeCultureMottos(mottos);
+    sendJson(res, 200, { ok: true, mottos });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '保存主页标语失败' });
   }
 }
 
@@ -12082,6 +12136,16 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname.startsWith('/api/') && !isAuthRoute && !isAuthenticated(req) && !(isDebugDownloadBypass && isDownloadDebugRoute)) {
     sendJson(res, 401, { error: '未登录或登录已失效' });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/home/culture-mottos') {
+    await handleGetHomeCultureMottos(req, res);
+    return;
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/home/culture-mottos') {
+    await handleUpdateHomeCultureMottos(req, res);
     return;
   }
 

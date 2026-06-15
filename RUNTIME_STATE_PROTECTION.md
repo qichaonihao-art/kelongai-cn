@@ -39,10 +39,12 @@ RUNTIME_STATE_DIR=/www/wwwroot/kelongai-runtime-state
 ```text
 /www/wwwroot/kelongai-runtime-state/volc-speaker-ownership.json
 /www/wwwroot/kelongai-runtime-state/collection.db
+/www/wwwroot/kelongai-runtime-state/home-culture-mottos.json
 ```
 
 - `volc-speaker-ownership.json`：火山声音克隆 speaker_id 槽位归属。
 - `collection.db`：店铺总览和相关运行数据。
+- `home-culture-mottos.json`：主页团队文化标语，多设备同步依赖它。
 
 ## 禁止操作
 
