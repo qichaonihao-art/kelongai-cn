@@ -95,6 +95,7 @@ interface SeedanceHistoryItem {
   generateAudio: boolean;
   watermark: boolean;
   elapsedSeconds?: number;
+  isGood?: boolean;
 }
 
 interface UploadHistoryPreviewItem {
@@ -550,6 +551,7 @@ function createSeedanceHistoryItem(
     generateAudio: options.generateAudio,
     watermark: options.watermark,
     elapsedSeconds: options.elapsedSeconds,
+    isGood: false,
   };
 }
 
@@ -883,7 +885,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [seedanceError, setSeedanceError] = useState("");
   const [seedanceTask, setSeedanceTask] = useState<SeedanceTaskResult | null>(null);
   const [seedanceHistory, setSeedanceHistory] = useState<SeedanceHistoryItem[]>(loadSeedanceHistory);
-  const [selectedHistoryDate, setSelectedHistoryDate] = useState<string>('');
+  const [selectedHistoryDate, setSelectedHistoryDate] = useState<string>(() => toISODate(new Date()));
   const [showSeedanceSettings, setShowSeedanceSettings] = useState(false);
   const [seedanceClock, setSeedanceClock] = useState(Date.now());
   const [seedanceVideoModal, setSeedanceVideoModal] = useState(false);
@@ -1792,6 +1794,16 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   function removeSeedanceHistoryItem(taskId: string) {
     setSeedanceHistory((previous) => previous.filter((item) => item.taskId !== taskId));
     setSeedanceTask((previous) => previous?.taskId === taskId ? null : previous);
+  }
+
+  function toggleSeedanceHistoryGood(taskId: string) {
+    setSeedanceHistory((previous) =>
+      previous.map((item) =>
+        item.taskId === taskId
+          ? { ...item, isGood: !item.isGood }
+          : item
+      )
+    );
   }
 
   async function handleMediaChange(file: File | null) {
@@ -3560,9 +3572,28 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                                                 </span>
                                               )}
                                               {expired && <span className="text-amber-600">视频链接已过期</span>}
+                                              {item.isGood && (
+                                                <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-700 ring-1 ring-amber-200">
+                                                  好
+                                                </span>
+                                              )}
                                             </div>
                                           </div>
                                           <div className="flex items-center gap-0.5">
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleSeedanceHistoryGood(item.taskId)}
+                                              className={cn(
+                                                "flex h-8 min-w-8 items-center justify-center rounded-full px-2 text-[11px] font-black transition-colors",
+                                                item.isGood
+                                                  ? "bg-amber-400 text-white shadow-sm shadow-amber-200 hover:bg-amber-500"
+                                                  : "border border-slate-200 bg-white text-slate-400 hover:border-amber-200 hover:bg-amber-50 hover:text-amber-600"
+                                              )}
+                                              aria-label={item.isGood ? "取消好标记" : "标记为好"}
+                                              title={item.isGood ? "取消好标记" : "标记为好"}
+                                            >
+                                              好
+                                            </button>
                                             <button
                                               type="button"
                                               onClick={async () => {

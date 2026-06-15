@@ -71,6 +71,17 @@ const modules = [
   },
 ];
 
+const cultureMottos = [
+  {
+    label: '多试试总没错',
+    tone: 'text-emerald-700 bg-emerald-50/80 border-emerald-100',
+  },
+  {
+    label: '7+3=七分专注，三分探索',
+    tone: 'text-indigo-700 bg-indigo-50/80 border-indigo-100',
+  },
+];
+
 export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-start p-6 relative">
@@ -110,10 +121,26 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
         >
           Professional AI Workspace • Unleash Your Imagination
         </motion.p>
+
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 1.15 }}
+          className="mt-5 flex flex-wrap items-center justify-center gap-2"
+        >
+          {cultureMottos.map((motto) => (
+            <span
+              key={motto.label}
+              className={`inline-flex h-8 items-center rounded-full border px-3 text-xs font-black shadow-sm shadow-slate-200/40 ${motto.tone}`}
+            >
+              {motto.label}
+            </span>
+          ))}
+        </motion.div>
       </motion.div>
 
       <motion.div
-        className="grid md:grid-cols-2 xl:grid-cols-3 gap-5 w-full max-w-[70rem] mt-8"
+        className="grid md:grid-cols-2 xl:grid-cols-3 gap-5 w-full max-w-[70rem] mt-4"
         initial="hidden"
         animate="visible"
         variants={{
