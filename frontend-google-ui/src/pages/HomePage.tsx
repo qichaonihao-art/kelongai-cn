@@ -74,17 +74,54 @@ const modules = [
 const cultureMottos = [
   {
     label: '多试试总没错',
-    tone: 'text-emerald-700 bg-emerald-50/80 border-emerald-100',
   },
   {
     label: '7+3=七分专注，三分探索',
-    tone: 'text-indigo-700 bg-indigo-50/80 border-indigo-100',
   },
 ];
 
 export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-start p-6 relative">
+      <style>{`
+        @keyframes culture-credit-rise {
+          0% {
+            transform: translateY(54px);
+            opacity: 0;
+          }
+          14% {
+            opacity: 0.42;
+          }
+          54% {
+            opacity: 0.34;
+          }
+          78% {
+            transform: translateY(-24px);
+            opacity: 0;
+          }
+          100% {
+            transform: translateY(-24px);
+            opacity: 0;
+          }
+        }
+      `}</style>
+      <div className="pointer-events-none absolute left-7 top-7 z-10 hidden h-24 w-72 overflow-hidden text-left md:block">
+        <div className="absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-background to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-background to-transparent" />
+        <div
+          className="space-y-2 pl-1"
+          style={{ animation: 'culture-credit-rise 7.5s ease-in-out infinite' }}
+        >
+          {cultureMottos.map((motto) => (
+            <div
+              key={motto.label}
+              className="text-sm font-black tracking-[0.18em] text-slate-700/80 drop-shadow-sm"
+            >
+              {motto.label}
+            </div>
+          ))}
+        </div>
+      </div>
       <div className="absolute top-5 right-6 z-20">
         <button
           onClick={onLogout}
@@ -121,26 +158,10 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
         >
           Professional AI Workspace • Unleash Your Imagination
         </motion.p>
-
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 1.15 }}
-          className="mt-5 flex flex-wrap items-center justify-center gap-2"
-        >
-          {cultureMottos.map((motto) => (
-            <span
-              key={motto.label}
-              className={`inline-flex h-8 items-center rounded-full border px-3 text-xs font-black shadow-sm shadow-slate-200/40 ${motto.tone}`}
-            >
-              {motto.label}
-            </span>
-          ))}
-        </motion.div>
       </motion.div>
 
       <motion.div
-        className="grid md:grid-cols-2 xl:grid-cols-3 gap-5 w-full max-w-[70rem] mt-4"
+        className="grid md:grid-cols-2 xl:grid-cols-3 gap-5 w-full max-w-[70rem] mt-8"
         initial="hidden"
         animate="visible"
         variants={{
