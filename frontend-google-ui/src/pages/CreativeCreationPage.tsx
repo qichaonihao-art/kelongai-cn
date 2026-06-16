@@ -502,7 +502,7 @@ function getLast30Days(): { date: string; label: string; dayName: string; dayNum
   const days: { date: string; label: string; dayName: string; dayNumber: number }[] = [];
   const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
   const now = new Date();
-  for (let i = 29; i >= 0; i--) {
+  for (let i = 0; i < 30; i++) {
     const date = new Date(now.getTime() - i * 86400000);
     const dateString = toISODate(date);
     days.push({
