@@ -933,6 +933,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const seedanceSettingsRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const seedancePromptRef = useRef<HTMLTextAreaElement>(null);
+  const additionalChangeRef = useRef<HTMLTextAreaElement>(null);
   const notebookRef = useRef<HTMLDivElement>(null);
   const additionalHistoryRef = useRef<HTMLDivElement>(null);
   const autoSyncToSeedanceRef = useRef(false);
@@ -942,6 +943,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   }
+
+  useEffect(() => {
+    const textarea = additionalChangeRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [additionalChange]);
 
   function scrollAnalysisToBottom() {
     requestAnimationFrame(() => {
@@ -2727,13 +2735,14 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
               <div className="mt-3 space-y-1.5">
                 <label className="text-[11px] font-bold text-slate-600">额外调整（可选）</label>
-                <input
-                  type="text"
+                <textarea
+                  ref={additionalChangeRef}
                   value={additionalChange}
                   onChange={(e) => setAdditionalChange(e.target.value)}
                   placeholder="如：把模特的衣服换成红色"
                   disabled={isLoading}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
+                  rows={2}
+                  className="min-h-[48px] w-full resize-none overflow-hidden rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold leading-5 text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
                 />
               </div>
 
