@@ -15,6 +15,7 @@ export interface ModelOption {
 
 export const AVAILABLE_MODELS: ModelOption[] = [
   { id: 'claude-opus-4-8', name: 'Claude Opus 4.8', description: 'Anthropic 最强推理模型' },
+  { id: 'gpt-5', name: 'ChatGPT 5.5', description: 'OpenAI 顶级通用对话模型' },
   { id: 'doubao-seed-2-0-pro-260215', name: 'Doubao Seed 2.0 Pro', description: '字节跳动多模态大模型', supportsMultimodal: true, supportsWebSearch: true },
   { id: 'qwen3.6-plus', name: '千问 3.6-Plus', description: '阿里云百炼深度思考模型', supportsMultimodal: true, supportsWebSearch: true },
 ];

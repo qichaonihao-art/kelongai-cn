@@ -13,6 +13,7 @@ import {
   Image as ImageIcon,
   Video,
   X,
+  Sparkles,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -106,6 +107,44 @@ const TARGET_IMAGE_BYTES = 2.5 * 1024 * 1024;
 const MAX_IMAGE_EDGE = 2048;
 const MAX_VIDEO_SIZE_MB = 8;
 const MEDIA_LIMIT_TEXT = '图片小于 50MB，大图自动压缩；视频小于 8MB';
+const STREAM_RENDER_THROTTLE_MS = 50;
+const DOUBAO_MODEL_ID = 'doubao-seed-2-0-pro-260215';
+const QWEN_MODEL_ID = 'qwen3.6-plus';
+const OPENAI_MODEL_ID = 'gpt-5';
+
+function getModelTone(modelId: string) {
+  if (modelId === DOUBAO_MODEL_ID) {
+    return {
+      text: 'text-blue-500',
+      activeBg: 'bg-blue-100 text-blue-700',
+      selectedText: 'font-bold text-blue-600',
+      gradient: 'bg-gradient-to-br from-blue-500 to-cyan-500',
+      hoverBorder: 'hover:border-blue-300',
+    };
+  }
+  if (modelId === OPENAI_MODEL_ID) {
+    return {
+      text: 'text-emerald-500',
+      activeBg: 'bg-emerald-100 text-emerald-700',
+      selectedText: 'font-bold text-emerald-600',
+      gradient: 'bg-gradient-to-br from-emerald-500 to-teal-500',
+      hoverBorder: 'hover:border-emerald-300',
+    };
+  }
+  return {
+    text: 'text-fuchsia-500',
+    activeBg: 'bg-fuchsia-100 text-fuchsia-700',
+    selectedText: 'font-bold text-fuchsia-600',
+    gradient: 'bg-gradient-to-br from-fuchsia-500 to-purple-600',
+    hoverBorder: 'hover:border-fuchsia-300',
+  };
+}
+
+function ModelLogo({ modelId, className }: { modelId: string; className?: string }) {
+  if (modelId === DOUBAO_MODEL_ID) return <DoubaoLogo className={className} />;
+  if (modelId === OPENAI_MODEL_ID) return <Sparkles className={className} />;
+  return <AnthropicLogo className={className} />;
+}
 
 function estimateSize(str: string): number {
   // UTF-8 approximate byte count
@@ -355,6 +394,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
   const activeConversationIdRef = useRef(activeConversationId);
 
   const currentModel = AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0];
+  const modelTone = getModelTone(selectedModel);
   const modelConversations = conversations[selectedModel] || [];
   const activeConversation = modelConversations.find((c) => c.id === activeConversationId) || null;
   const messages = activeConversation?.messages || [];
@@ -581,7 +621,8 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
   function updateActiveMessages(
     updater: (prev: ChatMessage[]) => ChatMessage[],
     targetModel = selectedModelRef.current,
-    targetConvId = activeConversationIdRef.current
+    targetConvId = activeConversationIdRef.current,
+    options: { persist?: boolean } = {}
   ) {
     const model = targetModel;
     const convId = targetConvId;
@@ -602,7 +643,10 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
         : modelConvs[idx].title,
     };
     const nextMap = { ...prevMap, [model]: modelConvs };
-    persistConversationsSnapshot(nextMap, model, convId);
+    conversationsRef.current = nextMap;
+    if (options.persist !== false) {
+      persistConversationsSnapshot(nextMap, model, convId);
+    }
     setConversations(nextMap);
   }
 
@@ -632,31 +676,52 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
     setIsLoading(true);
 
     let hasAddedAssistant = false;
+    let assistantContent = '';
+    let lastAssistantFlushAt = 0;
+
+    const flushAssistantContent = (persist = false) => {
+      updateActiveMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (!last || last.role !== 'assistant' || last.content === assistantContent) return prev;
+        return [
+          ...prev.slice(0, -1),
+          { ...last, content: assistantContent },
+        ];
+      }, requestModel, requestConvId, { persist });
+    };
 
     try {
       const options: { model: string; tools?: Array<{ type: string }> } = { model: requestModel };
-      if (requestModel === 'doubao-seed-2-0-pro-260215' || requestModel === 'qwen3.6-plus') {
+      if (requestModel === DOUBAO_MODEL_ID || requestModel === QWEN_MODEL_ID) {
         options.tools = [{ type: 'web_search' }];
       }
       for await (const chunk of streamChatCompletion(newMessages, options)) {
         if (!hasAddedAssistant) {
           hasAddedAssistant = true;
           flushSync(() => {
-            updateActiveMessages((prev) => [...prev, { role: 'assistant', content: '' }], requestModel, requestConvId);
+            updateActiveMessages(
+              (prev) => [...prev, { role: 'assistant', content: '' }],
+              requestModel,
+              requestConvId,
+              { persist: false }
+            );
           });
         }
-        updateActiveMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (!last || last.role !== 'assistant') return prev;
-          return [
-            ...prev.slice(0, -1),
-            { ...last, content: last.content + chunk },
-          ];
-        }, requestModel, requestConvId);
+        assistantContent += chunk;
+        const now = Date.now();
+        if (now - lastAssistantFlushAt >= STREAM_RENDER_THROTTLE_MS) {
+          lastAssistantFlushAt = now;
+          flushAssistantContent(false);
+        }
+      }
+      if (hasAddedAssistant) {
+        flushAssistantContent(true);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : '请求失败');
-      if (!hasAddedAssistant) {
+      if (hasAddedAssistant) {
+        flushAssistantContent(true);
+      } else {
         updateActiveMessages(
           (prev) => [...prev, { role: 'assistant', content: `请求失败：${e instanceof Error ? e.message : '请求失败'}` }],
           requestModel,
@@ -742,7 +807,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
               <div className="mb-2 px-1">
                 <span className={cn(
                   "text-[10px] font-bold uppercase tracking-wider",
-                  selectedModel === 'doubao-seed-2-0-pro-260215' ? 'text-blue-500' : 'text-fuchsia-500'
+                  modelTone.text
                 )}>
                   {currentModel.name}
                 </span>
@@ -754,9 +819,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
                   className={cn(
                     "w-full mb-1 rounded-lg px-2.5 py-2 text-left text-xs transition-colors group relative",
                     activeConversationId === conv.id
-                      ? selectedModel === 'doubao-seed-2-0-pro-260215'
-                        ? 'bg-blue-100 text-blue-700'
-                        : 'bg-fuchsia-100 text-fuchsia-700'
+                      ? modelTone.activeBg
                       : 'text-slate-600 hover:bg-slate-100'
                   )}
                 >
@@ -843,9 +906,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
                           className={cn(
                             'w-full px-3 py-2 text-left text-xs transition-colors hover:bg-slate-50',
                             selectedModel === m.id
-                              ? m.id === 'doubao-seed-2-0-pro-260215'
-                                ? 'font-bold text-blue-600'
-                                : 'font-bold text-fuchsia-600'
+                              ? getModelTone(m.id).selectedText
                               : 'text-slate-600'
                           )}
                         >
@@ -882,15 +943,9 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
           <div className="flex h-full flex-col items-center justify-center px-4">
             <div className={cn(
               "mb-6 flex size-16 items-center justify-center rounded-2xl text-white shadow-lg",
-              selectedModel === 'doubao-seed-2-0-pro-260215'
-                ? 'bg-gradient-to-br from-blue-500 to-cyan-500'
-                : 'bg-gradient-to-br from-fuchsia-500 to-purple-600'
+              modelTone.gradient
             )}>
-              {selectedModel === 'doubao-seed-2-0-pro-260215' ? (
-                <DoubaoLogo className="size-8" />
-              ) : (
-                <AnthropicLogo className="size-8" />
-              )}
+              <ModelLogo modelId={selectedModel} className="size-8" />
             </div>
             <h2 className="mb-2 text-2xl font-bold text-slate-900">{currentModel.name}</h2>
             <p className="mb-8 text-sm text-slate-500">{currentModel.description}</p>
@@ -905,9 +960,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
                   }}
                   className={cn(
                     "rounded-xl border border-slate-200 bg-white p-4 text-left text-sm text-slate-600 shadow-sm transition-all hover:shadow-md",
-                    selectedModel === 'doubao-seed-2-0-pro-260215'
-                      ? 'hover:border-blue-300'
-                      : 'hover:border-fuchsia-300'
+                    modelTone.hoverBorder
                   )}
                 >
                   {text}
@@ -928,15 +981,9 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
                 {msg.role === 'assistant' && (
                   <div className={cn(
                     "mr-3 mt-1 flex size-7 shrink-0 items-center justify-center rounded-full text-white",
-                    selectedModel === 'doubao-seed-2-0-pro-260215'
-                      ? 'bg-gradient-to-br from-blue-500 to-cyan-500'
-                      : 'bg-gradient-to-br from-fuchsia-500 to-purple-600'
+                    modelTone.gradient
                   )}>
-                    {selectedModel === 'doubao-seed-2-0-pro-260215' ? (
-                      <DoubaoLogo className="size-3.5" />
-                    ) : (
-                      <AnthropicLogo className="size-3.5" />
-                    )}
+                    <ModelLogo modelId={selectedModel} className="size-3.5" />
                   </div>
                 )}
                 <div
@@ -1014,22 +1061,16 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
               <div className="flex justify-start">
                 <div className={cn(
                   "mr-3 mt-1 flex size-7 shrink-0 items-center justify-center rounded-full text-white",
-                  selectedModel === 'doubao-seed-2-0-pro-260215'
-                    ? 'bg-gradient-to-br from-blue-500 to-cyan-500'
-                    : 'bg-gradient-to-br from-fuchsia-500 to-purple-600'
+                  modelTone.gradient
                 )}>
-                  {selectedModel === 'doubao-seed-2-0-pro-260215' ? (
-                    <DoubaoLogo className="size-3.5" />
-                  ) : (
-                    <AnthropicLogo className="size-3.5" />
-                  )}
+                  <ModelLogo modelId={selectedModel} className="size-3.5" />
                 </div>
                 <div className="flex items-center gap-3 rounded-2xl bg-slate-50 px-5 py-3">
                   <div className="flex items-center gap-1.5">
                     {[0, 1, 2].map((i) => (
                       <motion.div
                         key={i}
-                        className="size-3 rounded-full bg-gradient-to-br from-fuchsia-500 to-purple-600"
+                        className={cn("size-3 rounded-full", modelTone.gradient)}
                         animate={{
                           scale: [1, 1.6, 1],
                           opacity: [0.4, 1, 0.4],
