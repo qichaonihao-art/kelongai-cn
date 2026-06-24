@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ChangeEvent } from "react";
+import { memo, useEffect, useRef, useState, type KeyboardEvent, type ChangeEvent } from "react";
 import { flushSync } from "react-dom";
 import {
   ArrowLeft,
@@ -107,7 +107,7 @@ const TARGET_IMAGE_BYTES = 2.5 * 1024 * 1024;
 const MAX_IMAGE_EDGE = 2048;
 const MAX_VIDEO_SIZE_MB = 8;
 const MEDIA_LIMIT_TEXT = '图片小于 50MB，大图自动压缩；视频小于 8MB';
-const STREAM_RENDER_THROTTLE_MS = 50;
+const STREAM_RENDER_THROTTLE_MS = 90;
 const DOUBAO_MODEL_ID = 'doubao-seed-2-1-pro-260628';
 const QWEN_MODEL_ID = 'qwen3.6-plus';
 const OPENAI_MODEL_ID = 'gpt-5';
@@ -369,6 +369,41 @@ const WELCOME_SUGGESTIONS = [
   '给我讲一个关于程序员笑话',
 ];
 
+const AssistantMarkdownMessage = memo(function AssistantMarkdownMessage({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        table: ({ children }) => (
+          <div className="overflow-x-auto rounded-lg border border-slate-200 my-3">
+            <table className="w-full text-xs border-collapse">{children}</table>
+          </div>
+        ),
+        p: ({ children }) => (
+          <p className="mb-3 last:mb-0">{children}</p>
+        ),
+        li: ({ children }) => (
+          <li className="mb-1">{children}</li>
+        ),
+        h1: ({ children }) => (
+          <h1 className="text-lg font-bold mt-4 mb-2">{children}</h1>
+        ),
+        h2: ({ children }) => (
+          <h2 className="text-base font-bold mt-3 mb-2">{children}</h2>
+        ),
+        h3: ({ children }) => (
+          <h3 className="text-sm font-bold mt-3 mb-1.5">{children}</h3>
+        ),
+        hr: () => (
+          <hr className="my-4 border-slate-200" />
+        ),
+      }}
+    >
+      {normalizeMarkdown(content)}
+    </ReactMarkdown>
+  );
+});
+
 export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) {
   const initialModel = loadModel();
   const [conversations, setConversations] = useState<ConversationsMap>(() => {
@@ -385,6 +420,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
   const [selectedVideos, setSelectedVideos] = useState<string[]>([]);
   const [isProcessingMedia, setIsProcessingMedia] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [streamingAssistant, setStreamingAssistant] = useState<{ model: string; convId: string; index: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
@@ -679,6 +715,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
     let hasAddedAssistant = false;
     let assistantContent = '';
     let lastAssistantFlushAt = 0;
+    const assistantIndex = newMessages.length;
 
     const flushAssistantContent = (persist = false) => {
       updateActiveMessages((prev) => {
@@ -699,6 +736,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
       for await (const chunk of streamChatCompletion(newMessages, options)) {
         if (!hasAddedAssistant) {
           hasAddedAssistant = true;
+          setStreamingAssistant({ model: requestModel, convId: requestConvId, index: assistantIndex });
           flushSync(() => {
             updateActiveMessages(
               (prev) => [...prev, { role: 'assistant', content: '' }],
@@ -731,6 +769,13 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
       }
     } finally {
       setIsLoading(false);
+      setTimeout(() => {
+        setStreamingAssistant((current) => (
+          current?.model === requestModel && current?.convId === requestConvId && current?.index === assistantIndex
+            ? null
+            : current
+        ));
+      }, 180);
     }
   }
 
@@ -971,7 +1016,15 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
           </div>
         ) : (
           <div className="mx-auto max-w-3xl px-4 py-6">
-            {messages.map((msg, idx) => (
+            {messages.map((msg, idx) => {
+              const isStreamingAssistantMessage = Boolean(
+                streamingAssistant
+                  && selectedModel === streamingAssistant.model
+                  && activeConversationId === streamingAssistant.convId
+                  && idx === streamingAssistant.index
+                  && msg.role === 'assistant'
+              );
+              return (
               <div
                 key={idx}
                 className={cn(
@@ -997,36 +1050,11 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
                 >
                   {msg.role === 'assistant' ? (
                     <div className="markdown-body">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                          table: ({ children }) => (
-                            <div className="overflow-x-auto rounded-lg border border-slate-200 my-3">
-                              <table className="w-full text-xs border-collapse">{children}</table>
-                            </div>
-                          ),
-                          p: ({ children }) => (
-                            <p className="mb-3 last:mb-0">{children}</p>
-                          ),
-                          li: ({ children }) => (
-                            <li className="mb-1">{children}</li>
-                          ),
-                          h1: ({ children }) => (
-                            <h1 className="text-lg font-bold mt-4 mb-2">{children}</h1>
-                          ),
-                          h2: ({ children }) => (
-                            <h2 className="text-base font-bold mt-3 mb-2">{children}</h2>
-                          ),
-                          h3: ({ children }) => (
-                            <h3 className="text-sm font-bold mt-3 mb-1.5">{children}</h3>
-                          ),
-                          hr: () => (
-                            <hr className="my-4 border-slate-200" />
-                          ),
-                        }}
-                      >
-                        {normalizeMarkdown(msg.content)}
-                      </ReactMarkdown>
+                      {isStreamingAssistantMessage ? (
+                        <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                      ) : (
+                        <AssistantMarkdownMessage content={msg.content} />
+                      )}
                       {isLoading && idx === messages.length - 1 && (
                         <span className="ml-0.5 inline-block h-3.5 w-0.5 translate-y-0.5 bg-slate-800 animate-pulse" />
                       )}
@@ -1057,7 +1085,8 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
             {isLoading && messages[messages.length - 1]?.role === 'user' && (
               <div className="flex justify-start">
                 <div className={cn(
