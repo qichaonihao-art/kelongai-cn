@@ -84,6 +84,8 @@ const SERVER_CONFIG = {
 const DOUYIN_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 const TIKHUB_API_BASE_URL = 'https://api.tikhub.io';
 const DOUYIN_RETRY_DELAYS_MS = [250, 700];
+const DASHSCOPE_API_BASE_URL = String(process.env.DASHSCOPE_API_BASE_URL || 'https://llm-7725kgx72thqls1n.cn-beijing.maas.aliyuncs.com/compatible-mode/v1').trim().replace(/\/+$/g, '');
+const QWEN_TOPMODEL_MODEL = 'qwen3.7-plus';
 const SILICONFLOW_API_BASE_URL = String(process.env.SILICONFLOW_API_BASE_URL || 'https://api.siliconflow.cn/v1').trim().replace(/\/+$/g, '');
 const SILICONFLOW_ASR_MODEL = String(process.env.SILICONFLOW_ASR_MODEL || 'FunAudioLLM/SenseVoiceSmall').trim();
 const DEFAULT_SILICONFLOW_VOICE_MODEL = 'FunAudioLLM/CosyVoice2-0.5B';
@@ -2421,17 +2423,21 @@ async function handleQwenChatCompletions(req, res) {
       });
 
       const apiBody = {
-        model: 'qwen3.6-plus',
+        model: QWEN_TOPMODEL_MODEL,
         messages: transformedMessages,
         stream,
-        extra_body: { enable_thinking: true },
+        enable_thinking: true,
       };
+
+      if (hasWebSearch) {
+        apiBody.enable_search = true;
+      }
 
       if (typeof body.temperature === 'number') apiBody.temperature = body.temperature;
       if (typeof body.max_tokens === 'number') apiBody.max_tokens = body.max_tokens;
       if (typeof body.top_p === 'number') apiBody.top_p = body.top_p;
 
-      const response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+      const response = await fetch(`${DASHSCOPE_API_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -2486,48 +2492,18 @@ async function handleQwenChatCompletions(req, res) {
         res.end(data);
       }
     } else {
-      const input = [];
-      for (const msg of messages) {
-        const role = String(msg.role || '');
-        if (role === 'system') {
-          input.push({ role: 'system', content: msg.content });
-          continue;
-        }
-        if (role === 'assistant') {
-          input.push({ role: 'assistant', content: msg.content });
-          continue;
-        }
-
-        const content = [];
-        if (Array.isArray(msg.content)) {
-          for (const item of msg.content) {
-            if (item.type === 'text') {
-              content.push({ type: 'input_text', text: String(item.text || '') });
-            } else if (item.type === 'image_url') {
-              const imgUrl = typeof item.image_url === 'string' ? item.image_url : (item.image_url?.url || '');
-              if (imgUrl) {
-                content.push({ type: 'input_image', image_url: imgUrl });
-              }
-            }
-          }
-        } else {
-          content.push({ type: 'input_text', text: String(msg.content || '') });
-        }
-        input.push({ role: 'user', content });
-      }
-
       const requestPayload = {
-        model: 'qwen3.6-plus',
+        model: QWEN_TOPMODEL_MODEL,
+        messages,
         stream,
-        input,
         enable_thinking: true,
       };
 
       if (hasWebSearch) {
-        requestPayload.tools = [{ type: 'web_search' }];
+        requestPayload.enable_search = true;
       }
 
-      const upstreamRes = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/responses', {
+      const upstreamRes = await fetch(`${DASHSCOPE_API_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -2633,16 +2609,8 @@ async function handleQwenChatCompletions(req, res) {
         try { json = JSON.parse(text); } catch {}
 
         let content = '';
-        if (json?.output) {
-          for (const item of json.output) {
-            if (item.role === 'assistant' && Array.isArray(item.content)) {
-              for (const c of item.content) {
-                if (c.type === 'output_text' && c.text) {
-                  content += c.text;
-                }
-              }
-            }
-          }
+        if (typeof json?.choices?.[0]?.message?.content === 'string') {
+          content = json.choices[0].message.content;
         }
 
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });

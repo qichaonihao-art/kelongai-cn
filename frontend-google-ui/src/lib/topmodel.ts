@@ -17,7 +17,7 @@ export const AVAILABLE_MODELS: ModelOption[] = [
   { id: 'claude-opus-4-8', name: 'Claude Opus 4.8', description: 'Anthropic 最强推理模型' },
   { id: 'gpt-5', name: 'ChatGPT 5.5', description: 'OpenAI 顶级通用对话模型' },
   { id: 'doubao-seed-2-1-pro-260628', name: 'Doubao Seed 2.1 Pro', description: '字节跳动最新多模态大模型', supportsMultimodal: true, supportsWebSearch: true },
-  { id: 'qwen3.6-plus', name: '千问 3.6-Plus', description: '阿里云百炼深度思考模型', supportsMultimodal: true, supportsWebSearch: true },
+  { id: 'qwen3.7-plus', name: '千问 3.7-Plus', description: '阿里云百炼最新深度思考模型', supportsMultimodal: true, supportsWebSearch: true },
 ];
 
 function toApiMessages(messages: ChatMessage[]) {
@@ -50,7 +50,7 @@ export async function* streamChatCompletion(
 ): AsyncGenerator<string, void, unknown> {
   const model = options?.model || 'claude-opus-4-8';
   const isDoubao = model === 'doubao-seed-2-1-pro-260628';
-  const isQwen = model === 'qwen3.6-plus';
+  const isQwen = model === 'qwen3.7-plus';
   const endpoint = isDoubao ? '/api/chat/doubao' : isQwen ? '/api/chat/qwen' : '/api/chat/completions';
 
   const body: Record<string, unknown> = { model, stream: true };
