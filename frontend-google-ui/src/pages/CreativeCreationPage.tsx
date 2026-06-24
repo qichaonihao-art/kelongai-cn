@@ -125,6 +125,13 @@ const ADDITIONAL_CHANGE_HISTORY_KEY = 'kelongai.additionalChangeHistory';
 const ADDITIONAL_CHANGE_HISTORY_MAX = 30;
 const NOTEBOOK_STORAGE_KEY = 'kelongai.notebook';
 
+function formatDoubaoMultimodalModelName(modelId: string): string {
+  if (modelId === 'doubao-seed-2-1-pro-260628') return '豆包 Seed 2.1 Pro';
+  if (modelId === 'doubao-seed-2-0-pro-260215') return '豆包 Seed 2.0 Pro';
+  if (!modelId) return '豆包多模态';
+  return modelId;
+}
+
 function formatVideoDuration(seconds?: number): string {
   if (!Number.isFinite(seconds) || !seconds || seconds <= 0) return '未知时长';
   const totalSeconds = Math.round(seconds);
@@ -2401,7 +2408,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   <h2 className="text-base font-black text-slate-900">视频反推提示词</h2>
                 </div>
                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black tracking-wider text-emerald-600">
-                  已接入豆包多模态 {doubaoMultimodalModel.includes('pro') ? 'Pro' : doubaoMultimodalModel.includes('lite') ? 'Lite' : ''}
+                  已接入 {formatDoubaoMultimodalModelName(doubaoMultimodalModel)}
                 </span>
               </div>
 

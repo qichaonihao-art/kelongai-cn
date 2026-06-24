@@ -34,7 +34,7 @@ const MAX_MULTIMODAL_UPLOAD_BYTES = 170 * 1024 * 1024;
 const MAX_IMAGE_ORIGINAL_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 45 * 1024 * 1024;
 const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
-const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-0-pro-260215';
+const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-1-pro-260628';
 const DOUBAO_MULTIMODAL_TIMEOUT_MS = 8 * 60 * 1000;
 const APIMART_API_BASE_URL = String(process.env.APIMART_API_BASE_URL || 'https://api.apimart.ai/v1').trim().replace(/\/+$/g, '');
 const APIMART_IMAGE_MODEL = String(process.env.APIMART_IMAGE_MODEL || 'gpt-image-2').trim();
@@ -2258,7 +2258,7 @@ async function handleDoubaoChatCompletions(req, res) {
     }
 
     const requestPayload = {
-      model: 'doubao-seed-2-0-pro-260215',
+      model: 'doubao-seed-2-1-pro-260628',
       stream,
       input,
     };

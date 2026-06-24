@@ -108,7 +108,7 @@ const MAX_IMAGE_EDGE = 2048;
 const MAX_VIDEO_SIZE_MB = 8;
 const MEDIA_LIMIT_TEXT = '图片小于 50MB，大图自动压缩；视频小于 8MB';
 const STREAM_RENDER_THROTTLE_MS = 50;
-const DOUBAO_MODEL_ID = 'doubao-seed-2-0-pro-260215';
+const DOUBAO_MODEL_ID = 'doubao-seed-2-1-pro-260628';
 const QWEN_MODEL_ID = 'qwen3.6-plus';
 const OPENAI_MODEL_ID = 'gpt-5';
 
@@ -294,6 +294,7 @@ function loadModel(): string {
   try {
     const savedModel = localStorage.getItem(MODEL_STORAGE_KEY);
     if (savedModel === 'claude-opus-4-7') return 'claude-opus-4-8';
+    if (savedModel === 'doubao-seed-2-0-pro-260215') return DOUBAO_MODEL_ID;
     return savedModel || 'claude-opus-4-8';
   } catch {
     return 'claude-opus-4-8';

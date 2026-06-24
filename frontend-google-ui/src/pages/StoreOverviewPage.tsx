@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -20,6 +20,8 @@ import {
   Trash2,
   Truck,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import ModuleQuickNav from '@/src/components/ModuleQuickNav';
 import SiteFooter from '@/src/components/SiteFooter';
@@ -75,6 +77,21 @@ const PRODUCT_VIDEO_DOT_COLORS = [
   '#14b8a6',
   '#f43f5e',
 ];
+const GRAPH_NODE_CARD_WIDTH = 150;
+const GRAPH_NODE_CARD_HEIGHT = 62;
+const GRAPH_COLUMN_HEADER_HEIGHT = 48;
+const GRAPH_NODE_VERTICAL_GAP = 86;
+const GRAPH_CANVAS_MIN_WIDTH = 1180;
+const GRAPH_CANVAS_MIN_HEIGHT = 680;
+const GRAPH_CANVAS_TOP_PADDING = 108;
+const GRAPH_CANVAS_BOTTOM_PADDING = 96;
+const GRAPH_ZOOM_MIN = 0.28;
+const GRAPH_ZOOM_MAX = 2.2;
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function getDefaultSelectedNodeId(nodes: StoreOverviewNode[]) {
   return (
     nodes.find((node) => node.type === 'store' && /[锐瑞]春/.test(node.name))?.id
@@ -116,7 +133,7 @@ function getEdgePath(
   target: { x: number; y: number },
   size: { width: number; height: number }
 ) {
-  const cardW = 150;
+  const cardW = GRAPH_NODE_CARD_WIDTH;
   const halfW = size.width ? (cardW / 2 / size.width) * 100 : 6.35;
 
   function sidePoint(from: { x: number; y: number }, to: { x: number; y: number }) {
@@ -140,8 +157,12 @@ function getEdgePath(
 }
 
 export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewPageProps) {
+  const graphViewportRef = useRef<HTMLDivElement>(null);
   const graphContainerRef = useRef<HTMLDivElement>(null);
-  const [graphSize, setGraphSize] = useState({ width: 1180, height: 620 });
+  const didFitGraphRef = useRef(false);
+  const canvasDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
+  const [graphViewportSize, setGraphViewportSize] = useState({ width: 1180, height: 680 });
+  const [graphView, setGraphView] = useState({ scale: 1, x: 0, y: 0 });
   const [graph, setGraph] = useState<StoreOverviewGraph>({ nodes: [], edges: [], settings: { columnOrder: DEFAULT_GRAPH_COLUMN_TYPES } });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [activeType, setActiveType] = useState<StoreOverviewNodeType | 'all'>('all');
@@ -188,12 +209,12 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   }, []);
 
   useEffect(() => {
-    const element = graphContainerRef.current;
+    const element = graphViewportRef.current;
     if (!element) return;
     const update = () => {
       const width = element.clientWidth;
       const height = element.clientHeight;
-      setGraphSize((current) => {
+      setGraphViewportSize((current) => {
         if (current.width === width && current.height === height) return current;
         return { width, height };
       });
@@ -366,18 +387,43 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
     }));
   }, [graphColumnTypes, isProductVideoMode]);
 
+  const graphCanvasSize = useMemo(() => {
+    const maxItems = Math.max(
+      1,
+      ...graphColumns.map((column) => nodesByType.get(column.type)?.length || 0)
+    );
+    return {
+      width: Math.max(GRAPH_CANVAS_MIN_WIDTH, graphColumns.length * 240),
+      height: Math.max(
+        GRAPH_CANVAS_MIN_HEIGHT,
+        GRAPH_CANVAS_TOP_PADDING
+          + GRAPH_CANVAS_BOTTOM_PADDING
+          + GRAPH_COLUMN_HEADER_HEIGHT
+          + Math.max(0, maxItems - 1) * GRAPH_NODE_VERTICAL_GAP
+          + GRAPH_NODE_CARD_HEIGHT
+      ),
+    };
+  }, [graphColumns, nodesByType]);
+
   const graphNodes = useMemo(() => {
     const positions = new Map<number, { x: number; y: number; node: StoreOverviewNode }>();
     graphColumns.forEach((column) => {
       const items = nodesByType.get(column.type) || [];
-      const gap = Math.max(10, 68 / Math.max(items.length, 1));
-      const start = Math.max(16, 50 - ((items.length - 1) * gap) / 2);
+      const columnContentHeight = Math.max(0, items.length - 1) * GRAPH_NODE_VERTICAL_GAP + GRAPH_NODE_CARD_HEIGHT;
+      const startPx = Math.max(
+        GRAPH_CANVAS_TOP_PADDING,
+        (graphCanvasSize.height + GRAPH_COLUMN_HEADER_HEIGHT - columnContentHeight) / 2
+      );
       items.forEach((node, index) => {
-        positions.set(node.id, { x: column.x, y: start + index * gap, node });
+        positions.set(node.id, {
+          x: column.x,
+          y: ((startPx + index * GRAPH_NODE_VERTICAL_GAP) / graphCanvasSize.height) * 100,
+          node,
+        });
       });
     });
     return positions;
-  }, [graphColumns, nodesByType]);
+  }, [graphCanvasSize.height, graphColumns, nodesByType]);
 
   useEffect(() => {
     if (!selectedNode) {
@@ -572,6 +618,110 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
   }
 
   const graphLineEdges = isProductVideoMode ? productVideoEdges : normalizedEdges;
+
+  function updateGraphZoom(nextScale: number, anchor?: { x: number; y: number }) {
+    setGraphView((current) => {
+      const scale = clampNumber(nextScale, GRAPH_ZOOM_MIN, GRAPH_ZOOM_MAX);
+      if (!anchor || scale === current.scale) {
+        return { ...current, scale };
+      }
+      const canvasX = (anchor.x - current.x) / current.scale;
+      const canvasY = (anchor.y - current.y) / current.scale;
+      return {
+        scale,
+        x: anchor.x - canvasX * scale,
+        y: anchor.y - canvasY * scale,
+      };
+    });
+  }
+
+  function fitGraphToViewport() {
+    const viewport = graphViewportRef.current;
+    if (!viewport) return;
+    const nextScale = clampNumber(
+      Math.min(
+        viewport.clientWidth / graphCanvasSize.width,
+        viewport.clientHeight / graphCanvasSize.height
+      ) * 0.92,
+      GRAPH_ZOOM_MIN,
+      GRAPH_ZOOM_MAX
+    );
+    setGraphView({
+      scale: nextScale,
+      x: (viewport.clientWidth - graphCanvasSize.width * nextScale) / 2,
+      y: (viewport.clientHeight - graphCanvasSize.height * nextScale) / 2,
+    });
+  }
+
+  useEffect(() => {
+    didFitGraphRef.current = false;
+  }, [isProductVideoMode]);
+
+  useEffect(() => {
+    if (isLoading || graph.nodes.length === 0 || didFitGraphRef.current) return;
+    fitGraphToViewport();
+    didFitGraphRef.current = true;
+  }, [graph.nodes.length, graphCanvasSize.height, graphCanvasSize.width, graphViewportSize.height, graphViewportSize.width, isLoading]);
+
+  useEffect(() => {
+    const viewport = graphViewportRef.current;
+    if (!viewport) return;
+
+    function handleWheel(event: WheelEvent) {
+      event.preventDefault();
+      const rect = viewport.getBoundingClientRect();
+      if (event.ctrlKey || event.metaKey) {
+        const zoomFactor = Math.exp(-event.deltaY * 0.01);
+        updateGraphZoom(graphView.scale * zoomFactor, {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+        });
+        return;
+      }
+      setGraphView((current) => ({
+        ...current,
+        x: current.x - event.deltaX,
+        y: current.y - event.deltaY,
+      }));
+    }
+
+    viewport.addEventListener('wheel', handleWheel, { passive: false });
+    return () => viewport.removeEventListener('wheel', handleWheel);
+  }, [graphView.scale]);
+
+  function handleCanvasPointerDown(event: PointerEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest('[data-store-node], [data-store-column], [data-store-edge-action], button, input, textarea, select')) return;
+    canvasDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: graphView.x,
+      originY: graphView.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleCanvasPointerMove(event: PointerEvent<HTMLDivElement>) {
+    const drag = canvasDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setGraphView((current) => ({
+      ...current,
+      x: drag.originX + event.clientX - drag.startX,
+      y: drag.originY + event.clientY - drag.startY,
+    }));
+  }
+
+  function handleCanvasPointerUp(event: PointerEvent<HTMLDivElement>) {
+    const drag = canvasDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    canvasDragRef.current = null;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // ignore pointer capture cleanup failures
+    }
+  }
 
   async function handleGraphNodeClick(node: StoreOverviewNode) {
     if (!isConnectMode) {
@@ -916,9 +1066,53 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
 
           <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className={cn(
-              'relative overflow-auto bg-slate-50',
+              'relative touch-none overflow-hidden bg-slate-50',
               isOverviewMode ? 'h-[calc(100vh-190px)] min-h-[760px]' : 'h-[680px]'
-            )}>
+            )}
+              ref={graphViewportRef}
+              onPointerDown={handleCanvasPointerDown}
+              onPointerMove={handleCanvasPointerMove}
+              onPointerUp={handleCanvasPointerUp}
+              onPointerCancel={handleCanvasPointerUp}
+            >
+              <div className="absolute left-3 top-3 z-20 flex items-center gap-1 rounded-full border border-slate-200 bg-white/90 p-1 shadow-sm backdrop-blur">
+                <button
+                  type="button"
+                  onClick={() => updateGraphZoom(graphView.scale * 0.86, { x: graphViewportSize.width / 2, y: graphViewportSize.height / 2 })}
+                  className="flex size-8 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+                  title="缩小"
+                >
+                  <ZoomOut className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={fitGraphToViewport}
+                  className="h-8 rounded-full px-2.5 text-xs font-black text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                  title="适应屏幕"
+                >
+                  {Math.round(graphView.scale * 100)}%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateGraphZoom(graphView.scale * 1.16, { x: graphViewportSize.width / 2, y: graphViewportSize.height / 2 })}
+                  className="flex size-8 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+                  title="放大"
+                >
+                  <ZoomIn className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={fitGraphToViewport}
+                  className="flex h-8 items-center gap-1 rounded-full px-2.5 text-xs font-black text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+                  title="适应屏幕"
+                >
+                  <Maximize2 className="size-3.5" />
+                  看全
+                </button>
+              </div>
+              <div className="pointer-events-none absolute bottom-3 left-3 z-20 rounded-full border border-slate-200 bg-white/85 px-3 py-1.5 text-[11px] font-bold text-slate-400 shadow-sm backdrop-blur">
+                两指捏合缩放 · 两指滑动或拖动画布移动
+              </div>
               {isLoading ? (
                 <div className="flex h-full items-center justify-center text-sm font-bold text-slate-400">
                   <Loader2 className="mr-2 size-5 animate-spin" />
@@ -933,7 +1127,16 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                   </div>
                 </div>
               ) : (
-                <div ref={graphContainerRef} className="relative h-full min-w-[1180px]">
+                <div
+                  ref={graphContainerRef}
+                  className="relative"
+                  style={{
+                    width: graphCanvasSize.width,
+                    height: graphCanvasSize.height,
+                    transform: `translate(${graphView.x}px, ${graphView.y}px) scale(${graphView.scale})`,
+                    transformOrigin: '0 0',
+                  }}
+                >
                   {/* 未激活的连线：放在节点后面 */}
                   <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
                     <defs>
@@ -947,7 +1150,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       if (!a || !b) return null;
                       const active = isProductVideoMode || !selectedNode || relatedEdgeIds.has(edge.id);
                       if (active) return null;
-                      const path = getEdgePath(a, b, graphSize);
+                      const path = getEdgePath(a, b, graphCanvasSize);
                       return (
                         <path
                           key={edge.id}
@@ -980,10 +1183,11 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       if (!a || !b) return null;
                       const active = isProductVideoMode || !selectedNode || relatedEdgeIds.has(edge.id);
                       if (!active) return null;
-                      const path = getEdgePath(a, b, graphSize);
+                      const path = getEdgePath(a, b, graphCanvasSize);
                       return (
                         <g key={edge.id}>
                           <path
+                            data-store-edge-action
                             d={path}
                             stroke="transparent"
                             strokeWidth={12}
@@ -1019,6 +1223,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                     const Icon = meta.icon;
                     return (
                       <div
+                        data-store-column
                         key={column.type}
                         draggable
                         onDragStart={() => setDraggingColumnType(column.type)}
@@ -1080,6 +1285,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       return (
                         <div key={node.id}>
                           <button
+                            data-store-node
                             type="button"
                             onClick={() => void handleGraphNodeClick(node)}
                             className={cn(
@@ -1140,6 +1346,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
                       const idle = !connectedMainNodeIds.has(node.id);
                       return (
                         <button
+                          data-store-node
                           key={node.id}
                           type="button"
                           onClick={() => void handleGraphNodeClick(node)}
