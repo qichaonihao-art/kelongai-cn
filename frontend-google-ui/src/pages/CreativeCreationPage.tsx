@@ -2866,7 +2866,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   </div>
                 )}
 
-                <div className="ml-auto flex items-center gap-2">
+                <div className="ml-auto flex w-[180px] items-center gap-2">
                   <input
                     id="enable-character-remix"
                     type="checkbox"
@@ -2900,7 +2900,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               )}
 
               <div className="mt-3 flex justify-end">
-                <div className="flex items-center gap-2 ml-auto">
+                <div className="ml-auto flex w-[180px] items-center gap-2">
                   <input
                     id="include-subtitles"
                     type="checkbox"
