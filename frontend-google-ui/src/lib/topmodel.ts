@@ -1,6 +1,7 @@
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  reasoningContent?: string;
   images?: string[];
   videos?: string[];
 }
@@ -46,8 +47,9 @@ export async function* streamChatCompletion(
     maxTokens?: number;
     topP?: number;
     tools?: Array<{ type: string }>;
+    thinkingEnabled?: boolean;
   }
-): AsyncGenerator<string, void, unknown> {
+): AsyncGenerator<{ content?: string; reasoningContent?: string }, void, unknown> {
   const model = options?.model || 'claude-opus-4-8';
   const isDoubao = model === 'doubao-seed-2-1-pro-260628';
   const isQwen = model === 'qwen3.7-plus';
@@ -57,6 +59,7 @@ export async function* streamChatCompletion(
 
   if (isDoubao) {
     body.messages = messages;
+    body.thinkingEnabled = options?.thinkingEnabled !== false;
     if (options?.tools && options.tools.length > 0) {
       body.tools = options.tools;
     }
@@ -118,13 +121,24 @@ export async function* streamChatCompletion(
           const parsed = JSON.parse(data);
           // Support both Chat Completions and Responses API formats
           let delta: string | undefined;
+          let reasoningDelta: string | undefined;
           if (parsed?.type === 'response.output_text.delta') {
             delta = parsed.delta;
           } else {
             delta = parsed?.choices?.[0]?.delta?.content;
+            reasoningDelta = parsed?.choices?.[0]?.delta?.reasoning_content;
+          }
+          if (typeof parsed?.delta?.reasoning_content === 'string') {
+            reasoningDelta = parsed.delta.reasoning_content;
+          }
+          if (typeof parsed?.reasoning_content === 'string') {
+            reasoningDelta = parsed.reasoning_content;
+          }
+          if (typeof reasoningDelta === 'string' && reasoningDelta.length > 0) {
+            yield { reasoningContent: reasoningDelta };
           }
           if (typeof delta === 'string' && delta.length > 0) {
-            yield delta;
+            yield { content: delta };
           }
         } catch {
           // Ignore malformed SSE lines

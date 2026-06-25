@@ -2217,6 +2217,7 @@ async function handleDoubaoChatCompletions(req, res) {
     const messages = body.messages;
     const tools = body.tools;
     const stream = body.stream !== false;
+    const thinkingEnabled = body.thinkingEnabled !== false;
 
     if (!Array.isArray(messages) || messages.length === 0) {
       sendJson(res, 400, { error: 'messages 不能为空' });
@@ -2265,6 +2266,10 @@ async function handleDoubaoChatCompletions(req, res) {
       input,
     };
 
+    if (!thinkingEnabled) {
+      requestPayload.thinking = { type: 'disabled' };
+    }
+
     if (hasWebSearch) {
       requestPayload.tools = [{ type: 'web_search', max_keyword: 3 }];
     }
@@ -2300,6 +2305,7 @@ async function handleDoubaoChatCompletions(req, res) {
       const reader = upstreamRes.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let accumulatedReasoning = '';
 
       try {
         while (true) {
@@ -2315,6 +2321,19 @@ async function handleDoubaoChatCompletions(req, res) {
             if (!parsed) continue;
             if (parsed.done) continue;
             if (!isDoubaoDeltaEvent(parsed.event)) continue;
+
+            const reasoningDelta = extractDoubaoReasoningDelta(parsed.payload, parsed.event);
+            if (reasoningDelta) {
+              const incrementalReasoningDelta = getIncrementalText(accumulatedReasoning, reasoningDelta);
+              if (incrementalReasoningDelta) {
+                accumulatedReasoning += incrementalReasoningDelta;
+                const reasoningChunk = JSON.stringify({
+                  choices: [{ delta: { reasoning_content: incrementalReasoningDelta } }]
+                });
+                res.write(`data: ${reasoningChunk}\n\n`);
+                if (res.flush) res.flush();
+              }
+            }
 
             const delta = extractVisibleDoubaoDelta(parsed.payload, parsed.event);
             if (delta) {
@@ -2335,6 +2354,16 @@ async function handleDoubaoChatCompletions(req, res) {
           if (buffer.trim()) {
             const parsed = parseDoubaoSseBlock(buffer);
             if (parsed && !parsed.done && isDoubaoDeltaEvent(parsed.event)) {
+              const reasoningDelta = extractDoubaoReasoningDelta(parsed.payload, parsed.event);
+              if (reasoningDelta) {
+                const incrementalReasoningDelta = getIncrementalText(accumulatedReasoning, reasoningDelta);
+                if (incrementalReasoningDelta) {
+                  const reasoningChunk = JSON.stringify({
+                    choices: [{ delta: { reasoning_content: incrementalReasoningDelta } }]
+                  });
+                  res.write(`data: ${reasoningChunk}\n\n`);
+                }
+              }
               const delta = extractVisibleDoubaoDelta(parsed.payload, parsed.event);
               if (delta) {
                 const openaiChunk = JSON.stringify({
@@ -8077,6 +8106,68 @@ function extractVisibleDoubaoDelta(payload, eventName) {
         if (typeof contentItem.text === 'string' && contentItem.text.length > 0) {
           return contentItem.text;
         }
+      }
+    }
+  }
+
+  return '';
+}
+
+function extractDoubaoReasoningDelta(payload, eventName) {
+  const resolvedEvent = String(eventName || payload?.type || '').toLowerCase();
+  const choices = Array.isArray(payload?.choices) ? payload.choices : [];
+  for (const choice of choices) {
+    if (!choice || typeof choice !== 'object') continue;
+    const delta = choice.delta;
+    if (delta && typeof delta === 'object') {
+      if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) return delta.reasoning_content;
+      if (typeof delta.reasoning === 'string' && delta.reasoning.length > 0) return delta.reasoning;
+      if (typeof delta.thinking === 'string' && delta.thinking.length > 0) return delta.thinking;
+    }
+  }
+
+  const candidates = [
+    payload?.reasoning_content,
+    payload?.reasoning,
+    payload?.thinking,
+    payload?.analysis,
+    payload?.delta?.reasoning_content,
+    payload?.delta?.reasoning,
+    payload?.delta?.thinking,
+    payload?.delta?.analysis,
+    payload?.data?.reasoning_content,
+    payload?.data?.reasoning,
+    payload?.data?.thinking,
+    payload?.data?.analysis,
+    payload?.item?.reasoning_content,
+    payload?.item?.reasoning,
+    payload?.item?.thinking,
+    payload?.item?.analysis,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.length > 0) return candidate;
+  }
+
+  const objectCandidates = [
+    payload?.delta,
+    payload?.data?.delta,
+    payload?.item?.delta,
+    payload?.item,
+    payload?.data
+  ].filter(Boolean);
+
+  for (const item of objectCandidates) {
+    if (!item || typeof item !== 'object') continue;
+    if (!isDoubaoReasoningType(resolvedEvent) && !isDoubaoReasoningType(item.type)) continue;
+    if (typeof item.text === 'string' && item.text.length > 0) return item.text;
+    if (typeof item.delta === 'string' && item.delta.length > 0) return item.delta;
+    if (item.delta && typeof item.delta.text === 'string' && item.delta.text.length > 0) return item.delta.text;
+    if (Array.isArray(item.content)) {
+      for (const contentItem of item.content) {
+        if (!contentItem || typeof contentItem !== 'object') continue;
+        if (!isDoubaoReasoningType(contentItem.type)) continue;
+        if (typeof contentItem.text === 'string' && contentItem.text.length > 0) return contentItem.text;
       }
     }
   }

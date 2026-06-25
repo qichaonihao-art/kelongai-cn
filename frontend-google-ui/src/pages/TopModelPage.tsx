@@ -54,6 +54,7 @@ const MODEL_STORAGE_KEY = 'topmodel_selected_model';
 const CONVERSATIONS_KEY = 'topmodel_conversations';
 const ACTIVE_CONV_KEY = 'topmodel_active_conversation';
 const MODEL_PROMPT_DATE_KEY = 'topmodel_model_prompt_date';
+const DOUBAO_THINKING_KEY = 'topmodel_doubao_thinking_enabled';
 
 function getTodayStr() {
   return new Date().toLocaleDateString('zh-CN');
@@ -310,6 +311,22 @@ function saveModel(model: string) {
   }
 }
 
+function loadDoubaoThinkingEnabled(): boolean {
+  try {
+    return localStorage.getItem(DOUBAO_THINKING_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function saveDoubaoThinkingEnabled(enabled: boolean) {
+  try {
+    localStorage.setItem(DOUBAO_THINKING_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+}
+
 function getConversationTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((m) => m.role === 'user');
   if (firstUser) {
@@ -405,6 +422,21 @@ const AssistantMarkdownMessage = memo(function AssistantMarkdownMessage({ conten
   );
 });
 
+function AssistantReasoningBlock({ content, isStreaming }: { content?: string; isStreaming?: boolean }) {
+  if (!content) return null;
+  return (
+    <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2 text-xs leading-5 text-blue-700">
+      <div className="mb-1 flex items-center gap-1.5 font-bold text-blue-600">
+        <Sparkles className={cn('size-3.5', isStreaming && 'animate-pulse')} />
+        <span>思考中</span>
+      </div>
+      <div className="max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-blue-700/85">
+        {content}
+      </div>
+    </div>
+  );
+}
+
 export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) {
   const initialModel = loadModel();
   const [conversations, setConversations] = useState<ConversationsMap>(() => {
@@ -421,6 +453,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
   const [selectedVideos, setSelectedVideos] = useState<string[]>([]);
   const [isProcessingMedia, setIsProcessingMedia] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [doubaoThinkingEnabled, setDoubaoThinkingEnabled] = useState(loadDoubaoThinkingEnabled);
   const [streamingAssistant, setStreamingAssistant] = useState<{ model: string; convId: string; index: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -468,6 +501,10 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
   useEffect(() => {
     saveModel(selectedModel);
   }, [selectedModel]);
+
+  useEffect(() => {
+    saveDoubaoThinkingEnabled(doubaoThinkingEnabled);
+  }, [doubaoThinkingEnabled]);
 
   // Save before page unload to prevent data loss
   useEffect(() => {
@@ -715,24 +752,30 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
 
     let hasAddedAssistant = false;
     let assistantContent = '';
+    let assistantReasoningContent = '';
     let lastAssistantFlushAt = 0;
     const assistantIndex = newMessages.length;
+    const requestDoubaoThinkingEnabled = doubaoThinkingEnabled;
 
     const flushAssistantContent = (persist = false) => {
       updateActiveMessages((prev) => {
         const last = prev[prev.length - 1];
-        if (!last || last.role !== 'assistant' || last.content === assistantContent) return prev;
+        if (!last || last.role !== 'assistant') return prev;
+        if (last.content === assistantContent && last.reasoningContent === assistantReasoningContent) return prev;
         return [
           ...prev.slice(0, -1),
-          { ...last, content: assistantContent },
+          { ...last, content: assistantContent, reasoningContent: assistantReasoningContent || undefined },
         ];
       }, requestModel, requestConvId, { persist });
     };
 
     try {
-      const options: { model: string; tools?: Array<{ type: string }> } = { model: requestModel };
+      const options: { model: string; tools?: Array<{ type: string }>; thinkingEnabled?: boolean } = { model: requestModel };
       if (requestModel === DOUBAO_MODEL_ID || requestModel === QWEN_MODEL_ID) {
         options.tools = [{ type: 'web_search' }];
+      }
+      if (requestModel === DOUBAO_MODEL_ID) {
+        options.thinkingEnabled = requestDoubaoThinkingEnabled;
       }
       for await (const chunk of streamChatCompletion(newMessages, options)) {
         if (!hasAddedAssistant) {
@@ -747,7 +790,12 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
             );
           });
         }
-        assistantContent += chunk;
+        if (chunk.reasoningContent) {
+          assistantReasoningContent += chunk.reasoningContent;
+        }
+        if (chunk.content) {
+          assistantContent += chunk.content;
+        }
         const now = Date.now();
         if (now - lastAssistantFlushAt >= STREAM_RENDER_THROTTLE_MS) {
           lastAssistantFlushAt = now;
@@ -970,6 +1018,24 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
         </div>
 
         <div className="flex items-center gap-2">
+          {selectedModel === DOUBAO_MODEL_ID && (
+            <button
+              type="button"
+              onClick={() => setDoubaoThinkingEnabled((prev) => !prev)}
+              className={cn(
+                "flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-bold shadow-sm transition-all",
+                doubaoThinkingEnabled
+                  ? "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                  : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+              )}
+              title="控制豆包 2.1 是否启用 thinking 模式"
+            >
+              <Sparkles className={cn("size-3.5", doubaoThinkingEnabled && "animate-pulse")} />
+              <span className="hidden sm:inline">
+                Thinking {doubaoThinkingEnabled ? '开' : '关'}
+              </span>
+            </button>
+          )}
           <button
             onClick={handleNewChat}
             className="flex h-8 items-center gap-1.5 rounded-lg border border-fuchsia-100 bg-fuchsia-50 px-3 text-xs font-bold text-fuchsia-700 shadow-sm transition-all hover:border-fuchsia-200 hover:bg-fuchsia-100 hover:shadow-md"
@@ -1052,9 +1118,15 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
                   {msg.role === 'assistant' ? (
                     <div className="markdown-body">
                       {isStreamingAssistantMessage ? (
-                        <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                        <>
+                          <AssistantReasoningBlock content={msg.reasoningContent} isStreaming />
+                          <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                        </>
                       ) : (
-                        <AssistantMarkdownMessage content={msg.content} />
+                        <>
+                          <AssistantReasoningBlock content={msg.reasoningContent} />
+                          <AssistantMarkdownMessage content={msg.content} />
+                        </>
                       )}
                       {isLoading && idx === messages.length - 1 && (
                         <span className="ml-0.5 inline-block h-3.5 w-0.5 translate-y-0.5 bg-slate-800 animate-pulse" />
