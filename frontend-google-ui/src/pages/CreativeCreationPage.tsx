@@ -621,6 +621,26 @@ function seedanceTaskToHistoryPatch(task: SeedanceTaskResult) {
   };
 }
 
+function seedanceHistoryItemToTask(item: SeedanceHistoryItem): SeedanceTaskResult {
+  return {
+    ok: true,
+    taskId: item.taskId,
+    status: item.status,
+    videoUrl: item.videoUrl,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    response: {
+      id: item.taskId,
+      status: item.status,
+      content: item.videoUrl ? { video_url: item.videoUrl } : undefined,
+    },
+  };
+}
+
+function findLatestActiveSeedanceHistoryItem(items: SeedanceHistoryItem[]) {
+  return items.find((item) => item.taskId && !item.videoUrl && !isSeedanceTerminalStatus(item.status)) || null;
+}
+
 function stripMarkdownMarks(value: string) {
   return value
     .replace(/^#{1,6}\s+/, '')
@@ -1083,6 +1103,19 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
     window.localStorage.setItem(SEEDANCE_HISTORY_STORAGE_KEY, JSON.stringify(seedanceHistory));
   }, [seedanceHistory]);
+
+  useEffect(() => {
+    if (seedanceTask?.taskId) return;
+    const activeItem = findLatestActiveSeedanceHistoryItem(seedanceHistory);
+    if (!activeItem) return;
+
+    setSeedanceTask(seedanceHistoryItemToTask(activeItem));
+    setSeedancePrompt(activeItem.prompt);
+    setSeedanceRatio(activeItem.ratio);
+    setSeedanceDuration(activeItem.duration);
+    setSeedanceGenerateAudio(activeItem.generateAudio);
+    setSeedanceWatermark(activeItem.watermark);
+  }, [seedanceHistory, seedanceTask?.taskId]);
 
   useEffect(() => {
     if (selectedHistoryDate) return;
@@ -1784,21 +1817,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     if (item.videoUrl) {
       setSeedanceModalItem(item);
       setSeedanceVideoModal(true);
-      return;
     }
-    setSeedanceTask({
-      ok: true,
-      taskId: item.taskId,
-      status: item.status,
-      videoUrl: item.videoUrl,
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt,
-      response: {
-        id: item.taskId,
-        status: item.status,
-        content: item.videoUrl ? { video_url: item.videoUrl } : undefined,
-      },
-    });
+    setSeedanceTask(seedanceHistoryItemToTask(item));
     setSeedancePrompt(item.prompt);
     setSeedanceRatio(item.ratio);
     setSeedanceDuration(item.duration);
@@ -3569,7 +3589,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                                   <div className="py-4 text-center text-xs text-slate-400">这一天还没有生成记录</div>
                                 ) : (
                                   (historyByDate.get(selectedHistoryDate) || []).map((item) => {
-                                    const expired = isSeedanceVideoExpired(item.savedAt);
+                                    const expired = !!item.videoUrl && isSeedanceVideoExpired(item.savedAt);
+                                    const isRunning = !item.videoUrl && !isSeedanceTerminalStatus(item.status);
+                                    const liveElapsedSeconds = isRunning && item.createdAt
+                                      ? Math.max(0, Math.floor(seedanceClock / 1000) - item.createdAt)
+                                      : 0;
                                     return (
                                       <div key={item.taskId} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                                         <div className="flex items-start justify-between gap-3">
@@ -3585,6 +3609,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                                               {item.elapsedSeconds !== undefined && item.elapsedSeconds > 0 && (
                                                 <span className="text-emerald-600">
                                                   生成耗时 {formatElapsedDuration(item.elapsedSeconds)}
+                                                </span>
+                                              )}
+                                              {isRunning && liveElapsedSeconds > 0 && (
+                                                <span className="text-cyan-600">
+                                                  已等待 {formatSeedanceWait(liveElapsedSeconds)}
                                                 </span>
                                               )}
                                               {expired && <span className="text-amber-600">视频链接已过期</span>}
@@ -3640,7 +3669,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                                           <button
                                             type="button"
                                             onClick={() => handleViewSeedanceHistoryItem(item)}
-                                            disabled={expired || !item.videoUrl}
+                                            disabled={expired}
                                             className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                                           >
                                             {item.videoUrl ? (
