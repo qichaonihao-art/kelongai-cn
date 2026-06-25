@@ -10191,6 +10191,7 @@ async function handleDoubaoMultimodal(req, res) {
       text: promptText
     });
 
+    const hasVisualMediaInput = content.some((item) => item.type === 'input_image' || item.type === 'input_video');
     const requestPayload = {
       model: resolvedModel,
       stream: shouldStream,
@@ -10201,6 +10202,9 @@ async function handleDoubaoMultimodal(req, res) {
         }
       ]
     };
+    if (hasVisualMediaInput) {
+      requestPayload.thinking = { type: 'disabled' };
+    }
     const requestInit = {
       method: 'POST',
       headers: {
@@ -10217,6 +10221,7 @@ async function handleDoubaoMultimodal(req, res) {
       stream: shouldStream,
       contentLength: content.length,
       contentTypes: content.map((c) => c.type),
+      thinking: hasVisualMediaInput ? 'disabled_for_visual_media' : 'default',
       promptPreview: promptText.slice(0, 100)
     });
 
