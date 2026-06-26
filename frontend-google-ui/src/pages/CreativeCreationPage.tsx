@@ -41,7 +41,6 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import {
   saveUploadHistory,
-  loadUploadHistory,
   loadUploadHistorySummaries,
   getUploadHistoryItem,
   deleteUploadHistory,
@@ -161,6 +160,26 @@ function HistoryVideoThumbnail({
           <Film className="size-5" />
         </div>
       )}
+    </div>
+  );
+}
+
+function HistoryImageThumbnail({
+  src,
+  name,
+}: {
+  src: string;
+  name: string;
+}) {
+  return src ? (
+    <img
+      src={src}
+      alt={name}
+      className="aspect-square w-full object-cover"
+    />
+  ) : (
+    <div className="flex aspect-square w-full items-center justify-center bg-slate-900 text-white/50">
+      <ImageIcon className="size-5" />
     </div>
   );
 }
@@ -1001,7 +1020,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   async function refreshUploadHistories() {
     const [videos, images] = await Promise.all([
       loadUploadHistorySummaries('video'),
-      loadUploadHistory('image'),
+      loadUploadHistorySummaries('image'),
     ]);
 
     setVideoHistory((previous) => {
@@ -1029,7 +1048,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         id: item.id,
         name: item.name,
         timestamp: item.timestamp,
-        previewUrl: URL.createObjectURL(item.blob),
+        previewUrl: item.previewBlob ? URL.createObjectURL(item.previewBlob) : '',
       }));
     });
   }
@@ -2054,6 +2073,33 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     }
   }
 
+  async function openImageHistoryPreview(item: UploadHistoryPreviewItem, source: 'image-creative' | 'image-seedance') {
+    if (item.previewUrl) {
+      setHistoryPreviewItem({
+        id: item.id,
+        name: item.name,
+        timestamp: item.timestamp,
+        previewUrl: item.previewUrl,
+        kind: 'image',
+        source,
+      });
+      return;
+    }
+
+    const found = await getUploadHistoryItem(item.id);
+    if (!found) return;
+    const previewUrl = URL.createObjectURL(found.blob);
+    setHistoryPreviewItem({
+      id: item.id,
+      name: item.name,
+      timestamp: item.timestamp,
+      previewUrl,
+      kind: 'image',
+      source,
+      ownedPreviewUrl: true,
+    });
+  }
+
   function rememberHistoryVideoDuration(id: number, seconds: number) {
     if (!Number.isFinite(seconds) || seconds <= 0) return;
     setHistoryVideoDurations((previous) => {
@@ -2075,8 +2121,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   }
 
   async function selectImageFromHistory(item: { id: number; name: string; timestamp: number; previewUrl: string }, forReplace: boolean) {
-    const histories = await loadUploadHistory('image');
-    const found = histories.find((h) => h.id === item.id);
+    const found = await getUploadHistoryItem(item.id);
     if (!found) return;
     const file = blobToFile(found);
     const previewUrl = createMediaPreviewUrl(file);
@@ -2119,8 +2164,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   }
 
   async function selectSeedanceReferenceFromHistory(item: { id: number; name: string; timestamp: number; previewUrl: string }, kind: 'image' | 'video') {
-    const histories = await loadUploadHistory(kind);
-    const found = histories.find((h) => h.id === item.id);
+    const found = await getUploadHistoryItem(item.id);
     if (!found) return;
 
     const file = blobToFile(found);
@@ -3878,14 +3922,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                               clearTimeout(hoverPreviewTimerRef.current);
                               hoverPreviewTimerRef.current = null;
                             }
-                            setHistoryPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'image', source: 'image-creative' });
+                            void openImageHistoryPreview(item, 'image-creative');
                           }}
                         >
                           <div className="relative overflow-hidden rounded-lg bg-slate-950">
-                            <img
+                            <HistoryImageThumbnail
                               src={item.previewUrl}
-                              alt={item.name}
-                              className="aspect-square w-full object-cover"
+                              name={item.name}
                             />
                           </div>
                           <div className="mt-2 flex items-center justify-between gap-1">
@@ -3928,14 +3971,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                               clearTimeout(hoverPreviewTimerRef.current);
                               hoverPreviewTimerRef.current = null;
                             }
-                            setHistoryPreviewItem({ id: item.id, name: item.name, previewUrl: item.previewUrl, timestamp: item.timestamp, kind: 'image', source: 'image-seedance' });
+                            void openImageHistoryPreview(item, 'image-seedance');
                           }}
                         >
                           <div className="relative overflow-hidden rounded-lg bg-slate-950">
-                            <img
+                            <HistoryImageThumbnail
                               src={item.previewUrl}
-                              alt={item.name}
-                              className="aspect-square w-full object-cover"
+                              name={item.name}
                             />
                           </div>
                           <div className="mt-2 flex items-center justify-between gap-1">

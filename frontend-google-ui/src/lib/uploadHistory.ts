@@ -2,6 +2,13 @@ const DB_NAME = 'kelong-upload-history';
 const DB_VERSION = 2;
 const STORE_NAME = 'files';
 const META_STORE_NAME = 'fileMetadata';
+const HISTORY_RETENTION_DAYS = 180;
+const HISTORY_RETENTION_MS = HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+const MAX_HISTORY_BY_KIND: Record<UploadHistoryItem['kind'], number> = {
+  video: 300,
+  image: 500,
+  audio: 100,
+};
 
 export interface UploadHistoryItem {
   id: number;
@@ -22,6 +29,57 @@ export interface UploadHistorySummaryItem {
   timestamp: number;
   previewBlob?: Blob;
   duration?: number;
+}
+
+async function createImageMetadata(file: File): Promise<Pick<UploadHistorySummaryItem, 'previewBlob'>> {
+  if (typeof document === 'undefined' || typeof URL === 'undefined') return {};
+
+  return new Promise((resolve) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    let settled = false;
+
+    const cleanup = () => {
+      URL.revokeObjectURL(objectUrl);
+      image.onload = null;
+      image.onerror = null;
+    };
+
+    const finish = (metadata: Pick<UploadHistorySummaryItem, 'previewBlob'> = {}) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(metadata);
+    };
+
+    const timer = window.setTimeout(() => finish(), 2500);
+    image.onload = () => {
+      try {
+        const sourceWidth = image.naturalWidth || 640;
+        const sourceHeight = image.naturalHeight || 640;
+        const targetSize = 360;
+        const scale = targetSize / Math.max(sourceWidth, sourceHeight);
+        const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+        const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        canvas.getContext('2d')?.drawImage(image, 0, 0, targetWidth, targetHeight);
+        canvas.toBlob((blob) => {
+          window.clearTimeout(timer);
+          finish({ previewBlob: blob || undefined });
+        }, 'image/jpeg', 0.76);
+      } catch {
+        window.clearTimeout(timer);
+        finish();
+      }
+    };
+    image.onerror = () => {
+      window.clearTimeout(timer);
+      finish();
+    };
+    image.src = objectUrl;
+  });
 }
 
 async function createVideoMetadata(file: File): Promise<Pick<UploadHistorySummaryItem, 'previewBlob' | 'duration'>> {
@@ -125,8 +183,42 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
+function isSameUploadHistoryFile(item: UploadHistorySummaryItem, file: File, kind: UploadHistoryItem['kind']) {
+  return item.kind === kind && item.name === file.name && item.size === file.size && item.type === file.type;
+}
+
+function filterRetainedHistoryItems<T extends { kind: UploadHistoryItem['kind']; timestamp: number }>(items: T[], kind?: UploadHistoryItem['kind']): T[] {
+  const oldestAllowed = Date.now() - HISTORY_RETENTION_MS;
+  const retained = items.filter((item) => item.timestamp >= oldestAllowed);
+  if (kind) {
+    return retained
+      .filter((item) => item.kind === kind)
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, MAX_HISTORY_BY_KIND[kind] || 300);
+  }
+
+  const grouped = new Map<UploadHistoryItem['kind'], T[]>();
+  retained.forEach((item) => {
+    const list = grouped.get(item.kind) || [];
+    list.push(item);
+    grouped.set(item.kind, list);
+  });
+
+  return Array.from(grouped.entries())
+    .flatMap(([itemKind, list]) => (
+      list
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, MAX_HISTORY_BY_KIND[itemKind] || 300)
+    ))
+    .sort((a, b) => b.timestamp - a.timestamp);
+}
+
 export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'audio'): Promise<void> {
-  const videoMetadata = kind === 'video' ? await createVideoMetadata(file) : {};
+  const mediaMetadata = kind === 'video'
+    ? await createVideoMetadata(file)
+    : kind === 'image'
+      ? await createImageMetadata(file)
+      : {};
   const db = await openDB();
 
   const all = await new Promise<UploadHistorySummaryItem[]>((resolve, reject) => {
@@ -140,24 +232,29 @@ export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'a
   const store = transaction.objectStore(STORE_NAME);
   const metaStore = transaction.objectStore(META_STORE_NAME);
 
-  const sameKind = all.filter((item) => item.kind === kind);
-  const maxCount = 30;
-  if (sameKind.length >= maxCount) {
-    const sorted = sameKind.sort((a, b) => a.timestamp - b.timestamp);
-    const toDelete = sorted.slice(0, sameKind.length - maxCount + 1);
-    for (const item of toDelete) {
-      store.delete(item.id);
-      metaStore.delete(item.id);
-    }
-  }
-
-  const existing = all.find((item) => item.kind === kind && item.name === file.name && item.size === file.size);
+  const existing = all.find((item) => isSameUploadHistoryFile(item, file, kind));
   if (existing) {
     store.delete(existing.id);
     metaStore.delete(existing.id);
   }
 
-  const timestamp = Date.now();
+  const now = Date.now();
+  const oldestAllowed = now - HISTORY_RETENTION_MS;
+  const maxCount = MAX_HISTORY_BY_KIND[kind] || 300;
+  const sameKindAfterDuplicateRemoval = all
+    .filter((item) => item.kind === kind && item.id !== existing?.id);
+  const expired = sameKindAfterDuplicateRemoval.filter((item) => item.timestamp < oldestAllowed);
+  const unexpired = sameKindAfterDuplicateRemoval
+    .filter((item) => item.timestamp >= oldestAllowed)
+    .sort((a, b) => b.timestamp - a.timestamp);
+  const overflow = unexpired.slice(Math.max(0, maxCount - 1));
+  const toDelete = [...expired, ...overflow];
+  for (const item of toDelete) {
+    store.delete(item.id);
+    metaStore.delete(item.id);
+  }
+
+  const timestamp = now;
   const addRequest = store.add({
     kind,
     name: file.name,
@@ -174,7 +271,7 @@ export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'a
       type: file.type,
       size: file.size,
       timestamp,
-      ...videoMetadata,
+      ...mediaMetadata,
     });
   };
 
@@ -199,12 +296,7 @@ export async function loadUploadHistory(kind?: 'image' | 'video' | 'audio'): Pro
 
   db.close();
 
-  let filtered = all;
-  if (kind) {
-    filtered = all.filter((item) => item.kind === kind);
-  }
-
-  return filtered.sort((a, b) => b.timestamp - a.timestamp);
+  return filterRetainedHistoryItems(all, kind);
 }
 
 export async function getUploadHistoryItem(id: number): Promise<UploadHistoryItem | null> {
@@ -235,12 +327,7 @@ export async function loadUploadHistorySummaries(kind?: 'image' | 'video' | 'aud
 
   db.close();
 
-  let filtered = all;
-  if (kind) {
-    filtered = all.filter((item) => item.kind === kind);
-  }
-
-  return filtered.sort((a, b) => b.timestamp - a.timestamp);
+  return filterRetainedHistoryItems(all, kind);
 }
 
 export async function deleteUploadHistory(id: number): Promise<void> {
