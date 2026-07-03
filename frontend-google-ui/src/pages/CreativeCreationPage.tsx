@@ -105,6 +105,11 @@ interface UploadHistoryPreviewItem {
   duration?: number;
 }
 
+interface AdditionalChangeHistoryItem {
+  text: string;
+  createdAt: number;
+}
+
 type HistoryPreviewItem = UploadHistoryPreviewItem & {
   kind: 'video' | 'image';
   source: 'video' | 'image-creative' | 'image-seedance';
@@ -121,7 +126,8 @@ const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
 const SEEDANCE_COST_KEY = 'kelongai.seedanceCost';
 const ADDITIONAL_CHANGE_HISTORY_KEY = 'kelongai.additionalChangeHistory';
-const ADDITIONAL_CHANGE_HISTORY_MAX = 30;
+const ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS = 180;
+const ADDITIONAL_CHANGE_HISTORY_RETENTION_MS = ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 const NOTEBOOK_STORAGE_KEY = 'kelongai.notebook';
 
 function formatDoubaoMultimodalModelName(modelId: string): string {
@@ -208,6 +214,43 @@ function saveNotebookItems(items: NotebookItem[]) {
   } catch {
     // ignore storage errors
   }
+}
+
+function normalizeAdditionalChangeHistory(rawItems: unknown): AdditionalChangeHistoryItem[] {
+  if (!Array.isArray(rawItems)) return [];
+  const now = Date.now();
+  const oldestAllowed = now - ADDITIONAL_CHANGE_HISTORY_RETENTION_MS;
+  const seen = new Set<string>();
+  const normalized: AdditionalChangeHistoryItem[] = [];
+
+  for (const item of rawItems) {
+    const text = typeof item === 'string'
+      ? item.trim()
+      : item && typeof item === 'object' && typeof (item as { text?: unknown }).text === 'string'
+        ? String((item as { text: string }).text).trim()
+        : '';
+    if (!text || seen.has(text)) continue;
+
+    const createdAt = item && typeof item === 'object' && Number.isFinite((item as { createdAt?: unknown }).createdAt)
+      ? Number((item as { createdAt: number }).createdAt)
+      : now;
+    if (createdAt < oldestAllowed) continue;
+
+    seen.add(text);
+    normalized.push({ text, createdAt });
+  }
+
+  return normalized.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function persistAdditionalChangeHistory(items: AdditionalChangeHistoryItem[]) {
+  const normalized = normalizeAdditionalChangeHistory(items);
+  try {
+    window.localStorage.setItem(ADDITIONAL_CHANGE_HISTORY_KEY, JSON.stringify(normalized));
+  } catch {
+    // ignore storage errors
+  }
+  return normalized;
 }
 
 function getTodayKey() {
@@ -947,7 +990,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [enableCharacterRemix, setEnableCharacterRemix] = useState(false);
   const [characterRemix, setCharacterRemix] = useState('');
   const [includeSubtitles, setIncludeSubtitles] = useState(false);
-  const [additionalChangeHistory, setAdditionalChangeHistory] = useState<string[]>([]);
+  const [additionalChangeHistory, setAdditionalChangeHistory] = useState<AdditionalChangeHistoryItem[]>([]);
   const [videoHistory, setVideoHistory] = useState<UploadHistoryPreviewItem[]>([]);
   const [imageHistory, setImageHistory] = useState<UploadHistoryPreviewItem[]>([]);
   const videoHistoryRef = useRef<UploadHistoryPreviewItem[]>([]);
@@ -1064,9 +1107,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         const raw = window.localStorage.getItem(ADDITIONAL_CHANGE_HISTORY_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            setAdditionalChangeHistory(parsed.filter((item) => typeof item === 'string'));
-          }
+          const normalized = persistAdditionalChangeHistory(parsed);
+          setAdditionalChangeHistory(normalized);
         }
       } catch {
         // ignore parse errors
@@ -1545,27 +1587,17 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     const trimmed = text.trim();
     if (!trimmed) return;
     setAdditionalChangeHistory((previous) => {
-      if (previous.includes(trimmed)) {
-        return previous;
-      }
-      const next = [trimmed, ...previous].slice(0, ADDITIONAL_CHANGE_HISTORY_MAX);
-      try {
-        window.localStorage.setItem(ADDITIONAL_CHANGE_HISTORY_KEY, JSON.stringify(next));
-      } catch {
-        // ignore storage errors
-      }
+      const next = persistAdditionalChangeHistory([
+        { text: trimmed, createdAt: Date.now() },
+        ...previous.filter((item) => item.text !== trimmed),
+      ]);
       return next;
     });
   }
 
   function deleteAdditionalChangeHistory(text: string) {
     setAdditionalChangeHistory((previous) => {
-      const next = previous.filter((item) => item !== text);
-      try {
-        window.localStorage.setItem(ADDITIONAL_CHANGE_HISTORY_KEY, JSON.stringify(next));
-      } catch {
-        // ignore storage errors
-      }
+      const next = persistAdditionalChangeHistory(previous.filter((item) => item.text !== text));
       return next;
     });
   }
@@ -2857,30 +2889,30 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                           </div>
                           <div className="flex-1 overflow-y-auto p-3">
                             <div className="space-y-2">
-                              {additionalChangeHistory.map((text, index) => (
+                              {additionalChangeHistory.map((item, index) => (
                                 <div
-                                  key={index}
+                                  key={`${item.createdAt}-${index}`}
                                   className="group relative rounded-xl border border-slate-200/70 bg-white/80 p-3 shadow-sm"
                                 >
                                   <div className="whitespace-pre-wrap text-xs leading-5 text-slate-700 pr-6">
-                                    {text}
+                                    {item.text}
                                   </div>
                                   <div className="mt-1.5 flex items-center justify-between">
                                     <span className="text-[10px] text-slate-400">第 {additionalChangeHistory.length - index} 条</span>
                                     <div className="flex items-center gap-1">
                                       <button
                                         type="button"
-                                        onClick={() => copyAdditionalHistory(text)}
+                                        onClick={() => copyAdditionalHistory(item.text)}
                                         className="flex size-6 items-center justify-center rounded text-slate-300 transition-colors hover:bg-indigo-50 hover:text-indigo-500"
                                         aria-label="复制"
                                         title="复制"
                                       >
-                                        {copiedAdditionalId === text ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+                                        {copiedAdditionalId === item.text ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => {
-                                          setAdditionalChange(text);
+                                          setAdditionalChange(item.text);
                                           setIsAdditionalHistoryOpen(false);
                                         }}
                                         className="flex size-6 items-center justify-center rounded text-slate-300 transition-colors hover:bg-indigo-50 hover:text-indigo-500"
@@ -2891,7 +2923,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() => deleteAdditionalChangeHistory(text)}
+                                        onClick={() => deleteAdditionalChangeHistory(item.text)}
                                         className="flex size-6 items-center justify-center rounded text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
                                         aria-label="删除"
                                         title="删除"
