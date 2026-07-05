@@ -664,7 +664,7 @@ async function extractFirstAudioSegmentFromFirstWorkingUrl({ videoUrls, audioPat
     for (let index = 0; index < urls.length; index += 1) {
       await cleanupCandidateAudio(`${audioPath}.${index}.part.mp3`);
     }
-    return;
+    return winner;
   }
 
   await Promise.allSettled(workers);
