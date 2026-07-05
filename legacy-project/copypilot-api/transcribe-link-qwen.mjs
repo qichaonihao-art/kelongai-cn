@@ -9,7 +9,8 @@ const execFileAsync = promisify(execFile);
 
 const QWEN_ASR_MODEL = 'qwen3-asr-flash';
 const QWEN_ASR_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
-const MAX_AUDIO_DURATION_SECONDS = 600;
+const AUDIO_SEGMENT_SECONDS = 9 * 60;
+const MAX_AUDIO_DURATION_SECONDS = 55 * 60;
 const FFMPEG_TIMEOUT_MS = 120_000;
 const FFMPEG_RACE_TIMEOUT_MS = 75_000;
 const AUDIO_RACE_CONCURRENCY = 3;
@@ -20,12 +21,18 @@ const QWEN_STREAM_TIMEOUT_MS = 420_000;
 const TRANSCRIPT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const transcriptCache = new Map();
 
-async function extractAudioFromUrl(videoUrl, outputPath, { signal, timeoutMs = FFMPEG_TIMEOUT_MS } = {}) {
+async function extractAudioFromUrl(videoUrl, outputPath, {
+  signal,
+  timeoutMs = FFMPEG_TIMEOUT_MS,
+  startSeconds = 0,
+  durationSeconds = AUDIO_SEGMENT_SECONDS
+} = {}) {
   const headers = [
     'Referer: https://www.douyin.com/',
     'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
   ].join('\r\n') + '\r\n';
 
+  const seekArgs = startSeconds > 0 ? ['-ss', String(startSeconds)] : [];
   const { stdout, stderr } = await execFileAsync('ffmpeg', [
     '-y',
     '-nostdin',
@@ -38,6 +45,7 @@ async function extractAudioFromUrl(videoUrl, outputPath, { signal, timeoutMs = F
     '-reconnect_delay_max', '2',
     '-analyzeduration', '1000000',
     '-probesize', '1000000',
+    ...seekArgs,
     '-i', videoUrl,
     '-map', '0:a:0',
     '-vn',
@@ -45,7 +53,7 @@ async function extractAudioFromUrl(videoUrl, outputPath, { signal, timeoutMs = F
     '-ac', '1',
     '-b:a', '32k',
     '-f', 'mp3',
-    '-t', String(MAX_AUDIO_DURATION_SECONDS),
+    '-t', String(durationSeconds),
     outputPath,
   ], {
     timeout: timeoutMs,
@@ -321,6 +329,18 @@ function createSseJsonResponse(run) {
   });
 }
 
+function joinTranscriptSegments(segments) {
+  return segments
+    .map((segment) => String(segment || '').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function isLikelyEndOfMediaError(error) {
+  const message = String(error?.message || error || '');
+  return /Output file is empty|nothing was written|Invalid data found|End of file|could not seek|does not contain any stream|no audio stream/i.test(message);
+}
+
 async function buildTranscriptionPayload({ body, url, env, requestId, emit }) {
   const tikhubKey = env.TIKHUB_API_KEY;
   const tikhubBaseUrl = env.TIKHUB_BASE_URL || 'https://api.tikhub.io';
@@ -397,33 +417,17 @@ async function buildTranscriptionPayload({ body, url, env, requestId, emit }) {
     // 3. Extract audio directly from URL with FFmpeg
     emit?.('status', { stage: 'extract_audio', message: '正在提取音频' });
     console.log(`[${requestId}] step 3: extracting audio with FFmpeg`);
-    const audioPath = join(tempDir, 'audio.mp3');
-    await extractAudioFromFirstWorkingUrl({
+    const audioSegments = await extractAudioSegmentsFromFirstWorkingUrl({
       videoUrls,
-      audioPath,
-      requestId
+      tempDir,
+      requestId,
+      emit
     });
+    console.log(`[${requestId}] extracted audio segments:`, audioSegments.length);
 
     // 4. Transcribe with Qwen ASR
-    let transcript = '';
-    if (emit) {
-      emit('status', { stage: 'asr', message: '千问 ASR 正在流式转写' });
-      console.log(`[${requestId}] step 4: transcribing with streaming Qwen ASR`);
-      try {
-        transcript = await transcribeWithQwenStream(audioPath, {
-          requestId,
-          onDelta: (fullText) => emit('delta', { text: fullText, fullText })
-        });
-      } catch (streamError) {
-        console.error(`[${requestId}] streaming Qwen ASR failed, fallback to non-stream:`, streamError.message);
-        emit('status', { stage: 'asr-fallback', message: '流式转写不稳定，正在切换稳妥模式' });
-        transcript = await transcribeWithQwen(audioPath, requestId);
-        emit('delta', { text: transcript, fullText: transcript });
-      }
-    } else {
-      console.log(`[${requestId}] step 4: transcribing with Qwen ASR`);
-      transcript = await transcribeWithQwen(audioPath, requestId);
-    }
+    console.log(`[${requestId}] step 4: transcribing ${audioSegments.length} segment(s) with Qwen ASR`);
+    const transcript = await transcribeAudioSegmentsWithQwen(audioSegments, { requestId, emit });
 
     console.log(`[${requestId}] Qwen ASR success, transcript length:`, transcript.length);
     setCachedTranscript(cacheKey, transcript);
@@ -478,7 +482,103 @@ export async function onRequestPost(context) {
   }
 }
 
-async function extractAudioFromFirstWorkingUrl({ videoUrls, audioPath, requestId }) {
+async function transcribeAudioSegmentsWithQwen(audioSegments, { requestId = '', emit } = {}) {
+  const transcripts = [];
+  for (let index = 0; index < audioSegments.length; index += 1) {
+    const segment = audioSegments[index];
+    const segmentLabel = `${index + 1}/${audioSegments.length}`;
+    let segmentTranscript = '';
+
+    if (emit) {
+      emit('status', { stage: 'asr', message: `千问 ASR 正在转写第 ${segmentLabel} 段` });
+      try {
+        segmentTranscript = await transcribeWithQwenStream(segment.path, {
+          requestId: `${requestId}_seg${index + 1}`,
+          onDelta: (segmentText) => {
+            const fullText = joinTranscriptSegments([...transcripts, segmentText]);
+            emit('delta', { text: fullText, fullText, segmentIndex: index + 1, segmentCount: audioSegments.length });
+          }
+        });
+      } catch (streamError) {
+        console.error(`[${requestId}] streaming Qwen ASR segment ${index + 1} failed, fallback to non-stream:`, streamError.message);
+        emit('status', { stage: 'asr-fallback', message: `第 ${segmentLabel} 段流式转写不稳定，正在切换稳妥模式` });
+        segmentTranscript = await transcribeWithQwen(segment.path, `${requestId}_seg${index + 1}`);
+      }
+    } else {
+      segmentTranscript = await transcribeWithQwen(segment.path, `${requestId}_seg${index + 1}`);
+    }
+
+    transcripts.push(segmentTranscript);
+    const fullText = joinTranscriptSegments(transcripts);
+    emit?.('delta', { text: fullText, fullText, segmentIndex: index + 1, segmentCount: audioSegments.length });
+  }
+
+  const transcript = joinTranscriptSegments(transcripts);
+  if (!transcript) {
+    throw new Error('千问 ASR 返回了空文本');
+  }
+  return transcript;
+}
+
+async function extractAudioSegmentsFromFirstWorkingUrl({ videoUrls, tempDir, requestId, emit }) {
+  const firstAudioPath = join(tempDir, 'audio-0.mp3');
+  const firstSegment = await extractFirstAudioSegmentFromFirstWorkingUrl({
+    videoUrls,
+    audioPath: firstAudioPath,
+    requestId
+  });
+
+  const audioSegments = [{
+    path: firstAudioPath,
+    startSeconds: 0,
+    durationSeconds: AUDIO_SEGMENT_SECONDS
+  }];
+
+  const segmentCountLimit = Math.ceil(MAX_AUDIO_DURATION_SECONDS / AUDIO_SEGMENT_SECONDS);
+  for (let index = 1; index < segmentCountLimit; index += 1) {
+    const startSeconds = index * AUDIO_SEGMENT_SECONDS;
+    const remainingSeconds = MAX_AUDIO_DURATION_SECONDS - startSeconds;
+    if (remainingSeconds <= 0) break;
+
+    const durationSeconds = Math.min(AUDIO_SEGMENT_SECONDS, remainingSeconds);
+    const segmentAudioPath = join(tempDir, `audio-${index}.mp3`);
+    emit?.('status', { stage: 'extract_audio', message: `正在提取第 ${index + 1} 段音频` });
+
+    try {
+      const { stderr } = await extractAudioFromUrl(firstSegment.videoUrl, segmentAudioPath, {
+        startSeconds,
+        durationSeconds,
+        timeoutMs: FFMPEG_TIMEOUT_MS
+      });
+      const audioStats = await readFile(segmentAudioPath).then((b) => ({ size: b.length }));
+      if (!audioStats.size || audioStats.size < 1024) {
+        await rm(segmentAudioPath, { force: true }).catch(() => {});
+        console.log(`[${requestId}] audio segment ${index + 1} is empty, stopping segmentation`);
+        break;
+      }
+      console.log(`[${requestId}] FFmpeg segment ${index + 1} success, audio size: ${audioStats.size} bytes`);
+      if (stderr) {
+        console.log(`[${requestId}] FFmpeg segment ${index + 1} stderr:`, stderr.slice(0, 500));
+      }
+      audioSegments.push({
+        path: segmentAudioPath,
+        startSeconds,
+        durationSeconds
+      });
+    } catch (error) {
+      await rm(segmentAudioPath, { force: true }).catch(() => {});
+      if (isLikelyEndOfMediaError(error)) {
+        console.log(`[${requestId}] audio segment ${index + 1} reached media end:`, error.message);
+        break;
+      }
+      throw new Error(`第 ${index + 1} 段音频提取失败：${error.message || error}`);
+    }
+  }
+
+  return audioSegments;
+}
+
+async function extractFirstAudioSegmentFromFirstWorkingUrl({ videoUrls, audioPath, requestId }) {
   const urls = videoUrls.slice(0, AUDIO_RACE_MAX_URLS);
   let lastError = null;
   let nextIndex = 0;
@@ -514,7 +614,7 @@ async function extractAudioFromFirstWorkingUrl({ videoUrls, audioPath, requestId
       if (stderr) {
         console.log(`[${requestId}] FFmpeg stderr:`, stderr.slice(0, 500));
       }
-      return { index, candidateAudioPath };
+      return { index, videoUrl, candidateAudioPath };
     } catch (error) {
       await cleanupCandidateAudio(candidateAudioPath);
       if (controller.signal.aborted) {
