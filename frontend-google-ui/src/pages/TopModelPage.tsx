@@ -294,12 +294,13 @@ function createConversation(model: string): Conversation {
 function loadModel(): string {
   try {
     const savedModel = localStorage.getItem(MODEL_STORAGE_KEY);
-    if (savedModel === 'claude-opus-4-7') return 'claude-opus-4-8';
+    if (savedModel === 'claude-opus-4-8') return 'claude-fable-5';
+    if (savedModel === 'claude-opus-4-7') return 'claude-fable-5';
     if (savedModel === 'doubao-seed-2-0-pro-260215') return DOUBAO_MODEL_ID;
     if (savedModel === 'qwen3.6-plus') return QWEN_MODEL_ID;
-    return savedModel || 'claude-opus-4-8';
+    return savedModel || 'claude-fable-5';
   } catch {
-    return 'claude-opus-4-8';
+    return 'claude-fable-5';
   }
 }
 

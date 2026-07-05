@@ -2084,7 +2084,7 @@ async function handleChatCompletions(req, res) {
   try {
     const body = await readRequestBody(req);
     const messages = body.messages;
-    const model = String(body.model || 'claude-opus-4-8');
+    const model = String(body.model || 'claude-fable-5');
     const stream = body.stream !== false;
 
     if (!Array.isArray(messages) || messages.length === 0) {
