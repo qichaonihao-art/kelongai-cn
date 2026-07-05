@@ -110,6 +110,11 @@ interface AdditionalChangeHistoryItem {
   createdAt: number;
 }
 
+interface TextHighlightState {
+  text: string;
+  ranges: Array<{ start: number; end: number }>;
+}
+
 type HistoryPreviewItem = UploadHistoryPreviewItem & {
   kind: 'video' | 'image';
   source: 'video' | 'image-creative' | 'image-seedance';
@@ -251,6 +256,67 @@ function persistAdditionalChangeHistory(items: AdditionalChangeHistoryItem[]) {
     // ignore storage errors
   }
   return normalized;
+}
+
+function replaceAllWithHighlightRanges(source: string, search: string, replacement: string) {
+  if (!search) return { text: source, count: 0, ranges: [] as TextHighlightState['ranges'] };
+
+  let cursor = 0;
+  let count = 0;
+  let text = '';
+  const ranges: TextHighlightState['ranges'] = [];
+
+  while (cursor < source.length) {
+    const index = source.indexOf(search, cursor);
+    if (index === -1) {
+      text += source.slice(cursor);
+      break;
+    }
+
+    text += source.slice(cursor, index);
+    const start = text.length;
+    text += replacement;
+    if (replacement) {
+      ranges.push({ start, end: start + replacement.length });
+    }
+    count += 1;
+    cursor = index + search.length;
+  }
+
+  if (cursor >= source.length && source.endsWith(search)) {
+    // The loop already appended the final replacement; this branch only keeps
+    // the intent explicit for exact trailing matches.
+  }
+
+  return { text, count, ranges };
+}
+
+function renderHighlightedText(state: TextHighlightState | null) {
+  if (!state) return null;
+  if (state.ranges.length === 0) return state.text;
+
+  const parts: Array<{ text: string; highlighted: boolean; key: string }> = [];
+  let cursor = 0;
+  state.ranges.forEach((range, index) => {
+    if (range.start > cursor) {
+      parts.push({ text: state.text.slice(cursor, range.start), highlighted: false, key: `plain_${index}` });
+    }
+    parts.push({ text: state.text.slice(range.start, range.end), highlighted: true, key: `hit_${index}` });
+    cursor = range.end;
+  });
+  if (cursor < state.text.length) {
+    parts.push({ text: state.text.slice(cursor), highlighted: false, key: 'plain_tail' });
+  }
+
+  return parts.map((part) => (
+    part.highlighted ? (
+      <mark key={part.key} className="rounded bg-emerald-200/80 px-0.5 font-bold text-emerald-900 ring-1 ring-emerald-300/70">
+        {part.text}
+      </mark>
+    ) : (
+      <span key={part.key}>{part.text}</span>
+    )
+  ));
 }
 
 function getTodayKey() {
@@ -1014,6 +1080,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [searchText, setSearchText] = useState("");
   const [replaceText, setReplaceText] = useState("");
   const [replaceResult, setReplaceResult] = useState<string | null>(null);
+  const [seedanceReplaceHighlight, setSeedanceReplaceHighlight] = useState<TextHighlightState | null>(null);
+  const [seedancePromptScrollTop, setSeedancePromptScrollTop] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1662,6 +1730,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   function handleSeedancePromptChange(event: { target: { value: string; selectionStart: number | null } }) {
     const value = event.target.value;
     setSeedancePrompt(value);
+    setSeedanceReplaceHighlight(null);
 
     const cursorPosition = event.target.selectionStart;
     const textBeforeCursor = value.slice(0, cursorPosition);
@@ -1684,7 +1753,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
   function handleSearchReplace() {
     if (!searchText) return;
-    const count = (seedancePrompt.match(new RegExp(searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+    const { text: newText, count, ranges } = replaceAllWithHighlightRanges(seedancePrompt, searchText, replaceText);
     if (count === 0) {
       setReplaceResult(`未找到 "${searchText}"`);
       setTimeout(() => {
@@ -1693,8 +1762,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       }, 1200);
       return;
     }
-    const newText = seedancePrompt.replaceAll(searchText, replaceText);
     setSeedancePrompt(newText);
+    setSeedanceReplaceHighlight(ranges.length > 0 ? { text: newText, ranges } : null);
     setReplaceResult(`成功替换 ${count} 处`);
     setTimeout(() => {
       setReplaceResult(null);
@@ -3197,21 +3266,33 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3 relative">
                 {/* 提示词输入框 + 内部参考素材 */}
                 <div className="relative">
+                  {seedanceReplaceHighlight && (
+                    <div
+                      className="pointer-events-none absolute inset-0 z-0 min-h-[280px] overflow-hidden rounded-xl border border-emerald-300 bg-white p-4 pb-20 text-sm leading-7 text-slate-700 whitespace-pre-wrap"
+                      aria-hidden="true"
+                    >
+                      <div style={{ transform: `translateY(-${seedancePromptScrollTop}px)` }}>
+                        {renderHighlightedText(seedanceReplaceHighlight)}
+                      </div>
+                    </div>
+                  )}
                   <textarea
                     ref={seedancePromptRef}
                     value={seedancePrompt}
                     onChange={handleSeedancePromptChange}
                     onKeyDown={handleSeedanceKeyDown}
+                    onScroll={(event) => setSeedancePromptScrollTop(event.currentTarget.scrollTop)}
                     placeholder="等待模块一反推出视频提示词..."
                     className={cn(
-                      "min-h-[280px] w-full resize-none rounded-xl border bg-white p-4 pb-20 text-sm leading-7 text-slate-700 outline-none transition-all focus:border-violet-300 whitespace-pre-wrap",
+                      "relative z-10 min-h-[280px] w-full resize-none rounded-xl border p-4 pb-20 text-sm leading-7 outline-none transition-all focus:border-violet-300 whitespace-pre-wrap",
+                      seedanceReplaceHighlight ? "bg-transparent text-transparent caret-slate-800 selection:bg-emerald-200/70" : "bg-white text-slate-700",
                       seedancePromptHighlight ? "border-violet-400 ring-2 ring-violet-300" : "border-slate-300"
                     )}
                   />
 
                   {/* 已上传的参考素材列表（放在输入框底部内部） */}
                   {seedanceReferences.length > 0 && (
-                    <div className="absolute bottom-2 left-2 right-2 flex flex-wrap gap-1.5">
+                    <div className="absolute bottom-2 left-2 right-2 z-20 flex flex-wrap gap-1.5">
                       {seedanceReferences.map((reference) => (
                         <div
                           key={reference.id}
