@@ -43,7 +43,7 @@ import {
 
 interface DouyinDownloaderPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal' | 'feeding') => void;
 }
 
 interface DiffPart {

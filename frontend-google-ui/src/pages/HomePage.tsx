@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { Mic2, Wand2, LogOut, Download, Network, Image, Crown } from "lucide-react";
+import { BookOpenText, Mic2, Wand2, LogOut, Download, Network, Image, Crown } from "lucide-react";
 import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import { motion } from "motion/react";
 
 interface HomePageProps {
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding') => void;
   onLogout: () => void;
 }
 
@@ -70,6 +70,16 @@ const modules = [
     gradient: 'from-fuchsia-500 to-purple-600',
     bgLight: 'bg-fuchsia-50/50',
     borderHover: 'hover:border-fuchsia-300/60',
+  },
+  {
+    id: 'feeding' as const,
+    title: '创意喂养',
+    desc: '沉淀装饰画爆款开头，基于真实案例仿写',
+    icon: BookOpenText,
+    color: 'orange',
+    gradient: 'from-orange-500 to-rose-500',
+    bgLight: 'bg-orange-50/50',
+    borderHover: 'hover:border-orange-300/60',
   },
 ];
 

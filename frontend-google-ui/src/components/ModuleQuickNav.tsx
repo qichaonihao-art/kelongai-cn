@@ -1,7 +1,7 @@
-import { Mic2, Wand2, Download, Network, Image, Crown } from 'lucide-react';
+import { BookOpenText, Mic2, Wand2, Download, Network, Image, Crown } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 
-type ModuleId = 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel';
+type ModuleId = 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding';
 
 const MODULES: { id: ModuleId; label: string; icon: typeof Mic2; gradient: string }[] = [
   { id: 'voice', label: '声音克隆', icon: Mic2, gradient: 'from-indigo-500 to-violet-600' },
@@ -10,6 +10,7 @@ const MODULES: { id: ModuleId; label: string; icon: typeof Mic2; gradient: strin
   { id: 'collection', label: '店铺总览', icon: Network, gradient: 'from-emerald-500 to-cyan-600' },
   { id: 'image', label: '图片生成', icon: Image, gradient: 'from-amber-500 to-orange-600' },
   { id: 'topmodel', label: '顶级模型', icon: Crown, gradient: 'from-fuchsia-500 to-purple-600' },
+  { id: 'feeding', label: '创意喂养', icon: BookOpenText, gradient: 'from-orange-500 to-rose-500' },
 ];
 
 interface ModuleQuickNavProps {

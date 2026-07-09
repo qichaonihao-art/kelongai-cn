@@ -46,7 +46,7 @@ import remarkGfm from "remark-gfm";
 
 interface TopModelPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding') => void;
 }
 
 const STORAGE_KEY = 'topmodel_chat_history';

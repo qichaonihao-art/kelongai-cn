@@ -20,7 +20,7 @@ import SiteFooter from "@/src/components/SiteFooter";
 
 interface UniversalExtractorPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal' | 'feeding') => void;
 }
 
 const PLATFORMS = [

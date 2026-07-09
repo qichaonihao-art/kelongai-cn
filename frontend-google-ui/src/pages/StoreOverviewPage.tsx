@@ -42,7 +42,7 @@ import {
 
 interface StoreOverviewPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding') => void;
 }
 
 const NODE_TYPES: {

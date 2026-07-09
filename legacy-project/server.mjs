@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
@@ -46,6 +46,8 @@ const RUNTIME_STATE_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || path.joi
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
 const VOICE_ARCHIVE_FILE = path.join(RUNTIME_STATE_DIR, 'voice-archive.json');
 const HOME_CULTURE_MOTTOS_FILE = path.join(RUNTIME_STATE_DIR, 'home-culture-mottos.json');
+const CREATIVE_FEEDING_SETTINGS_FILE = path.join(RUNTIME_STATE_DIR, 'creative-feeding-settings.json');
+const CREATIVE_OPENING_LIBRARY_FILE = path.join(RUNTIME_STATE_DIR, 'creative-opening-library.json');
 const VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS = 15 * 1000;
 const COLLECTION_DB_PATH = path.join(RUNTIME_STATE_DIR, 'collection.db');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
@@ -1863,6 +1865,392 @@ async function handleUpdateHomeCultureMottos(req, res) {
     sendJson(res, 200, { ok: true, mottos });
   } catch (error) {
     sendJson(res, 500, { error: error.message || '保存主页标语失败' });
+  }
+}
+
+// --- Creative Feeding API Handlers ---
+
+const DEFAULT_CREATIVE_FEEDING_SETTINGS = {
+  businessBackground: '我是做自粘墙面装饰画的，主要通过短视频平台销售装饰画。当前模块只服务装饰画短视频开头创作。',
+  targetAudience: '主要面向 50 岁以上中老年用户，以及重视家庭氛围、家居布置、寓意讲究的人群。',
+  productFeatures: '产品是适合客厅、沙发墙、床头、玄关等场景的装饰画，核心价值不只是美观，还包括寓意、家庭氛围、吉祥感、情绪价值和场景搭配。',
+  stylePreference: '表达要接地气、口语化、有场景感，像真实的人在提醒，而不是像广告。开头要抓人，有轻微冲突、提醒、讲究、反常识或情绪钩子。',
+  conversionDirections: '寓意、讲究、吉祥、富贵、家和、子女孝心、家庭氛围、床头不能空、客厅挂画不能乱选、沙发墙要有靠山感等方向表现更好。',
+  forbiddenExpressions: '避免直接宣传封建迷信，避免承诺发财、转运、保平安、治病、改变命运。可以表达“好寓意”“好兆头”“看着喜庆”“家里更有氛围”“长辈喜欢”这类相对安全的话。',
+  openingRules: '优先生成短视频前 3 秒开头。句子要短，有停顿感，有继续听下去的理由。不要一上来介绍产品参数，要先抓住场景、情绪或讲究。',
+  outputFormat: '每次输出多条开头文案，并在每条后面附一句简短爆点逻辑说明。'
+};
+
+const CREATIVE_FEEDING_SETTING_KEYS = Object.keys(DEFAULT_CREATIVE_FEEDING_SETTINGS);
+
+function sanitizeCreativeFeedingSettings(input = {}) {
+  const settings = {};
+  for (const key of CREATIVE_FEEDING_SETTING_KEYS) {
+    settings[key] = readValue(input?.[key], DEFAULT_CREATIVE_FEEDING_SETTINGS[key]);
+  }
+  return settings;
+}
+
+function sanitizeCreativeOpeningTags(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => readValue(item)).filter(Boolean).slice(0, 20);
+  }
+  return String(value || '')
+    .split(/[,，、\n]/g)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function createCreativeFeedingId(prefix = 'opening') {
+  return `${prefix}_${Date.now().toString(36)}_${randomBytes(4).toString('hex')}`;
+}
+
+function sanitizeCreativeOpening(input = {}, previous = null, options = {}) {
+  const now = new Date().toISOString();
+  const openingText = readValue(input?.openingText, previous?.openingText);
+  const createdAt = readValue(previous?.createdAt, input?.createdAt) || now;
+  return {
+    id: readValue(previous?.id, input?.id) || createCreativeFeedingId(),
+    openingText,
+    paintingName: readValue(input?.paintingName, previous?.paintingName),
+    scene: readValue(input?.scene, previous?.scene),
+    hookType: readValue(input?.hookType, previous?.hookType),
+    platform: readValue(input?.platform, previous?.platform),
+    performanceNote: readValue(input?.performanceNote, previous?.performanceNote),
+    reasonAnalysis: readValue(input?.reasonAnalysis, previous?.reasonAnalysis),
+    tags: sanitizeCreativeOpeningTags(input?.tags ?? previous?.tags),
+    createdAt,
+    updatedAt: options.touch ? now : (readValue(input?.updatedAt, previous?.updatedAt) || createdAt)
+  };
+}
+
+async function writeRuntimeJsonWithBackup(filePath, payload) {
+  await ensureRuntimeStateDir();
+  if (existsSync(filePath)) {
+    try {
+      await copyFile(filePath, `${filePath}.bak`);
+    } catch (error) {
+      console.error('[runtime state] backup_failed', { filePath, message: error?.message || '' });
+    }
+  }
+  await writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+}
+
+async function loadCreativeFeedingSettings() {
+  try {
+    const raw = await readFile(CREATIVE_FEEDING_SETTINGS_FILE, 'utf8');
+    const parsed = parseJsonString(raw, {});
+    return sanitizeCreativeFeedingSettings(parsed?.settings || parsed);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.error('[creative feeding] settings load_failed', { message: error?.message || '' });
+    }
+    const settings = sanitizeCreativeFeedingSettings();
+    await writeRuntimeJsonWithBackup(CREATIVE_FEEDING_SETTINGS_FILE, {
+      version: 1,
+      settings,
+      updatedAt: new Date().toISOString()
+    });
+    return settings;
+  }
+}
+
+async function saveCreativeFeedingSettings(settings) {
+  const sanitized = sanitizeCreativeFeedingSettings(settings);
+  await writeRuntimeJsonWithBackup(CREATIVE_FEEDING_SETTINGS_FILE, {
+    version: 1,
+    settings: sanitized,
+    updatedAt: new Date().toISOString()
+  });
+  return sanitized;
+}
+
+async function loadCreativeOpeningLibrary() {
+  try {
+    const raw = await readFile(CREATIVE_OPENING_LIBRARY_FILE, 'utf8');
+    const parsed = parseJsonString(raw, {});
+    const openings = Array.isArray(parsed?.openings)
+      ? parsed.openings
+          .map((item) => sanitizeCreativeOpening(item))
+          .filter((item) => item.openingText)
+          .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      : [];
+    return { version: 1, openings };
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.error('[creative feeding] library load_failed', { message: error?.message || '' });
+    }
+    const emptyLibrary = { version: 1, openings: [] };
+    await writeRuntimeJsonWithBackup(CREATIVE_OPENING_LIBRARY_FILE, emptyLibrary);
+    return emptyLibrary;
+  }
+}
+
+async function saveCreativeOpeningLibrary(openings) {
+  const payload = {
+    version: 1,
+    openings: openings
+      .map((item) => sanitizeCreativeOpening(item))
+      .filter((item) => item.openingText)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))),
+    updatedAt: new Date().toISOString()
+  };
+  await writeRuntimeJsonWithBackup(CREATIVE_OPENING_LIBRARY_FILE, payload);
+  return payload.openings;
+}
+
+function filterCreativeOpenings(openings, url) {
+  const query = readValue(url.searchParams.get('q')).toLowerCase();
+  const scene = readValue(url.searchParams.get('scene'));
+  const tag = readValue(url.searchParams.get('tag'));
+
+  return openings.filter((item) => {
+    if (scene && item.scene !== scene) return false;
+    if (tag && !item.tags.includes(tag)) return false;
+    if (!query) return true;
+    return [
+      item.openingText,
+      item.paintingName,
+      item.scene,
+      item.hookType,
+      item.platform,
+      item.performanceNote,
+      item.reasonAnalysis,
+      item.tags.join(' ')
+    ].join(' ').toLowerCase().includes(query);
+  });
+}
+
+function buildCreativeFeedingPrompt({ settings, references, requestBody }) {
+  const count = Math.min(30, Math.max(1, Number(requestBody?.count) || 10));
+  const referenceText = references.length
+    ? references.map((item, index) => [
+        `案例 ${index + 1}: ${item.openingText}`,
+        item.paintingName ? `画名：${item.paintingName}` : '',
+        item.scene ? `场景：${item.scene}` : '',
+        item.hookType ? `爆点类型：${item.hookType}` : '',
+        item.reasonAnalysis ? `分析：${item.reasonAnalysis}` : ''
+      ].filter(Boolean).join('\n')).join('\n\n')
+    : '暂无历史案例，请只基于业务设定和本次需求生成。';
+
+  return [
+    '你是装饰画短视频爆款开头文案助手，只负责生成短视频前 3 秒开头，不写完整脚本。',
+    '',
+    '【业务设定】',
+    `业务背景：${settings.businessBackground}`,
+    `目标人群：${settings.targetAudience}`,
+    `产品特点：${settings.productFeatures}`,
+    `文案风格偏好：${settings.stylePreference}`,
+    `高转化方向：${settings.conversionDirections}`,
+    `禁忌表达：${settings.forbiddenExpressions}`,
+    `开头生成规则：${settings.openingRules}`,
+    `输出格式要求：${settings.outputFormat}`,
+    '',
+    '【历史爆款开头案例】',
+    referenceText,
+    '',
+    '【本次需求】',
+    `画名：${readValue(requestBody?.paintingName) || '未指定'}`,
+    `使用场景：${readValue(requestBody?.scene) || '未指定'}`,
+    `想强调的寓意/卖点：${readValue(requestBody?.sellingPoint) || '未指定'}`,
+    `补充要求：${readValue(requestBody?.extraRequirement) || '无'}`,
+    `生成数量：${count} 条`,
+    '',
+    '【生成要求】',
+    '1. 先分析历史案例共性，但不要输出冗长分析。',
+    '2. 生成适合抖音 / 视频号的装饰画短视频开头。',
+    '3. 语言要口语化、接地气、有前 3 秒抓力，有场景感和情绪价值。',
+    '4. 避免太文艺、太年轻化、太书面、太像广告。',
+    '5. 不要封建迷信，不要承诺发财、转运、治病、保平安或改变命运。',
+    '6. 每条都包含“开头文案”和“爆点逻辑”。',
+    '',
+    '请按下面格式输出：',
+    '1. 开头文案：...',
+    '   爆点逻辑：...',
+    '2. 开头文案：...',
+    '   爆点逻辑：...'
+  ].join('\n');
+}
+
+function extractDoubaoResponseText(json) {
+  let content = '';
+  if (Array.isArray(json?.output)) {
+    for (const item of json.output) {
+      if (item?.role === 'assistant' && Array.isArray(item.content)) {
+        for (const part of item.content) {
+          if (part?.type === 'output_text' && part.text) content += part.text;
+          else if (typeof part?.text === 'string') content += part.text;
+        }
+      }
+    }
+  }
+  if (!content && typeof json?.output_text === 'string') content = json.output_text;
+  if (!content && typeof json?.choices?.[0]?.message?.content === 'string') content = json.choices[0].message.content;
+  return collapseRepeatedDoubaoText(content.trim());
+}
+
+function parseCreativeFeedingResults(text) {
+  const normalized = String(text || '').trim();
+  if (!normalized) return [];
+  const matches = [...normalized.matchAll(/(?:^|\n)\s*(?:\d+[.、)]\s*)?开头文案[:：]\s*([\s\S]*?)(?:\n\s*爆点逻辑[:：]\s*([\s\S]*?))(?=\n\s*(?:\d+[.、)]\s*)?开头文案[:：]|\n\s*\d+[.、)]\s*|$)/g)];
+  if (matches.length > 0) {
+    return matches.map((match) => ({
+      openingText: String(match[1] || '').trim().replace(/^["“]|["”]$/g, ''),
+      logic: String(match[2] || '').trim()
+    })).filter((item) => item.openingText);
+  }
+  return normalized.split(/\n(?=\s*\d+[.、)]\s*)/g).map((block) => ({ openingText: block.trim(), logic: '' })).filter((item) => item.openingText);
+}
+
+async function callCreativeFeedingDoubao(prompt) {
+  const apiKey = readValue(SERVER_CONFIG.doubaoTopmodelApiKey) || readValue(SERVER_CONFIG.seedanceApiKey);
+  if (!apiKey) {
+    const error = new Error('未配置 Doubao API Key');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const upstreamRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/responses', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'doubao-seed-2-1-pro-260628',
+      stream: false,
+      thinking: { type: 'disabled' },
+      input: [
+        {
+          role: 'user',
+          content: [{ type: 'input_text', text: prompt }]
+        }
+      ]
+    }),
+    signal: AbortSignal.timeout(APIMART_CHAT_FETCH_TIMEOUT_MS),
+  });
+
+  const text = await upstreamRes.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch {}
+
+  if (!upstreamRes.ok) {
+    const rawError = json?.error?.message || json?.message || json?.code || text;
+    const error = new Error(translateUpstreamError(rawError, `方舟 API 请求失败（状态码 ${upstreamRes.status}）`));
+    error.statusCode = upstreamRes.status;
+    throw error;
+  }
+
+  return extractDoubaoResponseText(json);
+}
+
+async function handleGetCreativeFeedingSettings(req, res) {
+  try {
+    const settings = await loadCreativeFeedingSettings();
+    sendJson(res, 200, { ok: true, settings });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '读取创意喂养设定失败' });
+  }
+}
+
+async function handleSaveCreativeFeedingSettings(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const settings = await saveCreativeFeedingSettings(body?.settings || body);
+    sendJson(res, 200, { ok: true, settings });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '保存创意喂养设定失败' });
+  }
+}
+
+async function handleGetCreativeOpenings(req, res, url) {
+  try {
+    const library = await loadCreativeOpeningLibrary();
+    const openings = filterCreativeOpenings(library.openings, url);
+    sendJson(res, 200, { ok: true, openings, total: openings.length });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '读取爆款开头库失败' });
+  }
+}
+
+async function handleCreateCreativeOpening(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const opening = sanitizeCreativeOpening(body, null, { touch: true });
+    if (!opening.openingText) {
+      sendJson(res, 400, { error: '开头文案不能为空' });
+      return;
+    }
+    const library = await loadCreativeOpeningLibrary();
+    const openings = await saveCreativeOpeningLibrary([opening, ...library.openings]);
+    sendJson(res, 200, { ok: true, opening: openings.find((item) => item.id === opening.id) || opening });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '新增爆款开头失败' });
+  }
+}
+
+async function handleUpdateCreativeOpening(req, res, id) {
+  try {
+    const body = await readRequestBody(req);
+    const library = await loadCreativeOpeningLibrary();
+    const index = library.openings.findIndex((item) => item.id === id);
+    if (index < 0) {
+      sendJson(res, 404, { error: '爆款开头不存在' });
+      return;
+    }
+    const opening = sanitizeCreativeOpening(body, library.openings[index], { touch: true });
+    if (!opening.openingText) {
+      sendJson(res, 400, { error: '开头文案不能为空' });
+      return;
+    }
+    const next = [...library.openings];
+    next[index] = opening;
+    await saveCreativeOpeningLibrary(next);
+    sendJson(res, 200, { ok: true, opening });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '更新爆款开头失败' });
+  }
+}
+
+async function handleDeleteCreativeOpening(req, res, id) {
+  try {
+    const library = await loadCreativeOpeningLibrary();
+    const next = library.openings.filter((item) => item.id !== id);
+    if (next.length === library.openings.length) {
+      sendJson(res, 404, { error: '爆款开头不存在' });
+      return;
+    }
+    await saveCreativeOpeningLibrary(next);
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '删除爆款开头失败' });
+  }
+}
+
+async function handleGenerateCreativeFeeding(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const settings = await loadCreativeFeedingSettings();
+    const library = await loadCreativeOpeningLibrary();
+    const selectedIds = Array.isArray(body?.referenceIds) ? body.referenceIds.map((item) => String(item)) : [];
+    const referenceLimit = Math.min(50, Math.max(1, Number(body?.referenceLimit) || 20));
+    const references = selectedIds.length > 0
+      ? library.openings.filter((item) => selectedIds.includes(item.id))
+      : library.openings.slice(0, referenceLimit);
+    const prompt = buildCreativeFeedingPrompt({ settings, references, requestBody: body });
+    const answer = await callCreativeFeedingDoubao(prompt);
+    sendJson(res, 200, {
+      ok: true,
+      model: 'doubao-seed-2.1-pro',
+      modelId: 'doubao-seed-2-1-pro-260628',
+      answer,
+      results: parseCreativeFeedingResults(answer),
+      referenceCount: references.length
+    });
+  } catch (error) {
+    sendJson(res, error.statusCode || 500, { error: error.message || '文案仿写生成失败' });
   }
 }
 
@@ -12210,6 +12598,43 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'PUT' && url.pathname === '/api/home/culture-mottos') {
     await handleUpdateHomeCultureMottos(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/creative-feeding/settings') {
+    await handleGetCreativeFeedingSettings(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/creative-feeding/settings') {
+    await handleSaveCreativeFeedingSettings(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/creative-feeding/openings') {
+    await handleGetCreativeOpenings(req, res, url);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/creative-feeding/openings') {
+    await handleCreateCreativeOpening(req, res);
+    return;
+  }
+
+  if (req.method === 'PUT' && url.pathname.startsWith('/api/creative-feeding/openings/')) {
+    const id = decodeURIComponent(url.pathname.replace(/^\/api\/creative-feeding\/openings\//, ''));
+    await handleUpdateCreativeOpening(req, res, id);
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/creative-feeding/openings/')) {
+    const id = decodeURIComponent(url.pathname.replace(/^\/api\/creative-feeding\/openings\//, ''));
+    await handleDeleteCreativeOpening(req, res, id);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/creative-feeding/generate') {
+    await handleGenerateCreativeFeeding(req, res);
     return;
   }
 

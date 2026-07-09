@@ -62,7 +62,7 @@ interface Message {
 
 interface CreativeCreationPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding') => void;
 }
 
 interface PersistedCreativeMessage {

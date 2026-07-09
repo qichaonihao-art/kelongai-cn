@@ -13,9 +13,10 @@ import StoreOverviewPage from './pages/StoreOverviewPage';
 import ImageGenerationPage from './pages/ImageGenerationPage';
 import TopModelPage from './pages/TopModelPage';
 import UniversalExtractorPage from './pages/UniversalExtractorPage';
+import CreativeFeedingPage from './pages/CreativeFeedingPage';
 import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
 
-type Page = 'login' | 'home' | 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal';
+type Page = 'login' | 'home' | 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal' | 'feeding';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
@@ -52,7 +53,7 @@ export default function App() {
     return result;
   };
 
-  const handleNavigate = (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal') => {
+  const handleNavigate = (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal' | 'feeding') => {
     setCurrentPage(page);
   };
 
@@ -114,6 +115,12 @@ export default function App() {
       )}
       {currentPage === 'topmodel' && (
         <TopModelPage
+          onBack={handleBackToHome}
+          onNavigate={handleNavigate}
+        />
+      )}
+      {currentPage === 'feeding' && (
+        <CreativeFeedingPage
           onBack={handleBackToHome}
           onNavigate={handleNavigate}
         />
