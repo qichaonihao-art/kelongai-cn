@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BookOpenText, Mic2, Wand2, LogOut, Download, Network, Image, Crown } from "lucide-react";
+import { BookOpenText, Clock3, Mic2, Wand2, LogOut, Download, Network, Image, Crown } from "lucide-react";
 import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import { motion } from "motion/react";
@@ -80,6 +80,28 @@ const modules = [
     gradient: 'from-orange-500 to-rose-500',
     bgLight: 'bg-orange-50/50',
     borderHover: 'hover:border-orange-300/60',
+  },
+  {
+    id: 'coming-soon-1' as const,
+    title: '后续更新',
+    desc: '新的团队工具模块正在预留中',
+    icon: Clock3,
+    color: 'slate',
+    gradient: 'from-slate-400 to-slate-500',
+    bgLight: 'bg-slate-50/50',
+    borderHover: 'hover:border-slate-300/60',
+    disabled: true,
+  },
+  {
+    id: 'coming-soon-2' as const,
+    title: '后续更新',
+    desc: '新的团队工具模块正在预留中',
+    icon: Clock3,
+    color: 'slate',
+    gradient: 'from-slate-400 to-slate-500',
+    bgLight: 'bg-slate-50/50',
+    borderHover: 'hover:border-slate-300/60',
+    disabled: true,
   },
 ];
 
@@ -320,6 +342,7 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
       >
         {modules.map((module, index) => {
           const Icon = module.icon;
+          const isDisabled = 'disabled' in module && module.disabled;
           return (
             <motion.div
               key={module.id}
@@ -340,8 +363,14 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
                 transition: { type: 'spring', stiffness: 300, damping: 20 },
               }}
               whileTap={{ scale: 0.96 }}
-              className={`group relative cursor-pointer rounded-3xl bg-white/60 backdrop-blur-xl border border-white/80 p-8 transition-colors duration-500 ${module.borderHover} hover:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] hover:bg-white/80`}
-              onClick={() => onNavigate(module.id)}
+              className={cn(
+                "group relative rounded-3xl bg-white/60 backdrop-blur-xl border border-white/80 p-8 transition-colors duration-500 hover:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] hover:bg-white/80",
+                module.borderHover,
+                isDisabled ? "cursor-default opacity-75" : "cursor-pointer"
+              )}
+              onClick={() => {
+                if (!isDisabled) onNavigate(module.id);
+              }}
             >
               <div className="flex flex-col items-center text-center">
                 {/* Icon with animated ring */}

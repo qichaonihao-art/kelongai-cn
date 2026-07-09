@@ -371,11 +371,17 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 </div>
               ) : (
                 <div className="grid gap-3">
-                  {openings.map((opening) => {
+                  {openings.map((opening, index) => {
                     const selected = selectedReferenceIds.includes(opening.id);
                     return (
                       <article key={opening.id} className={cn("rounded-3xl border p-4 transition", selected ? "border-emerald-300 bg-emerald-50/50" : "border-slate-200 bg-white hover:border-slate-300")}>
                         <div className="flex items-start gap-3">
+                          <div className={cn(
+                            "mt-1 flex h-8 min-w-8 shrink-0 items-center justify-center rounded-xl px-2 text-xs font-black",
+                            selected ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+                          )}>
+                            {index + 1}
+                          </div>
                           <button
                             onClick={() => toggleReference(opening.id)}
                             className={cn("mt-1 flex size-8 shrink-0 items-center justify-center rounded-xl border text-slate-400 transition", selected ? "border-emerald-300 bg-emerald-500 text-white" : "border-slate-200 bg-slate-50 hover:text-emerald-600")}
