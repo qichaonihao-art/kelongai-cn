@@ -302,31 +302,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
 
       <main className="mx-auto w-full max-w-[1500px] px-6 py-6 pb-24">
         <section className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-            <div>
-              <div className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">
-                <BookOpenText className="size-3.5" />
-                Creative Feeding
-              </div>
-              <h2 className="text-xl font-black tracking-tight text-slate-900">创意喂养</h2>
-              <p className="mt-0.5 text-xs font-bold leading-5 text-slate-500">沉淀装饰画短视频爆款开头，并基于真实案例仿写新开头。</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-500">
-              <button
-                onClick={() => {
-                  setSettingsDraft(settings);
-                  setIsSettingsOpen(true);
-                }}
-                className="flex h-9 items-center gap-2 rounded-full border border-slate-200/80 bg-white/60 px-4 text-xs font-bold text-slate-600 shadow-sm transition-all duration-300 hover:bg-white hover:shadow-md"
-              >
-                <Settings2 className="size-3.5" />
-                调整设定
-              </button>
-              <span className="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">{openings.length} 条开头</span>
-              <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-indigo-700">默认参考最近 20 条</span>
-            </div>
-          </div>
-          <div className="border-t border-slate-100/80 px-5 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
             <div className="flex w-fit rounded-2xl border border-slate-200 bg-white/60 p-1 shadow-sm backdrop-blur">
               {[
                 { id: 'library', label: '爆款开头文案库', icon: BookOpenText },
@@ -348,6 +324,20 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   </button>
                 );
               })}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-500">
+              <button
+                onClick={() => {
+                  setSettingsDraft(settings);
+                  setIsSettingsOpen(true);
+                }}
+                className="flex h-9 items-center gap-2 rounded-full border border-slate-200/80 bg-white/60 px-4 text-xs font-bold text-slate-600 shadow-sm transition-all duration-300 hover:bg-white hover:shadow-md"
+              >
+                <Settings2 className="size-3.5" />
+                调整设定
+              </button>
+              <span className="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">{openings.length} 条开头</span>
+              <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-indigo-700">默认参考最近 20 条</span>
             </div>
           </div>
 
