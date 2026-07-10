@@ -329,6 +329,24 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   </button>
                 );
               })}
+              <button
+                onClick={() => {
+                  setActiveTab('library');
+                  setOpeningDraft(emptyOpeningDraft);
+                  setEditingId(null);
+                  setIsOpeningFormCollapsed(false);
+                }}
+                className={cn(
+                  "flex h-10 w-10 items-center justify-center rounded-xl text-sm font-black transition",
+                  activeTab === 'library' && !isOpeningFormCollapsed
+                    ? "bg-emerald-500 text-white shadow-sm"
+                    : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                )}
+                title="新增爆款开头"
+                aria-label="新增爆款开头"
+              >
+                <Plus className="size-4" />
+              </button>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-500">
               <button
@@ -356,29 +374,10 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
             {activeTab === 'library' ? (
               <div className={cn(
                 "grid gap-5",
-                isOpeningFormCollapsed && !editingId ? "xl:grid-cols-[190px_minmax(0,1fr)]" : "xl:grid-cols-[420px_minmax(0,1fr)]"
+                isOpeningFormCollapsed && !editingId ? "xl:grid-cols-1" : "xl:grid-cols-[420px_minmax(0,1fr)]"
               )}>
+                {(!isOpeningFormCollapsed || editingId) && (
                 <section className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
-              {isOpeningFormCollapsed && !editingId ? (
-                <div className="flex min-h-[220px] flex-col justify-between">
-                  <div>
-                    <h2 className="text-base font-black text-slate-900">新增爆款开头</h2>
-                    <p className="mt-2 text-xs font-bold leading-5 text-slate-400">不用时收起，主要空间留给文案库。</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setOpeningDraft(emptyOpeningDraft);
-                      setEditingId(null);
-                      setIsOpeningFormCollapsed(false);
-                    }}
-                    className="flex h-10 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 text-xs font-black text-white shadow-md transition hover:bg-slate-800"
-                  >
-                    <Plus className="size-4" />
-                    展开新增
-                  </button>
-                </div>
-              ) : (
-                <>
                   <div className="mb-4 flex items-center justify-between">
                     <h2 className="text-base font-black text-slate-900">{editingId ? '编辑爆款开头' : '新增爆款开头'}</h2>
                     <div className="flex items-center gap-2">
@@ -411,9 +410,8 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                       {editingId ? '保存修改' : '新增爆款开头'}
                     </button>
                   </div>
-                </>
-              )}
                 </section>
+                )}
 
                 <section className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
               <div className="mb-4 flex flex-wrap items-center gap-2">
