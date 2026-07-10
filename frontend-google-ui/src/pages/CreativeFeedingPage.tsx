@@ -156,7 +156,10 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   const [generatedResults, setGeneratedResults] = useState<CreativeGenerateResult[]>([]);
   const [generateMeta, setGenerateMeta] = useState<{ model: string; referenceCount: number } | null>(null);
 
-  const tags = useMemo(() => Array.from(new Set(openings.flatMap((item) => item.tags || []).filter(Boolean))), [openings]);
+  const tags = useMemo(
+    () => Array.from(new Set(openings.flatMap((item) => item.tags || []).filter((tag) => tag && !isUrlLike(tag)))),
+    [openings]
+  );
   const displayedOpenings = useMemo(() => {
     if (!sortByLikes) return openings;
     return [...openings].sort((a, b) => {
@@ -522,7 +525,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               </div>
             ) : (
               <div className="grid gap-5 xl:grid-cols-[430px_minmax(0,1fr)]">
-                <section className="rounded-2xl border border-emerald-200/90 bg-emerald-50/35 p-5 shadow-sm shadow-emerald-100/80 ring-1 ring-white/70">
+                <section className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
               <h2 className="mb-4 text-base font-black text-slate-900">本次仿写需求</h2>
               <div className="space-y-3">
                 <input className="h-11 w-full rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 text-sm font-semibold outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" placeholder="画名，例如：日照金山" value={generateDraft.paintingName} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
