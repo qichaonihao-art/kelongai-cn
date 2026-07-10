@@ -326,30 +326,29 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-indigo-700">默认参考最近 20 条</span>
             </div>
           </div>
-        </section>
-
-        <section className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex rounded-2xl border border-slate-200 bg-white/60 p-1 shadow-sm backdrop-blur">
-            {[
-              { id: 'library', label: '爆款开头文案库', icon: BookOpenText },
-              { id: 'generate', label: '文案仿写', icon: Sparkles },
-            ].map((tab) => {
-              const Icon = tab.icon;
-              const active = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id as 'library' | 'generate')}
-                  className={cn(
-                    "flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-black transition",
-                    active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
-                  )}
-                >
-                  <Icon className="size-4" />
-                  {tab.label}
-                </button>
-              );
-            })}
+          <div className="border-t border-slate-100/80 px-6 py-4">
+            <div className="flex w-fit rounded-2xl border border-slate-200 bg-white/60 p-1 shadow-sm backdrop-blur">
+              {[
+                { id: 'library', label: '爆款开头文案库', icon: BookOpenText },
+                { id: 'generate', label: '文案仿写', icon: Sparkles },
+              ].map((tab) => {
+                const Icon = tab.icon;
+                const active = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id as 'library' | 'generate')}
+                    className={cn(
+                      "flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-black transition",
+                      active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                    )}
+                  >
+                    <Icon className="size-4" />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </section>
 
@@ -455,8 +454,10 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                       >
                         <div className="flex items-start gap-3">
                           <div className={cn(
-                            "mt-1 flex h-8 min-w-8 shrink-0 items-center justify-center rounded-xl px-2 text-xs font-black",
-                            selected ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+                            "mt-0.5 flex h-11 min-w-11 shrink-0 items-center justify-center rounded-2xl px-3 text-lg font-black shadow-sm",
+                            selected
+                              ? "bg-emerald-500 text-white shadow-emerald-200"
+                              : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
                           )}>
                             {index + 1}
                           </div>
