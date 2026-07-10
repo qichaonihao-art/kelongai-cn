@@ -73,7 +73,7 @@ const modules = [
   },
   {
     id: 'feeding' as const,
-    title: '创意喂养',
+    title: '创意文库',
     desc: '沉淀装饰画爆款开头，基于真实案例仿写',
     icon: BookOpenText,
     color: 'orange',
