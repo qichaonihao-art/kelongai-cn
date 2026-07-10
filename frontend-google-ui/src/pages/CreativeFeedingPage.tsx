@@ -362,9 +362,6 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               {isOpeningFormCollapsed && !editingId ? (
                 <div className="flex min-h-[220px] flex-col justify-between">
                   <div>
-                    <div className="mb-3 flex size-11 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
-                      <Plus className="size-5" />
-                    </div>
                     <h2 className="text-base font-black text-slate-900">新增爆款开头</h2>
                     <p className="mt-2 text-xs font-bold leading-5 text-slate-400">不用时收起，主要空间留给文案库。</p>
                   </div>
