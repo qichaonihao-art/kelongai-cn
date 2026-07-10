@@ -115,6 +115,10 @@ function extractLikeScore(note: string) {
   return candidates.length ? Math.max(...candidates) : 0;
 }
 
+function countOpeningChars(text: string) {
+  return Array.from(String(text || '').replace(/\s/g, '')).length;
+}
+
 function isUrlLike(value: string) {
   return /^https?:\/\/\S+/i.test(String(value || '').trim());
 }
@@ -533,6 +537,11 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                               {opening.platform && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{opening.platform}</span>}
                               {opening.tags.filter((tag) => !isUrlLike(tag)).map((tag) => <span key={tag} className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700">#{tag}</span>)}
                               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-500">{formatDate(opening.createdAt)}</span>
+                            </div>
+                            <div className="mt-2 flex justify-end">
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-black text-slate-500">
+                                总字数：{countOpeningChars(opening.openingText)}
+                              </span>
                             </div>
                           </div>
                           <div className="flex shrink-0 gap-1">
