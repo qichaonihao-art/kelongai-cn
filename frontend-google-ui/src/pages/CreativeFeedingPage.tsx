@@ -148,6 +148,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   const [sortByLikes, setSortByLikes] = useState(false);
   const [openingDraft, setOpeningDraft] = useState(emptyOpeningDraft);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isOpeningFormCollapsed, setIsOpeningFormCollapsed] = useState(true);
   const [detailOpening, setDetailOpening] = useState<CreativeOpening | null>(null);
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([]);
   const [generateDraft, setGenerateDraft] = useState(emptyGenerateDraft);
@@ -200,9 +201,10 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, tagFilter]);
 
-  function resetOpeningForm() {
+  function resetOpeningForm(shouldCollapse = true) {
     setOpeningDraft(emptyOpeningDraft);
     setEditingId(null);
+    if (shouldCollapse) setIsOpeningFormCollapsed(true);
   }
 
   async function saveOpening() {
@@ -217,7 +219,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
       } else {
         await createCreativeOpening(draftToPayload(openingDraft));
       }
-      resetOpeningForm();
+      resetOpeningForm(true);
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存爆款开头失败');
@@ -352,37 +354,68 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
 
           <div className="border-t border-slate-100/70 p-5">
             {activeTab === 'library' ? (
-              <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
+              <div className={cn(
+                "grid gap-5",
+                isOpeningFormCollapsed && !editingId ? "xl:grid-cols-[190px_minmax(0,1fr)]" : "xl:grid-cols-[420px_minmax(0,1fr)]"
+              )}>
                 <section className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-base font-black text-slate-900">{editingId ? '编辑爆款开头' : '新增爆款开头'}</h2>
-                {editingId && (
-                  <button onClick={resetOpeningForm} className="text-xs font-black text-slate-400 hover:text-slate-700">取消编辑</button>
-                )}
-              </div>
-              <div className="space-y-3">
-                <textarea
-                  value={openingDraft.openingText}
-                  onChange={(event) => setOpeningDraft((draft) => ({ ...draft, openingText: event.target.value }))}
-                  placeholder="输入真正跑出效果的开头文案"
-                  rows={4}
-                  className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition placeholder:text-slate-300 focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20"
-                />
-                <div className="grid grid-cols-2 gap-3">
-                  <input className="h-11 rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="画名" value={openingDraft.paintingName} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
-                  <input className="h-11 rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="平台" value={openingDraft.platform} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, platform: event.target.value }))} />
+              {isOpeningFormCollapsed && !editingId ? (
+                <div className="flex min-h-[220px] flex-col justify-between">
+                  <div>
+                    <div className="mb-3 flex size-11 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
+                      <Plus className="size-5" />
+                    </div>
+                    <h2 className="text-base font-black text-slate-900">新增爆款开头</h2>
+                    <p className="mt-2 text-xs font-bold leading-5 text-slate-400">不用时收起，主要空间留给文案库。</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setOpeningDraft(emptyOpeningDraft);
+                      setEditingId(null);
+                      setIsOpeningFormCollapsed(false);
+                    }}
+                    className="flex h-10 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 text-xs font-black text-white shadow-md transition hover:bg-slate-800"
+                  >
+                    <Plus className="size-4" />
+                    展开新增
+                  </button>
                 </div>
-                <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="视频链接" value={openingDraft.videoUrl} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, videoUrl: event.target.value }))} />
-                <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="效果备注" rows={2} value={openingDraft.performanceNote} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, performanceNote: event.target.value }))} />
-                <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="标签，用逗号分隔" value={openingDraft.tags} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, tags: event.target.value }))} />
-                <button
-                  onClick={() => void saveOpening()}
-                  className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 text-sm font-black text-white shadow-md transition hover:bg-slate-800"
-                >
-                  <Plus className="size-4" />
-                  {editingId ? '保存修改' : '新增爆款开头'}
-                </button>
-              </div>
+              ) : (
+                <>
+                  <div className="mb-4 flex items-center justify-between">
+                    <h2 className="text-base font-black text-slate-900">{editingId ? '编辑爆款开头' : '新增爆款开头'}</h2>
+                    <div className="flex items-center gap-2">
+                      {editingId && (
+                        <button onClick={() => resetOpeningForm(true)} className="text-xs font-black text-slate-400 hover:text-slate-700">取消编辑</button>
+                      )}
+                      <button onClick={() => setIsOpeningFormCollapsed(true)} className="text-xs font-black text-slate-400 hover:text-slate-700">收起</button>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <textarea
+                      value={openingDraft.openingText}
+                      onChange={(event) => setOpeningDraft((draft) => ({ ...draft, openingText: event.target.value }))}
+                      placeholder="输入真正跑出效果的开头文案"
+                      rows={4}
+                      className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition placeholder:text-slate-300 focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                    <div className="grid grid-cols-2 gap-3">
+                      <input className="h-11 rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="画名" value={openingDraft.paintingName} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
+                      <input className="h-11 rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="平台" value={openingDraft.platform} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, platform: event.target.value }))} />
+                    </div>
+                    <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="视频链接" value={openingDraft.videoUrl} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, videoUrl: event.target.value }))} />
+                    <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="效果备注" rows={2} value={openingDraft.performanceNote} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, performanceNote: event.target.value }))} />
+                    <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="标签，用逗号分隔" value={openingDraft.tags} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, tags: event.target.value }))} />
+                    <button
+                      onClick={() => void saveOpening()}
+                      className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 text-sm font-black text-white shadow-md transition hover:bg-slate-800"
+                    >
+                      <Plus className="size-4" />
+                      {editingId ? '保存修改' : '新增爆款开头'}
+                    </button>
+                  </div>
+                </>
+              )}
                 </section>
 
                 <section className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
@@ -508,7 +541,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                             </div>
                           </div>
                           <div className="flex shrink-0 gap-1">
-                            <button onClick={() => { setEditingId(opening.id); setOpeningDraft(openingToDraft(opening)); }} className="flex size-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="编辑">
+                            <button onClick={() => { setEditingId(opening.id); setOpeningDraft(openingToDraft(opening)); setIsOpeningFormCollapsed(false); }} className="flex size-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="编辑">
                               <Edit3 className="size-4" />
                             </button>
                             <button onClick={() => void removeOpening(opening.id)} className="flex size-8 items-center justify-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-500" title="删除">
@@ -657,6 +690,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 onClick={() => {
                   setEditingId(detailOpening.id);
                   setOpeningDraft(openingToDraft(detailOpening));
+                  setIsOpeningFormCollapsed(false);
                   setDetailOpening(null);
                 }}
                 className="flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-5 text-sm font-black text-slate-600 hover:bg-slate-50"
