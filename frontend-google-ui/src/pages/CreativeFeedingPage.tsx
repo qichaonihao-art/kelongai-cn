@@ -279,31 +279,57 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(251,146,60,0.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(244,63,94,0.12),transparent_30%),linear-gradient(180deg,#fff7ed_0%,#f8fafc_42%,#f6f8fb_100%)] text-slate-900">
-      <header className="sticky top-0 z-30 border-b border-orange-100/80 bg-white/80 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-[1500px] items-center justify-between px-5">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onBack}
-              className="flex size-9 items-center justify-center rounded-full border border-orange-100 bg-white text-orange-500 shadow-sm transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700"
-              title="返回首页"
-            >
-              <ArrowLeft className="size-4" />
-            </button>
-            <div>
-              <h1 className="bg-gradient-to-r from-orange-600 via-rose-500 to-emerald-600 bg-clip-text text-xl font-black tracking-tight text-transparent">创意喂养</h1>
-              <p className="text-xs font-semibold text-slate-500">沉淀装饰画短视频爆款开头，并基于真实案例仿写新开头。</p>
+    <div className="min-h-screen bg-background text-slate-900">
+      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200/60 bg-white/50 px-6 backdrop-blur-xl">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="group flex h-9 items-center gap-2.5 rounded-full border border-slate-200/80 bg-white/60 pl-1 pr-4 shadow-sm transition-all duration-300 hover:bg-white hover:shadow-md"
+            title="返回首页"
+          >
+            <div className="flex size-7 items-center justify-center rounded-full bg-slate-900 text-white transition-transform group-hover:scale-105">
+              <ArrowLeft className="size-3.5" />
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <ModuleQuickNav current="feeding" onNavigate={onNavigate} />
-          </div>
+            <span className="text-xs font-bold text-slate-700">返回</span>
+          </button>
+          <ModuleQuickNav current="feeding" onNavigate={onNavigate} />
+        </div>
+        <div className="text-right">
+          <h1 className="text-sm font-black text-slate-800">创意喂养</h1>
+          <p className="text-[11px] font-semibold text-slate-400">装饰画爆款开头库</p>
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1500px] px-5 py-6">
+      <main className="mx-auto w-full max-w-[1500px] space-y-5 px-6 py-6 pb-24">
+        <section className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass">
+          <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
+            <div>
+              <div className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">
+                <BookOpenText className="size-3.5" />
+                Creative Feeding
+              </div>
+              <h2 className="text-2xl font-black tracking-tight text-slate-900">创意喂养</h2>
+              <p className="mt-1 text-sm font-medium leading-6 text-slate-500">沉淀装饰画短视频爆款开头，并基于真实案例仿写新开头。</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-500">
+              <button
+                onClick={() => {
+                  setSettingsDraft(settings);
+                  setIsSettingsOpen(true);
+                }}
+                className="flex h-9 items-center gap-2 rounded-full border border-slate-200/80 bg-white/60 px-4 text-xs font-bold text-slate-600 shadow-sm transition-all duration-300 hover:bg-white hover:shadow-md"
+              >
+                <Settings2 className="size-3.5" />
+                调整设定
+              </button>
+              <span className="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">{openings.length} 条开头</span>
+              <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-indigo-700">默认参考最近 20 条</span>
+            </div>
+          </div>
+        </section>
+
         <section className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex rounded-2xl border border-orange-100 bg-white/85 p-1 shadow-sm shadow-orange-100/40 backdrop-blur">
+          <div className="flex rounded-2xl border border-slate-200 bg-white/60 p-1 shadow-sm backdrop-blur">
             {[
               { id: 'library', label: '爆款开头文案库', icon: BookOpenText },
               { id: 'generate', label: '文案仿写', icon: Sparkles },
@@ -316,7 +342,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   onClick={() => setActiveTab(tab.id as 'library' | 'generate')}
                   className={cn(
                     "flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-black transition",
-                    active ? "bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-sm shadow-orange-200" : "text-slate-500 hover:bg-orange-50 hover:text-orange-700"
+                    active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
                   )}
                 >
                   <Icon className="size-4" />
@@ -324,20 +350,6 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 </button>
               );
             })}
-          </div>
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
-            <button
-              onClick={() => {
-                setSettingsDraft(settings);
-                setIsSettingsOpen(true);
-              }}
-              className="flex h-8 items-center gap-1.5 rounded-full border border-orange-200 bg-white/90 px-3 text-xs font-black text-orange-700 shadow-sm shadow-orange-100/50 transition hover:bg-orange-50"
-            >
-              <Settings2 className="size-3.5" />
-              调整设定
-            </button>
-            <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700 ring-1 ring-emerald-100">{openings.length} 条开头</span>
-            <span className="rounded-full bg-blue-50 px-3 py-1 text-blue-700 ring-1 ring-blue-100">默认参考最近 20 条</span>
           </div>
         </section>
 
@@ -349,11 +361,11 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
 
         {activeTab === 'library' ? (
           <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
-            <section className="rounded-3xl border border-orange-100/80 bg-white/90 p-5 shadow-sm shadow-orange-100/50 backdrop-blur">
+            <section className="glass-card rounded-3xl border-white/80 p-5 shadow-glass">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="text-base font-black text-slate-900">{editingId ? '编辑爆款开头' : '新增爆款开头'}</h2>
                 {editingId && (
-                  <button onClick={resetOpeningForm} className="text-xs font-black text-orange-400 hover:text-orange-700">取消编辑</button>
+                  <button onClick={resetOpeningForm} className="text-xs font-black text-slate-400 hover:text-slate-700">取消编辑</button>
                 )}
               </div>
               <div className="space-y-3">
@@ -362,18 +374,18 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   onChange={(event) => setOpeningDraft((draft) => ({ ...draft, openingText: event.target.value }))}
                   placeholder="输入真正跑出效果的开头文案"
                   rows={4}
-                  className="w-full resize-none rounded-2xl border border-orange-100 bg-orange-50/40 px-4 py-3 text-sm font-semibold leading-6 outline-none transition placeholder:text-slate-300 focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100"
+                  className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition placeholder:text-slate-300 focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20"
                 />
                 <div className="grid grid-cols-2 gap-3">
-                  <input className="h-11 rounded-2xl border border-orange-100 bg-orange-50/40 px-4 text-sm font-semibold outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100" placeholder="画名" value={openingDraft.paintingName} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
-                  <input className="h-11 rounded-2xl border border-orange-100 bg-orange-50/40 px-4 text-sm font-semibold outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100" placeholder="平台" value={openingDraft.platform} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, platform: event.target.value }))} />
+                  <input className="h-11 rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="画名" value={openingDraft.paintingName} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
+                  <input className="h-11 rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="平台" value={openingDraft.platform} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, platform: event.target.value }))} />
                 </div>
-                <input className="h-11 w-full rounded-2xl border border-orange-100 bg-orange-50/40 px-4 text-sm font-semibold outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100" placeholder="视频链接" value={openingDraft.videoUrl} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, videoUrl: event.target.value }))} />
-                <textarea className="w-full resize-none rounded-2xl border border-orange-100 bg-orange-50/40 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100" placeholder="效果备注" rows={2} value={openingDraft.performanceNote} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, performanceNote: event.target.value }))} />
-                <input className="h-11 w-full rounded-2xl border border-orange-100 bg-orange-50/40 px-4 text-sm font-semibold outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100" placeholder="标签，用逗号分隔" value={openingDraft.tags} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, tags: event.target.value }))} />
+                <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="视频链接" value={openingDraft.videoUrl} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, videoUrl: event.target.value }))} />
+                <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="效果备注" rows={2} value={openingDraft.performanceNote} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, performanceNote: event.target.value }))} />
+                <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="标签，用逗号分隔" value={openingDraft.tags} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, tags: event.target.value }))} />
                 <button
                   onClick={() => void saveOpening()}
-                  className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-orange-500 to-rose-500 text-sm font-black text-white shadow-lg shadow-orange-200 transition hover:brightness-105"
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 text-sm font-black text-white shadow-md transition hover:bg-slate-800"
                 >
                   <Plus className="size-4" />
                   {editingId ? '保存修改' : '新增爆款开头'}
@@ -381,7 +393,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               </div>
             </section>
 
-            <section className="rounded-3xl border border-white/80 bg-white/90 p-5 shadow-sm shadow-slate-200/70 backdrop-blur">
+            <section className="glass-card rounded-3xl border-white/80 p-5 shadow-glass">
               <div className="mb-4 flex flex-wrap items-center gap-2">
                 <div className="relative min-w-[260px] flex-1">
                   <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
@@ -389,10 +401,10 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder="搜索开头、画名、标签、分析"
-                    className="h-11 w-full rounded-2xl border border-orange-100 bg-orange-50/30 pl-10 pr-4 text-sm font-semibold outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100"
+                    className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 pl-10 pr-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20"
                   />
                 </div>
-                <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} className="h-11 rounded-2xl border border-orange-100 bg-orange-50/30 px-3 text-sm font-bold outline-none transition focus:border-orange-300 focus:bg-white">
+                <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-white/60 px-3 text-sm font-bold outline-none transition focus:border-indigo-300 focus:bg-white">
                   <option value="">全部标签</option>
                   {tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
                 </select>
@@ -401,14 +413,14 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   className={cn(
                     "flex h-11 items-center gap-2 rounded-2xl border px-4 text-sm font-black transition",
                     sortByLikes
-                      ? "border-rose-200 bg-rose-50 text-rose-700 shadow-sm shadow-rose-100"
-                      : "border-orange-100 bg-white text-slate-600 hover:bg-orange-50 hover:text-orange-700"
+                      ? "border-indigo-200 bg-indigo-50 text-indigo-700 shadow-sm"
+                      : "border-slate-200 bg-white/60 text-slate-600 hover:bg-white hover:text-slate-900"
                   )}
                 >
                   <TrendingUp className="size-4" />
                   按点赞排序
                 </button>
-                <button onClick={() => void loadData()} className="flex h-11 items-center gap-2 rounded-2xl border border-orange-100 bg-white px-4 text-sm font-black text-slate-600 transition hover:bg-orange-50 hover:text-orange-700">
+                <button onClick={() => void loadData()} className="flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-black text-slate-600 transition hover:bg-white hover:text-slate-900">
                   <RefreshCw className="size-4" />
                   刷新
                 </button>
@@ -435,22 +447,22 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                         onDoubleClick={() => setDetailOpening(opening)}
                         title="双击查看完整内容"
                         className={cn(
-                          "rounded-3xl border p-4 transition hover:-translate-y-0.5 hover:shadow-lg",
+                          "rounded-3xl border p-4 transition hover:-translate-y-0.5 hover:shadow-md",
                           selected
-                            ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white shadow-md shadow-emerald-100"
-                            : "border-orange-100/70 bg-gradient-to-br from-white to-orange-50/25 hover:border-orange-200 hover:shadow-orange-100/60"
+                            ? "border-emerald-200 bg-emerald-50/40 shadow-sm"
+                            : "border-slate-200/80 bg-white/70 hover:border-slate-300"
                         )}
                       >
                         <div className="flex items-start gap-3">
                           <div className={cn(
                             "mt-1 flex h-8 min-w-8 shrink-0 items-center justify-center rounded-xl px-2 text-xs font-black",
-                            selected ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
+                            selected ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
                           )}>
                             {index + 1}
                           </div>
                           <button
                             onClick={() => toggleReference(opening.id)}
-                            className={cn("mt-1 flex size-8 shrink-0 items-center justify-center rounded-xl border text-slate-400 transition", selected ? "border-emerald-300 bg-emerald-500 text-white shadow-sm shadow-emerald-200" : "border-orange-100 bg-white hover:bg-emerald-50 hover:text-emerald-600")}
+                            className={cn("mt-1 flex size-8 shrink-0 items-center justify-center rounded-xl border text-slate-400 transition", selected ? "border-emerald-300 bg-emerald-500 text-white shadow-sm" : "border-slate-200 bg-white/70 hover:bg-emerald-50 hover:text-emerald-600")}
                             title="勾选为重点参考"
                           >
                             <CheckSquare className="size-4" />
@@ -458,14 +470,14 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                           <div className="min-w-0 flex-1">
                             <div className="mb-2 flex flex-wrap items-center gap-2">
                               {opening.paintingName && (
-                                <span className="rounded-2xl bg-amber-100 px-3 py-1.5 text-base font-black text-amber-800">
+                                <span className="rounded-2xl bg-indigo-50 px-3 py-1.5 text-base font-black text-indigo-700 ring-1 ring-indigo-100">
                                   {opening.paintingName}
                                 </span>
                               )}
                               {opening.performanceNote && (
                                 <span className={cn(
                                   "rounded-2xl px-3 py-1.5 text-sm font-black",
-                                  likeScore > 0 ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"
+                                  likeScore > 0 ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "bg-slate-100 text-slate-600"
                                 )}>
                                   {opening.performanceNote}
                                 </span>
@@ -502,7 +514,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                             </div>
                           </div>
                           <div className="flex shrink-0 gap-1">
-                            <button onClick={() => { setEditingId(opening.id); setOpeningDraft(openingToDraft(opening)); }} className="flex size-8 items-center justify-center rounded-xl text-slate-400 hover:bg-orange-50 hover:text-orange-600" title="编辑">
+                            <button onClick={() => { setEditingId(opening.id); setOpeningDraft(openingToDraft(opening)); }} className="flex size-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="编辑">
                               <Edit3 className="size-4" />
                             </button>
                             <button onClick={() => void removeOpening(opening.id)} className="flex size-8 items-center justify-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-500" title="删除">
@@ -533,7 +545,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 <button
                   onClick={() => void handleGenerate()}
                   disabled={isGenerating}
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 text-sm font-black text-white shadow-lg shadow-emerald-200 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 text-sm font-black text-white shadow-md transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isGenerating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                   {isGenerating ? '正在仿写' : '生成爆款开头'}
@@ -600,12 +612,12 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   {detailOpening.paintingName && (
-                    <span className="rounded-2xl bg-amber-100 px-3 py-1.5 text-lg font-black text-amber-800">
+                    <span className="rounded-2xl bg-indigo-50 px-3 py-1.5 text-lg font-black text-indigo-700 ring-1 ring-indigo-100">
                       {detailOpening.paintingName}
                     </span>
                   )}
                   {detailOpening.performanceNote && (
-                    <span className="rounded-2xl bg-rose-100 px-3 py-1.5 text-sm font-black text-rose-700">
+                    <span className="rounded-2xl bg-emerald-50 px-3 py-1.5 text-sm font-black text-emerald-700 ring-1 ring-emerald-100">
                       {detailOpening.performanceNote}
                     </span>
                   )}
@@ -689,7 +701,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                       value={settingsDraft[item.key]}
                       onChange={(event) => setSettingsDraft((draft) => draft ? ({ ...draft, [item.key]: event.target.value }) : draft)}
                       rows={item.rows}
-                      className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-orange-300 focus:bg-white"
+                      className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20"
                     />
                   </label>
                 ))}
