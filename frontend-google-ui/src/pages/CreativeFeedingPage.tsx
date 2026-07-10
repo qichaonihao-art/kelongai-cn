@@ -556,13 +556,13 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 <section className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
               <h2 className="mb-4 text-base font-black text-slate-900">本次仿写需求</h2>
               <div className="space-y-3">
-                <input className="h-11 w-full rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 text-sm font-semibold outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" placeholder="画名，例如：日照金山" value={generateDraft.paintingName} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
-                <input className="h-11 w-full rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 text-sm font-semibold outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" placeholder="使用场景，例如：客厅沙发墙" value={generateDraft.scene} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, scene: event.target.value }))} />
-                <textarea className="w-full resize-none rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" rows={3} placeholder="想强调的寓意 / 卖点" value={generateDraft.sellingPoint} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, sellingPoint: event.target.value }))} />
-                <textarea className="w-full resize-none rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" rows={4} placeholder="补充要求" value={generateDraft.extraRequirement} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, extraRequirement: event.target.value }))} />
+                <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="画名，例如：日照金山" value={generateDraft.paintingName} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
+                <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="使用场景，例如：客厅沙发墙" value={generateDraft.scene} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, scene: event.target.value }))} />
+                <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" rows={3} placeholder="想强调的寓意 / 卖点" value={generateDraft.sellingPoint} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, sellingPoint: event.target.value }))} />
+                <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" rows={4} placeholder="补充要求" value={generateDraft.extraRequirement} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, extraRequirement: event.target.value }))} />
                 <div>
                   <label className="mb-1 block text-xs font-black text-slate-500">生成数量</label>
-                  <input type="number" min={1} max={30} className="h-11 w-full rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 text-sm font-semibold outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" value={generateDraft.count} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, count: Number(event.target.value) }))} />
+                  <input type="number" min={1} max={30} className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" value={generateDraft.count} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, count: Number(event.target.value) }))} />
                 </div>
                 <button
                   onClick={() => void handleGenerate()}
@@ -572,7 +572,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   {isGenerating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                   {isGenerating ? '正在仿写' : '生成爆款开头'}
                 </button>
-                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-xs font-bold leading-5 text-emerald-700">
+                <div className="rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-xs font-bold leading-5 text-slate-500">
                   {selectedReferenceIds.length > 0
                     ? `已手动勾选 ${selectedReferenceIds.length} 条重点参考。`
                     : '未手动勾选时，默认参考最近 20 条爆款开头。'}
