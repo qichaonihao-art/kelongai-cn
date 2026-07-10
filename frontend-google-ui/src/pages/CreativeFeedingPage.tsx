@@ -300,16 +300,16 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[1500px] space-y-5 px-6 py-6 pb-24">
+      <main className="mx-auto w-full max-w-[1500px] px-6 py-6 pb-24">
         <section className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass">
-          <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
             <div>
               <div className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">
                 <BookOpenText className="size-3.5" />
                 Creative Feeding
               </div>
-              <h2 className="text-2xl font-black tracking-tight text-slate-900">创意喂养</h2>
-              <p className="mt-1 text-sm font-medium leading-6 text-slate-500">沉淀装饰画短视频爆款开头，并基于真实案例仿写新开头。</p>
+              <h2 className="text-xl font-black tracking-tight text-slate-900">创意喂养</h2>
+              <p className="mt-0.5 text-xs font-bold leading-5 text-slate-500">沉淀装饰画短视频爆款开头，并基于真实案例仿写新开头。</p>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-500">
               <button
@@ -326,7 +326,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-indigo-700">默认参考最近 20 条</span>
             </div>
           </div>
-          <div className="border-t border-slate-100/80 px-6 py-4">
+          <div className="border-t border-slate-100/80 px-5 py-3">
             <div className="flex w-fit rounded-2xl border border-slate-200 bg-white/60 p-1 shadow-sm backdrop-blur">
               {[
                 { id: 'library', label: '爆款开头文案库', icon: BookOpenText },
@@ -350,17 +350,17 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               })}
             </div>
           </div>
-        </section>
 
-        {error && (
-          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-600">
-            {error}
-          </div>
-        )}
+          {error && (
+            <div className="mx-5 mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-600">
+              {error}
+            </div>
+          )}
 
-        {activeTab === 'library' ? (
-          <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
-            <section className="glass-card rounded-3xl border-white/80 p-5 shadow-glass">
+          <div className="border-t border-slate-100/70 p-5">
+            {activeTab === 'library' ? (
+              <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
+                <section className="rounded-2xl border border-slate-100 bg-white/60 p-5">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="text-base font-black text-slate-900">{editingId ? '编辑爆款开头' : '新增爆款开头'}</h2>
                 {editingId && (
@@ -390,9 +390,9 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   {editingId ? '保存修改' : '新增爆款开头'}
                 </button>
               </div>
-            </section>
+                </section>
 
-            <section className="glass-card rounded-3xl border-white/80 p-5 shadow-glass">
+                <section className="rounded-2xl border border-slate-100 bg-white/60 p-5">
               <div className="mb-4 flex flex-wrap items-center gap-2">
                 <div className="relative min-w-[260px] flex-1">
                   <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
@@ -528,11 +528,11 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   })}
                 </div>
               )}
-            </section>
-          </div>
-        ) : (
-          <div className="grid gap-5 xl:grid-cols-[430px_minmax(0,1fr)]">
-            <section className="rounded-3xl border border-emerald-100/80 bg-white/90 p-5 shadow-sm shadow-emerald-100/50 backdrop-blur">
+                </section>
+              </div>
+            ) : (
+              <div className="grid gap-5 xl:grid-cols-[430px_minmax(0,1fr)]">
+                <section className="rounded-2xl border border-emerald-100/80 bg-emerald-50/25 p-5">
               <h2 className="mb-4 text-base font-black text-slate-900">本次仿写需求</h2>
               <div className="space-y-3">
                 <input className="h-11 w-full rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 text-sm font-semibold outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" placeholder="画名，例如：日照金山" value={generateDraft.paintingName} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
@@ -557,9 +557,9 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                     : '未手动勾选时，默认参考最近 20 条爆款开头。'}
                 </div>
               </div>
-            </section>
+                </section>
 
-            <section className="rounded-3xl border border-white/80 bg-white/90 p-5 shadow-sm shadow-slate-200/70 backdrop-blur">
+                <section className="rounded-2xl border border-slate-100 bg-white/60 p-5">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-black">仿写结果</h2>
@@ -601,9 +601,11 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   填写需求后点击生成，这里会展示多条开头和爆点逻辑。
                 </div>
               )}
-            </section>
+                </section>
+              </div>
+            )}
           </div>
-        )}
+        </section>
       </main>
 
       {detailOpening && (
