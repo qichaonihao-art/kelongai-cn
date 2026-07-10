@@ -350,7 +350,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
           <div className="border-t border-slate-100/70 p-5">
             {activeTab === 'library' ? (
               <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
-                <section className="rounded-2xl border border-slate-100 bg-white/60 p-5">
+                <section className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="text-base font-black text-slate-900">{editingId ? '编辑爆款开头' : '新增爆款开头'}</h2>
                 {editingId && (
@@ -382,7 +382,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               </div>
                 </section>
 
-                <section className="rounded-2xl border border-slate-100 bg-white/60 p-5">
+                <section className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
               <div className="mb-4 flex flex-wrap items-center gap-2">
                 <div className="relative min-w-[260px] flex-1">
                   <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
@@ -522,7 +522,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               </div>
             ) : (
               <div className="grid gap-5 xl:grid-cols-[430px_minmax(0,1fr)]">
-                <section className="rounded-2xl border border-emerald-100/80 bg-emerald-50/25 p-5">
+                <section className="rounded-2xl border border-emerald-200/90 bg-emerald-50/35 p-5 shadow-sm shadow-emerald-100/80 ring-1 ring-white/70">
               <h2 className="mb-4 text-base font-black text-slate-900">本次仿写需求</h2>
               <div className="space-y-3">
                 <input className="h-11 w-full rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 text-sm font-semibold outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" placeholder="画名，例如：日照金山" value={generateDraft.paintingName} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
@@ -549,7 +549,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               </div>
                 </section>
 
-                <section className="rounded-2xl border border-slate-100 bg-white/60 p-5">
+                <section className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-black">仿写结果</h2>
