@@ -11,6 +11,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  TrendingUp,
   Trash2,
   X,
 } from "lucide-react";
@@ -40,6 +41,7 @@ const emptyOpeningDraft = {
   scene: '',
   hookType: '',
   platform: '抖音',
+  videoUrl: '',
   performanceNote: '',
   reasonAnalysis: '',
   tags: '',
@@ -72,26 +74,64 @@ function formatDate(value: string) {
 }
 
 function openingToDraft(opening: CreativeOpening) {
+  const fallbackVideoUrl = getOpeningVideoUrl(opening);
   return {
     openingText: opening.openingText || '',
     paintingName: opening.paintingName || '',
-    scene: opening.scene || '',
-    hookType: opening.hookType || '',
+    scene: '',
+    hookType: '',
     platform: opening.platform || '抖音',
+    videoUrl: fallbackVideoUrl,
     performanceNote: opening.performanceNote || '',
-    reasonAnalysis: opening.reasonAnalysis || '',
-    tags: (opening.tags || []).join('，'),
+    reasonAnalysis: '',
+    tags: (opening.tags || []).filter((tag) => tag !== fallbackVideoUrl && !isUrlLike(tag)).join('，'),
   };
 }
 
 function draftToPayload(draft: typeof emptyOpeningDraft) {
   return {
     ...draft,
+    videoUrl: normalizeVideoUrl(draft.videoUrl),
     tags: draft.tags
       .split(/[,，、\n]/g)
       .map((item) => item.trim())
+      .filter((item) => !isUrlLike(item))
       .filter(Boolean),
   };
+}
+
+function extractLikeScore(note: string) {
+  const text = String(note || '').toLowerCase();
+  const candidates = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(万|w|k|千)?\s*(?:点赞|赞|like|likes)?/g)]
+    .map((match) => {
+      const value = Number(match[1]);
+      if (!Number.isFinite(value)) return 0;
+      const unit = match[2] || '';
+      if (unit === '万' || unit === 'w') return value * 10000;
+      if (unit === '千' || unit === 'k') return value * 1000;
+      return value;
+    })
+    .filter((value) => value > 0);
+  return candidates.length ? Math.max(...candidates) : 0;
+}
+
+function isUrlLike(value: string) {
+  return /^https?:\/\/\S+/i.test(String(value || '').trim());
+}
+
+function normalizeVideoUrl(value: string) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^[\w.-]+\.[a-z]{2,}(?:\/\S*)?$/i.test(trimmed)) return `https://${trimmed}`;
+  return trimmed;
+}
+
+function getOpeningVideoUrl(opening: CreativeOpening) {
+  const direct = normalizeVideoUrl(opening.videoUrl || '');
+  if (direct) return direct;
+  const tagUrl = (opening.tags || []).find((tag) => isUrlLike(tag));
+  return tagUrl ? normalizeVideoUrl(tagUrl) : '';
 }
 
 export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeedingPageProps) {
@@ -104,10 +144,11 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
-  const [sceneFilter, setSceneFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
+  const [sortByLikes, setSortByLikes] = useState(false);
   const [openingDraft, setOpeningDraft] = useState(emptyOpeningDraft);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [detailOpening, setDetailOpening] = useState<CreativeOpening | null>(null);
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([]);
   const [generateDraft, setGenerateDraft] = useState(emptyGenerateDraft);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -115,10 +156,17 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   const [generatedResults, setGeneratedResults] = useState<CreativeGenerateResult[]>([]);
   const [generateMeta, setGenerateMeta] = useState<{ model: string; referenceCount: number } | null>(null);
 
-  const scenes = useMemo(() => Array.from(new Set(openings.map((item) => item.scene).filter(Boolean))), [openings]);
   const tags = useMemo(() => Array.from(new Set(openings.flatMap((item) => item.tags || []).filter(Boolean))), [openings]);
+  const displayedOpenings = useMemo(() => {
+    if (!sortByLikes) return openings;
+    return [...openings].sort((a, b) => {
+      const scoreDelta = extractLikeScore(b.performanceNote) - extractLikeScore(a.performanceNote);
+      if (scoreDelta !== 0) return scoreDelta;
+      return String(b.createdAt).localeCompare(String(a.createdAt));
+    });
+  }, [openings, sortByLikes]);
 
-  async function loadData(filters = { q: query, scene: sceneFilter, tag: tagFilter }) {
+  async function loadData(filters = { q: query, tag: tagFilter }) {
     setIsLoading(true);
     setError('');
     try {
@@ -137,17 +185,17 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   }
 
   useEffect(() => {
-    void loadData({ q: '', scene: '', tag: '' });
+    void loadData({ q: '', tag: '' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void loadData({ q: query, scene: sceneFilter, tag: tagFilter });
+      void loadData({ q: query, tag: tagFilter });
     }, 250);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, sceneFilter, tagFilter]);
+  }, [query, tagFilter]);
 
   function resetOpeningForm() {
     setOpeningDraft(emptyOpeningDraft);
@@ -231,41 +279,31 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   }
 
   return (
-    <div className="min-h-screen bg-[#f6f8fb] text-slate-900">
-      <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-white/85 backdrop-blur-xl">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(251,146,60,0.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(244,63,94,0.12),transparent_30%),linear-gradient(180deg,#fff7ed_0%,#f8fafc_42%,#f6f8fb_100%)] text-slate-900">
+      <header className="sticky top-0 z-30 border-b border-orange-100/80 bg-white/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-[1500px] items-center justify-between px-5">
           <div className="flex items-center gap-3">
             <button
               onClick={onBack}
-              className="flex size-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+              className="flex size-9 items-center justify-center rounded-full border border-orange-100 bg-white text-orange-500 shadow-sm transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700"
               title="返回首页"
             >
               <ArrowLeft className="size-4" />
             </button>
             <div>
-              <h1 className="text-xl font-black tracking-tight">创意喂养</h1>
+              <h1 className="bg-gradient-to-r from-orange-600 via-rose-500 to-emerald-600 bg-clip-text text-xl font-black tracking-tight text-transparent">创意喂养</h1>
               <p className="text-xs font-semibold text-slate-500">沉淀装饰画短视频爆款开头，并基于真实案例仿写新开头。</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                setSettingsDraft(settings);
-                setIsSettingsOpen(true);
-              }}
-              className="flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 shadow-sm transition hover:border-orange-200 hover:text-orange-600"
-            >
-              <Settings2 className="size-4" />
-              调整设定
-            </button>
             <ModuleQuickNav current="feeding" onNavigate={onNavigate} />
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1500px] px-5 py-5">
+      <main className="mx-auto max-w-[1500px] px-5 py-6">
         <section className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+          <div className="flex rounded-2xl border border-orange-100 bg-white/85 p-1 shadow-sm shadow-orange-100/40 backdrop-blur">
             {[
               { id: 'library', label: '爆款开头文案库', icon: BookOpenText },
               { id: 'generate', label: '文案仿写', icon: Sparkles },
@@ -278,7 +316,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   onClick={() => setActiveTab(tab.id as 'library' | 'generate')}
                   className={cn(
                     "flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-black transition",
-                    active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                    active ? "bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-sm shadow-orange-200" : "text-slate-500 hover:bg-orange-50 hover:text-orange-700"
                   )}
                 >
                   <Icon className="size-4" />
@@ -288,8 +326,18 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
             })}
           </div>
           <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
-            <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">{openings.length} 条开头</span>
-            <span className="rounded-full bg-blue-50 px-3 py-1 text-blue-700">默认参考最近 20 条</span>
+            <button
+              onClick={() => {
+                setSettingsDraft(settings);
+                setIsSettingsOpen(true);
+              }}
+              className="flex h-8 items-center gap-1.5 rounded-full border border-orange-200 bg-white/90 px-3 text-xs font-black text-orange-700 shadow-sm shadow-orange-100/50 transition hover:bg-orange-50"
+            >
+              <Settings2 className="size-3.5" />
+              调整设定
+            </button>
+            <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700 ring-1 ring-emerald-100">{openings.length} 条开头</span>
+            <span className="rounded-full bg-blue-50 px-3 py-1 text-blue-700 ring-1 ring-blue-100">默认参考最近 20 条</span>
           </div>
         </section>
 
@@ -301,11 +349,11 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
 
         {activeTab === 'library' ? (
           <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
-            <section className="rounded-3xl border border-white/80 bg-white p-5 shadow-sm">
+            <section className="rounded-3xl border border-orange-100/80 bg-white/90 p-5 shadow-sm shadow-orange-100/50 backdrop-blur">
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-base font-black">{editingId ? '编辑爆款开头' : '新增爆款开头'}</h2>
+                <h2 className="text-base font-black text-slate-900">{editingId ? '编辑爆款开头' : '新增爆款开头'}</h2>
                 {editingId && (
-                  <button onClick={resetOpeningForm} className="text-xs font-black text-slate-400 hover:text-slate-700">取消编辑</button>
+                  <button onClick={resetOpeningForm} className="text-xs font-black text-orange-400 hover:text-orange-700">取消编辑</button>
                 )}
               </div>
               <div className="space-y-3">
@@ -314,20 +362,18 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   onChange={(event) => setOpeningDraft((draft) => ({ ...draft, openingText: event.target.value }))}
                   placeholder="输入真正跑出效果的开头文案"
                   rows={4}
-                  className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-emerald-300 focus:bg-white"
+                  className="w-full resize-none rounded-2xl border border-orange-100 bg-orange-50/40 px-4 py-3 text-sm font-semibold leading-6 outline-none transition placeholder:text-slate-300 focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100"
                 />
                 <div className="grid grid-cols-2 gap-3">
-                  <input className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none focus:border-emerald-300 focus:bg-white" placeholder="画名" value={openingDraft.paintingName} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
-                  <input className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none focus:border-emerald-300 focus:bg-white" placeholder="场景" value={openingDraft.scene} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, scene: event.target.value }))} />
-                  <input className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none focus:border-emerald-300 focus:bg-white" placeholder="爆点类型" value={openingDraft.hookType} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, hookType: event.target.value }))} />
-                  <input className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none focus:border-emerald-300 focus:bg-white" placeholder="平台" value={openingDraft.platform} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, platform: event.target.value }))} />
+                  <input className="h-11 rounded-2xl border border-orange-100 bg-orange-50/40 px-4 text-sm font-semibold outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100" placeholder="画名" value={openingDraft.paintingName} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
+                  <input className="h-11 rounded-2xl border border-orange-100 bg-orange-50/40 px-4 text-sm font-semibold outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100" placeholder="平台" value={openingDraft.platform} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, platform: event.target.value }))} />
                 </div>
-                <input className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none focus:border-emerald-300 focus:bg-white" placeholder="标签，用逗号分隔" value={openingDraft.tags} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, tags: event.target.value }))} />
-                <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold leading-6 outline-none focus:border-emerald-300 focus:bg-white" placeholder="效果备注" rows={2} value={openingDraft.performanceNote} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, performanceNote: event.target.value }))} />
-                <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold leading-6 outline-none focus:border-emerald-300 focus:bg-white" placeholder="为什么这条开头能爆" rows={3} value={openingDraft.reasonAnalysis} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, reasonAnalysis: event.target.value }))} />
+                <input className="h-11 w-full rounded-2xl border border-orange-100 bg-orange-50/40 px-4 text-sm font-semibold outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100" placeholder="视频链接" value={openingDraft.videoUrl} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, videoUrl: event.target.value }))} />
+                <textarea className="w-full resize-none rounded-2xl border border-orange-100 bg-orange-50/40 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100" placeholder="效果备注" rows={2} value={openingDraft.performanceNote} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, performanceNote: event.target.value }))} />
+                <input className="h-11 w-full rounded-2xl border border-orange-100 bg-orange-50/40 px-4 text-sm font-semibold outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100" placeholder="标签，用逗号分隔" value={openingDraft.tags} onChange={(event) => setOpeningDraft((draft) => ({ ...draft, tags: event.target.value }))} />
                 <button
                   onClick={() => void saveOpening()}
-                  className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 text-sm font-black text-white shadow-sm transition hover:bg-slate-800"
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-orange-500 to-rose-500 text-sm font-black text-white shadow-lg shadow-orange-200 transition hover:brightness-105"
                 >
                   <Plus className="size-4" />
                   {editingId ? '保存修改' : '新增爆款开头'}
@@ -335,7 +381,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               </div>
             </section>
 
-            <section className="rounded-3xl border border-white/80 bg-white p-5 shadow-sm">
+            <section className="rounded-3xl border border-white/80 bg-white/90 p-5 shadow-sm shadow-slate-200/70 backdrop-blur">
               <div className="mb-4 flex flex-wrap items-center gap-2">
                 <div className="relative min-w-[260px] flex-1">
                   <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
@@ -343,18 +389,26 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder="搜索开头、画名、标签、分析"
-                    className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm font-semibold outline-none focus:border-emerald-300 focus:bg-white"
+                    className="h-11 w-full rounded-2xl border border-orange-100 bg-orange-50/30 pl-10 pr-4 text-sm font-semibold outline-none transition focus:border-orange-300 focus:bg-white focus:ring-2 focus:ring-orange-100"
                   />
                 </div>
-                <select value={sceneFilter} onChange={(event) => setSceneFilter(event.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold outline-none">
-                  <option value="">全部场景</option>
-                  {scenes.map((scene) => <option key={scene} value={scene}>{scene}</option>)}
-                </select>
-                <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold outline-none">
+                <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} className="h-11 rounded-2xl border border-orange-100 bg-orange-50/30 px-3 text-sm font-bold outline-none transition focus:border-orange-300 focus:bg-white">
                   <option value="">全部标签</option>
                   {tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
                 </select>
-                <button onClick={() => void loadData()} className="flex h-11 items-center gap-2 rounded-2xl border border-slate-200 px-4 text-sm font-black text-slate-600 hover:bg-slate-50">
+                <button
+                  onClick={() => setSortByLikes((value) => !value)}
+                  className={cn(
+                    "flex h-11 items-center gap-2 rounded-2xl border px-4 text-sm font-black transition",
+                    sortByLikes
+                      ? "border-rose-200 bg-rose-50 text-rose-700 shadow-sm shadow-rose-100"
+                      : "border-orange-100 bg-white text-slate-600 hover:bg-orange-50 hover:text-orange-700"
+                  )}
+                >
+                  <TrendingUp className="size-4" />
+                  按点赞排序
+                </button>
+                <button onClick={() => void loadData()} className="flex h-11 items-center gap-2 rounded-2xl border border-orange-100 bg-white px-4 text-sm font-black text-slate-600 transition hover:bg-orange-50 hover:text-orange-700">
                   <RefreshCw className="size-4" />
                   刷新
                 </button>
@@ -365,49 +419,90 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   <Loader2 className="mr-2 size-4 animate-spin" />
                   正在读取文案库
                 </div>
-              ) : openings.length === 0 ? (
+              ) : displayedOpenings.length === 0 ? (
                 <div className="flex h-64 items-center justify-center rounded-3xl bg-slate-50 text-sm font-black text-slate-400">
                   暂无爆款开头，先新增一条真实跑量好的开头。
                 </div>
               ) : (
                 <div className="grid gap-3">
-                  {openings.map((opening, index) => {
+                  {displayedOpenings.map((opening, index) => {
                     const selected = selectedReferenceIds.includes(opening.id);
+                    const likeScore = extractLikeScore(opening.performanceNote);
+                    const videoUrl = getOpeningVideoUrl(opening);
                     return (
-                      <article key={opening.id} className={cn("rounded-3xl border p-4 transition", selected ? "border-emerald-300 bg-emerald-50/50" : "border-slate-200 bg-white hover:border-slate-300")}>
+                      <article
+                        key={opening.id}
+                        onDoubleClick={() => setDetailOpening(opening)}
+                        title="双击查看完整内容"
+                        className={cn(
+                          "rounded-3xl border p-4 transition hover:-translate-y-0.5 hover:shadow-lg",
+                          selected
+                            ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white shadow-md shadow-emerald-100"
+                            : "border-orange-100/70 bg-gradient-to-br from-white to-orange-50/25 hover:border-orange-200 hover:shadow-orange-100/60"
+                        )}
+                      >
                         <div className="flex items-start gap-3">
                           <div className={cn(
                             "mt-1 flex h-8 min-w-8 shrink-0 items-center justify-center rounded-xl px-2 text-xs font-black",
-                            selected ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+                            selected ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
                           )}>
                             {index + 1}
                           </div>
                           <button
                             onClick={() => toggleReference(opening.id)}
-                            className={cn("mt-1 flex size-8 shrink-0 items-center justify-center rounded-xl border text-slate-400 transition", selected ? "border-emerald-300 bg-emerald-500 text-white" : "border-slate-200 bg-slate-50 hover:text-emerald-600")}
+                            className={cn("mt-1 flex size-8 shrink-0 items-center justify-center rounded-xl border text-slate-400 transition", selected ? "border-emerald-300 bg-emerald-500 text-white shadow-sm shadow-emerald-200" : "border-orange-100 bg-white hover:bg-emerald-50 hover:text-emerald-600")}
                             title="勾选为重点参考"
                           >
                             <CheckSquare className="size-4" />
                           </button>
                           <div className="min-w-0 flex-1">
-                            <p className="text-base font-black leading-7 text-slate-900">{opening.openingText}</p>
+                            <div className="mb-2 flex flex-wrap items-center gap-2">
+                              {opening.paintingName && (
+                                <span className="rounded-2xl bg-amber-100 px-3 py-1.5 text-base font-black text-amber-800">
+                                  {opening.paintingName}
+                                </span>
+                              )}
+                              {opening.performanceNote && (
+                                <span className={cn(
+                                  "rounded-2xl px-3 py-1.5 text-sm font-black",
+                                  likeScore > 0 ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"
+                                )}>
+                                  {opening.performanceNote}
+                                </span>
+                              )}
+                            </div>
+                            <p
+                              className="overflow-hidden text-sm font-bold leading-6 text-slate-700"
+                              style={{
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                              }}
+                            >
+                              {opening.openingText}
+                            </p>
+                            {videoUrl && (
+                              <button
+                                type="button"
+                                onDoubleClick={(event) => {
+                                  event.stopPropagation();
+                                  window.open(videoUrl, '_blank', 'noopener,noreferrer');
+                                }}
+                                onClick={(event) => event.stopPropagation()}
+                                className="mt-2 block max-w-full truncate rounded-xl bg-blue-50 px-3 py-1.5 text-left text-[11px] font-black text-blue-600 transition-colors hover:bg-blue-100"
+                                title="双击打开视频链接"
+                              >
+                                视频链接：{videoUrl}
+                              </button>
+                            )}
                             <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-black">
-                              {opening.paintingName && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-700">{opening.paintingName}</span>}
-                              {opening.scene && <span className="rounded-full bg-sky-50 px-2.5 py-1 text-sky-700">{opening.scene}</span>}
-                              {opening.hookType && <span className="rounded-full bg-rose-50 px-2.5 py-1 text-rose-700">{opening.hookType}</span>}
                               {opening.platform && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{opening.platform}</span>}
-                              {opening.tags.map((tag) => <span key={tag} className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700">#{tag}</span>)}
+                              {opening.tags.filter((tag) => !isUrlLike(tag)).map((tag) => <span key={tag} className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700">#{tag}</span>)}
                               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-500">{formatDate(opening.createdAt)}</span>
                             </div>
-                            {(opening.performanceNote || opening.reasonAnalysis) && (
-                              <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-2 text-xs font-semibold leading-5 text-slate-500">
-                                {opening.performanceNote && <div>效果：{opening.performanceNote}</div>}
-                                {opening.reasonAnalysis && <div>分析：{opening.reasonAnalysis}</div>}
-                              </div>
-                            )}
                           </div>
                           <div className="flex shrink-0 gap-1">
-                            <button onClick={() => { setEditingId(opening.id); setOpeningDraft(openingToDraft(opening)); }} className="flex size-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="编辑">
+                            <button onClick={() => { setEditingId(opening.id); setOpeningDraft(openingToDraft(opening)); }} className="flex size-8 items-center justify-center rounded-xl text-slate-400 hover:bg-orange-50 hover:text-orange-600" title="编辑">
                               <Edit3 className="size-4" />
                             </button>
                             <button onClick={() => void removeOpening(opening.id)} className="flex size-8 items-center justify-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-500" title="删除">
@@ -424,16 +519,16 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
           </div>
         ) : (
           <div className="grid gap-5 xl:grid-cols-[430px_minmax(0,1fr)]">
-            <section className="rounded-3xl border border-white/80 bg-white p-5 shadow-sm">
-              <h2 className="mb-4 text-base font-black">本次仿写需求</h2>
+            <section className="rounded-3xl border border-emerald-100/80 bg-white/90 p-5 shadow-sm shadow-emerald-100/50 backdrop-blur">
+              <h2 className="mb-4 text-base font-black text-slate-900">本次仿写需求</h2>
               <div className="space-y-3">
-                <input className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none focus:border-emerald-300 focus:bg-white" placeholder="画名，例如：日照金山" value={generateDraft.paintingName} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
-                <input className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none focus:border-emerald-300 focus:bg-white" placeholder="使用场景，例如：客厅沙发墙" value={generateDraft.scene} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, scene: event.target.value }))} />
-                <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold leading-6 outline-none focus:border-emerald-300 focus:bg-white" rows={3} placeholder="想强调的寓意 / 卖点" value={generateDraft.sellingPoint} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, sellingPoint: event.target.value }))} />
-                <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold leading-6 outline-none focus:border-emerald-300 focus:bg-white" rows={4} placeholder="补充要求" value={generateDraft.extraRequirement} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, extraRequirement: event.target.value }))} />
+                <input className="h-11 w-full rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 text-sm font-semibold outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" placeholder="画名，例如：日照金山" value={generateDraft.paintingName} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
+                <input className="h-11 w-full rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 text-sm font-semibold outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" placeholder="使用场景，例如：客厅沙发墙" value={generateDraft.scene} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, scene: event.target.value }))} />
+                <textarea className="w-full resize-none rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" rows={3} placeholder="想强调的寓意 / 卖点" value={generateDraft.sellingPoint} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, sellingPoint: event.target.value }))} />
+                <textarea className="w-full resize-none rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" rows={4} placeholder="补充要求" value={generateDraft.extraRequirement} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, extraRequirement: event.target.value }))} />
                 <div>
                   <label className="mb-1 block text-xs font-black text-slate-500">生成数量</label>
-                  <input type="number" min={1} max={30} className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none focus:border-emerald-300 focus:bg-white" value={generateDraft.count} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, count: Number(event.target.value) }))} />
+                  <input type="number" min={1} max={30} className="h-11 w-full rounded-2xl border border-emerald-100 bg-emerald-50/35 px-4 text-sm font-semibold outline-none transition focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-100" value={generateDraft.count} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, count: Number(event.target.value) }))} />
                 </div>
                 <button
                   onClick={() => void handleGenerate()}
@@ -443,7 +538,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   {isGenerating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                   {isGenerating ? '正在仿写' : '生成爆款开头'}
                 </button>
-                <div className="rounded-2xl bg-slate-50 px-4 py-3 text-xs font-bold leading-5 text-slate-500">
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-xs font-bold leading-5 text-emerald-700">
                   {selectedReferenceIds.length > 0
                     ? `已手动勾选 ${selectedReferenceIds.length} 条重点参考。`
                     : '未手动勾选时，默认参考最近 20 条爆款开头。'}
@@ -451,7 +546,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               </div>
             </section>
 
-            <section className="rounded-3xl border border-white/80 bg-white p-5 shadow-sm">
+            <section className="rounded-3xl border border-white/80 bg-white/90 p-5 shadow-sm shadow-slate-200/70 backdrop-blur">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-black">仿写结果</h2>
@@ -497,6 +592,81 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
           </div>
         )}
       </main>
+
+      {detailOpening && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm">
+          <div className="max-h-[88vh] w-full max-w-3xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  {detailOpening.paintingName && (
+                    <span className="rounded-2xl bg-amber-100 px-3 py-1.5 text-lg font-black text-amber-800">
+                      {detailOpening.paintingName}
+                    </span>
+                  )}
+                  {detailOpening.performanceNote && (
+                    <span className="rounded-2xl bg-rose-100 px-3 py-1.5 text-sm font-black text-rose-700">
+                      {detailOpening.performanceNote}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-black">
+                  {detailOpening.platform && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{detailOpening.platform}</span>}
+                  {detailOpening.tags.filter((tag) => !isUrlLike(tag)).map((tag) => <span key={tag} className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700">#{tag}</span>)}
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-500">{formatDate(detailOpening.createdAt)}</span>
+                </div>
+                {getOpeningVideoUrl(detailOpening) && (
+                  <button
+                    type="button"
+                    onDoubleClick={() => window.open(getOpeningVideoUrl(detailOpening), '_blank', 'noopener,noreferrer')}
+                    className="mt-3 block max-w-full truncate rounded-xl bg-blue-50 px-3 py-1.5 text-left text-[11px] font-black text-blue-600 transition-colors hover:bg-blue-100"
+                    title="双击打开视频链接"
+                  >
+                    视频链接：{getOpeningVideoUrl(detailOpening)}
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={() => setDetailOpening(null)}
+                className="flex size-9 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="关闭详情"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="max-h-[60vh] overflow-y-auto p-5">
+              <div className="rounded-3xl bg-slate-50 p-5">
+                <div className="mb-2 text-xs font-black text-slate-400">完整开头文案</div>
+                <p className="whitespace-pre-wrap text-base font-bold leading-8 text-slate-900">
+                  {detailOpening.openingText}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-between gap-2 border-t border-slate-100 px-5 py-4">
+              <button
+                onClick={() => {
+                  setEditingId(detailOpening.id);
+                  setOpeningDraft(openingToDraft(detailOpening));
+                  setDetailOpening(null);
+                }}
+                className="flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-5 text-sm font-black text-slate-600 hover:bg-slate-50"
+              >
+                <Edit3 className="size-4" />
+                编辑
+              </button>
+              <button
+                onClick={() => void navigator.clipboard.writeText(detailOpening.openingText)}
+                className="flex h-10 items-center gap-2 rounded-full bg-slate-900 px-5 text-sm font-black text-white hover:bg-slate-800"
+              >
+                <Copy className="size-4" />
+                复制完整文案
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isSettingsOpen && settingsDraft && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm">

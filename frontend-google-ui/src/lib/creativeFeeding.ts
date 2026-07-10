@@ -16,6 +16,7 @@ export interface CreativeOpening {
   scene: string;
   hookType: string;
   platform: string;
+  videoUrl: string;
   performanceNote: string;
   reasonAnalysis: string;
   tags: string[];
@@ -67,10 +68,9 @@ export async function saveCreativeFeedingSettings(settings: CreativeFeedingSetti
   return json.settings;
 }
 
-export async function fetchCreativeOpenings(filters?: { q?: string; scene?: string; tag?: string }) {
+export async function fetchCreativeOpenings(filters?: { q?: string; tag?: string }) {
   const params = new URLSearchParams();
   if (filters?.q) params.set('q', filters.q);
-  if (filters?.scene) params.set('scene', filters.scene);
   if (filters?.tag) params.set('tag', filters.tag);
   const query = params.toString();
   const json = await requestJson<{ ok: boolean; openings: CreativeOpening[]; total: number }>(

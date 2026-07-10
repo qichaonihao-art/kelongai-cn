@@ -1917,6 +1917,7 @@ function sanitizeCreativeOpening(input = {}, previous = null, options = {}) {
     scene: readValue(input?.scene, previous?.scene),
     hookType: readValue(input?.hookType, previous?.hookType),
     platform: readValue(input?.platform, previous?.platform),
+    videoUrl: readValue(input?.videoUrl, previous?.videoUrl),
     performanceNote: readValue(input?.performanceNote, previous?.performanceNote),
     reasonAnalysis: readValue(input?.reasonAnalysis, previous?.reasonAnalysis),
     tags: sanitizeCreativeOpeningTags(input?.tags ?? previous?.tags),
@@ -2002,11 +2003,9 @@ async function saveCreativeOpeningLibrary(openings) {
 
 function filterCreativeOpenings(openings, url) {
   const query = readValue(url.searchParams.get('q')).toLowerCase();
-  const scene = readValue(url.searchParams.get('scene'));
   const tag = readValue(url.searchParams.get('tag'));
 
   return openings.filter((item) => {
-    if (scene && item.scene !== scene) return false;
     if (tag && !item.tags.includes(tag)) return false;
     if (!query) return true;
     return [
@@ -2015,6 +2014,7 @@ function filterCreativeOpenings(openings, url) {
       item.scene,
       item.hookType,
       item.platform,
+      item.videoUrl,
       item.performanceNote,
       item.reasonAnalysis,
       item.tags.join(' ')
