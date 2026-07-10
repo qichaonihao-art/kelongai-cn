@@ -305,7 +305,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[1500px] px-6 py-6 pb-24">
+      <main className="mx-auto w-full max-w-[1280px] px-6 py-6 pb-24">
         <section className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass">
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
             <div className="flex w-fit rounded-2xl border border-slate-200 bg-white/60 p-1 shadow-sm backdrop-blur">
