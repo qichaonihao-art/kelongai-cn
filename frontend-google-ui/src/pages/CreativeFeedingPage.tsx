@@ -514,8 +514,8 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                           <div className={cn(
                             "mt-0.5 flex h-11 min-w-11 shrink-0 items-center justify-center rounded-2xl px-3 text-lg font-black shadow-sm",
                             selected
-                              ? "bg-emerald-500 text-white shadow-emerald-200"
-                              : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
+                              ? "bg-red-500 text-white shadow-red-200"
+                              : "bg-red-50 text-red-700 ring-1 ring-red-100"
                           )}>
                             {index + 1}
                           </div>
