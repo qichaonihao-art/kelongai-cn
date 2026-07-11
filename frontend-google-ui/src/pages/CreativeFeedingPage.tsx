@@ -119,6 +119,35 @@ function countOpeningChars(text: string) {
   return Array.from(String(text || '').replace(/\s/g, '')).length;
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function renderSearchHighlight(text: string, keyword: string) {
+  const source = String(text || '');
+  const terms = String(keyword || '')
+    .trim()
+    .split(/\s+/g)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  if (!source || terms.length === 0) return source;
+
+  const pattern = new RegExp(`(${terms.map(escapeRegExp).join('|')})`, 'gi');
+  return source.split(pattern).map((part, index) => {
+    if (!part) return null;
+    const matched = terms.some((term) => part.toLowerCase() === term.toLowerCase());
+    return matched ? (
+      <mark key={`${part}-${index}`} className="bg-transparent px-0 font-black text-red-600">
+        {part}
+      </mark>
+    ) : (
+      part
+    );
+  });
+}
+
 function isUrlLike(value: string) {
   return /^https?:\/\/\S+/i.test(String(value || '').trim());
 }
@@ -501,7 +530,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                             <div className="mb-2 flex flex-wrap items-center gap-2">
                               {opening.paintingName && (
                                 <span className="rounded-2xl bg-indigo-50 px-3 py-1.5 text-base font-black text-indigo-700 ring-1 ring-indigo-100">
-                                  {opening.paintingName}
+                                  {renderSearchHighlight(opening.paintingName, query)}
                                 </span>
                               )}
                               {opening.performanceNote && (
@@ -509,7 +538,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                                   "rounded-2xl px-3 py-1.5 text-sm font-black",
                                   likeScore > 0 ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "bg-slate-100 text-slate-600"
                                 )}>
-                                  {opening.performanceNote}
+                                  {renderSearchHighlight(opening.performanceNote, query)}
                                 </span>
                               )}
                             </div>
@@ -521,7 +550,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                                 WebkitBoxOrient: 'vertical',
                               }}
                             >
-                              {opening.openingText}
+                              {renderSearchHighlight(opening.openingText, query)}
                             </p>
                             {videoUrl && (
                               <button
@@ -534,12 +563,12 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                                 className="mt-2 block max-w-full truncate rounded-xl bg-blue-50 px-3 py-1.5 text-left text-[11px] font-black text-blue-600 transition-colors hover:bg-blue-100"
                                 title="双击打开视频链接"
                               >
-                                视频链接：{videoUrl}
+                                视频链接：{renderSearchHighlight(videoUrl, query)}
                               </button>
                             )}
                             <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-black">
-                              {opening.platform && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{opening.platform}</span>}
-                              {opening.tags.filter((tag) => !isUrlLike(tag)).map((tag) => <span key={tag} className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700">#{tag}</span>)}
+                              {opening.platform && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{renderSearchHighlight(opening.platform, query)}</span>}
+                              {opening.tags.filter((tag) => !isUrlLike(tag)).map((tag) => <span key={tag} className="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700">#{renderSearchHighlight(tag, query)}</span>)}
                               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-500">{formatDate(opening.createdAt)}</span>
                             </div>
                             <div className="mt-2 flex justify-end">
