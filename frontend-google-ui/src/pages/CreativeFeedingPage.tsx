@@ -139,7 +139,7 @@ function renderSearchHighlight(text: string, keyword: string) {
     if (!part) return null;
     const matched = terms.some((term) => part.toLowerCase() === term.toLowerCase());
     return matched ? (
-      <mark key={`${part}-${index}`} className="bg-transparent px-0 font-black text-red-600">
+      <mark key={`${part}-${index}`} className="rounded-md bg-red-100 px-1 font-black text-red-700 shadow-[0_0_14px_rgba(239,68,68,0.45)] ring-1 ring-red-200/80">
         {part}
       </mark>
     ) : (
