@@ -35,7 +35,6 @@ import {
   getVoiceArchive,
   getVoiceConfigStatus,
   supportsVoiceSpeechRate,
-  syncVolcVoiceOwnership,
   updateVoiceArchiveName,
 } from "@/src/lib/voice";
 import {
@@ -314,7 +313,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const [cloneError, setCloneError] = useState("");
   const [generateError, setGenerateError] = useState("");
   const [configError, setConfigError] = useState("");
-  const [ownershipError, setOwnershipError] = useState("");
   const [configStatus, setConfigStatus] = useState<VoiceConfigStatus>(EMPTY_CONFIG_STATUS);
   const [isConfigLoading, setIsConfigLoading] = useState(true);
   const [zhipuApiKey, setZhipuApiKey] = useState("");
@@ -384,15 +382,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
       (voice) => voice.provider === 'volcengine' && voice.remoteVoiceId === activeReadyVoice.remoteVoiceId,
     ).length;
   }, [activeReadyVoice, voices]);
-  const localVolcSpeakerIds = useMemo(
-    () => Array.from(new Set(
-      voices
-        .filter((voice) => voice.provider === 'volcengine')
-        .map((voice) => voice.remoteVoiceId)
-        .filter(Boolean),
-    )),
-    [voices],
-  );
   const hasVolcServerSupport =
     configStatus.volcAppKey && configStatus.volcAccessKey;
   const hasVolcSlotPool = configStatus.volcSpeakerSlotTotal > 0;
@@ -554,47 +543,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
       cancelled = true;
     };
   }, [isMyVoicesOpen]);
-
-  useEffect(() => {
-    if (!deviceId || configStatus.mockMode || !hasVolcServerSupport) {
-      return;
-    }
-
-    let cancelled = false;
-
-    async function syncOwnership() {
-      try {
-        const result = await syncVolcVoiceOwnership({
-          deviceId,
-          speakerIds: localVolcSpeakerIds,
-        });
-
-        if (cancelled) {
-          return;
-        }
-
-        if (Array.isArray(result?.conflicts) && result.conflicts.length > 0) {
-          setOwnershipError("当前浏览器里有火山历史音色对应的 speaker_id 已被其他设备占用，请删除冲突记录后重新克隆。");
-          return;
-        }
-
-        setOwnershipError("");
-        void refreshConfigStatus({ silent: true });
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-
-        setOwnershipError(error instanceof Error ? error.message : "火山音色槽位同步失败，请稍后重试。");
-      }
-    }
-
-    void syncOwnership();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [configStatus.mockMode, deviceId, hasVolcServerSupport, localVolcSpeakerIds, refreshConfigStatus]);
 
   useEffect(() => {
     generatedAudiosRef.current = generatedAudios;
@@ -1446,7 +1394,6 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                     <p className="text-xs text-slate-500 leading-relaxed">{platformHint}</p>
                     {isConfigLoading && <p className="text-xs text-slate-400">正在读取服务端语音配置...</p>}
                     {configError && <p className="text-xs text-red-500">{configError}</p>}
-                    {ownershipError && <p className="text-xs text-red-500">{ownershipError}</p>}
                   </div>
                 </div>
               </motion.div>
