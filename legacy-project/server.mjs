@@ -16,7 +16,7 @@ import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-loadDotenv({ path: path.join(__dirname, '.env') });
+loadDotenv({ path: path.join(__dirname, '.env'), override: true });
 const LEGACY_FRONTEND_DIR = path.join(__dirname, 'ai');
 const REACT_FRONTEND_DIR = path.join(__dirname, '..', 'frontend-google-ui', 'dist');
 const FRONTEND_MODE = String(process.env.FRONTEND_MODE || 'legacy').trim().toLowerCase();
