@@ -504,10 +504,10 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                         onDoubleClick={() => setDetailOpening(opening)}
                         title="双击查看完整内容"
                         className={cn(
-                          "rounded-3xl border p-4 transition hover:-translate-y-0.5 hover:shadow-md",
+                          "rounded-3xl border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg",
                           selected
-                            ? "border-emerald-200 bg-emerald-50/40 shadow-sm"
-                            : "border-slate-200/80 bg-white/70 hover:border-slate-300"
+                            ? "border-emerald-300 bg-emerald-50/55 shadow-emerald-100/80 ring-1 ring-emerald-100"
+                            : "border-slate-300/90 bg-white/90 shadow-slate-200/70 hover:border-slate-400"
                         )}
                       >
                         <div className="flex items-start gap-3">
