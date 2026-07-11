@@ -3188,16 +3188,18 @@ async function getVolcSpeakerRemoteSlotSummary({ force = false } = {}) {
         const hasOwnership = !!ownershipState.slots[speakerId]?.ownerDeviceId;
         summary.total += 1;
 
-        if (availableTrainingTimes <= 0 || hasOwnership) {
+        if (hasOwnership) {
           summary.speakers[speakerId] = 'used';
           summary.used += 1;
-        } else {
-          if (speakerStatusLength === 0) {
-            summary.speakers[speakerId] = 'fresh';
-          } else {
-            summary.speakers[speakerId] = 'recyclable';
-          }
+        } else if (speakerStatusLength === 0) {
+          summary.speakers[speakerId] = 'fresh';
           summary.available += 1;
+        } else if (availableTrainingTimes > 0) {
+          summary.speakers[speakerId] = 'recyclable';
+          summary.available += 1;
+        } else {
+          summary.speakers[speakerId] = 'used';
+          summary.used += 1;
         }
         return;
       }
