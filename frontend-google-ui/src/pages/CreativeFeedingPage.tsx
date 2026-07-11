@@ -312,48 +312,50 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
       <main className="mx-auto w-full max-w-[1280px] px-6 py-6 pb-24">
         <section className="glass-card overflow-hidden rounded-3xl border-white/80 shadow-glass">
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-            <div className="flex w-fit rounded-2xl border border-slate-200 bg-white/60 p-1 shadow-sm backdrop-blur">
-              {[
-                { id: 'library', label: '爆款开头文案库', icon: BookOpenText },
-                { id: 'generate', label: '文案仿写', icon: Sparkles },
-              ].map((tab) => {
-                const Icon = tab.icon;
-                const active = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id as 'library' | 'generate')}
-                    className={cn(
-                      "flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-black transition",
-                      active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
-                    )}
-                  >
-                    <Icon className="size-4" />
-                    {tab.label}
-                  </button>
-                );
-              })}
-              <span className="flex h-10 items-center px-3 text-base font-black text-red-600">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex w-fit rounded-2xl border border-slate-200 bg-white/60 p-1 shadow-sm backdrop-blur">
+                {[
+                  { id: 'library', label: '爆款开头文案库', icon: BookOpenText },
+                  { id: 'generate', label: '文案仿写', icon: Sparkles },
+                ].map((tab) => {
+                  const Icon = tab.icon;
+                  const active = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id as 'library' | 'generate')}
+                      className={cn(
+                        "flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-black transition",
+                        active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                      )}
+                    >
+                      <Icon className="size-4" />
+                      {tab.label}
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => {
+                    setActiveTab('library');
+                    setOpeningDraft(emptyOpeningDraft);
+                    setEditingId(null);
+                    setIsOpeningFormCollapsed(false);
+                  }}
+                  className={cn(
+                    "flex h-10 w-10 items-center justify-center rounded-xl text-sm font-black transition",
+                    activeTab === 'library' && !isOpeningFormCollapsed
+                      ? "bg-emerald-500 text-white shadow-sm"
+                      : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                  )}
+                  title="新增爆款开头"
+                  aria-label="新增爆款开头"
+                >
+                  <Plus className="size-4" />
+                </button>
+              </div>
+              <span className="text-base font-black text-emerald-600">
                 {openings.length}条爆款记录
               </span>
-              <button
-                onClick={() => {
-                  setActiveTab('library');
-                  setOpeningDraft(emptyOpeningDraft);
-                  setEditingId(null);
-                  setIsOpeningFormCollapsed(false);
-                }}
-                className={cn(
-                  "flex h-10 w-10 items-center justify-center rounded-xl text-sm font-black transition",
-                  activeTab === 'library' && !isOpeningFormCollapsed
-                    ? "bg-emerald-500 text-white shadow-sm"
-                    : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
-                )}
-                title="新增爆款开头"
-                aria-label="新增爆款开头"
-              >
-                <Plus className="size-4" />
-              </button>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-500">
               <button
