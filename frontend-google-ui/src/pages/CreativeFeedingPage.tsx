@@ -333,6 +333,9 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   </button>
                 );
               })}
+              <span className="flex h-10 items-center px-3 text-base font-black text-red-600">
+                {openings.length}条爆款记录
+              </span>
               <button
                 onClick={() => {
                   setActiveTab('library');
@@ -363,7 +366,6 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 <Settings2 className="size-3.5" />
                 调整设定
               </button>
-              <span className="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">{openings.length} 条开头</span>
               <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-indigo-700">默认参考最近 20 条</span>
             </div>
           </div>
