@@ -512,8 +512,8 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                       >
                         <div className="flex items-start gap-3">
                           <div className={cn(
-                            "mt-0.5 flex h-11 min-w-11 shrink-0 items-center justify-center rounded-2xl border px-3 text-lg font-black shadow-md",
-                            "border-red-600 bg-red-600 text-white shadow-red-300/80"
+                            "mt-0.5 flex h-11 min-w-11 shrink-0 items-center justify-center px-2 text-2xl font-black text-white drop-shadow-[0_3px_8px_rgba(15,23,42,0.45)]",
+                            "[text-shadow:0_1px_0_rgba(15,23,42,0.25),0_0_10px_rgba(15,23,42,0.35)]"
                           )}>
                             {index + 1}
                           </div>
