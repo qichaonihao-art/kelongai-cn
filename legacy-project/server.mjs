@@ -9548,6 +9548,19 @@ function connectVolcTts({ appKey, accessKey, speakerId, text, resourceId = 'seed
     });
 
     ws.on('error', fail);
+    ws.on('unexpected-response', (_request, response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        const detail = body ? `：${body.slice(0, 500)}` : '';
+        const error = new Error(`火山 TTS WebSocket 鉴权失败 ${response.statusCode || ''}${detail}`);
+        error.statusCode = response.statusCode;
+        error.statusMessage = response.statusMessage;
+        error.upstreamBody = body;
+        fail(error);
+      });
+    });
     ws.on('close', () => {
       if (!settled) {
         fail(new Error('火山引擎连接意外关闭'));
@@ -9581,6 +9594,9 @@ async function handleVolcTts(req, res) {
     debug = {
       speakerId: resolvedSpeakerId,
       speakerSource: speakerSource || 'unknown',
+      matchedGroupIndex: group?.index || null,
+      speakerInConfiguredPool: !!group,
+      configuredSpeakerIdCount: getConfiguredVolcSpeakerIds().length,
       requestedResourceId: resourceId || 'seed-icl-2.0',
       getVoiceSpeakerStatus: null,
       parsedModelTypes: [],
@@ -9616,8 +9632,11 @@ async function handleVolcTts(req, res) {
 
     sendWavResponse(res, wavBuffer);
   } catch (error) {
+    const isVolcTtsForbidden = error.statusCode === 403;
     sendJson(res, 500, {
-      error: error.message || '火山语音生成失败',
+      error: isVolcTtsForbidden
+        ? '火山 TTS 鉴权失败 403：当前 speaker_id 对应的火山账号组可能未开通实时语音合成权限，或该组不支持当前 resourceId。克隆成功但试听/生成失败时，通常需要在火山后台给这一组 App 开通 TTS/实时语音合成权限。'
+        : (error.message || '火山语音生成失败'),
       debug: {
         speakerId: error.debug?.speakerId || debug?.speakerId,
         speakerSource: error.debug?.speakerSource || debug?.speakerSource,
@@ -9628,6 +9647,12 @@ async function handleVolcTts(req, res) {
         beforeUpgrade: error.debug?.beforeUpgrade || debug?.beforeUpgrade,
         afterUpgrade: error.debug?.afterUpgrade || debug?.afterUpgrade,
         requestedResourceId: error.debug?.requestedResourceId || debug?.requestedResourceId,
+        matchedGroupIndex: error.debug?.matchedGroupIndex || debug?.matchedGroupIndex,
+        speakerInConfiguredPool: typeof error.debug?.speakerInConfiguredPool === 'boolean' ? error.debug.speakerInConfiguredPool : debug?.speakerInConfiguredPool,
+        configuredSpeakerIdCount: error.debug?.configuredSpeakerIdCount || debug?.configuredSpeakerIdCount,
+        upstreamStatusCode: error.statusCode || null,
+        upstreamStatusMessage: error.statusMessage || '',
+        upstreamBody: error.upstreamBody || '',
         volcError: error.message || '火山语音生成失败'
       }
     });
