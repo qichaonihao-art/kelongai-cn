@@ -183,6 +183,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isOpeningFormCollapsed, setIsOpeningFormCollapsed] = useState(true);
   const [detailOpening, setDetailOpening] = useState<CreativeOpening | null>(null);
+  const [detailCopyStatus, setDetailCopyStatus] = useState<'idle' | 'done' | 'error'>('idle');
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([]);
   const [generateDraft, setGenerateDraft] = useState(emptyGenerateDraft);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -234,6 +235,10 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, tagFilter]);
 
+  useEffect(() => {
+    setDetailCopyStatus('idle');
+  }, [detailOpening?.id]);
+
   function resetOpeningForm(shouldCollapse = true) {
     setOpeningDraft(emptyOpeningDraft);
     setEditingId(null);
@@ -268,6 +273,19 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除爆款开头失败');
+    }
+  }
+
+  async function copyDetailOpeningText() {
+    if (!detailOpening?.openingText) return;
+
+    try {
+      await navigator.clipboard.writeText(detailOpening.openingText);
+      setDetailCopyStatus('done');
+      window.setTimeout(() => setDetailCopyStatus('idle'), 1600);
+    } catch {
+      setDetailCopyStatus('error');
+      window.setTimeout(() => setDetailCopyStatus('idle'), 2200);
     }
   }
 
@@ -734,11 +752,22 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 编辑
               </button>
               <button
-                onClick={() => void navigator.clipboard.writeText(detailOpening.openingText)}
-                className="flex h-10 items-center gap-2 rounded-full bg-slate-900 px-5 text-sm font-black text-white hover:bg-slate-800"
+                onClick={() => void copyDetailOpeningText()}
+                className={cn(
+                  "flex h-10 items-center gap-2 rounded-full px-5 text-sm font-black text-white transition-all",
+                  detailCopyStatus === 'done'
+                    ? "bg-emerald-500 shadow-lg shadow-emerald-200"
+                    : detailCopyStatus === 'error'
+                      ? "bg-red-500 shadow-lg shadow-red-200"
+                      : "bg-slate-900 hover:bg-slate-800"
+                )}
               >
-                <Copy className="size-4" />
-                复制完整文案
+                {detailCopyStatus === 'done' ? <CheckSquare className="size-4" /> : <Copy className="size-4" />}
+                {detailCopyStatus === 'done'
+                  ? '复制成功'
+                  : detailCopyStatus === 'error'
+                    ? '复制失败'
+                    : '复制完整文案'}
               </button>
             </div>
           </div>
