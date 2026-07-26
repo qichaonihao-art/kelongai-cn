@@ -147,7 +147,7 @@ export default function TeamTimelinePage({ onBack }: TeamTimelinePageProps) {
           时间是一条河，经过的地方都会留下痕迹
         </p>
 
-        <main className="relative mt-8 pb-16">
+        <main className="relative left-1/2 mt-8 w-screen -translate-x-1/2 pb-16">
           {isLoading ? (
             <div className="rounded-3xl border border-white/80 bg-white/60 p-10 text-center font-bold text-slate-400">正在读取团队时间线...</div>
           ) : visibleRecords.length === 0 ? (
@@ -158,7 +158,7 @@ export default function TeamTimelinePage({ onBack }: TeamTimelinePageProps) {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="relative min-w-max px-10 py-8 md:px-16" style={{ width: `${Math.max(visibleRecords.length + 1, 4) * 300}px` }}>
+              <div className="relative min-w-max py-8" style={{ width: 'max-content', minWidth: '100vw' }}>
                 <div className="relative grid items-stretch gap-x-10" style={{ gridTemplateColumns: `repeat(${visibleRecords.length + 1}, 16rem)`, gridTemplateRows: 'auto 120px auto' }}>
                   <svg className="pointer-events-none z-0 col-span-full row-start-2 h-full w-full overflow-visible" viewBox="0 0 1680 120" preserveAspectRatio="none" aria-hidden="true">
                     <path d="M0 60 C120 8 240 112 360 60 S600 8 720 60 S960 112 1080 60 S1320 8 1440 60 S1560 112 1680 60" fill="none" stroke="#24b9a7" strokeLinecap="round" strokeWidth="18" opacity="0.12" />
