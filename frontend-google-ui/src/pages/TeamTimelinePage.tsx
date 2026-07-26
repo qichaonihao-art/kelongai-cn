@@ -35,6 +35,15 @@ function getYear(value: string) {
   return value.slice(0, 4);
 }
 
+function highlightTeamPhrase(value: string) {
+  return value.split('天塌了').map((part, index, parts) => (
+    <span key={`${part}-${index}`}>
+      {part}
+      {index < parts.length - 1 && <span className="rounded px-0.5 font-black text-blue-600">天塌了</span>}
+    </span>
+  ));
+}
+
 async function requestTimeline<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...init, credentials: 'include', headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } });
   const json = await response.json().catch(() => null);
@@ -158,7 +167,7 @@ export default function TeamTimelinePage({ onBack }: TeamTimelinePageProps) {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="relative min-w-max py-8" style={{ width: 'max-content', minWidth: '100vw' }}>
+              <div className="relative min-w-max py-8 pl-6 md:pl-10" style={{ width: 'max-content', minWidth: '100vw' }}>
                 <div className="relative grid items-stretch gap-x-10" style={{ gridTemplateColumns: `repeat(${visibleRecords.length + 1}, 16rem)`, gridTemplateRows: 'auto 120px auto' }}>
                   <svg className="pointer-events-none z-0 col-span-full row-start-2 h-full w-full overflow-visible" viewBox="0 0 1680 120" preserveAspectRatio="none" aria-hidden="true">
                     <path d="M0 60 C120 8 240 112 360 60 S600 8 720 60 S960 112 1080 60 S1320 8 1440 60 S1560 112 1680 60" fill="none" stroke="#24b9a7" strokeLinecap="round" strokeWidth="18" opacity="0.12" />
@@ -171,9 +180,9 @@ export default function TeamTimelinePage({ onBack }: TeamTimelinePageProps) {
                     return (
                       <motion.article key={record.id} style={{ gridColumn: index + 1, gridRow: isTop ? 1 : 3 }} initial={{ opacity: 0, y: isTop ? -12 : 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }} className={cn('w-64 self-stretch p-4', isTop ? 'self-end' : 'self-start')}>
                         <div onDoubleClick={() => openEdit(record)} className="w-full cursor-pointer rounded-2xl text-left">
-                          <h2 className="text-lg font-black leading-6 tracking-tight text-slate-900">{record.title}</h2>
-                          <p className="mt-2 whitespace-pre-wrap break-words text-xs font-semibold leading-5 text-slate-500">{record.content || '暂无详细记录'}</p>
-                          {record.challenge && <p className="mt-3 whitespace-pre-wrap break-words text-xs font-bold leading-5 text-amber-700"><span className="font-black">困难 / 思考：</span>{record.challenge}</p>}
+                          <h2 className="text-lg font-black leading-6 tracking-tight text-slate-900">{highlightTeamPhrase(record.title)}</h2>
+                          <p className="mt-2 whitespace-pre-wrap break-words text-xs font-semibold leading-5 text-slate-500">{record.content ? highlightTeamPhrase(record.content) : '暂无详细记录'}</p>
+                          {record.challenge && <p className="mt-3 whitespace-pre-wrap break-words text-xs font-bold leading-5 text-amber-700"><span className="font-black">困难 / 思考：</span>{highlightTeamPhrase(record.challenge)}</p>}
                         </div>
                       </motion.article>
                     );
