@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { BookOpenText, Clock3, Mic2, Wand2, LogOut, Download, Network, Image, Crown } from "lucide-react";
+import { BookOpenText, Clock3, Mic2, Wand2, LogOut, Download, Network, Image, Crown, CalendarRange } from "lucide-react";
 import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import { motion } from "motion/react";
 
 interface HomePageProps {
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding' | 'timeline') => void;
   onLogout: () => void;
 }
 
@@ -82,15 +82,14 @@ const modules = [
     borderHover: 'hover:border-orange-300/60',
   },
   {
-    id: 'coming-soon-1' as const,
-    title: '后续更新',
-    desc: '新的团队工具模块正在预留中',
-    icon: Clock3,
-    color: 'slate',
-    gradient: 'from-slate-400 to-slate-500',
-    bgLight: 'bg-slate-50/50',
-    borderHover: 'hover:border-slate-300/60',
-    disabled: true,
+    id: 'timeline' as const,
+    title: '团队轨迹',
+    desc: '记录团队每一年的关键选择、困难与突破',
+    icon: CalendarRange,
+    color: 'teal',
+    gradient: 'from-teal-500 to-emerald-600',
+    bgLight: 'bg-teal-50/50',
+    borderHover: 'hover:border-teal-300/60',
   },
   {
     id: 'coming-soon-2' as const,
@@ -369,7 +368,7 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
                 isDisabled ? "cursor-default opacity-75" : "cursor-pointer"
               )}
               onClick={() => {
-                if (!isDisabled) onNavigate(module.id);
+                if (!isDisabled && module.id !== 'coming-soon-2') onNavigate(module.id);
               }}
             >
               <div className="flex flex-col items-center text-center">

@@ -46,6 +46,7 @@ const RUNTIME_STATE_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || path.joi
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
 const VOICE_ARCHIVE_FILE = path.join(RUNTIME_STATE_DIR, 'voice-archive.json');
 const HOME_CULTURE_MOTTOS_FILE = path.join(RUNTIME_STATE_DIR, 'home-culture-mottos.json');
+const TEAM_TIMELINE_FILE = path.join(RUNTIME_STATE_DIR, 'team-timeline.json');
 const CREATIVE_FEEDING_SETTINGS_FILE = path.join(RUNTIME_STATE_DIR, 'creative-feeding-settings.json');
 const CREATIVE_OPENING_LIBRARY_FILE = path.join(RUNTIME_STATE_DIR, 'creative-opening-library.json');
 const VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS = 15 * 1000;
@@ -169,6 +170,7 @@ let volcSpeakerRemoteStatusCache = {
   summary: null
 };
 let collectionDb = null;
+let teamTimelineQueue = Promise.resolve();
 
 function readBooleanEnv(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -1865,6 +1867,131 @@ async function handleUpdateHomeCultureMottos(req, res) {
     sendJson(res, 200, { ok: true, mottos });
   } catch (error) {
     sendJson(res, 500, { error: error.message || '保存主页标语失败' });
+  }
+}
+
+const DEFAULT_TEAM_TIMELINE_RECORDS = [
+  {
+    id: 'timeline_2022_10',
+    date: '2022-10',
+    title: '进入装饰画赛道',
+    content: '团队正式开始探索装饰画业务，开启了这段长期积累的旅程。',
+    challenge: '',
+    createdAt: '2022-10-01T00:00:00.000Z',
+    updatedAt: '2022-10-01T00:00:00.000Z'
+  }
+];
+
+function normalizeTeamTimelineRecord(value, fallback = {}) {
+  const item = value && typeof value === 'object' ? value : {};
+  const date = readValue(item.date, fallback.date);
+  const title = readValue(item.title, fallback.title);
+  const content = readValue(item.content, item.description, fallback.content);
+  const challenge = readValue(item.challenge, fallback.challenge);
+  const id = readValue(item.id, fallback.id);
+  if (!date || !title) return null;
+  return {
+    id: id || `timeline_${Date.now()}_${randomBytes(3).toString('hex')}`,
+    date: date.slice(0, 20),
+    title: title.slice(0, 120),
+    content: content.slice(0, 3000),
+    challenge: challenge.slice(0, 3000),
+    createdAt: readValue(item.createdAt, fallback.createdAt) || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function normalizeTeamTimelineRecords(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => normalizeTeamTimelineRecord(item)).filter(Boolean);
+}
+
+async function loadTeamTimeline() {
+  try {
+    const raw = await readFile(TEAM_TIMELINE_FILE, 'utf8');
+    const parsed = parseJsonString(raw, {});
+    return normalizeTeamTimelineRecords(parsed?.records);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.error('[team timeline] load_failed', { filePath: TEAM_TIMELINE_FILE, message: error?.message || '' });
+    }
+    return DEFAULT_TEAM_TIMELINE_RECORDS;
+  }
+}
+
+async function saveTeamTimeline(records) {
+  const normalized = normalizeTeamTimelineRecords(records);
+  const operation = teamTimelineQueue.then(async () => {
+    await ensureRuntimeStateDir();
+    await writeFile(
+      TEAM_TIMELINE_FILE,
+      JSON.stringify({ version: 1, records: normalized, updatedAt: new Date().toISOString() }, null, 2),
+      'utf8'
+    );
+  });
+  teamTimelineQueue = operation.catch(() => {});
+  await operation;
+  return normalized;
+}
+
+async function handleGetTeamTimeline(req, res) {
+  try {
+    sendJson(res, 200, { ok: true, records: await loadTeamTimeline() });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '读取重大事件时间线失败' });
+  }
+}
+
+async function handleCreateTeamTimeline(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const record = normalizeTeamTimelineRecord(body);
+    if (!record) {
+      sendJson(res, 400, { error: '请填写事件时间和事件名称' });
+      return;
+    }
+    const records = await loadTeamTimeline();
+    const saved = await saveTeamTimeline([...records, record]);
+    sendJson(res, 201, { ok: true, record, records: saved });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '新增重大事件失败' });
+  }
+}
+
+async function handleUpdateTeamTimeline(req, res, id) {
+  try {
+    const body = await readRequestBody(req);
+    const records = await loadTeamTimeline();
+    const index = records.findIndex((item) => item.id === id);
+    if (index < 0) {
+      sendJson(res, 404, { error: '没有找到这条重大事件记录' });
+      return;
+    }
+    const record = normalizeTeamTimelineRecord(body, records[index]);
+    if (!record) {
+      sendJson(res, 400, { error: '请填写事件时间和事件名称' });
+      return;
+    }
+    records[index] = record;
+    const saved = await saveTeamTimeline(records);
+    sendJson(res, 200, { ok: true, record, records: saved });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '更新重大事件失败' });
+  }
+}
+
+async function handleDeleteTeamTimeline(req, res, id) {
+  try {
+    const records = await loadTeamTimeline();
+    const next = records.filter((item) => item.id !== id);
+    if (next.length === records.length) {
+      sendJson(res, 404, { error: '没有找到这条重大事件记录' });
+      return;
+    }
+    const saved = await saveTeamTimeline(next);
+    sendJson(res, 200, { ok: true, records: saved });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '删除重大事件失败' });
   }
 }
 
@@ -12625,6 +12752,28 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'PUT' && url.pathname === '/api/home/culture-mottos') {
     await handleUpdateHomeCultureMottos(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/team-timeline') {
+    await handleGetTeamTimeline(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/team-timeline') {
+    await handleCreateTeamTimeline(req, res);
+    return;
+  }
+
+  if (req.method === 'PUT' && url.pathname.startsWith('/api/team-timeline/')) {
+    const id = decodeURIComponent(url.pathname.replace(/^\/api\/team-timeline\//, ''));
+    await handleUpdateTeamTimeline(req, res, id);
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/team-timeline/')) {
+    const id = decodeURIComponent(url.pathname.replace(/^\/api\/team-timeline\//, ''));
+    await handleDeleteTeamTimeline(req, res, id);
     return;
   }
 
