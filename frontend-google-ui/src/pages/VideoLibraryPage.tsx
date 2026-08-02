@@ -7,7 +7,7 @@ import {
   formatVideoLibrarySize,
   formatVideoLibraryTime,
   getVideoLibrary,
-  updateVideoLibraryNote,
+  updateVideoLibraryItem,
   uploadVideoLibraryVideo,
   type VideoLibraryItem,
 } from '@/src/lib/videoLibrary';
@@ -27,6 +27,8 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
   const [folderDraft, setFolderDraft] = useState(DEFAULT_FOLDER);
   const [newFolderDraft, setNewFolderDraft] = useState('');
   const [selectedItem, setSelectedItem] = useState<VideoLibraryItem | null>(null);
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isFolderOpen, setIsFolderOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -115,12 +117,34 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
 
   async function handleSaveNote(item: VideoLibraryItem, note: string) {
     try {
-      const updated = await updateVideoLibraryNote(item.id, note);
+      const updated = await updateVideoLibraryItem(item.id, { note });
       setItems((previous) => previous.map((current) => current.id === updated.id ? updated : current));
       setSelectedItem(updated);
       setNotice('备注已保存，所有设备都会同步');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存备注失败');
+    }
+  }
+
+  function startRename(item: VideoLibraryItem) {
+    setRenamingId(item.id);
+    setRenameDraft(item.originalName);
+  }
+
+  async function saveRename(item: VideoLibraryItem) {
+    const originalName = renameDraft.trim();
+    if (!originalName || originalName === item.originalName) {
+      setRenamingId(null);
+      return;
+    }
+    try {
+      const updated = await updateVideoLibraryItem(item.id, { originalName });
+      setItems((previous) => previous.map((current) => current.id === updated.id ? updated : current));
+      if (selectedItem?.id === updated.id) setSelectedItem(updated);
+      setRenamingId(null);
+      setNotice('视频名称已保存，所有设备都会同步');
+    } catch (renameError) {
+      setError(renameError instanceof Error ? renameError.message : '保存视频名称失败');
     }
   }
 
@@ -163,7 +187,7 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
       </section>
 
       <section className="mx-auto mt-4 max-w-7xl space-y-5">
-        {isLoading ? <div className="flex items-center justify-center rounded-2xl border border-white/80 bg-white/80 py-20 text-sm font-bold text-slate-400"><Loader2 className="mr-2 size-5 animate-spin" />正在读取共享视频库</div> : groupedItems.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 py-20 text-center"><FolderOpen className="mx-auto size-9 text-slate-300" /><h2 className="mt-3 text-lg font-black text-slate-600">还没有共享视频</h2><p className="mt-1 text-sm font-semibold text-slate-400">先上传一条视频，团队成员就都能看到</p><button type="button" onClick={() => openUpload()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-black text-white"><Plus className="size-4" />上传第一条</button></div> : groupedItems.map(([folder, folderItems]) => <div key={folder}><div className="mb-2 flex items-center gap-2"><FolderOpen className="size-4 text-sky-500" /><h2 className="text-base font-black">{folder}</h2><span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-black text-slate-500">{folderItems.length}</span><button type="button" onClick={() => openUpload(folder)} className="ml-auto inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-600 hover:bg-slate-50"><Plus className="size-3" />上传</button></div><div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">{folderItems.map((item) => <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md"><button type="button" onClick={() => setSelectedItem(item)} className="group relative block aspect-video w-full bg-slate-900 text-left"><video src={item.streamUrl} preload="metadata" muted playsInline className="h-full w-full object-cover" /><span className="absolute inset-0 flex items-center justify-center bg-slate-950/0 text-white transition-colors group-hover:bg-slate-950/30"><Play className="size-7 opacity-0 drop-shadow transition-opacity group-hover:opacity-100" /></span></button><div className="p-2.5"><div className="flex items-center gap-1"><h3 className="min-w-0 flex-1 truncate text-xs font-black" title={item.originalName}>{item.originalName}</h3><button type="button" onClick={() => setSelectedItem(item)} className={cn('shrink-0 rounded-md px-1.5 py-1 text-[10px] font-black', item.note ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200')}>备注</button></div><div className="mt-1 flex items-center justify-between text-[10px] font-semibold text-slate-400"><span>{formatVideoLibrarySize(item.fileSize)}</span><span>{formatVideoLibraryTime(item.createdAt)}</span></div>{item.note && <p className="mt-2 line-clamp-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-bold leading-4 text-amber-700">{item.note}</p>}<div className="mt-2 flex items-center gap-1.5"><a href={item.downloadUrl} download className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-200"><Download className="size-3" />下载</a><button type="button" onClick={() => void handleDelete(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500" title="删除视频"><Trash2 className="size-3.5" /></button></div></div></article>)}</div></div>)}
+        {isLoading ? <div className="flex items-center justify-center rounded-2xl border border-white/80 bg-white/80 py-20 text-sm font-bold text-slate-400"><Loader2 className="mr-2 size-5 animate-spin" />正在读取共享视频库</div> : groupedItems.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 py-20 text-center"><FolderOpen className="mx-auto size-9 text-slate-300" /><h2 className="mt-3 text-lg font-black text-slate-600">还没有共享视频</h2><p className="mt-1 text-sm font-semibold text-slate-400">先上传一条视频，团队成员就都能看到</p><button type="button" onClick={() => openUpload()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-black text-white"><Plus className="size-4" />上传第一条</button></div> : groupedItems.map(([folder, folderItems]) => <div key={folder}><div className="mb-2 flex items-center gap-2"><FolderOpen className="size-4 text-sky-500" /><h2 className="text-base font-black">{folder}</h2><span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-black text-slate-500">{folderItems.length}</span><button type="button" onClick={() => openUpload(folder)} className="ml-auto inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-600 hover:bg-slate-50"><Plus className="size-3" />上传</button></div><div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">{folderItems.map((item) => <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md"><button type="button" onClick={() => setSelectedItem(item)} className="group relative block aspect-video w-full bg-slate-900 text-left"><video src={item.streamUrl} preload="metadata" muted playsInline className="h-full w-full object-cover" /><span className="absolute inset-0 flex items-center justify-center bg-slate-950/0 text-white transition-colors group-hover:bg-slate-950/30"><Play className="size-7 opacity-0 drop-shadow transition-opacity group-hover:opacity-100" /></span></button><div className="p-2.5"><div className="flex items-center gap-1">{renamingId === item.id ? <input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onBlur={() => void saveRename(item)} onKeyDown={(event) => { if (event.key === 'Enter') void saveRename(item); if (event.key === 'Escape') setRenamingId(null); }} className="min-w-0 flex-1 rounded-md border border-sky-300 bg-sky-50 px-1.5 py-1 text-xs font-black outline-none" /> : <h3 onDoubleClick={() => startRename(item)} className="min-w-0 flex-1 cursor-text truncate text-xs font-black" title="双击修改名称">{item.originalName}</h3>}<button type="button" onClick={() => setSelectedItem(item)} className={cn('shrink-0 rounded-md px-1.5 py-1 text-[10px] font-black', item.note ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200')}>备注</button></div><div className="mt-1 flex items-center justify-between text-[10px] font-semibold text-slate-400"><span>{formatVideoLibrarySize(item.fileSize)}</span><span>{formatVideoLibraryTime(item.createdAt)}</span></div>{item.note && <p className="mt-2 line-clamp-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-bold leading-4 text-amber-700">{item.note}</p>}<div className="mt-2 flex items-center gap-1.5"><a href={item.downloadUrl} download className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-200"><Download className="size-3" />下载</a><button type="button" onClick={() => void handleDelete(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500" title="删除视频"><Trash2 className="size-3.5" /></button></div></div></article>)}</div></div>)}
       </section>
 
       <input ref={inputRef} type="file" accept="video/*" className="hidden" onChange={(event) => void handleUpload(event)} />

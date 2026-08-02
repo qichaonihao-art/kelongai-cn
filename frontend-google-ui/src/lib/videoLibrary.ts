@@ -64,12 +64,12 @@ export async function createVideoLibraryFolder(folderName: string) {
   return String(json?.folder || folderName);
 }
 
-export async function updateVideoLibraryNote(id: number, note: string) {
+export async function updateVideoLibraryItem(id: number, input: { note?: string; originalName?: string }) {
   const response = await fetch(`/api/video-library/videos/${id}`, {
     method: 'PATCH',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ note }),
+    body: JSON.stringify(input),
   });
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '保存备注失败'));

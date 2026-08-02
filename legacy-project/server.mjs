@@ -1461,7 +1461,12 @@ async function handleUpdateVideoLibrary(req, res, id) {
       sendJson(res, 404, { error: '视频记录不存在' });
       return;
     }
-    const item = dbUpdateVideoLibraryNote(id, readValue(body?.note).slice(0, 1000));
+    const nextNote = body?.note === undefined ? existing.note : readValue(body.note).slice(0, 1000);
+    const nextName = body?.originalName === undefined
+      ? existing.originalName
+      : sanitizeVideoLibraryFileName(body.originalName);
+    getCollectionDb().prepare('UPDATE video_library_items SET original_name = ?, note = ?, updated_at = unixepoch() WHERE id = ?').run(nextName, nextNote, Number(id));
+    const item = dbGetVideoLibraryItem(id);
     sendJson(res, 200, { ok: true, item });
   } catch (error) {
     sendJson(res, 500, { error: error.message || '保存视频备注失败' });
