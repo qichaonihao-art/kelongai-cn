@@ -46,6 +46,14 @@ RUNTIME_STATE_DIR=/www/wwwroot/kelongai-runtime-state
 - `collection.db`：店铺总览和相关运行数据。
 - `home-culture-mottos.json`：主页团队文化标语，多设备同步依赖它。
 
+团队共享视频库是另一套独立数据，默认位于：
+
+```text
+/www/wwwroot/kelongai-media/video-library
+```
+
+它不在 Git 项目目录，也不在运行状态目录。部署时不要执行删除该目录的操作。视频库的记录索引保存在运行状态目录的 `collection.db` 中，视频文件本身保存在上述独立目录。
+
 ## 禁止操作
 
 除非已经明确备份并确认要恢复，否则不要执行任何会删除运行状态目录的命令。
@@ -56,6 +64,12 @@ RUNTIME_STATE_DIR=/www/wwwroot/kelongai-runtime-state
 rm -rf /www/wwwroot/kelongai-runtime-state
 rm -rf /www/wwwroot/kelongai-runtime-state/*
 rm -f /www/wwwroot/kelongai-runtime-state/voice-archive.json
+```
+
+同样不要删除：
+
+```bash
+rm -rf /www/wwwroot/kelongai-media/video-library
 ```
 
 也不要把 `RUNTIME_STATE_DIR` 改回项目目录下的 `.runtime-state`，否则页面会读到另一个空状态目录，看起来就像历史音色丢失。
@@ -85,7 +99,14 @@ test -f /www/wwwroot/kelongai-runtime-state/voice-archive.json && echo "voice ar
 ```bash
 mkdir -p /www/wwwroot/kelongai-runtime-state-backups
 tar -czf /www/wwwroot/kelongai-runtime-state-backups/runtime-state-$(date +%F-%H%M%S).tar.gz \
-  -C /www/wwwroot kelongai-runtime-state
+    -C /www/wwwroot kelongai-runtime-state
+```
+
+如果要备份共享视频库，应单独备份：
+
+```bash
+tar -czf /www/wwwroot/kelongai-runtime-state-backups/video-library-$(date +%F-%H%M%S).tar.gz \
+  -C /www/wwwroot kelongai-media
 ```
 
 备份完成后再执行 `git pull`、`npm install`、`npm run build`、`pm2 restart` 等操作。

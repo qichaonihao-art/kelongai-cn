@@ -15,9 +15,10 @@ import TopModelPage from './pages/TopModelPage';
 import UniversalExtractorPage from './pages/UniversalExtractorPage';
 import CreativeFeedingPage from './pages/CreativeFeedingPage';
 import TeamTimelinePage from './pages/TeamTimelinePage';
+import VideoLibraryPage from './pages/VideoLibraryPage';
 import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
 
-type Page = 'login' | 'home' | 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal' | 'feeding' | 'timeline';
+type Page = 'login' | 'home' | 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal' | 'feeding' | 'timeline' | 'video-library';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
@@ -54,7 +55,7 @@ export default function App() {
     return result;
   };
 
-  const handleNavigate = (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal' | 'feeding' | 'timeline') => {
+  const handleNavigate = (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal' | 'feeding' | 'timeline' | 'video-library') => {
     setCurrentPage(page);
   };
 
@@ -128,6 +129,9 @@ export default function App() {
       )}
       {currentPage === 'timeline' && (
         <TeamTimelinePage onBack={handleBackToHome} />
+      )}
+      {currentPage === 'video-library' && (
+        <VideoLibraryPage onBack={handleBackToHome} />
       )}
       {currentPage === 'universal' && (
         <UniversalExtractorPage

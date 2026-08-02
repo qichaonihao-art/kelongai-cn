@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { BookOpenText, Clock3, Mic2, Wand2, LogOut, Download, Network, Image, Crown, CalendarRange } from "lucide-react";
+import { BookOpenText, Mic2, Wand2, LogOut, Download, Network, Image, Crown, CalendarRange, Video } from "lucide-react";
 import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import { motion } from "motion/react";
 
 interface HomePageProps {
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding' | 'timeline') => void;
+  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding' | 'timeline' | 'video-library') => void;
   onLogout: () => void;
 }
 
@@ -92,15 +92,14 @@ const modules = [
     borderHover: 'hover:border-teal-300/60',
   },
   {
-    id: 'coming-soon-2' as const,
-    title: '后续更新',
-    desc: '新的团队工具模块正在预留中',
-    icon: Clock3,
-    color: 'slate',
-    gradient: 'from-slate-400 to-slate-500',
-    bgLight: 'bg-slate-50/50',
-    borderHover: 'hover:border-slate-300/60',
-    disabled: true,
+    id: 'video-library' as const,
+    title: '视频素材库',
+    desc: '团队共享装饰画视频，原文件保存，多设备同步',
+    icon: Video,
+    color: 'sky',
+    gradient: 'from-sky-500 to-cyan-600',
+    bgLight: 'bg-sky-50/50',
+    borderHover: 'hover:border-sky-300/60',
   },
 ];
 
@@ -368,7 +367,7 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
                 isDisabled ? "cursor-default opacity-75" : "cursor-pointer"
               )}
               onClick={() => {
-                if (!isDisabled && module.id !== 'coming-soon-2') onNavigate(module.id);
+                if (!isDisabled) onNavigate(module.id);
               }}
             >
               <div className="flex flex-col items-center text-center">

@@ -3,7 +3,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createReadStream, existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -43,6 +43,8 @@ const APIMART_IMAGE_RETRY_DELAYS_MS = [1000];
 const APIMART_CHAT_FETCH_TIMEOUT_MS = 8 * 60 * 1000;
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || path.join(__dirname, '.runtime-state'));
+const VIDEO_LIBRARY_DIR = path.resolve(process.env.VIDEO_LIBRARY_DIR || path.join(path.dirname(RUNTIME_STATE_DIR), 'kelongai-media', 'video-library'));
+const VIDEO_LIBRARY_MAX_FILE_BYTES = 10 * 1024 * 1024;
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
 const VOICE_ARCHIVE_FILE = path.join(RUNTIME_STATE_DIR, 'voice-archive.json');
 const HOME_CULTURE_MOTTOS_FILE = path.join(RUNTIME_STATE_DIR, 'home-culture-mottos.json');
@@ -1064,6 +1066,22 @@ function getCollectionDb() {
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
+      CREATE TABLE IF NOT EXISTS video_library_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        folder_name TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        stored_name TEXT NOT NULL UNIQUE,
+        mime_type TEXT NOT NULL DEFAULT 'video/mp4',
+        file_size INTEGER NOT NULL DEFAULT 0,
+        sha256 TEXT NOT NULL UNIQUE,
+        note TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_video_library_folder ON video_library_items(folder_name);
+      CREATE INDEX IF NOT EXISTS idx_video_library_created ON video_library_items(created_at DESC);
+
       CREATE INDEX IF NOT EXISTS idx_store_overview_nodes_type ON store_overview_nodes(type);
       CREATE INDEX IF NOT EXISTS idx_store_overview_edges_source ON store_overview_edges(source_id);
       CREATE INDEX IF NOT EXISTS idx_store_overview_edges_target ON store_overview_edges(target_id);
@@ -1243,6 +1261,233 @@ function dbDeleteImageTask(id) {
   const db = getCollectionDb();
   const stmt = db.prepare('DELETE FROM image_generation_tasks WHERE id = ?');
   stmt.run(id);
+}
+
+// --- Shared Video Library ---
+
+function sanitizeVideoLibraryFolder(value) {
+  const folder = readValue(value).replace(/[\\/:*?"<>|]/g, '').trim();
+  return (folder || '通用素材').slice(0, 80);
+}
+
+function sanitizeVideoLibraryFileName(value) {
+  const name = path.basename(readValue(value)).replace(/[\\/:*?"<>|]/g, '').trim();
+  return (name || '未命名视频').slice(0, 180);
+}
+
+function normalizeVideoLibraryItem(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    folderName: row.folder_name,
+    originalName: row.original_name,
+    mimeType: row.mime_type || 'video/mp4',
+    fileSize: Number(row.file_size || 0),
+    sha256: row.sha256,
+    note: row.note || '',
+    createdAt: Number(row.created_at || 0),
+    updatedAt: Number(row.updated_at || 0),
+    streamUrl: `/api/video-library/videos/${Number(row.id)}/file`,
+    downloadUrl: `/api/video-library/videos/${Number(row.id)}/file?download=1`,
+  };
+}
+
+function dbGetVideoLibraryItems({ folderName = '', query = '' } = {}) {
+  const db = getCollectionDb();
+  const clauses = [];
+  const params = [];
+  if (folderName) {
+    clauses.push('folder_name = ?');
+    params.push(folderName);
+  }
+  if (query) {
+    clauses.push('(original_name LIKE ? OR note LIKE ? OR folder_name LIKE ?)');
+    const pattern = `%${query}%`;
+    params.push(pattern, pattern, pattern);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const rows = db.prepare(`SELECT * FROM video_library_items ${where} ORDER BY created_at DESC, id DESC`).all(...params);
+  return rows.map(normalizeVideoLibraryItem).filter(Boolean);
+}
+
+function dbGetVideoLibraryItem(id) {
+  const row = getCollectionDb().prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(id));
+  return normalizeVideoLibraryItem(row);
+}
+
+function dbFindVideoLibraryByHash(sha256) {
+  const row = getCollectionDb().prepare('SELECT * FROM video_library_items WHERE sha256 = ? LIMIT 1').get(sha256);
+  return normalizeVideoLibraryItem(row);
+}
+
+function dbInsertVideoLibraryItem({ folderName, originalName, storedName, mimeType, fileSize, sha256, note }) {
+  const result = getCollectionDb().prepare(`
+    INSERT INTO video_library_items
+      (folder_name, original_name, stored_name, mime_type, file_size, sha256, note)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(folderName, originalName, storedName, mimeType, fileSize, sha256, note);
+  return dbGetVideoLibraryItem(Number(result.lastInsertRowid));
+}
+
+function dbUpdateVideoLibraryNote(id, note) {
+  getCollectionDb().prepare('UPDATE video_library_items SET note = ?, updated_at = unixepoch() WHERE id = ?').run(note, Number(id));
+  return dbGetVideoLibraryItem(id);
+}
+
+function dbDeleteVideoLibraryItem(id) {
+  const db = getCollectionDb();
+  const row = db.prepare('SELECT stored_name FROM video_library_items WHERE id = ?').get(Number(id));
+  if (!row) return null;
+  db.prepare('DELETE FROM video_library_items WHERE id = ?').run(Number(id));
+  return row;
+}
+
+async function ensureVideoLibraryDir() {
+  await mkdir(VIDEO_LIBRARY_DIR, { recursive: true });
+}
+
+async function readVideoLibraryUploadBody(req) {
+  const contentLength = Number(req.headers['content-length'] || 0);
+  if (contentLength && contentLength > VIDEO_LIBRARY_MAX_FILE_BYTES + 256 * 1024) {
+    throw new Error('视频文件不能超过 10MB');
+  }
+  const request = new Request('http://localhost/video-library-upload', {
+    method: req.method || 'POST',
+    headers: req.headers,
+    body: req,
+    duplex: 'half'
+  });
+  const formData = await request.formData();
+  const file = formData.get('file');
+  return {
+    folderName: sanitizeVideoLibraryFolder(formData.get('folderName')),
+    note: readValue(formData.get('note')).slice(0, 1000),
+    file: file instanceof File ? file : null,
+  };
+}
+
+async function handleGetVideoLibrary(req, res, url) {
+  const folderName = sanitizeVideoLibraryFolder(url.searchParams.get('folder') || '');
+  const query = readValue(url.searchParams.get('q'));
+  const items = dbGetVideoLibraryItems({ folderName: url.searchParams.get('folder') ? folderName : '', query });
+  const folders = [...new Set(['通用素材', ...dbGetVideoLibraryItems().map((item) => item.folderName)])];
+  sendJson(res, 200, { ok: true, items, folders });
+}
+
+async function handleUploadVideoLibrary(req, res) {
+  let filePath = '';
+  try {
+    const { folderName, note, file } = await readVideoLibraryUploadBody(req);
+    if (!file || file.size <= 0) {
+      sendJson(res, 400, { error: '请选择要上传的视频文件' });
+      return;
+    }
+    if (file.size > VIDEO_LIBRARY_MAX_FILE_BYTES) {
+      sendJson(res, 413, { error: '视频文件不能超过 10MB' });
+      return;
+    }
+    if (!String(file.type || '').startsWith('video/')) {
+      sendJson(res, 400, { error: '只支持上传视频文件' });
+      return;
+    }
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const sha256 = createHash('sha256').update(buffer).digest('hex');
+    const existing = dbFindVideoLibraryByHash(sha256);
+    if (existing) {
+      sendJson(res, 200, { ok: true, duplicate: true, item: existing, message: '这个视频已经存在，没有重复保存' });
+      return;
+    }
+
+    await ensureVideoLibraryDir();
+    const extension = path.extname(sanitizeVideoLibraryFileName(file.name)).toLowerCase() || '.mp4';
+    const storedName = `${sha256}${extension}`;
+    filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
+    await writeFile(filePath, buffer);
+    const item = dbInsertVideoLibraryItem({
+      folderName,
+      originalName: sanitizeVideoLibraryFileName(file.name),
+      storedName,
+      mimeType: file.type || 'video/mp4',
+      fileSize: buffer.length,
+      sha256,
+      note,
+    });
+    sendJson(res, 201, { ok: true, duplicate: false, item });
+  } catch (error) {
+    if (filePath) await unlink(filePath).catch(() => {});
+    sendJson(res, 500, { error: error.message || '视频上传失败' });
+  }
+}
+
+async function handleUpdateVideoLibrary(req, res, id) {
+  try {
+    const body = await readRequestBody(req);
+    const existing = dbGetVideoLibraryItem(id);
+    if (!existing) {
+      sendJson(res, 404, { error: '视频记录不存在' });
+      return;
+    }
+    const item = dbUpdateVideoLibraryNote(id, readValue(body?.note).slice(0, 1000));
+    sendJson(res, 200, { ok: true, item });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '保存视频备注失败' });
+  }
+}
+
+async function handleDeleteVideoLibrary(req, res, id) {
+  try {
+    const deleted = dbDeleteVideoLibraryItem(id);
+    if (!deleted) {
+      sendJson(res, 404, { error: '视频记录不存在' });
+      return;
+    }
+    await unlink(path.join(VIDEO_LIBRARY_DIR, deleted.stored_name)).catch(() => {});
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '删除视频失败' });
+  }
+}
+
+async function handleVideoLibraryFile(req, res, id, url) {
+  try {
+    const db = getCollectionDb();
+    const row = db.prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(id));
+    if (!row) {
+      sendJson(res, 404, { error: '视频不存在' });
+      return;
+    }
+    const filePath = path.join(VIDEO_LIBRARY_DIR, row.stored_name);
+    const info = await stat(filePath);
+    const range = req.headers.range;
+    const asAttachment = url.searchParams.get('download') === '1';
+    const filename = encodeURIComponent(row.original_name);
+    const headers = {
+      'Accept-Ranges': 'bytes',
+      'Content-Type': row.mime_type || 'video/mp4',
+      'Content-Disposition': `${asAttachment ? 'attachment' : 'inline'}; filename*=UTF-8''${filename}`,
+      'Cache-Control': 'public, max-age=86400',
+    };
+    if (range) {
+      const match = String(range).match(/bytes=(\d*)-(\d*)/);
+      if (match) {
+        const start = match[1] ? Number(match[1]) : Math.max(0, info.size - Number(match[2] || 0) - 1);
+        const end = match[2] ? Number(match[2]) : info.size - 1;
+        if (start >= 0 && start <= end && end < info.size) {
+          headers['Content-Range'] = `bytes ${start}-${end}/${info.size}`;
+          headers['Content-Length'] = String(end - start + 1);
+          res.writeHead(206, headers);
+          createReadStream(filePath, { start, end }).pipe(res);
+          return;
+        }
+      }
+    }
+    headers['Content-Length'] = String(info.size);
+    res.writeHead(200, headers);
+    createReadStream(filePath).pipe(res);
+  } catch (error) {
+    sendJson(res, 404, { error: '视频文件不存在或已损坏' });
+  }
 }
 
 // --- Store Overview Database ---
@@ -13021,6 +13266,35 @@ const server = createServer(async (req, res) => {
   if (req.method === 'DELETE' && url.pathname.startsWith('/api/store-overview/edges/')) {
     const id = url.pathname.replace(/^\/api\/store-overview\/edges\//, '');
     await handleDeleteStoreOverviewEdge(req, res, id);
+    return;
+  }
+
+  // Shared video library routes
+  if (req.method === 'GET' && url.pathname === '/api/video-library/videos') {
+    await handleGetVideoLibrary(req, res, url);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/video-library/videos') {
+    await handleUploadVideoLibrary(req, res);
+    return;
+  }
+
+  if (req.method === 'PATCH' && url.pathname.startsWith('/api/video-library/videos/')) {
+    const id = url.pathname.replace(/^\/api\/video-library\/videos\//, '');
+    await handleUpdateVideoLibrary(req, res, id);
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/video-library/videos/')) {
+    const id = url.pathname.replace(/^\/api\/video-library\/videos\//, '');
+    await handleDeleteVideoLibrary(req, res, id);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/api/video-library/videos/') && url.pathname.endsWith('/file')) {
+    const id = url.pathname.replace(/^\/api\/video-library\/videos\//, '').replace(/\/file$/, '');
+    await handleVideoLibraryFile(req, res, id, url);
     return;
   }
 

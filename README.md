@@ -178,6 +178,15 @@ cp legacy-project/.env.example legacy-project/.env
   - 火山槽位占用由服务端统一记录 owner，写入同一状态目录下的 `volc-speaker-ownership.json`
   - 维护时不要删除或清空这个目录，详见 [`RUNTIME_STATE_PROTECTION.md`](RUNTIME_STATE_PROTECTION.md)
 
+### 视频素材库
+
+- `VIDEO_LIBRARY_DIR`
+  - 可选，团队共享视频的独立文件目录
+  - 生产环境建议使用 `/www/wwwroot/kelongai-media/video-library`
+  - 不属于 Git 项目目录，也不属于运行状态目录；部署前端时不要清理它
+  - 如果不配置，后端会根据 `RUNTIME_STATE_DIR` 自动放在同级的 `kelongai-media/video-library` 目录
+- 第一版单个视频限制为 10MB，原文件直接保存，不做转码压缩
+
 ### Mock 开关
 
 - `VOICE_CLONE_MOCK_MODE`
