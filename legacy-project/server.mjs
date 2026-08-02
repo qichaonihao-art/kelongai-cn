@@ -1082,6 +1082,12 @@ function getCollectionDb() {
       CREATE INDEX IF NOT EXISTS idx_video_library_folder ON video_library_items(folder_name);
       CREATE INDEX IF NOT EXISTS idx_video_library_created ON video_library_items(created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS video_library_folders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        folder_name TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
       CREATE INDEX IF NOT EXISTS idx_store_overview_nodes_type ON store_overview_nodes(type);
       CREATE INDEX IF NOT EXISTS idx_store_overview_edges_source ON store_overview_edges(source_id);
       CREATE INDEX IF NOT EXISTS idx_store_overview_edges_target ON store_overview_edges(target_id);
@@ -1310,6 +1316,18 @@ function dbGetVideoLibraryItems({ folderName = '', query = '' } = {}) {
   return rows.map(normalizeVideoLibraryItem).filter(Boolean);
 }
 
+function dbGetVideoLibraryFolders() {
+  const rows = getCollectionDb().prepare('SELECT folder_name FROM video_library_folders ORDER BY created_at ASC, id ASC').all();
+  const itemFolders = getCollectionDb().prepare('SELECT DISTINCT folder_name FROM video_library_items ORDER BY folder_name ASC').all();
+  return [...new Set(['通用素材', ...rows.map((row) => row.folder_name), ...itemFolders.map((row) => row.folder_name)])];
+}
+
+function dbCreateVideoLibraryFolder(folderName) {
+  const normalized = sanitizeVideoLibraryFolder(folderName);
+  getCollectionDb().prepare('INSERT OR IGNORE INTO video_library_folders (folder_name) VALUES (?)').run(normalized);
+  return normalized;
+}
+
 function dbGetVideoLibraryItem(id) {
   const row = getCollectionDb().prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(id));
   return normalizeVideoLibraryItem(row);
@@ -1370,8 +1388,23 @@ async function handleGetVideoLibrary(req, res, url) {
   const folderName = sanitizeVideoLibraryFolder(url.searchParams.get('folder') || '');
   const query = readValue(url.searchParams.get('q'));
   const items = dbGetVideoLibraryItems({ folderName: url.searchParams.get('folder') ? folderName : '', query });
-  const folders = [...new Set(['通用素材', ...dbGetVideoLibraryItems().map((item) => item.folderName)])];
+  const folders = dbGetVideoLibraryFolders();
   sendJson(res, 200, { ok: true, items, folders });
+}
+
+async function handleCreateVideoLibraryFolder(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const folderName = readValue(body?.folderName);
+    if (!folderName.trim()) {
+      sendJson(res, 400, { error: '请输入文件夹名称' });
+      return;
+    }
+    const folder = dbCreateVideoLibraryFolder(folderName);
+    sendJson(res, 201, { ok: true, folder });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || '新建文件夹失败' });
+  }
 }
 
 async function handleUploadVideoLibrary(req, res) {
@@ -13272,6 +13305,11 @@ const server = createServer(async (req, res) => {
   // Shared video library routes
   if (req.method === 'GET' && url.pathname === '/api/video-library/videos') {
     await handleGetVideoLibrary(req, res, url);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/video-library/folders') {
+    await handleCreateVideoLibraryFolder(req, res);
     return;
   }
 

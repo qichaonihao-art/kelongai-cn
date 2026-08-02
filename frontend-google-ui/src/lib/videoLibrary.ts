@@ -34,11 +34,10 @@ export async function getVideoLibrary(filters?: { folder?: string; query?: strin
   };
 }
 
-export async function uploadVideoLibraryVideo(file: File, folderName: string, note: string) {
+export async function uploadVideoLibraryVideo(file: File, folderName: string) {
   const formData = new FormData();
   formData.append('file', file, file.name);
   formData.append('folderName', folderName);
-  formData.append('note', note);
   const response = await fetch('/api/video-library/videos', {
     method: 'POST',
     credentials: 'include',
@@ -51,6 +50,18 @@ export async function uploadVideoLibraryVideo(file: File, folderName: string, no
     duplicate: Boolean(json?.duplicate),
     message: typeof json?.message === 'string' ? json.message : '',
   };
+}
+
+export async function createVideoLibraryFolder(folderName: string) {
+  const response = await fetch('/api/video-library/folders', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderName }),
+  });
+  const json = await readJson(response);
+  if (!response.ok) throw new Error(errorMessage(json, '新建文件夹失败'));
+  return String(json?.folder || folderName);
 }
 
 export async function updateVideoLibraryNote(id: number, note: string) {
