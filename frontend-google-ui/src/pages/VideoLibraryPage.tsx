@@ -138,27 +138,20 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
 
   return (
     <main className="min-h-screen bg-slate-100 px-3 py-4 text-slate-900 md:px-6">
-      <header className="mx-auto flex max-w-7xl items-center justify-between gap-3 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm">
-        <div className="flex min-w-0 items-center gap-3">
+      <section className="mx-auto max-w-7xl rounded-2xl border border-white/80 bg-white/90 p-3 shadow-sm md:p-4">
+        <div className="mb-3 flex items-center gap-2 border-b border-slate-100 pb-3">
           <button type="button" onClick={onBack} className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50" title="返回首页">
-            <ArrowLeft className="size-5" />
+            <ArrowLeft className="size-4" />
           </button>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.22em] text-sky-600"><Video className="size-4" />视频素材库</div>
-            <h1 className="truncate text-xl font-black tracking-tight">团队共享视频素材</h1>
-            <p className="mt-0.5 text-[11px] font-semibold text-slate-400">原文件保存，多设备同步</p>
-          </div>
+          <div className="flex min-w-0 items-center gap-2 text-sm font-black text-slate-700"><Video className="size-4 text-sky-500" />视频素材库</div>
+          <button type="button" onClick={() => { setError(''); setNewFolderDraft(''); setIsFolderOpen(true); }} className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-black text-white shadow-sm hover:bg-slate-800">
+            <Plus className="size-4" />新建文件夹
+          </button>
         </div>
-        <button type="button" onClick={() => { setError(''); setNewFolderDraft(''); setIsFolderOpen(true); }} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-black text-white shadow-sm hover:bg-slate-800">
-          <Plus className="size-4" />新建文件夹
-        </button>
-      </header>
-
-      <section className="mx-auto mt-4 max-w-7xl rounded-2xl border border-white/80 bg-white/90 p-3 shadow-sm md:p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="relative min-w-0 flex-1">
+          <div className="relative min-w-0 flex-1 lg:flex-none lg:w-72 xl:w-80">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void refresh(); }} placeholder="搜索视频名称、画名或备注" className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-xs font-semibold outline-none focus:border-sky-300 focus:bg-white" />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void refresh(); }} placeholder="搜索素材" className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-xs font-semibold outline-none focus:border-sky-300 focus:bg-white" />
           </div>
           <div className="flex gap-2 overflow-x-auto">
             <button type="button" onClick={() => setSelectedFolder('')} className={cn('whitespace-nowrap rounded-xl px-3 py-2 text-xs font-black', !selectedFolder ? 'bg-sky-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200')}>全部视频</button>
