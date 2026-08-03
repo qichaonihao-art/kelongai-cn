@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
 import { createReadStream, existsSync } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
@@ -57,6 +57,7 @@ const VIDEO_LIBRARY_MIME_BY_EXTENSION = new Map([
 ]);
 const videoLibraryThumbnailJobs = [];
 const videoLibraryThumbnailPromises = new Map();
+const videoLibraryPreviewPromises = new Map();
 let activeVideoLibraryThumbnailJobs = 0;
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
 const VOICE_ARCHIVE_FILE = path.join(RUNTIME_STATE_DIR, 'voice-archive.json');
@@ -1329,6 +1330,11 @@ function getVideoLibraryThumbnailName(row) {
   return `${sha256 || `video-${Number(row?.id || 0)}`}.jpg`;
 }
 
+function getVideoLibraryPreviewName(row) {
+  const sha256 = readValue(row?.sha256).replace(/[^a-f0-9]/gi, '').toLowerCase();
+  return `${sha256 || `video-${Number(row?.id || 0)}`}.preview.mp4`;
+}
+
 function formatSeedanceVideoLibraryName(createdAt) {
   const numericCreatedAt = Number(createdAt || 0);
   const timestampMs = numericCreatedAt > 1e12 ? numericCreatedAt : numericCreatedAt * 1000;
@@ -1357,7 +1363,7 @@ function normalizeVideoLibraryItem(row) {
     note: row.note || '',
     createdAt: Number(row.created_at || 0),
     updatedAt: Number(row.updated_at || 0),
-    streamUrl: `/api/video-library/videos/${Number(row.id)}/file`,
+    streamUrl: `/api/video-library/videos/${Number(row.id)}/file?preview=1`,
     downloadUrl: `/api/video-library/videos/${Number(row.id)}/file?download=1`,
     downloadName: getVideoLibraryDownloadName(row),
     thumbnailUrl: `/api/video-library/videos/${Number(row.id)}/thumbnail`,
@@ -1481,6 +1487,55 @@ async function ensureVideoLibraryThumbnail(row) {
   return promise;
 }
 
+async function ensureVideoLibraryPreview(rowOrItem) {
+  const row = rowOrItem?.stored_name
+    ? rowOrItem
+    : getCollectionDb().prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(rowOrItem?.id || 0));
+  if (!row) throw new Error('视频不存在');
+
+  await ensureVideoLibraryDir();
+  const sourcePath = path.join(VIDEO_LIBRARY_DIR, row.stored_name);
+  const sourceExtension = path.extname(row.stored_name || '').toLowerCase();
+  if (!['.mp4', '.m4v', '.mov'].includes(sourceExtension)) return sourcePath;
+
+  const previewPath = path.join(VIDEO_LIBRARY_DIR, getVideoLibraryPreviewName(row));
+  if (existsSync(previewPath)) return previewPath;
+  if (videoLibraryPreviewPromises.has(previewPath)) {
+    return videoLibraryPreviewPromises.get(previewPath);
+  }
+
+  const promise = enqueueVideoLibraryThumbnailJob(async () => {
+    if (existsSync(previewPath)) return previewPath;
+    const temporaryPath = `${previewPath}.${process.pid}-${randomBytes(4).toString('hex')}.mp4`;
+    try {
+      await execFileAsync('ffmpeg', [
+        '-y',
+        '-i', sourcePath,
+        '-map', '0',
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        temporaryPath,
+      ], {
+        timeout: 30 * 1000,
+        killSignal: 'SIGKILL',
+      });
+      await rename(temporaryPath, previewPath);
+      return previewPath;
+    } catch (error) {
+      await unlink(temporaryPath).catch(() => {});
+      console.warn('[video library] preview_faststart_failed', {
+        id: Number(row.id || 0),
+        message: error?.message || '',
+      });
+      return sourcePath;
+    }
+  }).finally(() => {
+    videoLibraryPreviewPromises.delete(previewPath);
+  });
+  videoLibraryPreviewPromises.set(previewPath, promise);
+  return promise;
+}
+
 async function readVideoLibraryUploadBody(req) {
   const contentLength = Number(req.headers['content-length'] || 0);
   if (contentLength && contentLength > VIDEO_LIBRARY_MAX_FILE_BYTES + 256 * 1024) {
@@ -1506,6 +1561,9 @@ async function handleGetVideoLibrary(req, res, url) {
   const query = readValue(url.searchParams.get('q'));
   const items = dbGetVideoLibraryItems({ folderName: url.searchParams.get('folder') ? folderName : '', query });
   const folders = dbGetVideoLibraryFolders();
+  items.slice(0, 12).forEach((item) => {
+    void ensureVideoLibraryPreview(item).catch(() => {});
+  });
   sendJson(res, 200, { ok: true, items, folders });
 }
 
@@ -1640,6 +1698,7 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
       sha256,
       note: '来自创意创作',
     });
+    void ensureVideoLibraryPreview({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
     void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch((thumbnailError) => {
       console.warn('[video library] seedance_thumbnail_generation_failed', {
         id: item.id,
@@ -1704,6 +1763,7 @@ async function handleUploadVideoLibrary(req, res) {
       sha256,
       note,
     });
+    void ensureVideoLibraryPreview({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
     void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch((thumbnailError) => {
       console.warn('[video library] thumbnail_generation_failed', {
         id: item.id,
@@ -1747,6 +1807,7 @@ async function handleDeleteVideoLibrary(req, res, id) {
     await Promise.all([
       unlink(path.join(VIDEO_LIBRARY_DIR, deleted.stored_name)).catch(() => {}),
       unlink(path.join(VIDEO_LIBRARY_DIR, getVideoLibraryThumbnailName(deleted))).catch(() => {}),
+      unlink(path.join(VIDEO_LIBRARY_DIR, getVideoLibraryPreviewName(deleted))).catch(() => {}),
     ]);
     sendJson(res, 200, { ok: true });
   } catch (error) {
@@ -1786,17 +1847,21 @@ async function handleVideoLibraryFile(req, res, id, url) {
       sendJson(res, 404, { error: '视频不存在' });
       return;
     }
-    const filePath = path.join(VIDEO_LIBRARY_DIR, row.stored_name);
+    const wantsFastPreview = url.searchParams.get('preview') === '1' && url.searchParams.get('download') !== '1';
+    const filePath = wantsFastPreview
+      ? await ensureVideoLibraryPreview(row)
+      : path.join(VIDEO_LIBRARY_DIR, row.stored_name);
     const info = await stat(filePath);
     const range = req.headers.range;
     const asAttachment = url.searchParams.get('download') === '1';
     const downloadName = getVideoLibraryDownloadName(row);
     const encodedFilename = encodeURIComponent(downloadName);
     const fallbackFilename = `video-${Number(row.id)}${getVideoLibraryExtension(row.stored_name, row.mime_type)}`;
-    const etag = `"${readValue(row.sha256) || `${Number(row.id)}-${info.size}`}"`;
+    const etagBase = readValue(row.sha256) || `${Number(row.id)}-${info.size}`;
+    const etag = `"${etagBase}${wantsFastPreview ? '-preview' : ''}"`;
     const headers = {
       'Accept-Ranges': 'bytes',
-      'Content-Type': normalizeVideoLibraryMimeType(row.stored_name, row.mime_type) || 'video/mp4',
+      'Content-Type': wantsFastPreview ? 'video/mp4' : (normalizeVideoLibraryMimeType(row.stored_name, row.mime_type) || 'video/mp4'),
       'Content-Disposition': `${asAttachment ? 'attachment' : 'inline'}; filename="${fallbackFilename}"; filename*=UTF-8''${encodedFilename}`,
       'Cache-Control': 'private, max-age=31536000, immutable',
       'ETag': etag,
