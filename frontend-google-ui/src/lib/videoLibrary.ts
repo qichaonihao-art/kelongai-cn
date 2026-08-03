@@ -10,6 +10,8 @@ export interface VideoLibraryItem {
   updatedAt: number;
   streamUrl: string;
   downloadUrl: string;
+  downloadName: string;
+  thumbnailUrl: string;
 }
 
 async function readJson(response: Response) {
@@ -62,6 +64,35 @@ export async function createVideoLibraryFolder(folderName: string) {
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '新建文件夹失败'));
   return String(json?.folder || folderName);
+}
+
+export async function getVideoLibraryFolders() {
+  const response = await fetch('/api/video-library/folders', { credentials: 'include' });
+  const json = await readJson(response);
+  if (!response.ok) throw new Error(errorMessage(json, '读取视频素材库文件夹失败'));
+  return Array.isArray(json?.folders) ? json.folders.map(String) : ['通用素材'];
+}
+
+export async function saveSeedanceVideoToLibrary(input: {
+  taskId: string;
+  folderName: string;
+  createdAt?: number;
+}) {
+  const response = await fetch('/api/video-library/import-seedance', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const json = await readJson(response);
+  if (!response.ok) throw new Error(errorMessage(json, '保存到视频素材库失败'));
+  return {
+    item: json?.item as VideoLibraryItem,
+    duplicate: Boolean(json?.duplicate),
+    sourceBytes: Number(json?.sourceBytes || 0),
+    savedBytes: Number(json?.savedBytes || 0),
+    message: typeof json?.message === 'string' ? json.message : '已保存到视频素材库',
+  };
 }
 
 export async function updateVideoLibraryItem(id: number, input: { note?: string; originalName?: string }) {

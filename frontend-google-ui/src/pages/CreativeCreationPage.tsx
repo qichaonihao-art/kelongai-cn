@@ -22,6 +22,7 @@ import {
   BookText,
   Search,
   Clock,
+  FolderOpen,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav from "@/src/components/ModuleQuickNav";
@@ -47,6 +48,10 @@ import {
   blobToFile,
   formatHistoryTime,
 } from "@/src/lib/uploadHistory";
+import {
+  getVideoLibraryFolders,
+  saveSeedanceVideoToLibrary,
+} from "@/src/lib/videoLibrary";
 
 interface Message {
   id: string;
@@ -95,6 +100,12 @@ interface SeedanceHistoryItem {
   watermark: boolean;
   elapsedSeconds?: number;
   isGood?: boolean;
+  libraryFolder?: string;
+}
+
+interface SeedanceLibrarySaveTarget {
+  taskId: string;
+  createdAt?: number;
 }
 
 interface UploadHistoryPreviewItem {
@@ -668,6 +679,21 @@ function getSeedanceTaskTime(task: SeedanceTaskResult) {
   return task.createdAt && task.createdAt > 0 ? task.createdAt : Math.floor(Date.now() / 1000);
 }
 
+function formatSeedanceLibraryFileName(createdAt?: number) {
+  const timestampMs = createdAt && createdAt > 1e12 ? createdAt : Number(createdAt || 0) * 1000;
+  const date = new Date(timestampMs > 0 ? timestampMs : Date.now());
+  const month = date.toLocaleString('zh-CN', { month: 'numeric', timeZone: 'Asia/Shanghai' });
+  const day = date.toLocaleString('zh-CN', { day: 'numeric', timeZone: 'Asia/Shanghai' });
+  const time = date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    hourCycle: 'h23',
+    timeZone: 'Asia/Shanghai',
+  }).replace(':', '-');
+  return `${month}${day} ${time}.mp4`;
+}
+
 function createSeedanceHistoryItem(
   task: SeedanceTaskResult,
   options: {
@@ -1054,6 +1080,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [seedanceClock, setSeedanceClock] = useState(Date.now());
   const [seedanceVideoModal, setSeedanceVideoModal] = useState(false);
   const [seedanceModalItem, setSeedanceModalItem] = useState<SeedanceHistoryItem | null>(null);
+  const [seedanceLibrarySaveTarget, setSeedanceLibrarySaveTarget] = useState<SeedanceLibrarySaveTarget | null>(null);
+  const [videoLibraryFolders, setVideoLibraryFolders] = useState<string[]>([]);
+  const [selectedVideoLibraryFolder, setSelectedVideoLibraryFolder] = useState('通用素材');
+  const [isVideoLibraryFolderLoading, setIsVideoLibraryFolderLoading] = useState(false);
+  const [isSavingToVideoLibrary, setIsSavingToVideoLibrary] = useState(false);
+  const [videoLibrarySaveError, setVideoLibrarySaveError] = useState('');
+  const [videoLibrarySaveNotice, setVideoLibrarySaveNotice] = useState('');
   const [showAtMenu, setShowAtMenu] = useState(false);
   const [atMenuFilter, setAtMenuFilter] = useState("");
   const [atMenuSelectedIndex, setAtMenuSelectedIndex] = useState(0);
@@ -1077,6 +1110,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const ownedHistoryPreviewUrlRef = useRef<string | null>(null);
   const hoverPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seedanceCostStats = getSeedanceCostStats();
+  const currentSeedanceLibraryFolder = seedanceTask?.taskId
+    ? seedanceHistory.find((item) => item.taskId === seedanceTask.taskId)?.libraryFolder || ''
+    : '';
   const [notebookItems, setNotebookItems] = useState<NotebookItem[]>(loadNotebookItems);
   const [isNotebookOpen, setIsNotebookOpen] = useState(false);
   const [notebookDraft, setNotebookDraft] = useState("");
@@ -1974,6 +2010,51 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setSeedanceDuration(item.duration);
     setSeedanceGenerateAudio(item.generateAudio);
     setSeedanceWatermark(item.watermark);
+  }
+
+  async function openSeedanceLibrarySave(target: SeedanceLibrarySaveTarget) {
+    setSeedanceLibrarySaveTarget(target);
+    setVideoLibrarySaveError('');
+    setVideoLibrarySaveNotice('');
+    setIsVideoLibraryFolderLoading(true);
+    try {
+      const folders = await getVideoLibraryFolders();
+      const availableFolders = folders.length ? folders : ['通用素材'];
+      setVideoLibraryFolders(availableFolders);
+      setSelectedVideoLibraryFolder(availableFolders.includes('通用素材') ? '通用素材' : availableFolders[0]);
+    } catch (error) {
+      setVideoLibrarySaveError(error instanceof Error ? error.message : '读取视频素材库文件夹失败');
+    } finally {
+      setIsVideoLibraryFolderLoading(false);
+    }
+  }
+
+  async function handleSaveSeedanceToLibrary() {
+    const target = seedanceLibrarySaveTarget;
+    if (!target || isSavingToVideoLibrary || !selectedVideoLibraryFolder) return;
+    setIsSavingToVideoLibrary(true);
+    setVideoLibrarySaveError('');
+    try {
+      const result = await saveSeedanceVideoToLibrary({
+        taskId: target.taskId,
+        folderName: selectedVideoLibraryFolder,
+        createdAt: target.createdAt,
+      });
+      if (result.sourceBytes !== result.savedBytes) {
+        throw new Error('保存后文件大小校验失败，请重试');
+      }
+      setSeedanceHistory((previous) => previous.map((item) => (
+        item.taskId === target.taskId
+          ? { ...item, libraryFolder: result.item.folderName }
+          : item
+      )));
+      setVideoLibrarySaveNotice(`${result.message}：${result.item.originalName}`);
+      setSeedanceLibrarySaveTarget(null);
+    } catch (error) {
+      setVideoLibrarySaveError(error instanceof Error ? error.message : '保存到视频素材库失败');
+    } finally {
+      setIsSavingToVideoLibrary(false);
+    }
   }
 
   function removeSeedanceHistoryItem(taskId: string) {
@@ -3707,6 +3788,20 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                             <Download className="size-3.5" />
                             下载视频
                           </a>
+                          <button
+                            type="button"
+                            onClick={() => void openSeedanceLibrarySave({
+                              taskId: seedanceTask.taskId,
+                              createdAt: seedanceTask.createdAt,
+                            })}
+                            disabled={!seedanceTask.taskId || !!currentSeedanceLibraryFolder}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 text-[11px] font-bold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-700"
+                          >
+                            {currentSeedanceLibraryFolder ? <Check className="size-3.5" /> : <FolderOpen className="size-3.5" />}
+                            {currentSeedanceLibraryFolder
+                              ? `已保存至 ${currentSeedanceLibraryFolder}`
+                              : '保存到视频素材库'}
+                          </button>
                         </div>
                       </div>
                     )}
@@ -3735,6 +3830,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                 {seedanceError && (
                   <div className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium leading-5 text-red-500">
                     {seedanceError}
+                  </div>
+                )}
+                {videoLibrarySaveNotice && (
+                  <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-medium leading-5 text-emerald-700">
+                    {videoLibrarySaveNotice}
                   </div>
                 )}
               </div>
@@ -3906,14 +4006,28 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                                             )}
                                           </button>
                                           {item.videoUrl && !expired && (
-                                            <a
-                                              href={item.videoUrl}
-                                              download={`seedance-${item.taskId}.mp4`}
-                                              className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-bold text-white transition-colors hover:bg-emerald-700"
-                                            >
-                                              <Download className="size-3.5" />
-                                              下载
-                                            </a>
+                                            <>
+                                              <button
+                                                type="button"
+                                                onClick={() => void openSeedanceLibrarySave({
+                                                  taskId: item.taskId,
+                                                  createdAt: item.createdAt,
+                                                })}
+                                                disabled={!!item.libraryFolder}
+                                                className="inline-flex h-9 items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-4 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-700"
+                                              >
+                                                {item.libraryFolder ? <Check className="size-3.5" /> : <FolderOpen className="size-3.5" />}
+                                                {item.libraryFolder ? `已保存至 ${item.libraryFolder}` : '保存到素材库'}
+                                              </button>
+                                              <a
+                                                href={item.videoUrl}
+                                                download={`seedance-${item.taskId}.mp4`}
+                                                className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-bold text-white transition-colors hover:bg-emerald-700"
+                                              >
+                                                <Download className="size-3.5" />
+                                                下载
+                                              </a>
+                                            </>
                                           )}
                                         </div>
                                       </div>
@@ -3983,6 +4097,116 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   playsInline
                   autoPlay
                 />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {seedanceLibrarySaveTarget && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/55 p-4 backdrop-blur-sm"
+            onClick={() => {
+              if (!isSavingToVideoLibrary) setSeedanceLibrarySaveTarget(null);
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className="w-full max-w-lg rounded-3xl border border-white/60 bg-white p-5 shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-black text-slate-900">保存到视频素材库</h3>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    原视频会立即复制到我们自己的素材库，不再依赖 Seedance 临时链接；不压缩、不转码，下载仍为 MP4。
+                  </p>
+                  <p className="mt-1 text-[11px] font-medium leading-5 text-amber-600">
+                    请在 Seedance 链接失效前完成保存；保存成功后可长期预览和下载。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={isSavingToVideoLibrary}
+                  onClick={() => setSeedanceLibrarySaveTarget(null)}
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed"
+                  aria-label="关闭"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">默认文件名</div>
+                <div className="mt-1 text-sm font-bold text-slate-800">
+                  {formatSeedanceLibraryFileName(seedanceLibrarySaveTarget.createdAt)}
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <div className="mb-2 text-xs font-black text-slate-700">选择保存文件夹</div>
+                {isVideoLibraryFolderLoading ? (
+                  <div className="flex min-h-28 items-center justify-center rounded-2xl border border-dashed border-slate-200 text-xs font-bold text-slate-400">
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                    正在读取文件夹…
+                  </div>
+                ) : videoLibraryFolders.length > 0 ? (
+                  <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
+                    {videoLibraryFolders.map((folder) => (
+                      <button
+                        key={folder}
+                        type="button"
+                        onClick={() => setSelectedVideoLibraryFolder(folder)}
+                        disabled={isSavingToVideoLibrary}
+                        className={cn(
+                          "flex min-h-16 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-xs font-bold transition-colors disabled:cursor-not-allowed",
+                          selectedVideoLibraryFolder === folder
+                            ? "border-indigo-400 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-100"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:bg-indigo-50/50"
+                        )}
+                      >
+                        <FolderOpen className="size-4 shrink-0" />
+                        <span className="break-all">{folder}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">
+                    素材库还没有文件夹，请先到视频素材库创建一个文件夹。
+                  </div>
+                )}
+              </div>
+
+              {videoLibrarySaveError && (
+                <div className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium leading-5 text-red-600">
+                  {videoLibrarySaveError}
+                </div>
+              )}
+
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={isSavingToVideoLibrary}
+                  onClick={() => setSeedanceLibrarySaveTarget(null)}
+                  className="h-10 rounded-full border border-slate-200 bg-white px-5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingToVideoLibrary || isVideoLibraryFolderLoading || !selectedVideoLibraryFolder}
+                  onClick={() => void handleSaveSeedanceToLibrary()}
+                  className="inline-flex h-10 items-center gap-2 rounded-full bg-indigo-600 px-5 text-xs font-bold text-white shadow-sm shadow-indigo-200 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                >
+                  {isSavingToVideoLibrary ? <Loader2 className="size-4 animate-spin" /> : <FolderOpen className="size-4" />}
+                  {isSavingToVideoLibrary ? '正在保存原视频…' : '确认保存'}
+                </button>
               </div>
             </motion.div>
           </motion.div>

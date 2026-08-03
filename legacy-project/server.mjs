@@ -45,6 +45,19 @@ const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || path.join(__dirname, '.runtime-state'));
 const VIDEO_LIBRARY_DIR = path.resolve(process.env.VIDEO_LIBRARY_DIR || path.join(path.dirname(RUNTIME_STATE_DIR), 'kelongai-media', 'video-library'));
 const VIDEO_LIBRARY_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const VIDEO_LIBRARY_THUMBNAIL_MAX_WIDTH = 640;
+const VIDEO_LIBRARY_THUMBNAIL_CONCURRENCY = 2;
+const VIDEO_LIBRARY_MIME_BY_EXTENSION = new Map([
+  ['.mp4', 'video/mp4'],
+  ['.m4v', 'video/x-m4v'],
+  ['.mov', 'video/quicktime'],
+  ['.webm', 'video/webm'],
+  ['.avi', 'video/x-msvideo'],
+  ['.mkv', 'video/x-matroska'],
+]);
+const videoLibraryThumbnailJobs = [];
+const videoLibraryThumbnailPromises = new Map();
+let activeVideoLibraryThumbnailJobs = 0;
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
 const VOICE_ARCHIVE_FILE = path.join(RUNTIME_STATE_DIR, 'voice-archive.json');
 const HOME_CULTURE_MOTTOS_FILE = path.join(RUNTIME_STATE_DIR, 'home-culture-mottos.json');
@@ -1281,6 +1294,57 @@ function sanitizeVideoLibraryFileName(value) {
   return (name || '未命名视频').slice(0, 180);
 }
 
+function getVideoLibraryExtension(fileName, mimeType = '') {
+  const extension = path.extname(sanitizeVideoLibraryFileName(fileName)).toLowerCase();
+  if (VIDEO_LIBRARY_MIME_BY_EXTENSION.has(extension)) return extension;
+  const normalizedMime = readValue(mimeType).split(';')[0].trim().toLowerCase();
+  for (const [candidateExtension, candidateMime] of VIDEO_LIBRARY_MIME_BY_EXTENSION.entries()) {
+    if (candidateMime === normalizedMime) return candidateExtension;
+  }
+  return '.mp4';
+}
+
+function normalizeVideoLibraryMimeType(fileName, mimeType = '') {
+  const extension = path.extname(sanitizeVideoLibraryFileName(fileName)).toLowerCase();
+  if (VIDEO_LIBRARY_MIME_BY_EXTENSION.has(extension)) {
+    return VIDEO_LIBRARY_MIME_BY_EXTENSION.get(extension);
+  }
+  const normalizedMime = readValue(mimeType).split(';')[0].trim().toLowerCase();
+  return normalizedMime.startsWith('video/') ? normalizedMime : '';
+}
+
+function getVideoLibraryDownloadName(row) {
+  const originalName = sanitizeVideoLibraryFileName(row?.original_name);
+  const originalExtension = path.extname(originalName).toLowerCase();
+  const actualExtension = getVideoLibraryExtension(row?.stored_name, row?.mime_type);
+  if (originalExtension === actualExtension) return originalName;
+  if (VIDEO_LIBRARY_MIME_BY_EXTENSION.has(originalExtension)) {
+    return `${originalName.slice(0, -originalExtension.length)}${actualExtension}`;
+  }
+  return `${originalName}${actualExtension}`;
+}
+
+function getVideoLibraryThumbnailName(row) {
+  const sha256 = readValue(row?.sha256).replace(/[^a-f0-9]/gi, '').toLowerCase();
+  return `${sha256 || `video-${Number(row?.id || 0)}`}.jpg`;
+}
+
+function formatSeedanceVideoLibraryName(createdAt) {
+  const numericCreatedAt = Number(createdAt || 0);
+  const timestampMs = numericCreatedAt > 1e12 ? numericCreatedAt : numericCreatedAt * 1000;
+  const date = new Date(Number.isFinite(timestampMs) && timestampMs > 0 ? timestampMs : Date.now());
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const readPart = (type) => parts.find((part) => part.type === type)?.value || '00';
+  return `${Number(readPart('month'))}月${Number(readPart('day'))}日 ${readPart('hour')}-${readPart('minute')}.mp4`;
+}
+
 function normalizeVideoLibraryItem(row) {
   if (!row) return null;
   return {
@@ -1295,6 +1359,8 @@ function normalizeVideoLibraryItem(row) {
     updatedAt: Number(row.updated_at || 0),
     streamUrl: `/api/video-library/videos/${Number(row.id)}/file`,
     downloadUrl: `/api/video-library/videos/${Number(row.id)}/file?download=1`,
+    downloadName: getVideoLibraryDownloadName(row),
+    thumbnailUrl: `/api/video-library/videos/${Number(row.id)}/thumbnail`,
   };
 }
 
@@ -1354,7 +1420,7 @@ function dbUpdateVideoLibraryNote(id, note) {
 
 function dbDeleteVideoLibraryItem(id) {
   const db = getCollectionDb();
-  const row = db.prepare('SELECT stored_name FROM video_library_items WHERE id = ?').get(Number(id));
+  const row = db.prepare('SELECT id, stored_name, sha256 FROM video_library_items WHERE id = ?').get(Number(id));
   if (!row) return null;
   db.prepare('DELETE FROM video_library_items WHERE id = ?').run(Number(id));
   return row;
@@ -1362,6 +1428,57 @@ function dbDeleteVideoLibraryItem(id) {
 
 async function ensureVideoLibraryDir() {
   await mkdir(VIDEO_LIBRARY_DIR, { recursive: true });
+}
+
+function runNextVideoLibraryThumbnailJob() {
+  while (activeVideoLibraryThumbnailJobs < VIDEO_LIBRARY_THUMBNAIL_CONCURRENCY && videoLibraryThumbnailJobs.length) {
+    const job = videoLibraryThumbnailJobs.shift();
+    activeVideoLibraryThumbnailJobs += 1;
+    Promise.resolve()
+      .then(job.task)
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        activeVideoLibraryThumbnailJobs -= 1;
+        runNextVideoLibraryThumbnailJob();
+      });
+  }
+}
+
+function enqueueVideoLibraryThumbnailJob(task) {
+  return new Promise((resolve, reject) => {
+    videoLibraryThumbnailJobs.push({ task, resolve, reject });
+    runNextVideoLibraryThumbnailJob();
+  });
+}
+
+async function ensureVideoLibraryThumbnail(row) {
+  await ensureVideoLibraryDir();
+  const thumbnailPath = path.join(VIDEO_LIBRARY_DIR, getVideoLibraryThumbnailName(row));
+  if (existsSync(thumbnailPath)) return thumbnailPath;
+  if (videoLibraryThumbnailPromises.has(thumbnailPath)) {
+    return videoLibraryThumbnailPromises.get(thumbnailPath);
+  }
+
+  const promise = enqueueVideoLibraryThumbnailJob(async () => {
+    if (existsSync(thumbnailPath)) return thumbnailPath;
+    const videoPath = path.join(VIDEO_LIBRARY_DIR, row.stored_name);
+    await execFileAsync('ffmpeg', [
+      '-y',
+      '-i', videoPath,
+      '-vf', `thumbnail=30,scale=${VIDEO_LIBRARY_THUMBNAIL_MAX_WIDTH}:-2:force_original_aspect_ratio=decrease`,
+      '-frames:v', '1',
+      '-q:v', '4',
+      thumbnailPath,
+    ], {
+      timeout: 30 * 1000,
+      killSignal: 'SIGKILL',
+    });
+    return thumbnailPath;
+  }).finally(() => {
+    videoLibraryThumbnailPromises.delete(thumbnailPath);
+  });
+  videoLibraryThumbnailPromises.set(thumbnailPath, promise);
+  return promise;
 }
 
 async function readVideoLibraryUploadBody(req) {
@@ -1407,6 +1524,146 @@ async function handleCreateVideoLibraryFolder(req, res) {
   }
 }
 
+async function handleGetVideoLibraryFolders(req, res) {
+  sendJson(res, 200, { ok: true, folders: dbGetVideoLibraryFolders() });
+}
+
+async function readVideoLibraryRemoteBuffer(response) {
+  const declaredSize = Number(response.headers.get('content-length') || 0);
+  if (declaredSize > VIDEO_LIBRARY_MAX_FILE_BYTES) {
+    throw new Error('生成视频超过 10MB，暂时不能保存到视频素材库');
+  }
+  if (!response.body) throw new Error('生成视频没有可读取的文件内容');
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = Buffer.from(value);
+    totalBytes += chunk.length;
+    if (totalBytes > VIDEO_LIBRARY_MAX_FILE_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw new Error('生成视频超过 10MB，暂时不能保存到视频素材库');
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, totalBytes);
+}
+
+async function handleSaveSeedanceVideoToLibrary(req, res) {
+  let filePath = '';
+  try {
+    const body = await readRequestBody(req);
+    const taskId = readValue(body?.taskId);
+    const folderName = sanitizeVideoLibraryFolder(body?.folderName);
+    const requestedCreatedAt = Number(body?.createdAt || 0);
+    const apiKey = readValue(SERVER_CONFIG.seedanceApiKey);
+    if (!taskId) {
+      sendJson(res, 400, { error: '缺少视频生成任务 ID' });
+      return;
+    }
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 SEEDANCE_API_KEY' });
+      return;
+    }
+
+    const taskResponse = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${encodeURIComponent(taskId)}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(60 * 1000),
+    });
+    const taskText = await taskResponse.text();
+    let taskPayload = null;
+    try {
+      taskPayload = taskText ? JSON.parse(taskText) : null;
+    } catch {}
+    if (!taskResponse.ok) {
+      const upstreamMessage = taskPayload?.error?.message || taskPayload?.message || '';
+      throw new Error(translateUpstreamError(upstreamMessage, '读取生成视频失败，请稍后重试'));
+    }
+
+    const videoUrl = extractSeedanceVideoUrl(taskPayload);
+    if (!videoUrl) throw new Error('这条生成记录还没有可保存的视频');
+
+    const videoResponse = await fetch(videoUrl, {
+      headers: {
+        'User-Agent': DOUYIN_USER_AGENT,
+        Accept: 'video/mp4,video/*;q=0.9,application/octet-stream;q=0.8',
+      },
+      signal: AbortSignal.timeout(2 * 60 * 1000),
+    });
+    if (!videoResponse.ok) {
+      throw new Error(`生成视频下载失败（HTTP ${videoResponse.status}）`);
+    }
+    const contentType = readValue(videoResponse.headers.get('content-type')).toLowerCase();
+    if (contentType.includes('text/html') || contentType.includes('application/json')) {
+      await videoResponse.body?.cancel().catch(() => {});
+      throw new Error('生成视频链接已失效，请刷新任务后重试');
+    }
+
+    const buffer = await readVideoLibraryRemoteBuffer(videoResponse);
+    if (!buffer.length) throw new Error('生成视频文件为空');
+    if (buffer.length < 12 || buffer.subarray(4, 8).toString('ascii') !== 'ftyp') {
+      throw new Error('生成结果不是有效的 MP4 文件，请刷新任务后重试');
+    }
+    const sha256 = createHash('sha256').update(buffer).digest('hex');
+    const existing = dbFindVideoLibraryByHash(sha256);
+    if (existing) {
+      sendJson(res, 200, {
+        ok: true,
+        duplicate: true,
+        item: existing,
+        sourceBytes: buffer.length,
+        savedBytes: existing.fileSize,
+        message: `这个视频已经保存在“${existing.folderName}”文件夹`,
+      });
+      return;
+    }
+
+    const taskCreatedAt = Number(taskPayload?.created_at || taskPayload?.data?.created_at || requestedCreatedAt || 0);
+    const originalName = formatSeedanceVideoLibraryName(taskCreatedAt);
+    const storedName = `${sha256}.mp4`;
+    await ensureVideoLibraryDir();
+    filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
+    await writeFile(filePath, buffer);
+    const savedFile = await stat(filePath);
+    if (savedFile.size !== buffer.length) {
+      throw new Error('保存后文件大小校验失败，请重试');
+    }
+    const item = dbInsertVideoLibraryItem({
+      folderName,
+      originalName,
+      storedName,
+      mimeType: 'video/mp4',
+      fileSize: savedFile.size,
+      sha256,
+      note: '来自创意创作',
+    });
+    void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch((thumbnailError) => {
+      console.warn('[video library] seedance_thumbnail_generation_failed', {
+        id: item.id,
+        taskId,
+        message: thumbnailError?.message || '',
+      });
+    });
+    sendJson(res, 201, {
+      ok: true,
+      duplicate: false,
+      item,
+      sourceBytes: buffer.length,
+      savedBytes: item.fileSize,
+      message: `已无损保存到“${folderName}”文件夹`,
+    });
+  } catch (error) {
+    if (filePath) await unlink(filePath).catch(() => {});
+    const isTimeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    sendJson(res, isTimeout ? 504 : 500, {
+      error: isTimeout ? '保存视频超时，请稍后重试' : (error?.message || '保存视频失败'),
+    });
+  }
+}
+
 async function handleUploadVideoLibrary(req, res) {
   let filePath = '';
   try {
@@ -1419,7 +1676,8 @@ async function handleUploadVideoLibrary(req, res) {
       sendJson(res, 413, { error: '视频文件不能超过 10MB' });
       return;
     }
-    if (!String(file.type || '').startsWith('video/')) {
+    const mimeType = normalizeVideoLibraryMimeType(file.name, file.type);
+    if (!mimeType) {
       sendJson(res, 400, { error: '只支持上传视频文件' });
       return;
     }
@@ -1433,7 +1691,7 @@ async function handleUploadVideoLibrary(req, res) {
     }
 
     await ensureVideoLibraryDir();
-    const extension = path.extname(sanitizeVideoLibraryFileName(file.name)).toLowerCase() || '.mp4';
+    const extension = getVideoLibraryExtension(file.name, mimeType);
     const storedName = `${sha256}${extension}`;
     filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
     await writeFile(filePath, buffer);
@@ -1441,10 +1699,16 @@ async function handleUploadVideoLibrary(req, res) {
       folderName,
       originalName: sanitizeVideoLibraryFileName(file.name),
       storedName,
-      mimeType: file.type || 'video/mp4',
+      mimeType,
       fileSize: buffer.length,
       sha256,
       note,
+    });
+    void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch((thumbnailError) => {
+      console.warn('[video library] thumbnail_generation_failed', {
+        id: item.id,
+        message: thumbnailError?.message || '',
+      });
     });
     sendJson(res, 201, { ok: true, duplicate: false, item });
   } catch (error) {
@@ -1480,7 +1744,10 @@ async function handleDeleteVideoLibrary(req, res, id) {
       sendJson(res, 404, { error: '视频记录不存在' });
       return;
     }
-    await unlink(path.join(VIDEO_LIBRARY_DIR, deleted.stored_name)).catch(() => {});
+    await Promise.all([
+      unlink(path.join(VIDEO_LIBRARY_DIR, deleted.stored_name)).catch(() => {}),
+      unlink(path.join(VIDEO_LIBRARY_DIR, getVideoLibraryThumbnailName(deleted))).catch(() => {}),
+    ]);
     sendJson(res, 200, { ok: true });
   } catch (error) {
     sendJson(res, 500, { error: error.message || '删除视频失败' });
@@ -1499,11 +1766,13 @@ async function handleVideoLibraryFile(req, res, id, url) {
     const info = await stat(filePath);
     const range = req.headers.range;
     const asAttachment = url.searchParams.get('download') === '1';
-    const filename = encodeURIComponent(row.original_name);
+    const downloadName = getVideoLibraryDownloadName(row);
+    const encodedFilename = encodeURIComponent(downloadName);
+    const fallbackFilename = `video-${Number(row.id)}${getVideoLibraryExtension(row.stored_name, row.mime_type)}`;
     const headers = {
       'Accept-Ranges': 'bytes',
-      'Content-Type': row.mime_type || 'video/mp4',
-      'Content-Disposition': `${asAttachment ? 'attachment' : 'inline'}; filename*=UTF-8''${filename}`,
+      'Content-Type': normalizeVideoLibraryMimeType(row.stored_name, row.mime_type) || 'video/mp4',
+      'Content-Disposition': `${asAttachment ? 'attachment' : 'inline'}; filename="${fallbackFilename}"; filename*=UTF-8''${encodedFilename}`,
       'Cache-Control': 'public, max-age=86400',
     };
     if (range) {
@@ -1525,6 +1794,30 @@ async function handleVideoLibraryFile(req, res, id, url) {
     createReadStream(filePath).pipe(res);
   } catch (error) {
     sendJson(res, 404, { error: '视频文件不存在或已损坏' });
+  }
+}
+
+async function handleVideoLibraryThumbnail(req, res, id) {
+  try {
+    const row = getCollectionDb().prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(id));
+    if (!row) {
+      sendJson(res, 404, { error: '视频不存在' });
+      return;
+    }
+    const thumbnailPath = await ensureVideoLibraryThumbnail(row);
+    const info = await stat(thumbnailPath);
+    res.writeHead(200, {
+      'Content-Type': 'image/jpeg',
+      'Content-Length': String(info.size),
+      'Cache-Control': 'public, max-age=604800, immutable',
+    });
+    createReadStream(thumbnailPath).pipe(res);
+  } catch (error) {
+    console.warn('[video library] thumbnail_read_failed', {
+      id: Number(id),
+      message: error?.message || '',
+    });
+    sendJson(res, 404, { error: '视频封面暂不可用' });
   }
 }
 
@@ -13313,8 +13606,18 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/video-library/folders') {
+    await handleGetVideoLibraryFolders(req, res);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/video-library/folders') {
     await handleCreateVideoLibraryFolder(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/video-library/import-seedance') {
+    await handleSaveSeedanceVideoToLibrary(req, res);
     return;
   }
 
@@ -13338,6 +13641,12 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname.startsWith('/api/video-library/videos/') && url.pathname.endsWith('/file')) {
     const id = url.pathname.replace(/^\/api\/video-library\/videos\//, '').replace(/\/file$/, '');
     await handleVideoLibraryFile(req, res, id, url);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/api/video-library/videos/') && url.pathname.endsWith('/thumbnail')) {
+    const id = url.pathname.replace(/^\/api\/video-library\/videos\//, '').replace(/\/thumbnail$/, '');
+    await handleVideoLibraryThumbnail(req, res, id);
     return;
   }
 
