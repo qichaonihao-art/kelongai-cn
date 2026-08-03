@@ -1754,6 +1754,30 @@ async function handleDeleteVideoLibrary(req, res, id) {
   }
 }
 
+function parseVideoLibraryByteRange(rangeHeader, fileSize) {
+  const match = String(rangeHeader || '').trim().match(/^bytes=(\d*)-(\d*)$/i);
+  if (!match || fileSize <= 0 || (!match[1] && !match[2])) return null;
+
+  if (!match[1]) {
+    const suffixLength = Number(match[2]);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return null;
+    return {
+      start: Math.max(0, fileSize - suffixLength),
+      end: fileSize - 1,
+    };
+  }
+
+  const start = Number(match[1]);
+  const requestedEnd = match[2] ? Number(match[2]) : fileSize - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || start < 0 || start >= fileSize || requestedEnd < start) {
+    return null;
+  }
+  return {
+    start,
+    end: Math.min(requestedEnd, fileSize - 1),
+  };
+}
+
 async function handleVideoLibraryFile(req, res, id, url) {
   try {
     const db = getCollectionDb();
@@ -1769,29 +1793,43 @@ async function handleVideoLibraryFile(req, res, id, url) {
     const downloadName = getVideoLibraryDownloadName(row);
     const encodedFilename = encodeURIComponent(downloadName);
     const fallbackFilename = `video-${Number(row.id)}${getVideoLibraryExtension(row.stored_name, row.mime_type)}`;
+    const etag = `"${readValue(row.sha256) || `${Number(row.id)}-${info.size}`}"`;
     const headers = {
       'Accept-Ranges': 'bytes',
       'Content-Type': normalizeVideoLibraryMimeType(row.stored_name, row.mime_type) || 'video/mp4',
       'Content-Disposition': `${asAttachment ? 'attachment' : 'inline'}; filename="${fallbackFilename}"; filename*=UTF-8''${encodedFilename}`,
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': 'private, max-age=31536000, immutable',
+      'ETag': etag,
+      'X-Content-Type-Options': 'nosniff',
     };
+    if (!range && req.headers['if-none-match'] === etag) {
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
     if (range) {
-      const match = String(range).match(/bytes=(\d*)-(\d*)/);
-      if (match) {
-        const start = match[1] ? Number(match[1]) : Math.max(0, info.size - Number(match[2] || 0) - 1);
-        const end = match[2] ? Number(match[2]) : info.size - 1;
-        if (start >= 0 && start <= end && end < info.size) {
-          headers['Content-Range'] = `bytes ${start}-${end}/${info.size}`;
-          headers['Content-Length'] = String(end - start + 1);
-          res.writeHead(206, headers);
-          createReadStream(filePath, { start, end }).pipe(res);
-          return;
-        }
+      const parsedRange = parseVideoLibraryByteRange(range, info.size);
+      if (!parsedRange) {
+        res.writeHead(416, {
+          'Content-Range': `bytes */${info.size}`,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': headers['Cache-Control'],
+        });
+        res.end();
+        return;
       }
+      const { start, end } = parsedRange;
+      headers['Content-Range'] = `bytes ${start}-${end}/${info.size}`;
+      headers['Content-Length'] = String(end - start + 1);
+      res.writeHead(206, headers);
+      if (req.method === 'HEAD') res.end();
+      else createReadStream(filePath, { start, end }).pipe(res);
+      return;
     }
     headers['Content-Length'] = String(info.size);
     res.writeHead(200, headers);
-    createReadStream(filePath).pipe(res);
+    if (req.method === 'HEAD') res.end();
+    else createReadStream(filePath).pipe(res);
   } catch (error) {
     sendJson(res, 404, { error: '视频文件不存在或已损坏' });
   }
@@ -13638,7 +13676,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'GET' && url.pathname.startsWith('/api/video-library/videos/') && url.pathname.endsWith('/file')) {
+  if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/api/video-library/videos/') && url.pathname.endsWith('/file')) {
     const id = url.pathname.replace(/^\/api\/video-library\/videos\//, '').replace(/\/file$/, '');
     await handleVideoLibraryFile(req, res, id, url);
     return;
