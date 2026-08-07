@@ -453,31 +453,24 @@ ${subtitleClause}${characterRemixClause}`;
 
 const IMAGE_TO_VIDEO_PROMPT = (options?: {
   addPainting?: boolean;
-  characterChange?: string;
-  sceneChange?: string;
-  elementChange?: string;
+  paintingPlacement?: string;
   additionalChange?: string;
   includeSubtitles?: boolean;
 }) => {
   const addPainting = options?.addPainting ?? false;
-  const characterChange = options?.characterChange?.trim();
-  const sceneChange = options?.sceneChange?.trim();
-  const elementChange = options?.elementChange?.trim();
+  const paintingPlacement = options?.paintingPlacement?.trim();
   const additionalChange = options?.additionalChange?.trim();
   const subtitleRule = options?.includeSubtitles
     ? '保留画面中需要呈现的字幕或文字内容；如果图片中存在文字，先准确识别，再在视频提示词中说明其位置、内容和保持清晰的要求。'
     : '不得添加字幕、标题、贴纸、水印、平台标识或额外文字叠加；图片中原本存在的文字也只能在用户明确要求保留时出现。';
   const optionalRules = [
     addPainting
-      ? '在不破坏原图片主体、构图和场景关系的前提下，加入适合画面环境的挂画或装饰画；挂画应自然融入墙面透视、光影和空间比例。'
+      ? `我上传的第二张图片是要插入的挂画/装饰画参考图。${paintingPlacement ? `请将它放置在：${paintingPlacement}。` : '请根据基础图片中适合的墙面或空间位置合理放置。'} 在不破坏原图片主体、构图和场景关系的前提下，加入这幅挂画；必须保持参考图的画面内容、宽高比、材质和主要颜色，并自然融入墙面透视、光影和空间比例。`
       : '',
-    characterChange ? `人物调整要求：${characterChange}。只改变用户明确指定的人物内容，人物以外的场景、道具、构图、镜头和光影保持图片设定。` : '',
-    sceneChange ? `场景调整要求：${sceneChange}。除明确调整的场景内容外，保留图片中的主体、构图、色彩关系和关键道具。` : '',
-    elementChange ? `元素增删或替换要求：${elementChange}。新增、删除或替换元素时，要说明其位置、大小、透视、材质和与原画面的关系，避免牵连改变未指定内容。` : '',
     additionalChange ? `其他调整要求：${additionalChange}` : '',
   ].filter(Boolean).join('\n');
 
-  const imageIsolationRule = '本次任务只基于当前上传的这张图片和本条指令进行判断。不得引用、继承、延续或假设任何历史会话、旧图片、旧提示词中的主体、道具、场景、挂画、装饰物、文字内容或风格要求；如果图片中没有明确出现某元素，除非用户在本条指令中明确要求，否则不得写入分析和最终提示词。';
+  const imageIsolationRule = `本次任务只基于当前上传的图片${addPainting ? '和当前上传的挂画参考图片' : ''}以及本条指令进行判断。不得引用、继承、延续或假设任何历史会话、旧图片、旧提示词中的主体、道具、场景、挂画、装饰物、文字内容或风格要求；如果图片中没有明确出现某元素，除非用户在本条指令中明确要求，否则不得写入分析和最终提示词。`;
   return `请把我上传的这张图片作为唯一的视觉基准，生成一份可以直接交给 Seedance 图生视频模型使用的完整视频提示词。不是简单描述图片，而是要在尽量保持图片内容一致的基础上，补全合理、真实、可执行的视频动作、镜头、时间顺序和动态细节。\n\n${imageIsolationRule}\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、图片生视频关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整提示词\n十二、负面提示词\n\n必须遵守以下规则：\n1. 先完整识别图片中的主体、人物年龄和性别（仅在确实可判断时）、服装、发型、姿态、道具、背景、空间层次、构图、景别、光线方向和色彩，再设计动态；不确定的内容不要臆造。\n2. 图片是本次唯一基准。除用户明确提出的调整外，主体身份、人物外观、场景、道具、画面布局、空间比例、色彩和氛围都要保持一致，不得凭借历史对话增加以前出现过的挂画、家具、人物或其他元素。\n3. 生成的视频动作必须从静态图片自然延伸出来，写清楚 0-2 秒、2-4 秒等连续且不重叠的时间段；每个时间段必须按先后顺序排列，不能出现时间倒置、区间交叉或超过总时长的描述。\n4. 镜头运动要克制、真实并服务于主体，不要凭空添加复杂运镜；同时明确固定机位、推近、横移、跟拍或轻微环绕等动作的起止时间。\n5. 如果有人物，正面或偏正面能看见眼睛时，必须表现出真人感：适当自然眨眼、视线轻微移动和真实聚焦变化，避免眼睛一直睁着、眼珠固定、空洞凝视和 AI 呆滞感。人物手部可见时，重点描述手指、手腕、手掌的自然动作、接触位置、发力方向和动作先后，避免手部畸形和穿模。\n6. 如果出现卷轴式挂画、卷筒挂画或挂画需要打开，必须明确写成沿轴向旋转的滚动展开，画布从卷筒中逐步释放；禁止滑动、平移、平铺或直接弹开。挂画、海报和其他平面元素必须保持原始宽高比、透视、边界和文字内容，不得拉伸变形。\n7. ${subtitleRule}\n8. 画面要减少 AI 感，保持自然的动作惯性、真实材质、合理接触、柔和光影和生活化节奏，避免塑料感、过度磨皮、虚假高光、僵硬表情、异常肢体和过度电影化。\n${optionalRules ? `\n本次可选调整：\n${optionalRules}\n` : ''}\n最终提示词必须以“生成指令”开头，内容完整、具体、可直接复制使用；不要把分析过程写成空泛建议。`;
 };
 const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const;
@@ -1125,9 +1118,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [replaceTarget, setReplaceTarget] = useState('');
   const [replaceWith, setReplaceWith] = useState('');
   const [imageToVideoAddPainting, setImageToVideoAddPainting] = useState(false);
-  const [imageToVideoCharacterChange, setImageToVideoCharacterChange] = useState('');
-  const [imageToVideoSceneChange, setImageToVideoSceneChange] = useState('');
-  const [imageToVideoElementChange, setImageToVideoElementChange] = useState('');
+  const [imageToVideoPainting, setImageToVideoPainting] = useState<SelectedCreativeMedia | null>(null);
+  const [imageToVideoPaintingPlacement, setImageToVideoPaintingPlacement] = useState('');
   const [additionalChange, setAdditionalChange] = useState('');
   const [enableCharacterRemix, setEnableCharacterRemix] = useState(false);
   const [characterRemix, setCharacterRemix] = useState('');
@@ -1166,6 +1158,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceImageInputRef = useRef<HTMLInputElement>(null);
+  const imageToVideoPaintingInputRef = useRef<HTMLInputElement>(null);
   const seedanceFileInputRef = useRef<HTMLInputElement>(null);
   const seedanceSettingsRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1778,12 +1771,18 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       }
       const prompt = IMAGE_TO_VIDEO_PROMPT({
         addPainting: imageToVideoAddPainting,
-        characterChange: imageToVideoCharacterChange,
-        sceneChange: imageToVideoSceneChange,
-        elementChange: imageToVideoElementChange,
+        paintingPlacement: imageToVideoPaintingPlacement,
         additionalChange,
         includeSubtitles,
       });
+      if (imageToVideoAddPainting && !imageToVideoPainting) {
+        setRequestError('勾选加入挂画后，请先上传一张挂画或装饰画参考图。');
+        return;
+      }
+      if (imageToVideoAddPainting && !imageToVideoPaintingPlacement.trim()) {
+        setRequestError('请填写挂画或装饰画要插入的位置。');
+        return;
+      }
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
@@ -2274,8 +2273,45 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     if (nextMode === reverseMode) return;
     clearSelectedMedia();
     clearReplaceImage();
+    clearImageToVideoPainting();
     setRequestError('');
     setReverseMode(nextMode);
+  }
+
+  async function handleImageToVideoPaintingChange(file: File | null) {
+    setRequestError('');
+    if (!file) return;
+    try {
+      if (!file.type.startsWith('image/')) {
+        throw new Error('挂画参考素材必须是图片格式。');
+      }
+      if (file.size > MAX_VIDEO_SIZE_BYTES) {
+        throw new Error('挂画参考图片请控制在 150MB 以内。');
+      }
+      const previewUrl = createMediaPreviewUrl(file);
+      if (imageToVideoPainting) {
+        URL.revokeObjectURL(imageToVideoPainting.previewUrl);
+      }
+      setImageToVideoPainting({ kind: 'image', file, previewUrl, fileName: file.name });
+      await saveUploadHistory(file, 'image');
+      await refreshUploadHistories();
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : '挂画参考图片读取失败，请换一张再试。');
+    } finally {
+      if (imageToVideoPaintingInputRef.current) {
+        imageToVideoPaintingInputRef.current.value = '';
+      }
+    }
+  }
+
+  function clearImageToVideoPainting() {
+    if (imageToVideoPainting) {
+      URL.revokeObjectURL(imageToVideoPainting.previewUrl);
+    }
+    setImageToVideoPainting(null);
+    if (imageToVideoPaintingInputRef.current) {
+      imageToVideoPaintingInputRef.current.value = '';
+    }
   }
 
   async function handleReplaceImageChange(file: File | null) {
@@ -2545,12 +2581,15 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     );
     const question = isReversePrompt ? rawQuestion + VIDEO_REVERSE_FORMAT_SUFFIX : rawQuestion;
     const isReplaceMode = reverseMode === 'replace' && selectedMedia?.kind === 'video' && replaceImage;
+    const isImageToVideoWithPainting = reverseMode === 'image' && selectedMedia?.kind === 'image' && imageToVideoAddPainting && imageToVideoPainting;
     const shouldIsolateReverseTask = !!selectedMedia && (isReversePrompt || isReplaceMode);
     const mediaToSend: SelectedCreativeMedia | SelectedCreativeMedia[] | null = isReplaceMode
       ? [selectedMedia!, replaceImage!]
-      : selectedMedia;
+      : isImageToVideoWithPainting
+        ? [selectedMedia!, imageToVideoPainting!]
+        : selectedMedia;
     const mediaMessages: Message[] = [];
-    if (isReplaceMode) {
+    if (isReplaceMode || isImageToVideoWithPainting) {
       if (selectedMedia) {
         mediaMessages.push({
           id: createMessageId(`creative_${selectedMedia.kind}`),
@@ -2563,15 +2602,16 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
           timestamp: new Date(),
         });
       }
-      if (replaceImage) {
+      const secondMedia = isReplaceMode ? replaceImage : imageToVideoPainting;
+      if (secondMedia) {
         mediaMessages.push({
-          id: createMessageId(`creative_${replaceImage.kind}`),
+          id: createMessageId(`creative_${secondMedia.kind}`),
           role: 'user',
-          type: replaceImage.kind,
+          type: secondMedia.kind,
           content: '',
-          mediaUrl: replaceImage.previewUrl,
-          mediaKind: replaceImage.kind,
-          fileName: replaceImage.fileName,
+          mediaUrl: secondMedia.previewUrl,
+          mediaKind: secondMedia.kind,
+          fileName: secondMedia.fileName,
           timestamp: new Date(),
         });
       }
@@ -2677,6 +2717,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         accept="image/*"
         className="hidden"
         onChange={(event) => handleReplaceImageChange(event.target.files?.[0] || null)}
+      />
+      <input
+        ref={imageToVideoPaintingInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => handleImageToVideoPaintingChange(event.target.files?.[0] || null)}
       />
 
       <header className="h-14 border-b border-slate-300 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 shrink-0 sticky top-0 z-30">
@@ -3000,32 +3047,52 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       加入挂画/装饰画
                     </label>
                   </div>
-                  <div className="grid gap-2 md:grid-cols-3">
-                    <input
-                      type="text"
-                      value={imageToVideoCharacterChange}
-                      onChange={(event) => setImageToVideoCharacterChange(event.target.value)}
-                      placeholder="人物调整，如：换成80岁女性"
-                      disabled={isLoading}
-                      className="w-full rounded-xl border border-indigo-100 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
-                    />
-                    <input
-                      type="text"
-                      value={imageToVideoSceneChange}
-                      onChange={(event) => setImageToVideoSceneChange(event.target.value)}
-                      placeholder="场景调整，如：改为中式客厅"
-                      disabled={isLoading}
-                      className="w-full rounded-xl border border-indigo-100 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
-                    />
-                    <input
-                      type="text"
-                      value={imageToVideoElementChange}
-                      onChange={(event) => setImageToVideoElementChange(event.target.value)}
-                      placeholder="元素增删，如：增加茶桌"
-                      disabled={isLoading}
-                      className="w-full rounded-xl border border-indigo-100 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
-                    />
-                  </div>
+                  {imageToVideoAddPainting && (
+                    <div className="space-y-3 rounded-xl border border-indigo-100 bg-white/80 p-3">
+                      {imageToVideoPainting ? (
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={imageToVideoPainting.previewUrl}
+                            alt={imageToVideoPainting.fileName}
+                            className="size-16 rounded-lg bg-slate-100 object-contain"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-bold text-slate-700">{imageToVideoPainting.fileName}</div>
+                            <div className="mt-1 text-[11px] text-indigo-500">已作为挂画参考图</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={clearImageToVideoPainting}
+                            className="flex size-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                            aria-label="移除挂画参考图"
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => imageToVideoPaintingInputRef.current?.click()}
+                          disabled={isLoading}
+                          className="flex min-h-[92px] w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-indigo-200 text-center text-indigo-600 hover:bg-indigo-50/50 disabled:opacity-60"
+                        >
+                          <ImageIcon className="size-5" />
+                          <span className="text-xs font-bold">上传挂画/装饰画参考图</span>
+                        </button>
+                      )}
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600">插入位置</label>
+                        <input
+                          type="text"
+                          value={imageToVideoPaintingPlacement}
+                          onChange={(event) => setImageToVideoPaintingPlacement(event.target.value)}
+                          placeholder="如：人物身后的白墙中央，位于人物右侧"
+                          disabled={isLoading}
+                          className="mt-1.5 w-full rounded-xl border border-indigo-100 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
