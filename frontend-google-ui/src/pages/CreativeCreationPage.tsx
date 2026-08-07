@@ -344,8 +344,10 @@ function getYearKey() {
   return String(new Date().getFullYear());
 }
 
-function recordSeedanceCost(durationSeconds: number) {
-  const cost = Math.max(1, Math.round(durationSeconds));
+function recordSeedanceCost(durationSeconds: number, model: SeedanceModelId) {
+  const cost = model === 'doubao-seedance-2-5-260628'
+    ? Number((Math.max(0, durationSeconds) * 1.5).toFixed(2))
+    : Math.max(1, Math.round(durationSeconds));
   const today = getTodayKey();
   const month = getMonthKey();
   const year = getYearKey();
@@ -475,6 +477,12 @@ const IMAGE_TO_VIDEO_PROMPT = (options?: {
 };
 const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const;
 const SEEDANCE_DURATIONS = [4, 5, 6, 8, 10, 12, 15] as const;
+const SEEDANCE_DURATIONS_2_5 = [4, 5, 6, 8, 10, 12, 15, 20, 25, 30] as const;
+type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-5-260628';
+
+function getSeedanceModelLabel(model: SeedanceModelId) {
+  return model === 'doubao-seedance-2-5-260628' ? 'Seedance 2.5 测试版' : 'Seedance 2.0 稳定版';
+}
 
 function createMessageId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1087,6 +1095,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [publicBaseUrlConfigured, setPublicBaseUrlConfigured] = useState(false);
   const [doubaoMultimodalModel, setDoubaoMultimodalModel] = useState('');
   const [selectedMedia, setSelectedMedia] = useState<SelectedCreativeMedia | null>(null);
+  const [seedanceModel, setSeedanceModel] = useState<SeedanceModelId>('doubao-seedance-2-0-260128');
   const [seedancePrompt, setSeedancePrompt] = useState("");
   const [seedanceRatio, setSeedanceRatio] = useState("9:16");
   const [seedanceDuration, setSeedanceDuration] = useState(5);
@@ -1971,6 +1980,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
     try {
       const task = await createSeedanceTask({
+        model: seedanceModel,
         prompt,
         ratio: seedanceRatio,
         duration: seedanceDuration,
@@ -2000,7 +2010,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
           )
         )
       );
-      recordSeedanceCost(seedanceDuration);
+      recordSeedanceCost(seedanceDuration, seedanceModel);
     } catch (error) {
       setSeedanceError(error instanceof Error ? error.message : 'Seedance 创建任务失败');
     } finally {
@@ -3592,14 +3602,33 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                     <Sparkles className="size-3.5" />
                     模块二
                   </div>
-                  <h2 className="text-base font-black text-slate-900">Seedance 2.0 生成视频</h2>
+                  <h2 className="text-base font-black text-slate-900">Seedance 生成视频</h2>
                 </div>
                 <div className="flex flex-col items-end gap-1.5">
+                  <select
+                    value={seedanceModel}
+                    onChange={(event) => {
+                      const nextModel = event.target.value as SeedanceModelId;
+                      setSeedanceModel(nextModel);
+                      // Each model starts from a predictable profile so switching
+                      // models cannot carry incompatible settings across.
+                      setSeedanceRatio('9:16');
+                      setSeedanceDuration(5);
+                      setSeedanceGenerateAudio(nextModel === 'doubao-seedance-2-5-260628');
+                      setSeedanceWatermark(false);
+                    }}
+                    disabled={isSeedanceLoading}
+                    className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[10px] font-black text-violet-700 outline-none disabled:opacity-60"
+                    aria-label="选择 Seedance 模型"
+                  >
+                    <option value="doubao-seedance-2-0-260128">Seedance 2.0 稳定版</option>
+                    <option value="doubao-seedance-2-5-260628">Seedance 2.5 测试版</option>
+                  </select>
                   <span className={cn(
                     "rounded-full px-3 py-1 text-[10px] font-black tracking-wider",
                     seedanceApiConfigured ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
                   )}>
-                    {seedanceApiConfigured ? '已接入 Seedance 2.0' : '待配置'}
+                    {seedanceApiConfigured ? `已接入 ${getSeedanceModelLabel(seedanceModel)}` : '待配置'}
                   </span>
                   <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[10px] font-semibold text-slate-500">
                     今日 ¥{seedanceCostStats.daily} / 本月 ¥{seedanceCostStats.monthly} / 本年 ¥{seedanceCostStats.yearly}
@@ -3813,7 +3842,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                         <div className="mt-4">
                           <div className="mb-2 text-xs font-black text-slate-700">视频时长</div>
                           <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
-                            {SEEDANCE_DURATIONS.map((duration) => (
+                            {(seedanceModel === 'doubao-seedance-2-5-260628' ? SEEDANCE_DURATIONS_2_5 : SEEDANCE_DURATIONS).map((duration) => (
                               <button
                                 key={duration}
                                 type="button"

@@ -496,6 +496,7 @@ export async function sendCreativeMessage(options: {
 }
 
 export async function createSeedanceTask(options: {
+  model: 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-5-260628';
   prompt: string;
   ratio: string;
   duration: number;
@@ -511,7 +512,7 @@ export async function createSeedanceTask(options: {
   if (options.references?.length) {
     const formData = new FormData();
     formData.append('prompt', options.prompt);
-    formData.append('model', 'doubao-seedance-2-0-260128');
+    formData.append('model', options.model);
     formData.append('ratio', options.ratio);
     formData.append('duration', String(options.duration));
     formData.append('generateAudio', String(options.generateAudio));
@@ -524,7 +525,7 @@ export async function createSeedanceTask(options: {
   } else {
     body = JSON.stringify({
       prompt: options.prompt,
-      model: 'doubao-seedance-2-0-260128',
+      model: options.model,
       ratio: options.ratio,
       duration: options.duration,
       generateAudio: options.generateAudio,

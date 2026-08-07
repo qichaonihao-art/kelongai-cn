@@ -11842,6 +11842,7 @@ async function handleSeedanceCreateTask(req, res) {
     const model = readValue(body?.model) || 'doubao-seedance-2-0-260128';
     const ratio = readValue(body?.ratio) || '16:9';
     const duration = Number.parseInt(String(body?.duration || 5), 10);
+    const isSeedance25 = model === 'doubao-seedance-2-5-260628';
     const generateAudio = body?.generateAudio !== false;
     const watermark = body?.watermark === true;
     const uploadedFiles = Array.isArray(body?.files) ? body.files : [];
@@ -11867,18 +11868,27 @@ async function handleSeedanceCreateTask(req, res) {
       return;
     }
 
+    if (!['doubao-seedance-2-0-260128', 'doubao-seedance-2-5-260628'].includes(model)) {
+      sendJson(res, 400, { error: '不支持的 Seedance 模型' });
+      return;
+    }
+
     if (!['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive'].includes(ratio)) {
       sendJson(res, 400, { error: 'ratio 取值不合法' });
       return;
     }
 
-    if (!Number.isInteger(duration) || duration < 4 || duration > 15) {
-      sendJson(res, 400, { error: 'Seedance 2.0 的 duration 需为 4 到 15 秒之间的整数' });
+    const maxDuration = isSeedance25 ? 30 : 15;
+    if (!Number.isInteger(duration) || duration < 4 || duration > maxDuration) {
+      sendJson(res, 400, { error: `${isSeedance25 ? 'Seedance 2.5' : 'Seedance 2.0'} 的 duration 需为 4 到 ${maxDuration} 秒之间的整数` });
       return;
     }
 
-    if (uploadedFiles.length > 13) {
-      sendJson(res, 400, { error: '参考素材最多支持 9 张图片、3 个视频、3 段音频，请减少上传数量。' });
+    const maxImageCount = isSeedance25 ? 30 : 9;
+    const maxVideoCount = isSeedance25 ? 10 : 3;
+    const maxAudioCount = isSeedance25 ? 10 : 3;
+    if (uploadedFiles.length > (isSeedance25 ? 50 : 13)) {
+      sendJson(res, 400, { error: `${isSeedance25 ? 'Seedance 2.5' : 'Seedance 2.0'} 最多支持 ${maxImageCount} 张图片、${maxVideoCount} 个视频、${maxAudioCount} 段音频，请减少上传数量。` });
       return;
     }
 
@@ -11897,8 +11907,8 @@ async function handleSeedanceCreateTask(req, res) {
 
       if (mimeType.startsWith('image/')) {
         imageCount += 1;
-        if (imageCount > 9) {
-          sendJson(res, 400, { error: 'Seedance 2.0 最多支持 9 张参考图片。' });
+        if (imageCount > maxImageCount) {
+          sendJson(res, 400, { error: `${isSeedance25 ? 'Seedance 2.5' : 'Seedance 2.0'} 最多支持 ${maxImageCount} 张参考图片。` });
           return;
         }
         const compressedFile = await compressMediaForArk(file, 'image');
@@ -11915,8 +11925,8 @@ async function handleSeedanceCreateTask(req, res) {
 
       if (mimeType.startsWith('video/')) {
         videoCount += 1;
-        if (videoCount > 3) {
-          sendJson(res, 400, { error: 'Seedance 2.0 最多支持 3 个参考视频。' });
+        if (videoCount > maxVideoCount) {
+          sendJson(res, 400, { error: `${isSeedance25 ? 'Seedance 2.5' : 'Seedance 2.0'} 最多支持 ${maxVideoCount} 个参考视频。` });
           return;
         }
         if (file.size > 50 * 1024 * 1024) {
@@ -11941,8 +11951,8 @@ async function handleSeedanceCreateTask(req, res) {
 
       if (mimeType.startsWith('audio/')) {
         audioCount += 1;
-        if (audioCount > 3) {
-          sendJson(res, 400, { error: 'Seedance 2.0 最多支持 3 段参考音频。' });
+        if (audioCount > maxAudioCount) {
+          sendJson(res, 400, { error: `${isSeedance25 ? 'Seedance 2.5' : 'Seedance 2.0'} 最多支持 ${maxAudioCount} 段参考音频。` });
           return;
         }
         if (file.size > 15 * 1024 * 1024) {
