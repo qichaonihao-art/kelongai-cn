@@ -88,6 +88,7 @@ interface SavedCreativeSession {
 interface SeedanceHistoryItem {
   id: string;
   taskId: string;
+  model: SeedanceModelId;
   prompt: string;
   status?: string;
   videoUrl?: string;
@@ -729,6 +730,7 @@ function createSeedanceHistoryItem(
   task: SeedanceTaskResult,
   options: {
     prompt: string;
+    model: SeedanceModelId;
     ratio: string;
     duration: number;
     generateAudio: boolean;
@@ -741,6 +743,7 @@ function createSeedanceHistoryItem(
   return {
     id: task.taskId || createMessageId('seedance_history'),
     taskId: task.taskId,
+    model: options.model,
     prompt: options.prompt,
     status: task.status,
     videoUrl: task.videoUrl,
@@ -798,7 +801,15 @@ function loadSeedanceHistory() {
       window.localStorage.setItem(SEEDANCE_HISTORY_STORAGE_KEY, JSON.stringify(filtered));
     }
 
-    return filtered.slice(0, MAX_SEEDANCE_HISTORY_ITEMS);
+    return filtered
+      .map((item) => ({
+        ...item,
+        // Records created before model switching were all Seedance 2.0.
+        model: item.model === 'doubao-seedance-2-5-260628'
+          ? 'doubao-seedance-2-5-260628' as SeedanceModelId
+          : 'doubao-seedance-2-0-260128' as SeedanceModelId,
+      }))
+      .slice(0, MAX_SEEDANCE_HISTORY_ITEMS);
   } catch {
     window.localStorage.removeItem(SEEDANCE_HISTORY_STORAGE_KEY);
     return [];
@@ -2001,6 +2012,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               createdAt: task.createdAt || Math.floor(Date.now() / 1000),
             },
             {
+              model: seedanceModel,
               prompt,
               ratio: seedanceRatio,
               duration: seedanceDuration,
@@ -2075,6 +2087,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setSeedanceTask(seedanceHistoryItemToTask(item));
     setSeedancePrompt(item.prompt);
     setSeedanceReplaceHighlight(null);
+    setSeedanceModel(item.model);
     setSeedanceRatio(item.ratio);
     setSeedanceDuration(item.duration);
     setSeedanceGenerateAudio(item.generateAudio);
@@ -2192,6 +2205,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     let imageCount = seedanceReferences.filter((item) => item.kind === 'image').length;
     let videoCount = seedanceReferences.filter((item) => item.kind === 'video').length;
     let audioCount = seedanceReferences.filter((item) => item.kind === 'audio').length;
+    const isSeedance25 = seedanceModel === 'doubao-seedance-2-5-260628';
+    const maxImageCount = isSeedance25 ? 30 : 9;
+    const maxVideoCount = isSeedance25 ? 10 : 3;
+    const maxAudioCount = isSeedance25 ? 10 : 3;
+    const maxReferenceCount = isSeedance25 ? 50 : 13;
 
     for (const file of Array.from(files)) {
       const kind = getSeedanceReferenceKind(file);
@@ -2199,11 +2217,16 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         setSeedanceError(`不支持的素材格式：${file.name}`);
         continue;
       }
+      if (imageCount + videoCount + audioCount >= maxReferenceCount) {
+        setSeedanceError(`${getSeedanceModelLabel(seedanceModel)}最多添加 ${maxReferenceCount} 个参考素材。`);
+        continue;
+      }
 
       if (kind === 'image') {
         imageCount += 1;
-        if (imageCount > 9) {
-          setSeedanceError('参考图片最多上传 9 张。');
+        if (imageCount > maxImageCount) {
+          imageCount -= 1;
+          setSeedanceError(`参考图片最多上传 ${maxImageCount} 张。`);
           continue;
         }
       }
@@ -2214,11 +2237,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
           continue;
         }
         videoCount += 1;
-        if (videoCount > 3) {
-          setSeedanceError('参考视频最多上传 3 个。');
+        if (videoCount > maxVideoCount) {
+          videoCount -= 1;
+          setSeedanceError(`参考视频最多上传 ${maxVideoCount} 个。`);
           continue;
         }
         if (file.size > 50 * 1024 * 1024) {
+          videoCount -= 1;
           setSeedanceError('参考视频单个文件不能超过 50MB。');
           continue;
         }
@@ -2226,11 +2251,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
       if (kind === 'audio') {
         audioCount += 1;
-        if (audioCount > 3) {
-          setSeedanceError('参考音频最多上传 3 段。');
+        if (audioCount > maxAudioCount) {
+          audioCount -= 1;
+          setSeedanceError(`参考音频最多上传 ${maxAudioCount} 段。`);
           continue;
         }
         if (file.size > 15 * 1024 * 1024) {
+          audioCount -= 1;
           setSeedanceError('参考音频单个文件不能超过 15MB。');
           continue;
         }
@@ -4156,6 +4183,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                                               {item.prompt.replace(/\s+/g, ' ').trim() || 'Seedance 视频任务'}
                                             </div>
                                             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-slate-400">
+                                              <span className={item.model === 'doubao-seedance-2-5-260628' ? 'font-black text-violet-600' : 'font-black text-slate-500'}>
+                                                {getSeedanceModelLabel(item.model)}
+                                              </span>
                                               <span>{formatSessionTime(item.savedAt)}</span>
                                               <span>{item.ratio}</span>
                                               <span>{item.duration} 秒</span>
@@ -4305,6 +4335,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                     {seedanceModalItem.prompt.replace(/\s+/g, ' ').slice(0, 60) || 'Seedance 视频'}
                   </div>
                   <div className="mt-0.5 flex gap-3 text-xs text-slate-400">
+                    <span className={seedanceModalItem.model === 'doubao-seedance-2-5-260628' ? 'font-black text-violet-300' : 'font-black text-slate-300'}>
+                      {getSeedanceModelLabel(seedanceModalItem.model)}
+                    </span>
                     <span>{seedanceModalItem.ratio}</span>
                     <span>{seedanceModalItem.duration} 秒</span>
                     <span>{getSeedanceStatusLabel(seedanceModalItem.status, true)}</span>
