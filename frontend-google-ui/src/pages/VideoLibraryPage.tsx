@@ -432,7 +432,7 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
               {groupVideosByDate(folderItems).map((dateGroup) => (
                 <section key={dateGroup.key}>
                   <div className="mb-2 flex items-center gap-3">
-                    <h3 className="shrink-0 text-sm font-black text-slate-700">{dateGroup.label}</h3>
+                    <h3 className="shrink-0 text-xl font-black text-slate-800">{dateGroup.label}</h3>
                     <span className="text-[11px] font-bold text-slate-400">{dateGroup.items.length} 个素材</span>
                     <div className="h-px flex-1 bg-slate-200" />
                   </div>
