@@ -2819,25 +2819,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
           <ModuleQuickNav current="creative" onNavigate={onNavigate} />
         </div>
         <div className="flex items-center gap-4">
-          <div className="hidden md:flex items-center gap-2">
-            <div className="relative">
-              <History className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
-              <select
-                value={activeSessionId}
-                onChange={(event) => handleSwitchSession(event.target.value)}
-                disabled={isLoading || savedSessions.length === 0}
-                className="h-9 min-w-[220px] rounded-full border border-slate-200 bg-white pl-9 pr-8 text-xs font-medium text-slate-600 outline-none transition-colors hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {!savedSessions.some((session) => session.id === activeSessionId) && (
-                  <option value={activeSessionId}>当前新会话</option>
-                )}
-                {savedSessions.map((session) => (
-                  <option key={session.id} value={session.id}>
-                    {session.title} · {formatSessionTime(session.updatedAt)}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="flex items-center">
             <button
               type="button"
               onClick={handleCreateNewSession}
@@ -2845,7 +2827,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Plus className="size-3.5" />
-              新建会话
+              新建对话
             </button>
           </div>
           <div className="flex items-center gap-2">
