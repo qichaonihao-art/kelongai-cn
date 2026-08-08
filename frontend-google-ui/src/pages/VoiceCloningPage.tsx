@@ -18,7 +18,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
-import ModuleQuickNav from "@/src/components/ModuleQuickNav";
+import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
 import SiteFooter from "@/src/components/SiteFooter";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
@@ -46,7 +46,7 @@ import { motion, AnimatePresence } from "motion/react";
 
 interface VoiceCloningPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding') => void;
+  onNavigate: (page: ModuleId) => void;
 }
 
 type VoicePlatformLabel = '智谱' | '阿里云' | '火山引擎' | 'SiliconFlow 声音克隆';

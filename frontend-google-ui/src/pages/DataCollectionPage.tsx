@@ -19,7 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import ModuleQuickNav from "@/src/components/ModuleQuickNav";
+import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
 import SiteFooter from "@/src/components/SiteFooter";
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
@@ -40,7 +40,7 @@ import {
 
 interface DataCollectionPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding') => void;
+  onNavigate: (page: ModuleId) => void;
 }
 
 type Tab = 'monitor' | 'library';

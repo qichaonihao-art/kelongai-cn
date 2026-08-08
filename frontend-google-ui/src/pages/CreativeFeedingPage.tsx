@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import ModuleQuickNav from "@/src/components/ModuleQuickNav";
+import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
 import { cn } from "@/src/lib/utils";
 import {
   createCreativeOpening,
@@ -32,7 +32,7 @@ import {
 
 interface CreativeFeedingPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding') => void;
+  onNavigate: (page: ModuleId) => void;
 }
 
 const emptyOpeningDraft = {

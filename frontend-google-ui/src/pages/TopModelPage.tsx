@@ -38,7 +38,7 @@ function DoubaoLogo({ className }: { className?: string }) {
     </svg>
   );
 }
-import ModuleQuickNav from "@/src/components/ModuleQuickNav";
+import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
 import { cn } from "@/src/lib/utils";
 import { streamChatCompletion, type ChatMessage, AVAILABLE_MODELS } from "@/src/lib/topmodel";
 import ReactMarkdown from "react-markdown";
@@ -46,7 +46,7 @@ import remarkGfm from "remark-gfm";
 
 interface TopModelPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding') => void;
+  onNavigate: (page: ModuleId) => void;
 }
 
 const STORAGE_KEY = 'topmodel_chat_history';

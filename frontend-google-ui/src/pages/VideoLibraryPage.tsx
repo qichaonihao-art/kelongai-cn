@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Download, FolderInput, FolderOpen, Loader2, Play, Plus, RefreshCw, Search, Trash2, Upload, Video, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
+import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import {
   deleteVideoLibraryVideo,
   createVideoLibraryFolder,
@@ -14,6 +15,7 @@ import {
 
 interface VideoLibraryPageProps {
   onBack: () => void;
+  onNavigate: (page: ModuleId) => void;
 }
 
 interface UploadProgress {
@@ -62,7 +64,7 @@ function groupVideosByDate(items: VideoLibraryItem[]) {
   }));
 }
 
-export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
+export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPageProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const previewWarmupRef = useRef<{ id: number; video: HTMLVideoElement } | null>(null);
   const [items, setItems] = useState<VideoLibraryItem[]>([]);
@@ -386,11 +388,13 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
   return (
     <main className="min-h-screen bg-slate-100 px-3 py-4 text-slate-900 md:px-6">
       <section className="mx-auto max-w-7xl rounded-2xl border border-white/80 bg-white/90 p-3 shadow-sm md:p-4">
-        <div className="mb-3 flex items-center gap-2 border-b border-slate-100 pb-3">
+        <div className="mb-3 flex min-w-0 items-center gap-2 border-b border-slate-100 pb-3">
           <button type="button" onClick={onBack} className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50" title="返回首页">
             <ArrowLeft className="size-4" />
           </button>
-          <div className="flex min-w-0 items-center gap-2 text-sm font-black text-slate-700"><Video className="size-4 text-sky-500" />视频素材库{selectedFolder && <><span className="text-slate-300">/</span><span className="truncate text-sky-600">{selectedFolder}</span></>}</div>
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <ModuleQuickNav current="video-library" onNavigate={onNavigate} />
+          </div>
           <button type="button" onClick={() => { setError(''); setNewFolderDraft(''); setIsFolderOpen(true); }} className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-black text-white shadow-sm hover:bg-slate-800">
             <Plus className="size-4" />新建文件夹
           </button>
@@ -432,7 +436,7 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
               {groupVideosByDate(folderItems).map((dateGroup) => (
                 <section key={dateGroup.key}>
                   <div className="mb-2 flex items-center gap-3">
-                    <h3 className="shrink-0 text-xl font-black text-slate-800">{dateGroup.label}</h3>
+                    <h3 className="shrink-0 text-2xl font-black text-slate-800 md:text-3xl">{dateGroup.label}</h3>
                     <span className="text-[11px] font-bold text-slate-400">{dateGroup.items.length} 个素材</span>
                     <div className="h-px flex-1 bg-slate-200" />
                   </div>

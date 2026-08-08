@@ -15,12 +15,12 @@ import {
   Sparkles,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import ModuleQuickNav from "@/src/components/ModuleQuickNav";
+import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
 import SiteFooter from "@/src/components/SiteFooter";
 
 interface UniversalExtractorPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'universal' | 'feeding') => void;
+  onNavigate: (page: ModuleId) => void;
 }
 
 const PLATFORMS = [

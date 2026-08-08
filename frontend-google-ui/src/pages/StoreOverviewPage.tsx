@@ -23,7 +23,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import ModuleQuickNav from '@/src/components/ModuleQuickNav';
+import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import SiteFooter from '@/src/components/SiteFooter';
 import { cn } from '@/src/lib/utils';
 import {
@@ -42,7 +42,7 @@ import {
 
 interface StoreOverviewPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding') => void;
+  onNavigate: (page: ModuleId) => void;
 }
 
 const NODE_TYPES: {

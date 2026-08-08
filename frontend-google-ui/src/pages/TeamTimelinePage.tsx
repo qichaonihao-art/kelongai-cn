@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ArrowLeft, Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
+import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 
 interface TeamTimelinePageProps {
   onBack: () => void;
+  onNavigate: (page: ModuleId) => void;
 }
 
 interface TimelineRecord {
@@ -55,7 +57,7 @@ function sortRecords(records: TimelineRecord[]) {
   return [...records].sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
 }
 
-export default function TeamTimelinePage({ onBack }: TeamTimelinePageProps) {
+export default function TeamTimelinePage({ onBack, onNavigate }: TeamTimelinePageProps) {
   const [records, setRecords] = useState<TimelineRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -146,10 +148,11 @@ export default function TeamTimelinePage({ onBack }: TeamTimelinePageProps) {
     <div className="min-h-screen bg-background px-4 py-5 text-slate-900 md:px-8 md:py-8">
       <style>{`@keyframes team-timeline-flow { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }`}</style>
       <div className="mx-auto max-w-6xl">
-        <div className="mb-5 flex items-center justify-between px-1">
+        <div className="mb-5 flex min-w-0 items-center gap-3 px-1">
           <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-sm font-bold text-slate-400 transition hover:text-slate-800">
             <ArrowLeft className="size-4" /> 返回主页
           </button>
+          <ModuleQuickNav current="timeline" onNavigate={onNavigate} />
         </div>
 
         <p className="mb-2 text-center text-sm font-semibold tracking-[0.18em] text-slate-400 md:text-base">

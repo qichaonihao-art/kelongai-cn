@@ -3,9 +3,10 @@ import { BookOpenText, Mic2, Wand2, LogOut, Download, Network, Image, Crown, Cal
 import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import { motion } from "motion/react";
+import type { ModuleId } from "@/src/components/ModuleQuickNav";
 
 interface HomePageProps {
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding' | 'timeline' | 'video-library') => void;
+  onNavigate: (page: ModuleId) => void;
   onLogout: () => void;
 }
 

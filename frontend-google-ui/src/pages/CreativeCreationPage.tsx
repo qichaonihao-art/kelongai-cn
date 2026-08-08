@@ -25,7 +25,7 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
-import ModuleQuickNav from "@/src/components/ModuleQuickNav";
+import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
 import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import {
@@ -67,7 +67,7 @@ interface Message {
 
 interface CreativeCreationPageProps {
   onBack: () => void;
-  onNavigate: (page: 'voice' | 'creative' | 'douyin' | 'collection' | 'image' | 'topmodel' | 'feeding') => void;
+  onNavigate: (page: ModuleId) => void;
 }
 
 interface PersistedCreativeMessage {
