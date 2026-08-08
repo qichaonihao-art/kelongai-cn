@@ -3934,13 +3934,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                     className={cn(
                       "rounded-full border px-3 py-1 text-[10px] font-black outline-none transition-colors disabled:opacity-60",
                       seedanceModel === 'doubao-seedance-2-5-260628'
-                        ? "border-violet-200 bg-violet-50 text-violet-700"
-                        : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        ? "border-violet-600 bg-violet-600 text-white shadow-[0_5px_14px_rgba(124,58,237,0.28)]"
+                        : "border-emerald-600 bg-emerald-600 text-white shadow-[0_5px_14px_rgba(5,150,105,0.28)]"
                     )}
                     aria-label="选择 Seedance 模型"
                   >
-                    <option value="doubao-seedance-2-0-260128">Seedance 2.0 稳定版</option>
-                    <option value="doubao-seedance-2-5-260628">Seedance 2.5 测试版</option>
+                    <option className="bg-white text-slate-800" value="doubao-seedance-2-0-260128">Seedance 2.0 稳定版</option>
+                    <option className="bg-white text-slate-800" value="doubao-seedance-2-5-260628">Seedance 2.5 测试版</option>
                   </select>
                   <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[10px] font-semibold text-slate-500">
                     今日 ¥{seedanceCostStats.daily} / 本月 ¥{seedanceCostStats.monthly} / 本年 ¥{seedanceCostStats.yearly}
