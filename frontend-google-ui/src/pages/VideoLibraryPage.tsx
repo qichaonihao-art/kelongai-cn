@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Download, FolderOpen, Loader2, Play, Plus, RefreshCw, Search, Trash2, Upload, Video, X } from 'lucide-react';
+import { ArrowLeft, Download, FolderInput, FolderOpen, Loader2, Play, Plus, RefreshCw, Search, Trash2, Upload, Video, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import {
   deleteVideoLibraryVideo,
@@ -29,6 +29,39 @@ interface UploadProgress {
 const DEFAULT_FOLDER = '通用素材';
 const VIDEO_FILE_EXTENSION_PATTERN = /\.(mp4|m4v|mov|webm|avi|mkv)$/i;
 
+function getVideoDateKey(timestamp: number) {
+  const date = new Date(timestamp * 1000);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatVideoDateLabel(timestamp: number) {
+  const date = new Date(timestamp * 1000);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const key = getVideoDateKey(timestamp);
+  const dateText = `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+  if (key === getVideoDateKey(today.getTime() / 1000)) return `今天 · ${dateText}`;
+  if (key === getVideoDateKey(yesterday.getTime() / 1000)) return `昨天 · ${dateText}`;
+  return dateText;
+}
+
+function groupVideosByDate(items: VideoLibraryItem[]) {
+  const groups = new Map<string, VideoLibraryItem[]>();
+  items.forEach((item) => {
+    const key = getVideoDateKey(item.createdAt);
+    groups.set(key, [...(groups.get(key) || []), item]);
+  });
+  return Array.from(groups.entries()).map(([key, dateItems]) => ({
+    key,
+    label: formatVideoDateLabel(dateItems[0]?.createdAt || 0),
+    items: dateItems,
+  }));
+}
+
 export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const previewWarmupRef = useRef<{ id: number; video: HTMLVideoElement } | null>(null);
@@ -39,6 +72,9 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
   const [folderDraft, setFolderDraft] = useState(DEFAULT_FOLDER);
   const [newFolderDraft, setNewFolderDraft] = useState('');
   const [selectedItem, setSelectedItem] = useState<VideoLibraryItem | null>(null);
+  const [movingItem, setMovingItem] = useState<VideoLibraryItem | null>(null);
+  const [moveTargetFolder, setMoveTargetFolder] = useState('');
+  const [isMoving, setIsMoving] = useState(false);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -236,6 +272,33 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
     }
   }
 
+  function openMoveDialog(item: VideoLibraryItem) {
+    const firstAvailableFolder = folders.find((folder) => folder !== item.folderName) || '';
+    setMovingItem(item);
+    setMoveTargetFolder(firstAvailableFolder);
+    setError('');
+  }
+
+  async function handleMoveVideo() {
+    if (!movingItem || !moveTargetFolder || moveTargetFolder === movingItem.folderName || isMoving) return;
+    setIsMoving(true);
+    setError('');
+    try {
+      const updated = await updateVideoLibraryItem(movingItem.id, { folderName: moveTargetFolder });
+      setItems((previous) => selectedFolder && selectedFolder !== updated.folderName
+        ? previous.filter((item) => item.id !== updated.id)
+        : previous.map((item) => item.id === updated.id ? updated : item));
+      if (selectedItem?.id === updated.id) setSelectedItem(updated);
+      setMovingItem(null);
+      setMoveTargetFolder('');
+      setNotice(`“${updated.originalName}”已移动到“${updated.folderName}”，所有设备都会同步`);
+    } catch (moveError) {
+      setError(moveError instanceof Error ? moveError.message : '移动视频失败');
+    } finally {
+      setIsMoving(false);
+    }
+  }
+
   function warmVideoPreview(item: VideoLibraryItem) {
     if (previewWarmupRef.current?.id === item.id) return;
     const previous = previewWarmupRef.current?.video;
@@ -250,6 +313,74 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
     video.src = item.streamUrl;
     video.load();
     previewWarmupRef.current = { id: item.id, video };
+  }
+
+  function renderVideoCard(item: VideoLibraryItem) {
+    return (
+      <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md">
+        <button
+          type="button"
+          onPointerEnter={() => warmVideoPreview(item)}
+          onFocus={() => warmVideoPreview(item)}
+          onTouchStart={() => warmVideoPreview(item)}
+          onClick={() => setSelectedItem(item)}
+          className="group relative flex aspect-video w-full items-center justify-center overflow-hidden bg-slate-900 text-left"
+        >
+          <Video className="size-8 text-slate-600" />
+          <img
+            src={item.thumbnailUrl}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onError={(event) => { event.currentTarget.style.display = 'none'; }}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+          <span className="absolute inset-0 flex items-center justify-center bg-slate-950/0 text-white transition-colors group-hover:bg-slate-950/30">
+            <Play className="size-7 opacity-0 drop-shadow transition-opacity group-hover:opacity-100" />
+          </span>
+        </button>
+        <div className="p-2.5">
+          <div className="flex items-center gap-1">
+            {renamingId === item.id ? (
+              <input
+                autoFocus
+                value={renameDraft}
+                onChange={(event) => setRenameDraft(event.target.value)}
+                onBlur={() => void saveRename(item)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void saveRename(item);
+                  if (event.key === 'Escape') setRenamingId(null);
+                }}
+                className="min-w-0 flex-1 rounded-md border border-sky-300 bg-sky-50 px-1.5 py-1 text-xs font-black outline-none"
+              />
+            ) : (
+              <h3 onDoubleClick={() => startRename(item)} className="min-w-0 flex-1 cursor-text truncate text-xs font-black" title="双击修改名称">
+                {item.originalName}
+              </h3>
+            )}
+            <button type="button" onClick={() => setSelectedItem(item)} className={cn('shrink-0 rounded-md px-1.5 py-1 text-[10px] font-black', item.note ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200')}>
+              备注
+            </button>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[10px] font-semibold text-slate-400">
+            <span>{formatVideoLibrarySize(item.fileSize)}</span>
+            <span>{formatVideoLibraryTime(item.createdAt)}</span>
+          </div>
+          {item.note && <p className="mt-2 line-clamp-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-bold leading-4 text-amber-700">{item.note}</p>}
+          <div className="mt-2 flex items-center gap-1.5">
+            <a href={item.downloadUrl} download={item.downloadName} className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-200">
+              <Download className="size-3" />下载
+            </a>
+            <button type="button" onClick={() => openMoveDialog(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-sky-50 hover:text-sky-600" title="移动到其他文件夹">
+              <FolderInput className="size-3.5" />
+            </button>
+            <button type="button" onClick={() => void handleDelete(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500" title="删除视频">
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
+        </div>
+      </article>
+    );
   }
 
   return (
@@ -278,7 +409,41 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
       </section>
 
       <section className="mx-auto mt-4 max-w-7xl space-y-5">
-        {isLoading ? <div className="flex items-center justify-center rounded-2xl border border-white/80 bg-white/80 py-20 text-sm font-bold text-slate-400"><Loader2 className="mr-2 size-5 animate-spin" />正在读取共享视频库</div> : isFolderHome ? folderHomeContent : groupedItems.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 py-20 text-center"><FolderOpen className="mx-auto size-9 text-slate-300" /><h2 className="mt-3 text-lg font-black text-slate-600">这个文件夹里还没有视频</h2><p className="mt-1 text-sm font-semibold text-slate-400">可以从这里上传第一条视频</p><button type="button" onClick={() => openUpload(selectedFolder)} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-black text-white"><Plus className="size-4" />上传视频</button></div> : groupedItems.map(([folder, folderItems]) => <div key={folder}><div className="mb-2 flex items-center gap-2"><FolderOpen className="size-4 text-sky-500" /><h2 className="text-base font-black">{folder}</h2><span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-black text-slate-500">{folderItems.length}</span><button type="button" onClick={() => openUpload(folder)} className="ml-auto inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-600 hover:bg-slate-50"><Plus className="size-3" />上传</button></div><div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">{folderItems.map((item) => <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md"><button type="button" onPointerEnter={() => warmVideoPreview(item)} onFocus={() => warmVideoPreview(item)} onTouchStart={() => warmVideoPreview(item)} onClick={() => setSelectedItem(item)} className="group relative flex aspect-video w-full items-center justify-center overflow-hidden bg-slate-900 text-left"><Video className="size-8 text-slate-600" /><img src={item.thumbnailUrl} alt="" loading="lazy" decoding="async" onError={(event) => { event.currentTarget.style.display = 'none'; }} className="absolute inset-0 h-full w-full object-cover" /><span className="absolute inset-0 flex items-center justify-center bg-slate-950/0 text-white transition-colors group-hover:bg-slate-950/30"><Play className="size-7 opacity-0 drop-shadow transition-opacity group-hover:opacity-100" /></span></button><div className="p-2.5"><div className="flex items-center gap-1">{renamingId === item.id ? <input autoFocus value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onBlur={() => void saveRename(item)} onKeyDown={(event) => { if (event.key === 'Enter') void saveRename(item); if (event.key === 'Escape') setRenamingId(null); }} className="min-w-0 flex-1 rounded-md border border-sky-300 bg-sky-50 px-1.5 py-1 text-xs font-black outline-none" /> : <h3 onDoubleClick={() => startRename(item)} className="min-w-0 flex-1 cursor-text truncate text-xs font-black" title="双击修改名称">{item.originalName}</h3>}<button type="button" onClick={() => setSelectedItem(item)} className={cn('shrink-0 rounded-md px-1.5 py-1 text-[10px] font-black', item.note ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200')}>备注</button></div><div className="mt-1 flex items-center justify-between text-[10px] font-semibold text-slate-400"><span>{formatVideoLibrarySize(item.fileSize)}</span><span>{formatVideoLibraryTime(item.createdAt)}</span></div>{item.note && <p className="mt-2 line-clamp-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-bold leading-4 text-amber-700">{item.note}</p>}<div className="mt-2 flex items-center gap-1.5"><a href={item.downloadUrl} download={item.downloadName} className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-200"><Download className="size-3" />下载</a><button type="button" onClick={() => void handleDelete(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500" title="删除视频"><Trash2 className="size-3.5" /></button></div></div></article>)}</div></div>)}
+        {isLoading ? (
+          <div className="flex items-center justify-center rounded-2xl border border-white/80 bg-white/80 py-20 text-sm font-bold text-slate-400"><Loader2 className="mr-2 size-5 animate-spin" />正在读取共享视频库</div>
+        ) : isFolderHome ? (
+          folderHomeContent
+        ) : groupedItems.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 py-20 text-center">
+            <FolderOpen className="mx-auto size-9 text-slate-300" />
+            <h2 className="mt-3 text-lg font-black text-slate-600">这个文件夹里还没有视频</h2>
+            <p className="mt-1 text-sm font-semibold text-slate-400">可以从这里上传第一条视频</p>
+            <button type="button" onClick={() => openUpload(selectedFolder)} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-black text-white"><Plus className="size-4" />上传视频</button>
+          </div>
+        ) : groupedItems.map(([folder, folderItems]) => (
+          <div key={folder}>
+            <div className="mb-4 flex items-center gap-2">
+              <FolderOpen className="size-4 text-sky-500" />
+              <h2 className="text-base font-black">{folder}</h2>
+              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-black text-slate-500">{folderItems.length}</span>
+              <button type="button" onClick={() => openUpload(folder)} className="ml-auto inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-600 hover:bg-slate-50"><Plus className="size-3" />上传</button>
+            </div>
+            <div className="space-y-6">
+              {groupVideosByDate(folderItems).map((dateGroup) => (
+                <section key={dateGroup.key}>
+                  <div className="mb-2 flex items-center gap-3">
+                    <h3 className="shrink-0 text-sm font-black text-slate-700">{dateGroup.label}</h3>
+                    <span className="text-[11px] font-bold text-slate-400">{dateGroup.items.length} 个素材</span>
+                    <div className="h-px flex-1 bg-slate-200" />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                    {dateGroup.items.map(renderVideoCard)}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </div>
+        ))}
       </section>
 
       <input ref={inputRef} type="file" accept="video/*,.mp4,.m4v,.mov,.webm,.avi,.mkv" multiple className="hidden" onChange={(event) => void handleUpload(event)} />
@@ -322,6 +487,61 @@ export default function VideoLibraryPage({ onBack }: VideoLibraryPageProps) {
       )}
 
       {isFolderOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" onMouseDown={() => setIsFolderOpen(false)}><div className="w-full max-w-sm rounded-3xl border border-white/80 bg-white p-6 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-center justify-between"><h2 className="text-xl font-black">新建文件夹</h2><button type="button" onClick={() => setIsFolderOpen(false)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="size-5" /></button></div><input autoFocus value={newFolderDraft} onChange={(event) => setNewFolderDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void handleCreateFolder(); }} placeholder="例如：富贵牡丹" className="mt-5 h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold outline-none focus:border-sky-300 focus:bg-white" /><button type="button" onClick={() => void handleCreateFolder()} className="mt-4 w-full rounded-2xl bg-slate-900 py-3 text-sm font-black text-white hover:bg-slate-800">创建文件夹</button></div></div>}
+
+      {movingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={() => !isMoving && setMovingItem(null)}>
+          <div className="w-full max-w-md rounded-3xl border border-white/80 bg-white p-6 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="text-xl font-black text-slate-900">移动视频</h2>
+                <p className="mt-1 truncate text-xs font-semibold text-slate-400">{movingItem.originalName}</p>
+              </div>
+              <button type="button" onClick={() => setMovingItem(null)} disabled={isMoving} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 disabled:opacity-40"><X className="size-5" /></button>
+            </div>
+            <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">
+              当前文件夹：<span className="text-slate-800">{movingItem.folderName}</span>
+            </div>
+            <div className="mt-5 text-sm font-black text-slate-700">选择目标文件夹</div>
+            {folders.some((folder) => folder !== movingItem.folderName) ? (
+              <div className="mt-2 grid max-h-64 grid-cols-2 gap-2 overflow-y-auto pr-1">
+                {folders.filter((folder) => folder !== movingItem.folderName).map((folder) => (
+                  <button
+                    key={folder}
+                    type="button"
+                    disabled={isMoving}
+                    onClick={() => setMoveTargetFolder(folder)}
+                    className={cn(
+                      'flex min-h-14 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-xs font-black transition-colors disabled:cursor-not-allowed',
+                      moveTargetFolder === folder
+                        ? 'border-sky-400 bg-sky-50 text-sky-700 ring-2 ring-sky-100'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:bg-sky-50/50'
+                    )}
+                  >
+                    <FolderOpen className="size-4 shrink-0" />
+                    <span className="break-all">{folder}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold leading-5 text-amber-700">
+                目前没有其他文件夹，请先新建一个文件夹。
+              </div>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" disabled={isMoving} onClick={() => setMovingItem(null)} className="h-10 rounded-xl border border-slate-200 px-4 text-xs font-black text-slate-600 hover:bg-slate-50 disabled:opacity-40">取消</button>
+              <button
+                type="button"
+                disabled={isMoving || !moveTargetFolder || moveTargetFolder === movingItem.folderName}
+                onClick={() => void handleMoveVideo()}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-sky-500 px-4 text-xs font-black text-white hover:bg-sky-600 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {isMoving ? <Loader2 className="size-4 animate-spin" /> : <FolderInput className="size-4" />}
+                {isMoving ? '正在移动' : '确认移动'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedItem && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onMouseDown={() => setSelectedItem(null)}><div className="w-full max-w-3xl rounded-3xl bg-white p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-center justify-between gap-3 px-2 pb-3"><div className="min-w-0"><h2 className="truncate text-lg font-black">{selectedItem.originalName}</h2><p className="text-xs font-semibold text-slate-400">{selectedItem.folderName} · {formatVideoLibrarySize(selectedItem.fileSize)}</p></div><button type="button" onClick={() => setSelectedItem(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="size-5" /></button></div><video key={selectedItem.id} src={selectedItem.streamUrl} poster={selectedItem.thumbnailUrl} controls autoPlay playsInline preload="auto" className="max-h-[65vh] w-full rounded-2xl bg-black" /><div className="mt-4 flex gap-2"><input defaultValue={selectedItem.note} onKeyDown={(event) => { if (event.key === 'Enter') void handleSaveNote(selectedItem, event.currentTarget.value); }} placeholder="输入备注后按回车保存" className="h-11 min-w-0 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold outline-none focus:border-sky-300 focus:bg-white" /><a href={selectedItem.downloadUrl} download={selectedItem.downloadName} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-black text-white"><Download className="size-4" />下载</a></div></div></div>}
     </main>

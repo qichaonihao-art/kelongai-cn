@@ -95,7 +95,7 @@ export async function saveSeedanceVideoToLibrary(input: {
   };
 }
 
-export async function updateVideoLibraryItem(id: number, input: { note?: string; originalName?: string }) {
+export async function updateVideoLibraryItem(id: number, input: { note?: string; originalName?: string; folderName?: string }) {
   const response = await fetch(`/api/video-library/videos/${id}`, {
     method: 'PATCH',
     credentials: 'include',
@@ -103,7 +103,7 @@ export async function updateVideoLibraryItem(id: number, input: { note?: string;
     body: JSON.stringify(input),
   });
   const json = await readJson(response);
-  if (!response.ok) throw new Error(errorMessage(json, '保存备注失败'));
+  if (!response.ok) throw new Error(errorMessage(json, '更新视频信息失败'));
   return json?.item as VideoLibraryItem;
 }
 

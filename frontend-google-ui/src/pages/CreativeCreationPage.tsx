@@ -146,6 +146,25 @@ const ADDITIONAL_CHANGE_HISTORY_KEY = 'kelongai.additionalChangeHistory';
 const ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS = 180;
 const ADDITIONAL_CHANGE_HISTORY_RETENTION_MS = ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 const NOTEBOOK_STORAGE_KEY = 'kelongai.notebook';
+const VIDEO_LIBRARY_LAST_FOLDER_KEY = 'kelongai.videoLibraryLastFolder';
+
+function loadLastVideoLibraryFolder(): string {
+  if (typeof window === 'undefined') return '通用素材';
+  try {
+    return window.localStorage.getItem(VIDEO_LIBRARY_LAST_FOLDER_KEY)?.trim() || '通用素材';
+  } catch {
+    return '通用素材';
+  }
+}
+
+function saveLastVideoLibraryFolder(folder: string) {
+  if (typeof window === 'undefined' || !folder.trim()) return;
+  try {
+    window.localStorage.setItem(VIDEO_LIBRARY_LAST_FOLDER_KEY, folder.trim());
+  } catch {
+    // 浏览器禁止本地存储时，仍允许本次保存流程正常进行。
+  }
+}
 
 function formatDoubaoMultimodalModelName(modelId: string): string {
   if (modelId === 'doubao-seed-2-1-pro-260628') return '豆包 Seed 2.1 Pro';
@@ -454,12 +473,14 @@ ${subtitleClause}${characterRemixClause}`;
   return `${enhancedBase}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
 };
 
-const IMAGE_TO_VIDEO_PROMPT = (options?: {
+const IMAGE_TO_VIDEO_PROMPT = (options: {
+  durationSeconds: number;
   addPainting?: boolean;
   paintingPlacement?: string;
   additionalChange?: string;
   includeSubtitles?: boolean;
 }) => {
+  const durationSeconds = options.durationSeconds;
   const addPainting = options?.addPainting ?? false;
   const paintingPlacement = options?.paintingPlacement?.trim();
   const additionalChange = options?.additionalChange?.trim();
@@ -474,7 +495,7 @@ const IMAGE_TO_VIDEO_PROMPT = (options?: {
   ].filter(Boolean).join('\n');
 
   const imageIsolationRule = `本次任务只基于当前上传的图片${addPainting ? '和当前上传的挂画参考图片' : ''}以及本条指令进行判断。不得引用、继承、延续或假设任何历史会话、旧图片、旧提示词中的主体、道具、场景、挂画、装饰物、文字内容或风格要求；如果图片中没有明确出现某元素，除非用户在本条指令中明确要求，否则不得写入分析和最终提示词。`;
-  return `请把我上传的这张图片作为唯一的视觉基准，生成一份可以直接交给 Seedance 图生视频模型使用的完整视频提示词。不是简单描述图片，而是要在尽量保持图片内容一致的基础上，补全合理、真实、可执行的视频动作、镜头、时间顺序和动态细节。\n\n${imageIsolationRule}\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、图片生视频关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整提示词\n十二、负面提示词\n\n必须遵守以下规则：\n1. 先完整识别图片中的主体、人物年龄和性别（仅在确实可判断时）、服装、发型、姿态、道具、背景、空间层次、构图、景别、光线方向和色彩，再设计动态；不确定的内容不要臆造。\n2. 图片是本次唯一基准。除用户明确提出的调整外，主体身份、人物外观、场景、道具、画面布局、空间比例、色彩和氛围都要保持一致，不得凭借历史对话增加以前出现过的挂画、家具、人物或其他元素。\n3. 生成的视频动作必须从静态图片自然延伸出来，写清楚 0-2 秒、2-4 秒等连续且不重叠的时间段；每个时间段必须按先后顺序排列，不能出现时间倒置、区间交叉或超过总时长的描述。\n4. 镜头运动要克制、真实并服务于主体，不要凭空添加复杂运镜；同时明确固定机位、推近、横移、跟拍或轻微环绕等动作的起止时间。\n5. 如果有人物，正面或偏正面能看见眼睛时，必须表现出真人感：适当自然眨眼、视线轻微移动和真实聚焦变化，避免眼睛一直睁着、眼珠固定、空洞凝视和 AI 呆滞感。人物手部可见时，重点描述手指、手腕、手掌的自然动作、接触位置、发力方向和动作先后，避免手部畸形和穿模。\n6. 如果出现卷轴式挂画、卷筒挂画或挂画需要打开，必须明确写成沿轴向旋转的滚动展开，画布从卷筒中逐步释放；禁止滑动、平移、平铺或直接弹开。挂画、海报和其他平面元素必须保持原始宽高比、透视、边界和文字内容，不得拉伸变形。\n7. ${subtitleRule}\n8. 画面要减少 AI 感，保持自然的动作惯性、真实材质、合理接触、柔和光影和生活化节奏，避免塑料感、过度磨皮、虚假高光、僵硬表情、异常肢体和过度电影化。\n${optionalRules ? `\n本次可选调整：\n${optionalRules}\n` : ''}\n最终提示词必须以“生成指令”开头，内容完整、具体、可直接复制使用；不要把分析过程写成空泛建议。`;
+  return `请把我上传的这张图片作为唯一的视觉基准，生成一份可以直接交给 Seedance 图生视频模型使用的完整视频提示词。目标视频总时长必须严格为 ${durationSeconds} 秒。不是简单描述图片，而是要在尽量保持图片内容一致的基础上，补全合理、真实、可执行的视频动作、镜头、时间顺序和动态细节。\n\n${imageIsolationRule}\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、图片生视频关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整提示词\n十二、负面提示词\n\n必须遵守以下规则：\n1. 先完整识别图片中的主体、人物年龄和性别（仅在确实可判断时）、服装、发型、姿态、道具、背景、空间层次、构图、景别、光线方向和色彩，再设计动态；不确定的内容不要臆造。\n2. 图片是本次唯一基准。除用户明确提出的调整外，主体身份、人物外观、场景、道具、画面布局、空间比例、色彩和氛围都要保持一致，不得凭借历史对话增加以前出现过的挂画、家具、人物或其他元素。\n3. 生成的视频动作必须从静态图片自然延伸出来，并围绕 ${durationSeconds} 秒总时长设计。所有时间段必须从 0 秒开始，连续且不重叠，按先后顺序排列，最后一个时间段必须准确结束于 ${durationSeconds} 秒；禁止时间倒置、区间交叉、时间断层或超过总时长。\n4. 镜头运动要克制、真实并服务于主体，不要凭空添加复杂运镜；同时明确固定机位、推近、横移、跟拍或轻微环绕等动作的起止时间。\n5. 如果有人物，正面或偏正面能看见眼睛时，必须表现出真人感：适当自然眨眼、视线轻微移动和真实聚焦变化，避免眼睛一直睁着、眼珠固定、空洞凝视和 AI 呆滞感。人物手部可见时，重点描述手指、手腕、手掌的自然动作、接触位置、发力方向和动作先后，避免手部畸形和穿模。\n6. 如果出现卷轴式挂画、卷筒挂画或挂画需要打开，必须明确写成沿轴向旋转的滚动展开，画布从卷筒中逐步释放；禁止滑动、平移、平铺或直接弹开。挂画、海报和其他平面元素必须保持原始宽高比、透视、边界和文字内容，不得拉伸变形。\n7. ${subtitleRule}\n8. 画面要减少 AI 感，保持自然的动作惯性、真实材质、合理接触、柔和光影和生活化节奏，避免塑料感、过度磨皮、虚假高光、僵硬表情、异常肢体和过度电影化。\n${optionalRules ? `\n本次可选调整：\n${optionalRules}\n` : ''}\n最终提示词必须以“生成指令”开头，明确写出总时长 ${durationSeconds} 秒，内容完整、具体、可直接复制使用；不要把分析过程写成空泛建议。`;
 };
 const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const;
 const SEEDANCE_DURATIONS = [4, 5, 6, 8, 10, 12, 15] as const;
@@ -1125,7 +1146,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [seedanceModalItem, setSeedanceModalItem] = useState<SeedanceHistoryItem | null>(null);
   const [seedanceLibrarySaveTarget, setSeedanceLibrarySaveTarget] = useState<SeedanceLibrarySaveTarget | null>(null);
   const [videoLibraryFolders, setVideoLibraryFolders] = useState<string[]>([]);
-  const [selectedVideoLibraryFolder, setSelectedVideoLibraryFolder] = useState('通用素材');
+  const [selectedVideoLibraryFolder, setSelectedVideoLibraryFolder] = useState(loadLastVideoLibraryFolder);
   const [isVideoLibraryFolderLoading, setIsVideoLibraryFolderLoading] = useState(false);
   const [isSavingToVideoLibrary, setIsSavingToVideoLibrary] = useState(false);
   const [videoLibrarySaveError, setVideoLibrarySaveError] = useState('');
@@ -1138,6 +1159,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [replaceTarget, setReplaceTarget] = useState('');
   const [replaceWith, setReplaceWith] = useState('');
   const [imageToVideoAddPainting, setImageToVideoAddPainting] = useState(false);
+  const [imageToVideoDuration, setImageToVideoDuration] = useState('');
   const [imageToVideoPainting, setImageToVideoPainting] = useState<SelectedCreativeMedia | null>(null);
   const [imageToVideoPaintingPlacement, setImageToVideoPaintingPlacement] = useState('');
   const [additionalChange, setAdditionalChange] = useState('');
@@ -1789,12 +1811,16 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         setRequestError('请先上传一张图片，作为生成视频提示词的视觉基准。');
         return;
       }
-      const prompt = IMAGE_TO_VIDEO_PROMPT({
-        addPainting: imageToVideoAddPainting,
-        paintingPlacement: imageToVideoPaintingPlacement,
-        additionalChange,
-        includeSubtitles,
-      });
+      const durationSeconds = Number(imageToVideoDuration);
+      const maxDuration = seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15;
+      if (!imageToVideoDuration.trim()) {
+        setRequestError('请填写图片生成视频的时长。');
+        return;
+      }
+      if (!Number.isInteger(durationSeconds) || durationSeconds < 4 || durationSeconds > maxDuration) {
+        setRequestError(`请输入 4-${maxDuration} 之间的整数秒数。`);
+        return;
+      }
       if (imageToVideoAddPainting && !imageToVideoPainting) {
         setRequestError('勾选加入挂画后，请先上传一张挂画或装饰画参考图。');
         return;
@@ -1803,7 +1829,15 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         setRequestError('请填写挂画或装饰画要插入的位置。');
         return;
       }
+      const prompt = IMAGE_TO_VIDEO_PROMPT({
+        durationSeconds,
+        addPainting: imageToVideoAddPainting,
+        paintingPlacement: imageToVideoPaintingPlacement,
+        additionalChange,
+        includeSubtitles,
+      });
       setInput(prompt);
+      setSeedanceDuration(durationSeconds);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
       autoSyncToSeedanceRef.current = true;
@@ -2102,8 +2136,15 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     try {
       const folders = await getVideoLibraryFolders();
       const availableFolders = folders.length ? folders : ['通用素材'];
+      const lastFolder = loadLastVideoLibraryFolder();
+      const nextFolder = availableFolders.includes(lastFolder)
+        ? lastFolder
+        : availableFolders.includes('通用素材')
+          ? '通用素材'
+          : availableFolders[0];
       setVideoLibraryFolders(availableFolders);
-      setSelectedVideoLibraryFolder(availableFolders.includes('通用素材') ? '通用素材' : availableFolders[0]);
+      setSelectedVideoLibraryFolder(nextFolder);
+      saveLastVideoLibraryFolder(nextFolder);
     } catch (error) {
       setVideoLibrarySaveError(error instanceof Error ? error.message : '读取视频素材库文件夹失败');
     } finally {
@@ -3084,6 +3125,30 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       加入挂画/装饰画
                     </label>
                   </div>
+                  <div className="rounded-xl border border-indigo-100 bg-white/80 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <label htmlFor="image-to-video-duration" className="text-[11px] font-bold text-slate-700">
+                        视频时长（秒）<span className="ml-1 text-red-500">必填</span>
+                      </label>
+                      <span className="text-[10px] font-semibold text-slate-400">
+                        当前模型支持 4-{seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15} 秒
+                      </span>
+                    </div>
+                    <input
+                      id="image-to-video-duration"
+                      type="number"
+                      min={4}
+                      max={seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15}
+                      step={1}
+                      inputMode="numeric"
+                      required
+                      value={imageToVideoDuration}
+                      onChange={(event) => setImageToVideoDuration(event.target.value)}
+                      placeholder={`请输入 4-${seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15} 之间的整数`}
+                      disabled={isLoading}
+                      className="mt-2 w-full rounded-xl border border-indigo-100 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
+                    />
+                  </div>
                   {imageToVideoAddPainting && (
                     <div className="space-y-3 rounded-xl border border-indigo-100 bg-white/80 p-3">
                       {imageToVideoPainting ? (
@@ -3448,6 +3513,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   disabled={
                     isLoading ||
                     (reverseMode === 'image' ? selectedMedia?.kind !== 'image' : selectedMedia?.kind !== 'video') ||
+                    (reverseMode === 'image' && !imageToVideoDuration.trim()) ||
                     (reverseMode === 'replace' && (!replaceImage || !replaceTarget.trim() || !replaceWith.trim()))
                   }
                   className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
@@ -4425,7 +4491,10 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       <button
                         key={folder}
                         type="button"
-                        onClick={() => setSelectedVideoLibraryFolder(folder)}
+                        onClick={() => {
+                          setSelectedVideoLibraryFolder(folder);
+                          saveLastVideoLibraryFolder(folder);
+                        }}
                         disabled={isSavingToVideoLibrary}
                         className={cn(
                           "flex min-h-16 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-xs font-bold transition-colors disabled:cursor-not-allowed",

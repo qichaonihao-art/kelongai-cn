@@ -1789,11 +1789,15 @@ async function handleUpdateVideoLibrary(req, res, id) {
     const nextName = body?.originalName === undefined
       ? existing.originalName
       : sanitizeVideoLibraryFileName(body.originalName);
-    getCollectionDb().prepare('UPDATE video_library_items SET original_name = ?, note = ?, updated_at = unixepoch() WHERE id = ?').run(nextName, nextNote, Number(id));
+    const nextFolder = body?.folderName === undefined
+      ? existing.folderName
+      : sanitizeVideoLibraryFolder(body.folderName);
+    dbCreateVideoLibraryFolder(nextFolder);
+    getCollectionDb().prepare('UPDATE video_library_items SET folder_name = ?, original_name = ?, note = ?, updated_at = unixepoch() WHERE id = ?').run(nextFolder, nextName, nextNote, Number(id));
     const item = dbGetVideoLibraryItem(id);
     sendJson(res, 200, { ok: true, item });
   } catch (error) {
-    sendJson(res, 500, { error: error.message || '保存视频备注失败' });
+    sendJson(res, 500, { error: error.message || '更新视频信息失败' });
   }
 }
 
