@@ -1267,6 +1267,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const seedancePromptRef = useRef<HTMLTextAreaElement>(null);
   const additionalChangeRef = useRef<HTMLTextAreaElement>(null);
+  const videoEditTargetRef = useRef<HTMLTextAreaElement>(null);
+  const videoEditAdjustmentsRef = useRef<HTMLTextAreaElement>(null);
   const notebookRef = useRef<HTMLDivElement>(null);
   const additionalHistoryRef = useRef<HTMLDivElement>(null);
   const autoSyncToSeedanceRef = useRef(false);
@@ -1297,6 +1299,15 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     textarea.style.height = 'auto';
     textarea.style.height = `${textarea.scrollHeight}px`;
   }, [additionalChange]);
+
+  useEffect(() => {
+    const textareas = [videoEditTargetRef.current, videoEditAdjustmentsRef.current];
+    textareas.forEach((textarea) => {
+      if (!textarea) return;
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.max(40, textarea.scrollHeight)}px`;
+    });
+  }, [videoEditTarget, videoEditAdjustments, seedanceTaskMode]);
 
   useEffect(() => {
     if (seedanceReplaceHighlight && seedanceReplaceHighlight.text !== seedancePrompt) {
@@ -4008,7 +4019,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <label className="block">
                         <span className="mb-1.5 block text-[11px] font-black text-slate-600">原视频中要替换的位置</span>
-                        <input
+                        <textarea
+                          ref={videoEditTargetRef}
+                          rows={1}
                           value={videoEditTarget}
                           onChange={(event) => {
                             const nextTarget = event.target.value;
@@ -4016,12 +4029,14 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                             setSeedancePrompt(buildVideoEditPaintingPrompt(nextTarget, videoEditAdjustments));
                           }}
                           placeholder="例如：人物手中正在展开的卷轴挂画"
-                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-violet-300"
+                          className="min-h-10 w-full resize-none overflow-hidden rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium leading-5 text-slate-700 outline-none focus:border-violet-300"
                         />
                       </label>
                       <label className="block">
                         <span className="mb-1.5 block text-[11px] font-black text-slate-600">额外调整（选填）</span>
-                        <input
+                        <textarea
+                          ref={videoEditAdjustmentsRef}
+                          rows={1}
                           value={videoEditAdjustments}
                           onChange={(event) => {
                             const nextAdjustments = event.target.value;
@@ -4029,7 +4044,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                             setSeedancePrompt(buildVideoEditPaintingPrompt(videoEditTarget, nextAdjustments));
                           }}
                           placeholder="例如：墙面改为浅灰色，其他内容不变"
-                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-violet-300"
+                          className="min-h-10 w-full resize-none overflow-hidden rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium leading-5 text-slate-700 outline-none focus:border-violet-300"
                         />
                       </label>
                     </div>
