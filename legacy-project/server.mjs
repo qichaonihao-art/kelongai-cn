@@ -8887,6 +8887,7 @@ async function readSeedanceTaskFormBody(req) {
   return {
     prompt: readValue(formData.get('prompt')),
     model: readValue(formData.get('model')),
+    taskMode: readValue(formData.get('taskMode')) || 'generate',
     ratio: readValue(formData.get('ratio')),
     duration: Number.parseInt(String(formData.get('duration') || 5), 10),
     generateAudio: readValue(formData.get('generateAudio')).toLowerCase() !== 'false',
@@ -11844,9 +11845,11 @@ async function handleSeedanceCreateTask(req, res) {
     const resolvedApiKey = readValue(SERVER_CONFIG.seedanceApiKey);
     const prompt = readValue(body?.prompt);
     const model = readValue(body?.model) || 'doubao-seedance-2-0-260128';
+    const taskMode = readValue(body?.taskMode) || 'generate';
     const ratio = readValue(body?.ratio) || '16:9';
     const duration = Number.parseInt(String(body?.duration || 5), 10);
     const isSeedance25 = model === 'doubao-seedance-2-5-260628';
+    const isVideoEditTask = taskMode === 'video_edit';
     const generateAudio = body?.generateAudio !== false;
     const watermark = body?.watermark === true;
     const uploadedFiles = Array.isArray(body?.files) ? body.files : [];
@@ -11854,6 +11857,7 @@ async function handleSeedanceCreateTask(req, res) {
     console.log('[seedance create task] request start', {
       requestId,
       model,
+      taskMode,
       ratio,
       duration,
       generateAudio,
@@ -11877,13 +11881,27 @@ async function handleSeedanceCreateTask(req, res) {
       return;
     }
 
+    if (!['generate', 'video_edit'].includes(taskMode)) {
+      sendJson(res, 400, { error: '不支持的 Seedance 任务类型' });
+      return;
+    }
+
+    if (isVideoEditTask && !isSeedance25) {
+      sendJson(res, 400, { error: '视频直接换画仅支持 Seedance 2.5' });
+      return;
+    }
+
     if (!['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive'].includes(ratio)) {
       sendJson(res, 400, { error: 'ratio 取值不合法' });
       return;
     }
 
     const maxDuration = isSeedance25 ? 30 : 15;
-    if (!Number.isInteger(duration) || duration < 4 || duration > maxDuration) {
+    if (isVideoEditTask && (ratio !== 'adaptive' || duration !== -1)) {
+      sendJson(res, 400, { error: 'Seedance 2.5 视频编辑必须使用智能比例并跟随原视频时长' });
+      return;
+    }
+    if (!isVideoEditTask && (!Number.isInteger(duration) || duration < 4 || duration > maxDuration)) {
       sendJson(res, 400, { error: `${isSeedance25 ? 'Seedance 2.5' : 'Seedance 2.0'} 的 duration 需为 4 到 ${maxDuration} 秒之间的整数` });
       return;
     }
@@ -11928,6 +11946,10 @@ async function handleSeedanceCreateTask(req, res) {
       }
 
       if (mimeType.startsWith('video/')) {
+        if (isVideoEditTask && !['video/mp4', 'video/quicktime'].includes(mimeType) && !/\.(mp4|mov)$/i.test(readValue(file.name))) {
+          sendJson(res, 400, { error: 'Seedance 2.5 视频编辑仅支持 MP4 或 MOV 原视频。' });
+          return;
+        }
         videoCount += 1;
         if (videoCount > maxVideoCount) {
           sendJson(res, 400, { error: `${isSeedance25 ? 'Seedance 2.5' : 'Seedance 2.0'} 最多支持 ${maxVideoCount} 个参考视频。` });
@@ -11980,6 +12002,11 @@ async function handleSeedanceCreateTask(req, res) {
 
     if (audioCount > 0 && imageCount === 0 && videoCount === 0) {
       sendJson(res, 400, { error: 'Seedance 不支持单独输入音频，请至少再上传 1 张图片或 1 个视频。' });
+      return;
+    }
+
+    if (isVideoEditTask && (videoCount !== 1 || imageCount !== 1 || audioCount !== 0)) {
+      sendJson(res, 400, { error: '视频直接换画需要且只能上传 1 个原视频和 1 张目标挂画图片' });
       return;
     }
 

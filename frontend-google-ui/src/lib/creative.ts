@@ -497,6 +497,7 @@ export async function sendCreativeMessage(options: {
 
 export async function createSeedanceTask(options: {
   model: 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-5-260628';
+  taskMode?: 'generate' | 'video_edit';
   prompt: string;
   ratio: string;
   duration: number;
@@ -513,6 +514,7 @@ export async function createSeedanceTask(options: {
     const formData = new FormData();
     formData.append('prompt', options.prompt);
     formData.append('model', options.model);
+    formData.append('taskMode', options.taskMode || 'generate');
     formData.append('ratio', options.ratio);
     formData.append('duration', String(options.duration));
     formData.append('generateAudio', String(options.generateAudio));
@@ -526,6 +528,7 @@ export async function createSeedanceTask(options: {
     body = JSON.stringify({
       prompt: options.prompt,
       model: options.model,
+      taskMode: options.taskMode || 'generate',
       ratio: options.ratio,
       duration: options.duration,
       generateAudio: options.generateAudio,

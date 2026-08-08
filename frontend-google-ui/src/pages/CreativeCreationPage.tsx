@@ -89,6 +89,7 @@ interface SeedanceHistoryItem {
   id: string;
   taskId: string;
   model: SeedanceModelId;
+  taskMode?: SeedanceTaskMode;
   prompt: string;
   status?: string;
   videoUrl?: string;
@@ -501,9 +502,58 @@ const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'
 const SEEDANCE_DURATIONS = Array.from({ length: 12 }, (_, index) => index + 4);
 const SEEDANCE_DURATIONS_2_5 = Array.from({ length: 27 }, (_, index) => index + 4);
 type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-5-260628';
+type SeedanceTaskMode = 'generate' | 'video-edit-painting';
 
 function getSeedanceModelLabel(model: SeedanceModelId) {
   return model === 'doubao-seedance-2-5-260628' ? 'Seedance 2.5 测试版' : 'Seedance 2.0 稳定版';
+}
+
+function getSeedanceHistoryModeLabel(item: SeedanceHistoryItem) {
+  return item.taskMode === 'video-edit-painting' ? '2.5 视频编辑' : getSeedanceModelLabel(item.model);
+}
+
+function getSeedanceHistoryDurationLabel(item: SeedanceHistoryItem) {
+  return item.taskMode === 'video-edit-painting' || item.duration === -1 ? '原视频时长' : `${item.duration} 秒`;
+}
+
+function getSeedanceHistoryRatioLabel(item: SeedanceHistoryItem) {
+  return item.taskMode === 'video-edit-painting' ? '原视频比例' : item.ratio;
+}
+
+function buildVideoEditPaintingPrompt(target: string, adjustments: string) {
+  const targetDescription = target.trim() || '原视频中出现的挂画或装饰画';
+  const adjustmentText = adjustments.trim();
+  return `视频编辑：自动识别 @视频1 中的${targetDescription}，并将其完整替换为 @图片1 中的目标挂画或装饰画。
+
+严格保留 @视频1 的镜头角度、构图、人物姿态、手部动作、动作顺序、运镜、场景布局、光影、声音和整体节奏。除目标挂画以及下方明确写出的额外调整外，不得修改其他人物、道具和场景元素。
+
+严格保持 @图片1 中挂画的画面内容、文字、颜色、宽高比例、挂轴、边框和材质，不得改字、拉伸、变形、模糊或重新设计。替换后的挂画必须逐帧自然跟随原视频中的透视、遮挡、手部接触、运动轨迹、光影和运动模糊，不能漂浮、穿模或与人物手部脱离。
+
+先逐帧识别原挂画在整个视频中的位置、形态、状态和变化过程，再让替换后的挂画严格复刻同样的状态与动作。原挂画静止时，替换后的挂画保持相同位置和静止状态；原挂画被拿起、移动、悬挂、卷起、展开、翻转或遮挡时，替换后的挂画必须复刻相同的动作轨迹、时间节奏、形态变化、手部接触和先后顺序。如果原挂画是卷轴结构并发生展开，必须按照原视频中的动作沿卷轴轴向旋转并滚动展开，禁止滑动展开、平铺、直接弹开或擅自增加原视频没有的动作。
+
+如果人物仅为背影或侧面，必须保持原朝向，不得主动转向镜头，不得凭空生成清晰正脸。人物可见的手部动作必须自然、稳定并与挂画正确接触。整体保持真人实拍质感，减少 AI 感。
+
+${adjustmentText ? `本次额外调整：${adjustmentText}` : '本次没有额外调整，除替换挂画外，其余内容严格保持原视频。'}`;
+}
+
+function readVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const previewUrl = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    const cleanup = () => URL.revokeObjectURL(previewUrl);
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      const duration = video.duration;
+      cleanup();
+      if (Number.isFinite(duration) && duration > 0) resolve(duration);
+      else reject(new Error('无法读取原视频时长，请更换视频后重试。'));
+    };
+    video.onerror = () => {
+      cleanup();
+      reject(new Error('无法读取原视频，请确认文件可以正常播放。'));
+    };
+    video.src = previewUrl;
+  });
 }
 
 function createMessageId(prefix: string) {
@@ -752,6 +802,7 @@ function createSeedanceHistoryItem(
   options: {
     prompt: string;
     model: SeedanceModelId;
+    taskMode?: SeedanceTaskMode;
     ratio: string;
     duration: number;
     generateAudio: boolean;
@@ -765,6 +816,7 @@ function createSeedanceHistoryItem(
     id: task.taskId || createMessageId('seedance_history'),
     taskId: task.taskId,
     model: options.model,
+    taskMode: options.taskMode || 'generate',
     prompt: options.prompt,
     status: task.status,
     videoUrl: task.videoUrl,
@@ -829,6 +881,9 @@ function loadSeedanceHistory() {
         model: item.model === 'doubao-seedance-2-5-260628'
           ? 'doubao-seedance-2-5-260628' as SeedanceModelId
           : 'doubao-seedance-2-0-260128' as SeedanceModelId,
+        taskMode: item.taskMode === 'video-edit-painting'
+          ? 'video-edit-painting' as SeedanceTaskMode
+          : 'generate' as SeedanceTaskMode,
       }))
       .slice(0, MAX_SEEDANCE_HISTORY_ITEMS);
   } catch {
@@ -1127,6 +1182,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [publicBaseUrlConfigured, setPublicBaseUrlConfigured] = useState(false);
   const [doubaoMultimodalModel, setDoubaoMultimodalModel] = useState('');
   const [selectedMedia, setSelectedMedia] = useState<SelectedCreativeMedia | null>(null);
+  const [seedanceTaskMode, setSeedanceTaskMode] = useState<SeedanceTaskMode>('generate');
   const [seedanceModel, setSeedanceModel] = useState<SeedanceModelId>('doubao-seedance-2-0-260128');
   const [seedancePrompt, setSeedancePrompt] = useState("");
   const [seedanceRatio, setSeedanceRatio] = useState("9:16");
@@ -1134,6 +1190,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [seedanceGenerateAudio, setSeedanceGenerateAudio] = useState(false);
   const [seedanceWatermark, setSeedanceWatermark] = useState(false);
   const [seedanceReferences, setSeedanceReferences] = useState<SeedanceReferenceFile[]>([]);
+  const [videoEditTarget, setVideoEditTarget] = useState('人物手中或场景中出现的原挂画/装饰画');
+  const [videoEditAdjustments, setVideoEditAdjustments] = useState('');
+  const [videoEditSourceDuration, setVideoEditSourceDuration] = useState<number | null>(null);
   const [isSeedanceLoading, setIsSeedanceLoading] = useState(false);
   const [isSeedancePolling, setIsSeedancePolling] = useState(false);
   const [seedanceError, setSeedanceError] = useState("");
@@ -1202,6 +1261,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const replaceImageInputRef = useRef<HTMLInputElement>(null);
   const imageToVideoPaintingInputRef = useRef<HTMLInputElement>(null);
   const seedanceFileInputRef = useRef<HTMLInputElement>(null);
+  const videoEditVideoInputRef = useRef<HTMLInputElement>(null);
+  const videoEditImageInputRef = useRef<HTMLInputElement>(null);
   const seedanceSettingsRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const seedancePromptRef = useRef<HTMLTextAreaElement>(null);
@@ -1209,6 +1270,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const notebookRef = useRef<HTMLDivElement>(null);
   const additionalHistoryRef = useRef<HTMLDivElement>(null);
   const autoSyncToSeedanceRef = useRef(false);
+  const normalSeedanceSettingsRef = useRef({
+    model: 'doubao-seedance-2-0-260128' as SeedanceModelId,
+    ratio: '9:16',
+    duration: 5,
+    generateAudio: false,
+    watermark: false,
+  });
 
   const filteredAdditionalChangeHistory = useMemo(() => {
     const keyword = additionalHistorySearch.trim().toLowerCase();
@@ -1367,6 +1435,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     if (!activeItem) return;
 
     setSeedanceTask(seedanceHistoryItemToTask(activeItem));
+    setSeedanceTaskMode(activeItem.taskMode || 'generate');
+    setSeedanceModel(activeItem.model);
     setSeedancePrompt(activeItem.prompt);
     setSeedanceRatio(activeItem.ratio);
     setSeedanceDuration(activeItem.duration);
@@ -2004,11 +2074,139 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     });
   }
 
+  function clearSeedanceReferences() {
+    setSeedanceReferences((previous) => {
+      previous.forEach((item) => {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      });
+      return [];
+    });
+    setVideoEditSourceDuration(null);
+  }
+
+  function switchSeedanceTaskMode(nextMode: SeedanceTaskMode) {
+    if (nextMode === seedanceTaskMode || isSeedanceLoading) return;
+    if ((seedancePrompt.trim() || seedanceReferences.length > 0) && !window.confirm('切换模式会清空当前提示词和参考素材，确定继续吗？')) {
+      return;
+    }
+
+    clearSeedanceReferences();
+    setSeedanceTask(null);
+    setSeedanceError('');
+    setSeedanceReplaceHighlight(null);
+    setShowAtMenu(false);
+    setSeedanceTaskMode(nextMode);
+
+    if (nextMode === 'video-edit-painting') {
+      normalSeedanceSettingsRef.current = {
+        model: seedanceModel,
+        ratio: seedanceRatio,
+        duration: seedanceDuration,
+        generateAudio: seedanceGenerateAudio,
+        watermark: seedanceWatermark,
+      };
+      setSeedanceModel('doubao-seedance-2-5-260628');
+      setSeedanceRatio('adaptive');
+      setSeedanceDuration(-1);
+      setSeedanceGenerateAudio(true);
+      setSeedanceWatermark(false);
+      setSeedancePrompt(buildVideoEditPaintingPrompt(videoEditTarget, videoEditAdjustments));
+      return;
+    }
+
+    const previous = normalSeedanceSettingsRef.current;
+    setSeedanceModel(previous.model);
+    setSeedanceRatio(previous.ratio);
+    setSeedanceDuration(previous.duration);
+    setSeedanceGenerateAudio(previous.generateAudio);
+    setSeedanceWatermark(previous.watermark);
+    setSeedancePrompt('');
+  }
+
+  async function handleVideoEditReference(file: File | null, expectedKind: 'video' | 'image') {
+    if (!file) return;
+    setSeedanceError('');
+
+    const actualKind = getSeedanceReferenceKind(file);
+    if (actualKind !== expectedKind) {
+      setSeedanceError(expectedKind === 'video' ? '这里请上传原视频文件。' : '这里请上传目标挂画图片。');
+      return;
+    }
+    if (expectedKind === 'video') {
+      if (!/\.(mp4|mov)$/i.test(file.name) && !['video/mp4', 'video/quicktime'].includes(file.type)) {
+        setSeedanceError('Seedance 2.5 视频编辑仅支持 MP4 或 MOV 原视频。');
+        return;
+      }
+      if (!publicBaseUrlConfigured) {
+        setSeedanceError('视频直接换画仅线上环境可提交，本地预览环境没有公网素材地址。');
+        return;
+      }
+      if (file.size > 50 * 1024 * 1024) {
+        setSeedanceError('原视频不能超过 50MB。');
+        return;
+      }
+      try {
+        const duration = await readVideoDuration(file);
+        if (duration < 4 || duration > 30) {
+          setSeedanceError(`原视频时长为 ${duration.toFixed(1)} 秒，Seedance 2.5 视频编辑只支持 4-30 秒。`);
+          return;
+        }
+        setVideoEditSourceDuration(duration);
+      } catch (error) {
+        setSeedanceError(error instanceof Error ? error.message : '无法读取原视频时长。');
+        return;
+      }
+    }
+
+    const nextReference: SeedanceReferenceFile = {
+      id: createMessageId('seedance_edit_ref'),
+      kind: expectedKind,
+      file,
+      previewUrl: createMediaPreviewUrl(file),
+      fileName: file.name,
+    };
+    setSeedanceReferences((previous) => {
+      previous.forEach((item) => {
+        if (item.kind === expectedKind && item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      });
+      const retained = previous.filter((item) => item.kind !== expectedKind && (item.kind === 'video' || item.kind === 'image'));
+      const combined = [...retained, nextReference];
+      return combined.sort((left, right) => (left.kind === 'video' ? -1 : right.kind === 'video' ? 1 : 0));
+    });
+    try {
+      await saveUploadHistory(file, expectedKind);
+      await refreshUploadHistories();
+    } catch {
+      // The selected file remains usable even if local upload history cannot be updated.
+    }
+  }
+
   async function handleCreateSeedanceVideo() {
-    const prompt = seedancePrompt.trim();
+    const isVideoEdit = seedanceTaskMode === 'video-edit-painting';
+    const prompt = isVideoEdit
+      ? buildVideoEditPaintingPrompt(videoEditTarget, videoEditAdjustments)
+      : seedancePrompt.trim();
     if (!prompt || isSeedanceLoading) return;
 
-    if (seedanceReferences.length === 0) {
+    if (isVideoEdit) {
+      const videoReferences = seedanceReferences.filter((item) => item.kind === 'video');
+      const imageReferences = seedanceReferences.filter((item) => item.kind === 'image');
+      if (videoReferences.length !== 1 || imageReferences.length !== 1 || seedanceReferences.length !== 2) {
+        setSeedanceError('请分别上传 1 个原视频和 1 张目标挂画图片后再提交。');
+        return;
+      }
+      if (!videoEditSourceDuration || videoEditSourceDuration < 4 || videoEditSourceDuration > 30) {
+        setSeedanceError('原视频时长必须在 4-30 秒之间。');
+        return;
+      }
+      if (!videoEditTarget.trim()) {
+        setSeedanceError('请写清楚原视频中需要被替换的挂画位置。');
+        return;
+      }
+      setSeedancePrompt(prompt);
+    }
+
+    if (!isVideoEdit && seedanceReferences.length === 0) {
       const confirmed = window.confirm('当前未添加任何参考图片或视频，确定只使用文本提示词生成视频吗？');
       if (!confirmed) return;
     }
@@ -2025,10 +2223,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
     try {
       const task = await createSeedanceTask({
-        model: seedanceModel,
+        model: isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel,
+        taskMode: isVideoEdit ? 'video_edit' : 'generate',
         prompt,
-        ratio: seedanceRatio,
-        duration: seedanceDuration,
+        ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
+        duration: isVideoEdit ? -1 : seedanceDuration,
         generateAudio: seedanceGenerateAudio,
         watermark: seedanceWatermark,
         references: seedanceReferences,
@@ -2046,17 +2245,21 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               createdAt: task.createdAt || Math.floor(Date.now() / 1000),
             },
             {
-              model: seedanceModel,
+              model: isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel,
+              taskMode: seedanceTaskMode,
               prompt,
-              ratio: seedanceRatio,
-              duration: seedanceDuration,
+              ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
+              duration: isVideoEdit ? -1 : seedanceDuration,
               generateAudio: seedanceGenerateAudio,
               watermark: seedanceWatermark,
             }
           )
         )
       );
-      recordSeedanceCost(seedanceDuration, seedanceModel);
+      recordSeedanceCost(
+        isVideoEdit ? Math.ceil(videoEditSourceDuration || 0) : seedanceDuration,
+        isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel
+      );
     } catch (error) {
       setSeedanceError(error instanceof Error ? error.message : 'Seedance 创建任务失败');
     } finally {
@@ -2119,6 +2322,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       setSeedanceVideoModal(true);
     }
     setSeedanceTask(seedanceHistoryItemToTask(item));
+    setSeedanceTaskMode(item.taskMode || 'generate');
     setSeedancePrompt(item.prompt);
     setSeedanceReplaceHighlight(null);
     setSeedanceModel(item.model);
@@ -2331,6 +2535,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       const target = previous.find((item) => item.id === referenceId);
       if (target?.previewUrl) {
         URL.revokeObjectURL(target.previewUrl);
+      }
+      if (target?.kind === 'video' && seedanceTaskMode === 'video-edit-painting') {
+        setVideoEditSourceDuration(null);
       }
       return previous.filter((item) => item.id !== referenceId);
     });
@@ -2788,6 +2995,26 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         multiple
         className="hidden"
         onChange={(event) => handleSeedanceReferenceChange(event.target.files)}
+      />
+      <input
+        ref={videoEditVideoInputRef}
+        type="file"
+        accept="video/mp4,video/quicktime,.mp4,.mov"
+        className="hidden"
+        onChange={(event) => {
+          void handleVideoEditReference(event.target.files?.[0] || null, 'video');
+          event.currentTarget.value = '';
+        }}
+      />
+      <input
+        ref={videoEditImageInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => {
+          void handleVideoEditReference(event.target.files?.[0] || null, 'image');
+          event.currentTarget.value = '';
+        }}
       />
       <input
         ref={replaceImageInputRef}
@@ -3692,7 +3919,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       setSeedanceGenerateAudio(nextModel === 'doubao-seedance-2-5-260628');
                       setSeedanceWatermark(false);
                     }}
-                    disabled={isSeedanceLoading}
+                    disabled={isSeedanceLoading || seedanceTaskMode === 'video-edit-painting'}
                     className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[10px] font-black text-violet-700 outline-none disabled:opacity-60"
                     aria-label="选择 Seedance 模型"
                   >
@@ -3711,7 +3938,104 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                 </div>
               </div>
 
+              <div className="mb-4 inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => switchSeedanceTaskMode('generate')}
+                  className={cn(
+                    "rounded-lg px-4 py-2 text-xs font-black transition-colors",
+                    seedanceTaskMode === 'generate' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  )}
+                >
+                  常规生成
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchSeedanceTaskMode('video-edit-painting')}
+                  className={cn(
+                    "rounded-lg px-4 py-2 text-xs font-black transition-colors",
+                    seedanceTaskMode === 'video-edit-painting' ? "bg-violet-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  )}
+                >
+                  视频直接换画
+                </button>
+              </div>
+
               <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3 relative">
+                {seedanceTaskMode === 'video-edit-painting' && (
+                  <div className="mb-3 rounded-xl border border-violet-200 bg-white p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                      <div>
+                        <div className="text-sm font-black text-slate-900">Seedance 2.5 视频编辑</div>
+                        <div className="mt-1 text-[11px] font-medium text-slate-500">直接保留原视频动作和镜头，只替换目标挂画</div>
+                      </div>
+                      <span className="rounded-full bg-violet-50 px-3 py-1 text-[10px] font-black text-violet-700">原比例 · 原时长</span>
+                    </div>
+
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      {(['video', 'image'] as const).map((kind) => {
+                        const reference = seedanceReferences.find((item) => item.kind === kind);
+                        const isVideo = kind === 'video';
+                        return (
+                          <button
+                            key={kind}
+                            type="button"
+                            onClick={() => (isVideo ? videoEditVideoInputRef : videoEditImageInputRef).current?.click()}
+                            disabled={isSeedanceLoading}
+                            className="flex min-h-20 items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-left transition-colors hover:border-violet-300 hover:bg-violet-50/40 disabled:opacity-60"
+                          >
+                            <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-slate-400 shadow-sm">
+                              {reference?.previewUrl ? (
+                                isVideo
+                                  ? <video src={reference.previewUrl} className="size-full object-cover" muted />
+                                  : <img src={reference.previewUrl} alt="目标挂画" className="size-full object-cover" />
+                              ) : isVideo ? <Film className="size-5" /> : <ImageIcon className="size-5" />}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs font-black text-slate-800">{isVideo ? '上传原视频' : '上传目标挂画'}</div>
+                              <div className="mt-1 truncate text-[11px] font-medium text-slate-400">
+                                {reference?.fileName || (isVideo ? '4-30 秒，最大 50MB' : '保持原图文字、比例与颜色')}
+                              </div>
+                              {isVideo && videoEditSourceDuration && (
+                                <div className="mt-1 text-[10px] font-black text-emerald-600">视频时长 {videoEditSourceDuration.toFixed(1)} 秒</div>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-1.5 block text-[11px] font-black text-slate-600">原视频中要替换的位置</span>
+                        <input
+                          value={videoEditTarget}
+                          onChange={(event) => {
+                            const nextTarget = event.target.value;
+                            setVideoEditTarget(nextTarget);
+                            setSeedancePrompt(buildVideoEditPaintingPrompt(nextTarget, videoEditAdjustments));
+                          }}
+                          placeholder="例如：人物手中正在展开的卷轴挂画"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-violet-300"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1.5 block text-[11px] font-black text-slate-600">额外调整（选填）</span>
+                        <input
+                          value={videoEditAdjustments}
+                          onChange={(event) => {
+                            const nextAdjustments = event.target.value;
+                            setVideoEditAdjustments(nextAdjustments);
+                            setSeedancePrompt(buildVideoEditPaintingPrompt(videoEditTarget, nextAdjustments));
+                          }}
+                          placeholder="例如：墙面改为浅灰色，其他内容不变"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-violet-300"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+
                 {/* 提示词输入框 + 内部参考素材 */}
                 <div className="relative">
                   {seedanceReplaceHighlight && (
@@ -3730,7 +4054,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                     onChange={handleSeedancePromptChange}
                     onKeyDown={handleSeedanceKeyDown}
                     onScroll={(event) => setSeedancePromptScrollTop(event.currentTarget.scrollTop)}
-                    placeholder="等待模块一反推出视频提示词..."
+                    readOnly={seedanceTaskMode === 'video-edit-painting'}
+                    placeholder={seedanceTaskMode === 'video-edit-painting' ? '上传原视频和目标挂画后即可提交视频编辑任务' : '等待模块一反推出视频提示词...'}
                     className={cn(
                       "relative z-10 min-h-[280px] w-full resize-none rounded-xl border p-4 pb-20 text-sm leading-7 outline-none transition-all focus:border-violet-300 whitespace-pre-wrap",
                       seedanceReplaceHighlight ? "bg-transparent text-transparent caret-slate-800 selection:bg-emerald-200/70" : "bg-white text-slate-700",
@@ -3832,7 +4157,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   )}
                 </div>
 
-                {imageHistory.length > 0 && (
+                {seedanceTaskMode === 'generate' && imageHistory.length > 0 && (
                   <button
                     type="button"
                     onClick={() => {
@@ -3848,30 +4173,34 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                 )}
 
                 {/* 搜索替换按钮 */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchText('');
-                    setReplaceText('');
-                    setShowSearchReplaceModal(true);
-                  }}
-                  className="mt-3 ml-2 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-violet-200 hover:bg-violet-50/40"
-                >
-                  <Search className="size-3 text-slate-400" />
-                  <span>搜索替换</span>
-                </button>
+                {seedanceTaskMode === 'generate' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchText('');
+                      setReplaceText('');
+                      setShowSearchReplaceModal(true);
+                    }}
+                    className="mt-3 ml-2 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-violet-200 hover:bg-violet-50/40"
+                  >
+                    <Search className="size-3 text-slate-400" />
+                    <span>搜索替换</span>
+                  </button>
+                )}
 
                 {/* 底部工具栏：添加素材 + 设置 */}
                 <div className="mt-3 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => seedanceFileInputRef.current?.click()}
-                    disabled={isSeedanceLoading}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <Plus className="size-3.5" />
-                    添加素材
-                  </button>
+                  {seedanceTaskMode === 'generate' && (
+                    <button
+                      type="button"
+                      onClick={() => seedanceFileInputRef.current?.click()}
+                      disabled={isSeedanceLoading}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Plus className="size-3.5" />
+                      添加素材
+                    </button>
+                  )}
                   <div ref={seedanceSettingsRef} className="relative flex-1">
                     <button
                       type="button"
@@ -3879,9 +4208,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       className="flex h-9 w-full flex-wrap items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-left text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50"
                     >
                       <SlidersHorizontal className="size-3.5 text-slate-500" />
-                      <span>{getSeedanceRatioLabel(seedanceRatio)}</span>
+                      <span>{seedanceTaskMode === 'video-edit-painting' ? '原视频比例' : getSeedanceRatioLabel(seedanceRatio)}</span>
                       <span className="h-3.5 w-px bg-slate-200" />
-                      <span>{seedanceDuration} 秒</span>
+                      <span>{seedanceTaskMode === 'video-edit-painting' ? '原视频时长' : `${seedanceDuration} 秒`}</span>
                       <span className="h-3.5 w-px bg-slate-200" />
                       <span className="inline-flex items-center gap-1">
                         <Volume2 className="size-3" />
@@ -3893,7 +4222,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
                     {showSeedanceSettings && (
                       <div className="absolute left-0 right-0 z-20 mt-2 rounded-2xl border border-slate-300 bg-white p-3 shadow-[0_18px_45px_rgba(15,23,42,0.14)]">
-                        <div>
+                        {seedanceTaskMode === 'generate' && <div>
                           <div className="mb-2 text-xs font-black text-slate-700">视频比例</div>
                           <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
                             {SEEDANCE_RATIOS.map((ratio) => (
@@ -3912,9 +4241,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                               </button>
                             ))}
                           </div>
-                        </div>
+                        </div>}
 
-                        <div className="mt-4">
+                        {seedanceTaskMode === 'generate' && <div className="mt-4">
                           <div className="mb-2 text-xs font-black text-slate-700">视频时长</div>
                           <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
                             {(seedanceModel === 'doubao-seedance-2-5-260628' ? SEEDANCE_DURATIONS_2_5 : SEEDANCE_DURATIONS).map((duration) => (
@@ -3933,7 +4262,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                               </button>
                             ))}
                           </div>
-                        </div>
+                        </div>}
+
+                        {seedanceTaskMode === 'video-edit-painting' && (
+                          <div className="rounded-xl bg-violet-50 px-3 py-2 text-xs font-bold leading-5 text-violet-700">
+                            视频编辑固定使用智能比例和原视频时长，避免改变原片构图与动作节奏。
+                          </div>
+                        )}
 
                         <div className="mt-4 grid grid-cols-2 gap-2">
                           <button
@@ -3968,25 +4303,37 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={syncLatestPromptToSeedance}
-                  disabled={!latestAssistantText}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <Send className="size-3.5" />
-                  同步最新提示词
-                </button>
+                {seedanceTaskMode === 'generate' && (
+                  <button
+                    type="button"
+                    onClick={syncLatestPromptToSeedance}
+                    disabled={!latestAssistantText}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Send className="size-3.5" />
+                    同步最新提示词
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleCreateSeedanceVideo}
-                  disabled={!seedancePrompt.trim() || isSeedanceLoading || !seedanceApiConfigured}
+                  disabled={
+                    !seedancePrompt.trim()
+                    || isSeedanceLoading
+                    || !seedanceApiConfigured
+                    || (seedanceTaskMode === 'video-edit-painting' && (
+                      !videoEditTarget.trim()
+                      || !videoEditSourceDuration
+                      || !seedanceReferences.some((item) => item.kind === 'video')
+                      || !seedanceReferences.some((item) => item.kind === 'image')
+                    ))
+                  }
                   className="inline-flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isSeedanceLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-                  开始生成视频
+                  {seedanceTaskMode === 'video-edit-painting' ? '开始直接换画' : '开始生成视频'}
                 </button>
-                <button
+                {seedanceTaskMode === 'generate' && <button
                   type="button"
                   onClick={() => {
                     setSeedancePrompt("");
@@ -4003,7 +4350,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   )}
                 >
                   清空提示词
-                </button>
+                </button>}
               </div>
 
               {/* 生成任务预览区域 */}
@@ -4071,7 +4418,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                             </span>
                           </div>
                           <span className="text-[11px] text-slate-400">
-                            {seedanceRatio} · {seedanceDuration}秒
+                            {seedanceTaskMode === 'video-edit-painting' ? '原视频比例 · 原视频时长' : `${seedanceRatio} · ${seedanceDuration}秒`}
                           </span>
                         </div>
                         <div className="relative mx-auto w-full overflow-hidden rounded-xl bg-slate-950">
@@ -4232,11 +4579,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                                             </div>
                                             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-slate-400">
                                               <span className={item.model === 'doubao-seedance-2-5-260628' ? 'font-black text-violet-600' : 'font-black text-slate-500'}>
-                                                {getSeedanceModelLabel(item.model)}
+                                                {getSeedanceHistoryModeLabel(item)}
                                               </span>
                                               <span>{formatSessionTime(item.savedAt)}</span>
-                                              <span>{item.ratio}</span>
-                                              <span>{item.duration} 秒</span>
+                                              <span>{getSeedanceHistoryRatioLabel(item)}</span>
+                                              <span>{getSeedanceHistoryDurationLabel(item)}</span>
                                               <span>{getSeedanceStatusLabel(item.status, !!item.videoUrl)}</span>
                                               {item.elapsedSeconds !== undefined && item.elapsedSeconds > 0 && (
                                                 <span className="text-emerald-600">
@@ -4384,10 +4731,10 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   </div>
                   <div className="mt-0.5 flex gap-3 text-xs text-slate-400">
                     <span className={seedanceModalItem.model === 'doubao-seedance-2-5-260628' ? 'font-black text-violet-300' : 'font-black text-slate-300'}>
-                      {getSeedanceModelLabel(seedanceModalItem.model)}
+                      {getSeedanceHistoryModeLabel(seedanceModalItem)}
                     </span>
-                    <span>{seedanceModalItem.ratio}</span>
-                    <span>{seedanceModalItem.duration} 秒</span>
+                    <span>{getSeedanceHistoryRatioLabel(seedanceModalItem)}</span>
+                    <span>{getSeedanceHistoryDurationLabel(seedanceModalItem)}</span>
                     <span>{getSeedanceStatusLabel(seedanceModalItem.status, true)}</span>
                   </div>
                 </div>
