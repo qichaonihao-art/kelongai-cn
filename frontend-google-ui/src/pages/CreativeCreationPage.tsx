@@ -3937,12 +3937,6 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                     <option value="doubao-seedance-2-0-260128">Seedance 2.0 稳定版</option>
                     <option value="doubao-seedance-2-5-260628">Seedance 2.5 测试版</option>
                   </select>
-                  <span className={cn(
-                    "rounded-full px-3 py-1 text-[10px] font-black tracking-wider",
-                    seedanceApiConfigured ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
-                  )}>
-                    {seedanceApiConfigured ? `已接入 ${getSeedanceModelLabel(seedanceModel)}` : '待配置'}
-                  </span>
                   <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[10px] font-semibold text-slate-500">
                     今日 ¥{seedanceCostStats.daily} / 本月 ¥{seedanceCostStats.monthly} / 本年 ¥{seedanceCostStats.yearly}
                   </span>
