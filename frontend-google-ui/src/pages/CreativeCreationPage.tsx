@@ -3110,7 +3110,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   className={cn(
                     'flex-1 rounded-lg px-3 py-1.5 text-xs font-bold transition-all',
                     reverseMode === 'direct'
-                      ? 'bg-white text-slate-900 shadow-sm'
+                      ? 'bg-emerald-600 text-white shadow-[0_5px_14px_rgba(5,150,105,0.28)]'
                       : 'text-slate-500 hover:text-slate-700'
                   )}
                 >
@@ -3125,7 +3125,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   className={cn(
                     'flex-1 rounded-lg px-3 py-1.5 text-xs font-bold transition-all',
                     reverseMode === 'replace'
-                      ? 'bg-white text-slate-900 shadow-sm'
+                      ? 'bg-violet-600 text-white shadow-[0_5px_14px_rgba(124,58,237,0.28)]'
                       : 'text-slate-500 hover:text-slate-700'
                   )}
                 >
@@ -3140,7 +3140,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   className={cn(
                     'flex-1 rounded-lg px-3 py-1.5 text-xs font-bold transition-all',
                     reverseMode === 'image'
-                      ? 'bg-white text-slate-900 shadow-sm'
+                      ? 'bg-amber-500 text-white shadow-[0_5px_14px_rgba(245,158,11,0.28)]'
                       : 'text-slate-500 hover:text-slate-700'
                   )}
                 >
