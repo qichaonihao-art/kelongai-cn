@@ -749,13 +749,47 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                         </div>
                       </div>
                     </div>
-                    <textarea
-                      rows={7}
-                      value={imageAnalysis}
-                      onChange={(event) => setImageAnalysis(event.target.value)}
-                      placeholder={isAnalyzingImage ? 'AI 正在理解画作内容...' : '识别结果会显示在这里，你可以直接修改后再生成'}
-                      className="w-full resize-y border-t-2 border-slate-200 bg-slate-50/70 px-4 py-3 text-xs font-semibold leading-6 text-slate-700 outline-none transition focus:border-indigo-300 focus:bg-white"
-                    />
+                    {isAnalyzingImage ? (
+                      <div className="relative min-h-[190px] overflow-hidden border-t-2 border-slate-700 bg-slate-900 px-5 py-7 text-center">
+                        <div
+                          className="pointer-events-none absolute inset-0 opacity-10"
+                          style={{
+                            backgroundImage: 'linear-gradient(rgba(99,102,241,0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.4) 1px, transparent 1px)',
+                            backgroundSize: '24px 24px',
+                          }}
+                        />
+                        <div
+                          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400 to-transparent opacity-70"
+                          style={{ animation: 'tech-scan 2.5s linear infinite' }}
+                        />
+                        <div className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-cyan-500/10 to-transparent" />
+                        <div className="relative flex min-h-[134px] flex-col items-center justify-center">
+                          <div className="mb-5 flex justify-center gap-2">
+                            {[0, 1, 2].map((index) => (
+                              <span
+                                key={index}
+                                className="inline-block size-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.65)]"
+                                style={{
+                                  animation: 'tech-pulse 1.6s infinite ease-in-out both',
+                                  animationDelay: `${index * 0.2}s`,
+                                }}
+                              />
+                            ))}
+                          </div>
+                          <div className="text-sm font-black tracking-wider text-white">AI 正在识别画作</div>
+                          <div className="mt-2 text-xs font-semibold text-cyan-300/80">分析主体、构图、色彩、寓意与适用场景</div>
+                          <div className="mt-3 text-[11px] text-slate-500">完成后将自动展示可编辑的识别结果</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <textarea
+                        rows={7}
+                        value={imageAnalysis}
+                        onChange={(event) => setImageAnalysis(event.target.value)}
+                        placeholder="识别结果会显示在这里，你可以直接修改后再生成"
+                        className="w-full resize-y border-t-2 border-slate-200 bg-slate-50/70 px-4 py-3 text-xs font-semibold leading-6 text-slate-700 outline-none transition focus:border-indigo-300 focus:bg-white"
+                      />
+                    )}
                   </div>
                 ) : (
                   <button
@@ -818,9 +852,36 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 )}
               </div>
               {isGenerating ? (
-                <div className="flex h-80 items-center justify-center rounded-3xl bg-slate-50 text-sm font-black text-slate-400">
-                  <Loader2 className="mr-2 size-4 animate-spin" />
-                  正在读取业务设定和爆款案例生成
+                <div className="relative min-h-80 overflow-hidden rounded-3xl border-2 border-slate-700 bg-slate-900 px-6 py-10 text-center shadow-xl">
+                  <div
+                    className="pointer-events-none absolute inset-0 opacity-10"
+                    style={{
+                      backgroundImage: 'linear-gradient(rgba(99,102,241,0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.4) 1px, transparent 1px)',
+                      backgroundSize: '24px 24px',
+                    }}
+                  />
+                  <div
+                    className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400 to-transparent opacity-70"
+                    style={{ animation: 'tech-scan 2.5s linear infinite' }}
+                  />
+                  <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-cyan-500/10 to-transparent" />
+                  <div className="relative flex min-h-60 flex-col items-center justify-center">
+                    <div className="mb-6 flex justify-center gap-2.5">
+                      {[0, 1, 2].map((index) => (
+                        <span
+                          key={index}
+                          className="inline-block size-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.7)]"
+                          style={{
+                            animation: 'tech-pulse 1.6s infinite ease-in-out both',
+                            animationDelay: `${index * 0.2}s`,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <div className="text-base font-black tracking-wider text-white">AI 正在创作爆款开头</div>
+                    <div className="mt-2 text-xs font-semibold text-cyan-300/80">读取团队设定，匹配相关案例，执行 7+3 创作策略</div>
+                    <div className="mt-4 text-[11px] text-slate-500">生成完成后将在此自动展示全部文案</div>
+                  </div>
                 </div>
               ) : generatedResults.length > 0 ? (
                 <div className="grid gap-4">
