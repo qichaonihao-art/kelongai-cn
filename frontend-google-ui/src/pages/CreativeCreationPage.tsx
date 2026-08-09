@@ -3101,9 +3101,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         className="flex-1 overflow-y-auto p-3 md:p-4 space-y-4 scroll-smooth"
       >
         <div className="max-w-6xl mx-auto w-full space-y-6">
-          <section className="grid gap-6 lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
+          <section className="grid gap-6 lg:grid-cols-2">
             <div className="rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
-              <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="mb-4 flex min-h-[49px] items-start justify-between gap-3">
                 <div>
                   <div className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">
                     <Film className="size-3.5" />
@@ -3167,12 +3167,12 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                 </div>
               </div>
 
-              <div className="mb-4 flex rounded-xl bg-slate-100 p-1">
+              <div className="mb-4 flex h-9 rounded-xl border border-slate-200 bg-slate-100 p-1">
                 <button
                   type="button"
                   onClick={() => switchReverseMode('direct')}
                   className={cn(
-                    'flex-1 rounded-lg px-3 py-1.5 text-xs font-bold transition-all',
+                    'flex-1 rounded-lg px-3 text-xs font-bold transition-all',
                     reverseMode === 'direct'
                       ? 'bg-emerald-600 text-white shadow-[0_5px_14px_rgba(5,150,105,0.28)]'
                       : 'text-slate-500 hover:text-slate-700'
@@ -3187,7 +3187,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   type="button"
                   onClick={() => switchReverseMode('replace')}
                   className={cn(
-                    'flex-1 rounded-lg px-3 py-1.5 text-xs font-bold transition-all',
+                    'flex-1 rounded-lg px-3 text-xs font-bold transition-all',
                     reverseMode === 'replace'
                       ? 'bg-violet-600 text-white shadow-[0_5px_14px_rgba(124,58,237,0.28)]'
                       : 'text-slate-500 hover:text-slate-700'
@@ -3202,7 +3202,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   type="button"
                   onClick={() => switchReverseMode('image')}
                   className={cn(
-                    'flex-1 rounded-lg px-3 py-1.5 text-xs font-bold transition-all',
+                    'flex-1 rounded-lg px-3 text-xs font-bold transition-all',
                     reverseMode === 'image'
                       ? 'bg-amber-500 text-white shadow-[0_5px_14px_rgba(245,158,11,0.28)]'
                       : 'text-slate-500 hover:text-slate-700'
@@ -3973,7 +3973,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
             </div>
 
             <div className="rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
-              <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="mb-4 flex min-h-[49px] items-start justify-between gap-3">
                 <div>
                   <div className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-violet-500">
                     <Sparkles className="size-3.5" />
@@ -4012,12 +4012,12 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                 </div>
               </div>
 
-              <div className="mb-4 inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">
+              <div className="mb-4 flex h-9 rounded-xl border border-slate-200 bg-slate-100 p-1">
                 <button
                   type="button"
                   onClick={() => switchSeedanceTaskMode('generate')}
                   className={cn(
-                    "rounded-lg px-4 py-2 text-xs font-black transition-colors",
+                    "flex-1 rounded-lg px-4 text-xs font-black transition-colors",
                     seedanceTaskMode === 'generate' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
                   )}
                 >
@@ -4027,7 +4027,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   type="button"
                   onClick={() => switchSeedanceTaskMode('video-edit-painting')}
                   className={cn(
-                    "rounded-lg px-4 py-2 text-xs font-black transition-colors",
+                    "flex-1 rounded-lg px-4 text-xs font-black transition-colors",
                     seedanceTaskMode === 'video-edit-painting' ? "bg-violet-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-700"
                   )}
                 >
