@@ -609,7 +609,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   暂无爆款开头，先新增一条真实跑量好的开头。
                 </div>
               ) : (
-                <div className="grid gap-3">
+                <div className="grid gap-4">
                   {displayedOpenings.map((opening, index) => {
                     const selected = selectedReferenceIds.includes(opening.id);
                     const likeScore = extractLikeScore(opening.performanceNote);
@@ -620,10 +620,10 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                         onDoubleClick={() => setDetailOpening(opening)}
                         title="双击查看完整内容"
                         className={cn(
-                          "rounded-3xl border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg",
+                          "rounded-3xl border-2 p-4 shadow-[0_5px_16px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:shadow-lg",
                           selected
-                            ? "border-emerald-300 bg-emerald-50/55 shadow-emerald-100/80 ring-1 ring-emerald-100"
-                            : "border-slate-300/90 bg-white/90 shadow-slate-200/70 hover:border-slate-400"
+                            ? "border-emerald-400 bg-emerald-50/55 shadow-emerald-100/90 ring-1 ring-emerald-100"
+                            : "border-slate-300 bg-white/95 hover:border-slate-400"
                         )}
                       >
                         <div className="flex items-start gap-3">
@@ -805,12 +805,12 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   正在读取业务设定和爆款案例生成
                 </div>
               ) : generatedResults.length > 0 ? (
-                <div className="grid gap-3">
+                <div className="grid gap-4">
                   {generatedResults.map((item, index) => {
                     const isExplore = item.strategy === 'explore';
                     const isSaved = savedGeneratedIndexes.includes(index);
                     return (
-                    <article key={`${item.openingText}-${index}`} className={cn("rounded-3xl border p-4", isExplore ? "border-amber-200 bg-amber-50/45" : "border-emerald-100 bg-emerald-50/40")}>
+                    <article key={`${item.openingText}-${index}`} className={cn("rounded-3xl border-2 p-4 shadow-[0_5px_16px_rgba(15,23,42,0.08)]", isExplore ? "border-amber-300 bg-amber-50/45" : "border-emerald-300 bg-emerald-50/40")}>
                       <div className="mb-2 flex items-center justify-between gap-3">
                         <div className={cn("flex items-center gap-2 text-xs font-black", isExplore ? "text-amber-700" : "text-emerald-600")}>
                           <span>#{index + 1}</span>
