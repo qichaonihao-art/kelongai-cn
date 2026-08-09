@@ -36,6 +36,8 @@ const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 45 * 1024 * 1024;
 const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
 const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-1-pro-260628';
 const DOUBAO_MULTIMODAL_TIMEOUT_MS = 8 * 60 * 1000;
+const QWEN_CREATIVE_MULTIMODAL_MODEL = 'qwen3.8-max';
+const QWEN_CREATIVE_MULTIMODAL_TIMEOUT_MS = 10 * 60 * 1000;
 const APIMART_API_BASE_URL = String(process.env.APIMART_API_BASE_URL || 'https://api.apimart.ai/v1').trim().replace(/\/+$/g, '');
 const APIMART_IMAGE_MODEL = String(process.env.APIMART_IMAGE_MODEL || 'gpt-image-2').trim();
 const APIMART_IMAGE_FETCH_TIMEOUT_MS = 45 * 1000;
@@ -929,6 +931,7 @@ async function handleConfigStatus(req, res) {
       gptImageApiKey: !!readValue(SERVER_CONFIG.gptImageApiKey),
       dashscopeApiKey: !!readValue(SERVER_CONFIG.dashscopeApiKey),
       doubaoMultimodalModel: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+      qwenMultimodalModel: QWEN_CREATIVE_MULTIMODAL_MODEL,
       voiceCloneMockMode: VOICE_CLONE_MOCK_MODE,
       publicBaseUrl: !!publicBaseUrl
     },
@@ -8861,6 +8864,7 @@ async function readMultipartFormBody(req) {
     question: readValue(formData.get('question')),
     history: parseJsonString(formData.get('history'), []),
     stream: readValue(formData.get('stream')).toLowerCase() === 'true',
+    enableThinking: readValue(formData.get('enable_thinking')).toLowerCase() === 'true',
     model: readValue(formData.get('model')),
     mediaKind: readValue(formData.get('media_kind')),
     file: file instanceof File ? file : null,
@@ -11269,6 +11273,7 @@ async function handleDoubaoMultimodal(req, res) {
     const resolvedModel = readValue(model) || DEFAULT_DOUBAO_MULTIMODAL_MODEL;
     const hasUploadedFile = file instanceof File && file.size > 0;
     const hasMultipleFiles = Array.isArray(files) && files.length > 0;
+    const enableThinking = body.enableThinking === true || body.enable_thinking === true;
 
     console.log('[doubao multimodal] request start', {
       requestId,
@@ -11508,7 +11513,6 @@ async function handleDoubaoMultimodal(req, res) {
       text: promptText
     });
 
-    const hasVisualMediaInput = content.some((item) => item.type === 'input_image' || item.type === 'input_video');
     const requestPayload = {
       model: resolvedModel,
       stream: shouldStream,
@@ -11519,7 +11523,7 @@ async function handleDoubaoMultimodal(req, res) {
         }
       ]
     };
-    if (hasVisualMediaInput) {
+    if (!enableThinking) {
       requestPayload.thinking = { type: 'disabled' };
     }
     const requestInit = {
@@ -11538,7 +11542,7 @@ async function handleDoubaoMultimodal(req, res) {
       stream: shouldStream,
       contentLength: content.length,
       contentTypes: content.map((c) => c.type),
-      thinking: hasVisualMediaInput ? 'disabled_for_visual_media' : 'default',
+      thinking: enableThinking ? 'enabled_by_model_default' : 'disabled',
       promptPreview: promptText.slice(0, 100)
     });
 
@@ -11707,6 +11711,300 @@ async function handleDoubaoMultimodal(req, res) {
       error: zhError,
       debug: { originalMessage: error?.message || '', stage }
     });
+  }
+}
+
+function extractQwenCreativeDelta(payload) {
+  const delta = payload?.choices?.[0]?.delta;
+  if (!delta || typeof delta !== 'object') return '';
+  if (typeof delta.content === 'string') return delta.content;
+  if (!Array.isArray(delta.content)) return '';
+  return delta.content
+    .map((item) => (item && typeof item === 'object' && typeof item.text === 'string' ? item.text : ''))
+    .join('');
+}
+
+async function proxyQwenCreativeStream(upstreamRes, req, res, requestId) {
+  if (!upstreamRes.body) {
+    writeSseEvent(res, 'error', { error: '千问未返回可读取的响应流' });
+    res.end();
+    return;
+  }
+
+  const reader = upstreamRes.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let answer = '';
+  let closedByClient = false;
+
+  const abortStream = async () => {
+    if (closedByClient) return;
+    closedByClient = true;
+    try {
+      await reader.cancel();
+    } catch {}
+  };
+  req.once('close', abortStream);
+
+  const consumeLine = (line) => {
+    const trimmed = String(line || '').replace(/\r$/, '').trim();
+    if (!trimmed.startsWith('data:')) return false;
+    const rawData = trimmed.slice(5).trim();
+    if (!rawData) return false;
+    if (rawData === '[DONE]') return true;
+
+    let payload = null;
+    try {
+      payload = JSON.parse(rawData);
+    } catch {
+      return false;
+    }
+
+    const upstreamError = payload?.error?.message || payload?.error || '';
+    if (upstreamError) {
+      writeSseEvent(res, 'error', { error: String(upstreamError) });
+      return false;
+    }
+
+    // reasoning_content intentionally stays server-side. Module one only
+    // displays the final reverse prompt while Qwen can still think internally.
+    const delta = extractQwenCreativeDelta(payload);
+    if (delta) {
+      answer += delta;
+      writeSseEvent(res, 'answer.delta', { delta });
+    }
+    return false;
+  };
+
+  try {
+    while (!closedByClient) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        consumeLine(line);
+      }
+    }
+
+    buffer += decoder.decode();
+    if (buffer.trim()) consumeLine(buffer);
+
+    if (!closedByClient) {
+      const normalizedAnswer = normalizeDoubaoDisplayText(answer);
+      if (normalizedAnswer) {
+        writeSseEvent(res, 'answer.done', { answer: normalizedAnswer, model: QWEN_CREATIVE_MULTIMODAL_MODEL });
+      } else {
+        writeSseEvent(res, 'error', { error: '千问已完成分析，但没有返回可用的提示词内容' });
+      }
+      res.end();
+    }
+  } catch (error) {
+    console.error('[qwen creative multimodal] stream failed', { requestId, message: error?.message || '' });
+    if (!closedByClient) {
+      writeSseEvent(res, 'error', { error: error?.message || '千问流式响应中断' });
+      res.end();
+    }
+  } finally {
+    req.off('close', abortStream);
+    try {
+      reader.releaseLock();
+    } catch {}
+  }
+}
+
+async function handleQwenCreativeMultimodal(req, res) {
+  let stage = 'init';
+  let shouldStream = false;
+  let waitingHeartbeat = null;
+  const requestId = randomBytes(6).toString('hex');
+  const requestStartedAt = Date.now();
+
+  try {
+    stage = 'read_body';
+    const body = isMultipartFormRequest(req)
+      ? await readMultipartFormBody(req)
+      : await readRequestBody(req);
+    const { question, history, mediaKind, file, files, filesKinds } = body;
+    shouldStream = wantsDoubaoStream(body, req);
+    const apiKey = readValue(SERVER_CONFIG.dashscopeApiKey);
+    const resolvedQuestion = readValue(question);
+    const hasUploadedFile = file instanceof File && file.size > 0;
+    const hasMultipleFiles = Array.isArray(files) && files.length > 0;
+    const enableThinking = body.enableThinking === true || body.enable_thinking === true;
+
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 DASHSCOPE_API_KEY' });
+      return;
+    }
+    if (!resolvedQuestion) {
+      sendJson(res, 400, { error: '缺少文本问题 question' });
+      return;
+    }
+
+    const promptText = buildDoubaoPromptWithHistory(resolvedQuestion, history);
+    const content = [];
+    const uploadedMedia = hasMultipleFiles
+      ? files.map((currentFile, index) => ({
+          file: currentFile,
+          kind: Array.isArray(filesKinds) && filesKinds[index]
+            ? filesKinds[index]
+            : String(currentFile.type || '').startsWith('image/') ? 'image' : 'video'
+        }))
+      : hasUploadedFile
+        ? [{ file, kind: mediaKind === 'image' ? 'image' : 'video' }]
+        : [];
+
+    stage = 'normalize_uploaded_media';
+    for (const media of uploadedMedia) {
+      const resolvedMediaKind = media.kind === 'image' ? 'image' : 'video';
+      let mediaUrl = '';
+
+      if (resolvedMediaKind === 'video' && media.file.size > MAX_VIDEO_ORIGINAL_UPLOAD_BYTES) {
+        const publicMedia = await createPublicMediaUrl({ file: media.file, req });
+        if (!publicMedia.ok) {
+          sendJson(res, 400, { error: publicMedia.error, debug: { stage, fileSize: media.file.size } });
+          return;
+        }
+        mediaUrl = publicMedia.url;
+      } else {
+        const compressedFile = await compressMediaForArk(media.file, resolvedMediaKind);
+        const normalizedMedia = await normalizeUploadedMediaInput(compressedFile, resolvedMediaKind);
+        mediaUrl = resolvedMediaKind === 'image' ? normalizedMedia.imageUrl : normalizedMedia.videoUrl;
+      }
+
+      content.push(
+        resolvedMediaKind === 'image'
+          ? { type: 'image_url', image_url: { url: mediaUrl } }
+          : { type: 'video_url', video_url: { url: mediaUrl }, fps: 2 }
+      );
+    }
+    content.push({ type: 'text', text: promptText });
+
+    const requestPayload = {
+      model: QWEN_CREATIVE_MULTIMODAL_MODEL,
+      messages: [{ role: 'user', content }],
+      enable_thinking: enableThinking,
+      stream: shouldStream
+    };
+
+    console.log('[qwen creative multimodal] request start', {
+      requestId,
+      model: QWEN_CREATIVE_MULTIMODAL_MODEL,
+      stream: shouldStream,
+      mediaCount: uploadedMedia.length,
+      mediaKinds: uploadedMedia.map((item) => item.kind),
+      thinking: enableThinking ? 'enabled' : 'disabled',
+      elapsedMs: Date.now() - requestStartedAt
+    });
+
+    if (shouldStream) {
+      stage = 'open_stream_to_client';
+      startSseResponse(res);
+      writeSseEvent(res, 'status', { stage: 'qwen_analyzing', model: QWEN_CREATIVE_MULTIMODAL_MODEL });
+      waitingHeartbeat = setInterval(() => {
+        try {
+          res.write(': waiting_qwen\n\n');
+        } catch {}
+      }, 15000);
+    }
+
+    stage = 'request_upstream';
+    const upstreamRes = await fetch(`${DASHSCOPE_API_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        Accept: shouldStream ? 'text/event-stream' : 'application/json'
+      },
+      body: JSON.stringify(requestPayload),
+      signal: AbortSignal.timeout(QWEN_CREATIVE_MULTIMODAL_TIMEOUT_MS)
+    });
+
+    if (waitingHeartbeat) {
+      clearInterval(waitingHeartbeat);
+      waitingHeartbeat = null;
+    }
+
+    if (!upstreamRes.ok) {
+      const responseText = await upstreamRes.text();
+      let payload = null;
+      try {
+        payload = JSON.parse(responseText);
+      } catch {}
+      const errorMessage = payload?.error?.message || payload?.message || responseText || `千问 API 请求失败（HTTP ${upstreamRes.status}）`;
+      if (shouldStream) {
+        writeSseEvent(res, 'error', { error: errorMessage });
+        res.end();
+      } else {
+        sendJson(res, upstreamRes.status, { error: errorMessage, upstream: payload || responseText });
+      }
+      return;
+    }
+
+    const upstreamContentType = String(upstreamRes.headers.get('content-type') || '').toLowerCase();
+    if (shouldStream && upstreamContentType.includes('text/event-stream')) {
+      stage = 'proxy_stream';
+      writeSseEvent(res, 'status', { stage: 'qwen_answering', model: QWEN_CREATIVE_MULTIMODAL_MODEL });
+      await proxyQwenCreativeStream(upstreamRes, req, res, requestId);
+      return;
+    }
+
+    stage = 'read_upstream_response';
+    const responseText = await upstreamRes.text();
+    let payload = null;
+    try {
+      payload = JSON.parse(responseText);
+    } catch {}
+    const answer = extractResponsesText(payload);
+
+    if (shouldStream) {
+      if (answer) {
+        writeSseEvent(res, 'answer.done', { answer, model: QWEN_CREATIVE_MULTIMODAL_MODEL });
+      } else {
+        writeSseEvent(res, 'error', { error: '千问已完成分析，但没有返回可用的提示词内容' });
+      }
+      res.end();
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      model: QWEN_CREATIVE_MULTIMODAL_MODEL,
+      answer,
+      response: payload,
+      debug: !answer ? { responseKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [] } : undefined
+    });
+  } catch (error) {
+    if (waitingHeartbeat) clearInterval(waitingHeartbeat);
+    const isInputError =
+      error?.message === '请求体不是合法 JSON' ||
+      error?.message === '请求体过大' ||
+      error?.message === '上传文件过大';
+    const isTimeout =
+      error?.name === 'TimeoutError' ||
+      error?.name === 'AbortError' ||
+      /timeout|timed out|aborted/i.test(String(error?.message || ''));
+    const message = isInputError
+      ? error.message
+      : isTimeout
+        ? '千问视频分析超时，系统将自动重试一次；如果仍失败，请稍后再试。'
+        : `千问请求失败：${error?.message || '未知错误'}`;
+
+    console.error('[qwen creative multimodal] request failed', {
+      requestId,
+      stage,
+      message: error?.message || '',
+      elapsedMs: Date.now() - requestStartedAt
+    });
+
+    if (shouldStream) {
+      writeSseEvent(res, 'error', { error: message, debug: { stage } });
+      res.end();
+    } else {
+      sendJson(res, isInputError ? 400 : isTimeout ? 504 : 500, { error: message, debug: { stage } });
+    }
   }
 }
 
@@ -13617,6 +13915,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/doubao/multimodal') {
     await handleDoubaoMultimodal(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/qwen/multimodal') {
+    await handleQwenCreativeMultimodal(req, res);
     return;
   }
 

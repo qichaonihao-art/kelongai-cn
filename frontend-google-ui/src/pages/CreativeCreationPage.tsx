@@ -34,6 +34,7 @@ import {
   getCreativeConfigStatus,
   querySeedanceTask,
   sendCreativeMessage,
+  type CreativeReverseModel,
   type CreativeHistoryItem,
   type SeedanceReferenceFile,
   type SeedanceTaskResult,
@@ -1178,9 +1179,14 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [requestError, setRequestError] = useState("");
   const [configReachable, setConfigReachable] = useState(true);
   const [arkApiConfigured, setArkApiConfigured] = useState(true);
+  const [dashscopeApiConfigured, setDashscopeApiConfigured] = useState(true);
   const [seedanceApiConfigured, setSeedanceApiConfigured] = useState(true);
   const [publicBaseUrlConfigured, setPublicBaseUrlConfigured] = useState(false);
   const [doubaoMultimodalModel, setDoubaoMultimodalModel] = useState('');
+  const [qwenMultimodalModel, setQwenMultimodalModel] = useState('qwen3.8-max');
+  const [reverseModel, setReverseModel] = useState<CreativeReverseModel>('doubao');
+  const [doubaoThinkingEnabled, setDoubaoThinkingEnabled] = useState(false);
+  const [qwenThinkingEnabled, setQwenThinkingEnabled] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<SelectedCreativeMedia | null>(null);
   const [seedanceTaskMode, setSeedanceTaskMode] = useState<SeedanceTaskMode>('generate');
   const [seedanceModel, setSeedanceModel] = useState<SeedanceModelId>('doubao-seedance-2-0-260128');
@@ -1518,9 +1524,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       if (cancelled) return;
       setConfigReachable(status.reachable);
       setArkApiConfigured(status.arkApiKey);
+      setDashscopeApiConfigured(status.dashscopeApiKey);
       setSeedanceApiConfigured(status.seedanceApiKey);
       setPublicBaseUrlConfigured(status.publicBaseUrl);
       setDoubaoMultimodalModel(status.doubaoMultimodalModel || '');
+      setQwenMultimodalModel(status.qwenMultimodalModel || 'qwen3.8-max');
     }
 
     loadConfig();
@@ -2958,6 +2966,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         question,
         media: mediaToSend,
         history,
+        provider: reverseModel,
+        enableThinking: reverseModel === 'qwen' ? qwenThinkingEnabled : doubaoThinkingEnabled,
         onDelta: (text) => {
           updateMessage(assistantMessageId, (message) => ({
             ...message,
@@ -2974,7 +2984,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         pending: false,
       }));
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '豆包回答失败';
+      const errorMessage = error instanceof Error
+        ? error.message
+        : `${reverseModel === 'qwen' ? '千问' : '豆包'}回答失败`;
       updateMessage(assistantMessageId, (message) => ({
         ...message,
         content: `生成失败：${errorMessage}`,
@@ -2989,6 +3001,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const seedanceElapsedText = seedanceTask && !seedanceTask.videoUrl
     ? formatSeedanceWait(getSeedanceElapsedSeconds(seedanceTask, seedanceClock))
     : '';
+  const reverseApiConfigured = reverseModel === 'qwen' ? dashscopeApiConfigured : arkApiConfigured;
 
   return (
     <div className="h-screen bg-slate-200 flex flex-col">
@@ -3071,13 +3084,13 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
           <div className="flex items-center gap-2">
             <div className={cn(
               "size-2 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.6)]",
-              configReachable && arkApiConfigured ? "bg-emerald-500 animate-pulse" : "bg-amber-400"
+              configReachable && reverseApiConfigured ? "bg-emerald-500 animate-pulse" : "bg-amber-400"
             )} />
             <span className={cn(
               "text-[10px] font-bold uppercase tracking-wider",
-              configReachable && arkApiConfigured ? "text-emerald-600" : "text-amber-600"
+              configReachable && reverseApiConfigured ? "text-emerald-600" : "text-amber-600"
             )}>
-              {configReachable && arkApiConfigured ? 'AI 在线' : '待配置'}
+              {configReachable && reverseApiConfigured ? 'AI 在线' : '待配置'}
             </span>
           </div>
         </div>
@@ -3098,9 +3111,60 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   </div>
                   <h2 className="text-base font-black text-slate-900">视频反推提示词</h2>
                 </div>
-                <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black tracking-wider text-emerald-600">
-                  已接入 {formatDoubaoMultimodalModelName(doubaoMultimodalModel)}
-                </span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={reverseModel === 'qwen' ? qwenThinkingEnabled : doubaoThinkingEnabled}
+                    onClick={() => {
+                      if (reverseModel === 'qwen') {
+                        setQwenThinkingEnabled((enabled) => !enabled);
+                      } else {
+                        setDoubaoThinkingEnabled((enabled) => !enabled);
+                      }
+                    }}
+                    disabled={isLoading}
+                    className={cn(
+                      "inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-[10px] font-black transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                      (reverseModel === 'qwen' ? qwenThinkingEnabled : doubaoThinkingEnabled)
+                        ? "border-amber-300 bg-amber-50 text-amber-700"
+                        : "border-slate-300 bg-slate-50 text-slate-500"
+                    )}
+                  >
+                    <span className={cn(
+                      "relative h-4 w-7 rounded-full transition-colors",
+                      (reverseModel === 'qwen' ? qwenThinkingEnabled : doubaoThinkingEnabled)
+                        ? "bg-amber-500"
+                        : "bg-slate-300"
+                    )}>
+                      <span className={cn(
+                        "absolute top-0.5 size-3 rounded-full bg-white shadow-sm transition-transform",
+                        (reverseModel === 'qwen' ? qwenThinkingEnabled : doubaoThinkingEnabled)
+                          ? "translate-x-3.5"
+                          : "translate-x-0.5"
+                      )} />
+                    </span>
+                    Thinking
+                  </button>
+                  <div className={cn(
+                    "relative rounded-full border px-1 shadow-sm transition-colors",
+                    reverseModel === 'qwen'
+                      ? "border-blue-300 bg-blue-50 text-blue-700"
+                      : "border-emerald-300 bg-emerald-50 text-emerald-700"
+                  )}>
+                    <select
+                      value={reverseModel}
+                      onChange={(event) => setReverseModel(event.target.value as CreativeReverseModel)}
+                      disabled={isLoading}
+                      aria-label="反推提示词模型"
+                      className="h-8 appearance-none bg-transparent pl-3 pr-8 text-xs font-black outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <option value="doubao">{formatDoubaoMultimodalModelName(doubaoMultimodalModel)}</option>
+                      <option value="qwen">千问 {qwenMultimodalModel === 'qwen3.8-max' ? 'Qwen3.8-Max' : qwenMultimodalModel}</option>
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2" />
+                  </div>
+                </div>
               </div>
 
               <div className="mb-4 flex rounded-xl bg-slate-100 p-1">

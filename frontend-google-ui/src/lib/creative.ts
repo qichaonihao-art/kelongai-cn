@@ -21,10 +21,14 @@ export interface SeedanceReferenceFile {
 interface CreativeConfigStatus {
   reachable: boolean;
   arkApiKey: boolean;
+  dashscopeApiKey: boolean;
   seedanceApiKey: boolean;
   publicBaseUrl: boolean;
   doubaoMultimodalModel?: string;
+  qwenMultimodalModel?: string;
 }
+
+export type CreativeReverseModel = 'doubao' | 'qwen';
 
 export interface SeedanceTaskResult {
   ok: boolean;
@@ -354,14 +358,17 @@ export async function getCreativeConfigStatus(): Promise<CreativeConfigStatus> {
     return {
       reachable: true,
       arkApiKey: !!json?.serverManaged?.arkApiKey,
+      dashscopeApiKey: !!json?.serverManaged?.dashscopeApiKey,
       seedanceApiKey: !!json?.serverManaged?.seedanceApiKey,
       publicBaseUrl: !!json?.serverManaged?.publicBaseUrl,
       doubaoMultimodalModel: json?.serverManaged?.doubaoMultimodalModel || '',
+      qwenMultimodalModel: json?.serverManaged?.qwenMultimodalModel || '',
     };
   } catch {
     return {
       reachable: false,
       arkApiKey: false,
+      dashscopeApiKey: false,
       seedanceApiKey: false,
       publicBaseUrl: false,
     };
@@ -374,6 +381,8 @@ export async function sendCreativeMessage(options: {
   history: CreativeHistoryItem[];
   onDelta?: (text: string) => void;
   model?: string;
+  provider?: CreativeReverseModel;
+  enableThinking?: boolean;
 }) {
   const mediaArray = options.media
     ? Array.isArray(options.media)
@@ -394,6 +403,7 @@ export async function sendCreativeMessage(options: {
       if (options.model) {
         formData.append('model', options.model);
       }
+      formData.append('enable_thinking', String(options.enableThinking === true));
       if (mediaArray.length === 1) {
         formData.append('media_kind', mediaArray[0].kind);
         formData.append('file', mediaArray[0].file, mediaArray[0].fileName);
@@ -415,6 +425,7 @@ export async function sendCreativeMessage(options: {
         question: options.question,
         history: options.history,
         stream,
+        enable_thinking: options.enableThinking === true,
         ...(options.model ? { model: options.model } : {}),
       }),
     };
@@ -427,7 +438,9 @@ export async function sendCreativeMessage(options: {
 
   const runRequest = async (stream: boolean) => {
     const { headers, body } = buildRequest(stream);
-    const response = await fetch('/api/doubao/multimodal', {
+    const provider = options.provider || 'doubao';
+    const providerLabel = provider === 'qwen' ? '千问' : '豆包';
+    const response = await fetch(provider === 'qwen' ? '/api/qwen/multimodal' : '/api/doubao/multimodal', {
       method: 'POST',
       credentials: 'include',
       headers,
@@ -435,7 +448,7 @@ export async function sendCreativeMessage(options: {
     });
 
     if (!response.ok) {
-      let message = `豆包回答失败（HTTP ${response.status}）`;
+      let message = `${providerLabel}回答失败（HTTP ${response.status}）`;
       try {
         const json = await response.json();
         if (json?.error) {
@@ -488,7 +501,8 @@ export async function sendCreativeMessage(options: {
       return await runRequest(false);
     } catch (retryError) {
       if (isRetriableNetworkError(retryError)) {
-        throw new Error('豆包连接偶发中断，已自动重试一次但仍未成功。请稍后再试。');
+        const providerLabel = options.provider === 'qwen' ? '千问' : '豆包';
+        throw new Error(`${providerLabel}连接偶发中断，已自动重试一次但仍未成功。请稍后再试。`);
       }
       throw retryError;
     }
