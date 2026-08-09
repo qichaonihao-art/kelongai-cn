@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   BookOpenText,
   CheckSquare,
   Copy,
   Edit3,
+  ImagePlus,
   Loader2,
   Plus,
   RefreshCw,
   Search,
+  Save,
   Settings2,
   Sparkles,
   TrendingUp,
@@ -18,6 +20,7 @@ import {
 import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
 import { cn } from "@/src/lib/utils";
 import {
+  analyzeCreativePainting,
   createCreativeOpening,
   deleteCreativeOpening,
   fetchCreativeFeedingSettings,
@@ -189,7 +192,19 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedAnswer, setGeneratedAnswer] = useState('');
   const [generatedResults, setGeneratedResults] = useState<CreativeGenerateResult[]>([]);
-  const [generateMeta, setGenerateMeta] = useState<{ model: string; referenceCount: number } | null>(null);
+  const [generateMeta, setGenerateMeta] = useState<{
+    model: string;
+    referenceCount: number;
+    referenceMode: 'manual' | 'smart';
+    stableCount: number;
+    exploreCount: number;
+  } | null>(null);
+  const [paintingImage, setPaintingImage] = useState<{ name: string; dataUrl: string } | null>(null);
+  const [imageAnalysis, setImageAnalysis] = useState('');
+  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
+  const [savedGeneratedIndexes, setSavedGeneratedIndexes] = useState<number[]>([]);
+  const [copiedGeneratedIndex, setCopiedGeneratedIndex] = useState<number | null>(null);
+  const paintingImageInputRef = useRef<HTMLInputElement>(null);
 
   const tags = useMemo(
     () => Array.from(new Set(openings.flatMap((item) => item.tags || []).filter((tag) => tag && !isUrlLike(tag)))),
@@ -311,20 +326,103 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
     setGeneratedAnswer('');
     setGeneratedResults([]);
     setGenerateMeta(null);
+    setSavedGeneratedIndexes([]);
+    setCopiedGeneratedIndex(null);
     try {
       const response = await generateCreativeOpenings({
         ...generateDraft,
+        imageDataUrl: paintingImage?.dataUrl,
+        imageAnalysis,
         count: Math.min(30, Math.max(1, Number(generateDraft.count) || 10)),
-        referenceLimit: 20,
+        referenceLimit: 12,
         referenceIds: selectedReferenceIds,
       });
       setGeneratedAnswer(response.answer);
       setGeneratedResults(response.results || []);
-      setGenerateMeta({ model: response.model, referenceCount: response.referenceCount });
+      setGenerateMeta({
+        model: response.model,
+        referenceCount: response.referenceCount,
+        referenceMode: response.referenceMode,
+        stableCount: response.stableCount,
+        exploreCount: response.exploreCount,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : '文案仿写生成失败');
     } finally {
       setIsGenerating(false);
+    }
+  }
+
+  async function analyzePaintingImage(dataUrl = paintingImage?.dataUrl || '') {
+    if (!dataUrl) return;
+    setIsAnalyzingImage(true);
+    setError('');
+    try {
+      const response = await analyzeCreativePainting(dataUrl);
+      setImageAnalysis(response.analysis || '');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '画作图片识别失败');
+    } finally {
+      setIsAnalyzingImage(false);
+    }
+  }
+
+  function handlePaintingImageChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setError('请选择图片文件');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError('画作图片不能超过 10MB');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!dataUrl) return;
+      setPaintingImage({ name: file.name, dataUrl });
+      setImageAnalysis('');
+      void analyzePaintingImage(dataUrl);
+    };
+    reader.onerror = () => setError('读取图片失败，请重新选择');
+    reader.readAsDataURL(file);
+  }
+
+  function removePaintingImage() {
+    setPaintingImage(null);
+    setImageAnalysis('');
+  }
+
+  async function copyGeneratedOpening(item: CreativeGenerateResult, index: number) {
+    try {
+      await navigator.clipboard.writeText(item.openingText);
+      setCopiedGeneratedIndex(index);
+      window.setTimeout(() => setCopiedGeneratedIndex((current) => current === index ? null : current), 1500);
+    } catch {
+      setError('复制文案失败');
+    }
+  }
+
+  async function saveGeneratedOpening(item: CreativeGenerateResult, index: number) {
+    if (savedGeneratedIndexes.includes(index)) return;
+    setError('');
+    try {
+      const strategyLabel = item.strategy === 'explore' ? '探索新角度' : '稳健参考';
+      const saved = await createCreativeOpening({
+        openingText: item.openingText,
+        paintingName: generateDraft.paintingName,
+        scene: generateDraft.scene,
+        platform: '抖音',
+        reasonAnalysis: item.logic,
+        tags: [strategyLabel],
+      });
+      setOpenings((previous) => [saved, ...previous.filter((opening) => opening.id !== saved.id)]);
+      setSavedGeneratedIndexes((previous) => [...previous, index]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存到爆款文案库失败');
     }
   }
 
@@ -415,7 +513,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 <Settings2 className="size-3.5" />
                 调整设定
               </button>
-              <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-indigo-700">默认参考最近 20 条</span>
+              <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-indigo-700">智能参考 8–12 条 · 7+3 创作</span>
             </div>
           </div>
 
@@ -614,6 +712,49 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 <section className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
               <h2 className="mb-4 text-base font-black text-slate-900">本次仿写需求</h2>
               <div className="space-y-3">
+                <input
+                  ref={paintingImageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePaintingImageChange}
+                />
+                {paintingImage ? (
+                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/70">
+                    <div className="flex items-center gap-3 p-3">
+                      <img src={paintingImage.dataUrl} alt="本次画作" className="size-20 shrink-0 rounded-xl object-cover" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-black text-slate-800">{paintingImage.name}</div>
+                        <p className="mt-1 text-xs font-bold text-slate-400">图片仅用于本次识别和仿写，不会保存进文案库</p>
+                        <div className="mt-2 flex gap-2">
+                          <button type="button" onClick={() => void analyzePaintingImage()} disabled={isAnalyzingImage} className="text-xs font-black text-indigo-600 disabled:opacity-50">
+                            {isAnalyzingImage ? '正在识别...' : '重新识别'}
+                          </button>
+                          <button type="button" onClick={removePaintingImage} className="text-xs font-black text-slate-400 hover:text-red-500">移除图片</button>
+                        </div>
+                      </div>
+                    </div>
+                    <textarea
+                      rows={7}
+                      value={imageAnalysis}
+                      onChange={(event) => setImageAnalysis(event.target.value)}
+                      placeholder={isAnalyzingImage ? 'AI 正在理解画作内容...' : '识别结果会显示在这里，你可以直接修改后再生成'}
+                      className="w-full resize-y border-t border-slate-100 bg-slate-50/70 px-4 py-3 text-xs font-semibold leading-6 text-slate-700 outline-none focus:bg-white"
+                    />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => paintingImageInputRef.current?.click()}
+                    className="flex w-full items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/50 p-4 text-left transition hover:border-indigo-300 hover:bg-indigo-50/30"
+                  >
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600"><ImagePlus className="size-5" /></span>
+                    <span>
+                      <span className="block text-sm font-black text-slate-800">上传画作图片（可选）</span>
+                      <span className="mt-1 block text-xs font-bold text-slate-400">AI 先看懂画面，再结合文库创作，最大 10MB</span>
+                    </span>
+                  </button>
+                )}
                 <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="画名，例如：日照金山" value={generateDraft.paintingName} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
                 <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="使用场景，例如：客厅沙发墙" value={generateDraft.scene} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, scene: event.target.value }))} />
                 <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" rows={3} placeholder="想强调的寓意 / 卖点" value={generateDraft.sellingPoint} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, sellingPoint: event.target.value }))} />
@@ -633,7 +774,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 <div className="rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-xs font-bold leading-5 text-slate-500">
                   {selectedReferenceIds.length > 0
                     ? `已手动勾选 ${selectedReferenceIds.length} 条重点参考。`
-                    : '未手动勾选时，默认参考最近 20 条爆款开头。'}
+                    : '未手动勾选时，系统会按画作、场景和卖点智能选择 8–12 条相关案例。'}
                 </div>
               </div>
                 </section>
@@ -644,7 +785,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   <h2 className="text-base font-black">仿写结果</h2>
                   {generateMeta && (
                     <p className="mt-1 text-xs font-bold text-slate-400">
-                      使用模型：{generateMeta.model} · 参考 {generateMeta.referenceCount} 条案例
+                      使用模型：{generateMeta.model} · {generateMeta.referenceMode === 'manual' ? '手动' : '智能'}参考 {generateMeta.referenceCount} 条 · 稳健 {generateMeta.stableCount} 条 / 探索 {generateMeta.exploreCount} 条
                     </p>
                   )}
                 </div>
@@ -665,13 +806,31 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                 </div>
               ) : generatedResults.length > 0 ? (
                 <div className="grid gap-3">
-                  {generatedResults.map((item, index) => (
-                    <article key={`${item.openingText}-${index}`} className="rounded-3xl border border-emerald-100 bg-emerald-50/40 p-4">
-                      <div className="mb-2 text-xs font-black text-emerald-600">#{index + 1}</div>
+                  {generatedResults.map((item, index) => {
+                    const isExplore = item.strategy === 'explore';
+                    const isSaved = savedGeneratedIndexes.includes(index);
+                    return (
+                    <article key={`${item.openingText}-${index}`} className={cn("rounded-3xl border p-4", isExplore ? "border-amber-200 bg-amber-50/45" : "border-emerald-100 bg-emerald-50/40")}>
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div className={cn("flex items-center gap-2 text-xs font-black", isExplore ? "text-amber-700" : "text-emerald-600")}>
+                          <span>#{index + 1}</span>
+                          <span className={cn("rounded-full px-2.5 py-1", isExplore ? "bg-amber-100" : "bg-emerald-100")}>{isExplore ? '探索新角度' : '稳健参考'}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => void copyGeneratedOpening(item, index)} className="flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-black text-slate-500 hover:bg-white/80" title="复制这条文案">
+                            {copiedGeneratedIndex === index ? <CheckSquare className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+                            {copiedGeneratedIndex === index ? '已复制' : '复制'}
+                          </button>
+                          <button onClick={() => void saveGeneratedOpening(item, index)} disabled={isSaved} className={cn("flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-black transition", isSaved ? "bg-emerald-100 text-emerald-700" : "text-slate-500 hover:bg-white/80")} title="保存到爆款文案库">
+                            {isSaved ? <CheckSquare className="size-3.5" /> : <Save className="size-3.5" />}
+                            {isSaved ? '已保存' : '保存'}
+                          </button>
+                        </div>
+                      </div>
                       <p className="text-base font-black leading-7 text-slate-900">{item.openingText}</p>
                       {item.logic && <p className="mt-3 rounded-2xl bg-white/75 px-3 py-2 text-xs font-bold leading-5 text-slate-600">爆点逻辑：{item.logic}</p>}
                     </article>
-                  ))}
+                  );})}
                 </div>
               ) : generatedAnswer ? (
                 <pre className="min-h-80 whitespace-pre-wrap rounded-3xl bg-slate-950 p-5 text-sm font-semibold leading-7 text-slate-100">{generatedAnswer}</pre>

@@ -29,6 +29,8 @@ export interface CreativeGenerateRequest {
   scene: string;
   sellingPoint: string;
   extraRequirement: string;
+  imageDataUrl?: string;
+  imageAnalysis?: string;
   count: number;
   referenceLimit?: number;
   referenceIds?: string[];
@@ -37,6 +39,7 @@ export interface CreativeGenerateRequest {
 export interface CreativeGenerateResult {
   openingText: string;
   logic: string;
+  strategy: 'stable' | 'explore';
 }
 
 async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
@@ -109,8 +112,22 @@ export async function generateCreativeOpenings(request: CreativeGenerateRequest)
     answer: string;
     results: CreativeGenerateResult[];
     referenceCount: number;
+    referenceMode: 'manual' | 'smart';
+    stableCount: number;
+    exploreCount: number;
   }>('/api/creative-feeding/generate', {
     method: 'POST',
     body: JSON.stringify(request),
+  });
+}
+
+export async function analyzeCreativePainting(imageDataUrl: string) {
+  return requestJson<{
+    ok: boolean;
+    model: string;
+    analysis: string;
+  }>('/api/creative-feeding/analyze-image', {
+    method: 'POST',
+    body: JSON.stringify({ imageDataUrl }),
   });
 }

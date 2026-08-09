@@ -2835,8 +2835,72 @@ function filterCreativeOpenings(openings, url) {
   });
 }
 
+function getCreativeFeedingStrategyCounts(countValue) {
+  const count = Math.min(30, Math.max(1, Number(countValue) || 10));
+  if (count === 1) return { count, stableCount: 1, exploreCount: 0 };
+  const exploreCount = Math.max(1, Math.round(count * 0.3));
+  return { count, stableCount: count - exploreCount, exploreCount };
+}
+
+function tokenizeCreativeReferenceText(value) {
+  const normalized = readValue(value).toLowerCase();
+  if (!normalized) return [];
+  const tokens = normalized
+    .split(/[\s,，。.!！?？、;；:：/\\|()（）【】\[\]“”"'_-]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2);
+  return Array.from(new Set(tokens));
+}
+
+function extractCreativeLikeScore(value) {
+  const text = readValue(value).replace(/,/g, '');
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(万|w|W)?/);
+  if (!match) return 0;
+  const amount = Number(match[1]) || 0;
+  return match[2] ? amount * 10000 : amount;
+}
+
+function selectSmartCreativeReferences(openings, requestBody, limit) {
+  const paintingName = readValue(requestBody?.paintingName).toLowerCase();
+  const scene = readValue(requestBody?.scene).toLowerCase();
+  const queryTokens = tokenizeCreativeReferenceText([
+    paintingName,
+    scene,
+    readValue(requestBody?.sellingPoint),
+    readValue(requestBody?.extraRequirement),
+    readValue(requestBody?.imageAnalysis)
+  ].join(' '));
+
+  return openings
+    .map((item, index) => {
+      const searchable = [
+        item.openingText,
+        item.paintingName,
+        item.scene,
+        item.hookType,
+        item.performanceNote,
+        item.reasonAnalysis,
+        ...(item.tags || [])
+      ].join(' ').toLowerCase();
+      let score = 0;
+      if (paintingName && readValue(item.paintingName).toLowerCase() === paintingName) score += 80;
+      else if (paintingName && searchable.includes(paintingName)) score += 35;
+      if (scene && readValue(item.scene).toLowerCase().includes(scene)) score += 35;
+      else if (scene && searchable.includes(scene)) score += 16;
+      for (const token of queryTokens) {
+        if (searchable.includes(token)) score += token.length >= 4 ? 8 : 4;
+      }
+      score += Math.min(16, Math.log10(extractCreativeLikeScore(item.performanceNote) + 1) * 3);
+      score += Math.max(0, 6 - index * 0.08);
+      return { item, score, index };
+    })
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, limit)
+    .map(({ item }) => item);
+}
+
 function buildCreativeFeedingPrompt({ settings, references, requestBody }) {
-  const count = Math.min(30, Math.max(1, Number(requestBody?.count) || 10));
+  const { count, stableCount, exploreCount } = getCreativeFeedingStrategyCounts(requestBody?.count);
   const referenceText = references.length
     ? references.map((item, index) => [
         `案例 ${index + 1}: ${item.openingText}`,
@@ -2868,20 +2932,26 @@ function buildCreativeFeedingPrompt({ settings, references, requestBody }) {
     `使用场景：${readValue(requestBody?.scene) || '未指定'}`,
     `想强调的寓意/卖点：${readValue(requestBody?.sellingPoint) || '未指定'}`,
     `补充要求：${readValue(requestBody?.extraRequirement) || '无'}`,
+    `画作图片识别结果：${readValue(requestBody?.imageAnalysis) || '未提供图片识别结果'}`,
     `生成数量：${count} 条`,
     '',
     '【生成要求】',
-    '1. 先分析历史案例共性，但不要输出冗长分析。',
+    '1. 历史案例只用于学习有效的开头结构、语言节奏、受众心理和爆点逻辑，严禁照抄原句，也不能只做同义词替换。',
     '2. 生成适合抖音 / 视频号的装饰画短视频开头。',
     '3. 语言要口语化、接地气、有前 6 秒抓力，有场景感和情绪价值。',
     '4. 避免太文艺、太年轻化、太书面、太像广告。',
     '5. 不要封建迷信，不要承诺发财、转运、治病、保平安或改变命运。',
-    '6. 每条都包含“开头文案”和“爆点逻辑”。',
+    `6. 前 ${stableCount} 条标记为“稳健参考”：沿用已验证的爆点结构，但表达和切入角度必须针对本次画作重新创作。`,
+    exploreCount > 0
+      ? `7. 后 ${exploreCount} 条标记为“探索新角度”：主动跳出历史案例，从画面内容、使用场景、人群关系、生活冲突或情绪价值中寻找新的切入点。`
+      : '7. 本次仅生成稳健参考结果。',
+    '8. 各条文案的第一句话、核心角度和爆点逻辑要有明显差异，避免批量套模板感。',
+    '9. 每条都包含“开头文案”和“爆点逻辑”。',
     '',
     '请按下面格式输出：',
-    '1. 开头文案：...',
+    '1. [稳健参考] 开头文案：...',
     '   爆点逻辑：...',
-    '2. 开头文案：...',
+    exploreCount > 0 ? `${stableCount + 1}. [探索新角度] 开头文案：...` : '2. [稳健参考] 开头文案：...',
     '   爆点逻辑：...'
   ].join('\n');
 }
@@ -2903,26 +2973,49 @@ function extractDoubaoResponseText(json) {
   return collapseRepeatedDoubaoText(content.trim());
 }
 
-function parseCreativeFeedingResults(text) {
+function parseCreativeFeedingResults(text, stableCount = 0) {
   const normalized = String(text || '').trim();
   if (!normalized) return [];
-  const matches = [...normalized.matchAll(/(?:^|\n)\s*(?:\d+[.、)]\s*)?开头文案[:：]\s*([\s\S]*?)(?:\n\s*爆点逻辑[:：]\s*([\s\S]*?))(?=\n\s*(?:\d+[.、)]\s*)?开头文案[:：]|\n\s*\d+[.、)]\s*|$)/g)];
+  const matches = [...normalized.matchAll(/(?:^|\n)\s*(?:\d+[.、)]\s*)?(?:[\[【](稳健参考|探索新角度)[\]】]\s*)?开头文案[:：]\s*([\s\S]*?)(?:\n\s*爆点逻辑[:：]\s*([\s\S]*?))(?=\n\s*(?:\d+[.、)]\s*)?(?:[\[【](?:稳健参考|探索新角度)[\]】]\s*)?开头文案[:：]|\n\s*\d+[.、)]\s*|$)/g)];
   if (matches.length > 0) {
-    return matches.map((match) => ({
-      openingText: String(match[1] || '').trim().replace(/^["“]|["”]$/g, ''),
-      logic: String(match[2] || '').trim()
+    return matches.map((match, index) => ({
+      openingText: String(match[2] || '').trim().replace(/^["“]|["”]$/g, ''),
+      logic: String(match[3] || '').trim(),
+      strategy: match[1] === '探索新角度' || (!match[1] && index >= stableCount) ? 'explore' : 'stable'
     })).filter((item) => item.openingText);
   }
-  return normalized.split(/\n(?=\s*\d+[.、)]\s*)/g).map((block) => ({ openingText: block.trim(), logic: '' })).filter((item) => item.openingText);
+  return normalized.split(/\n(?=\s*\d+[.、)]\s*)/g).map((block, index) => ({
+    openingText: block.trim(),
+    logic: '',
+    strategy: index >= stableCount ? 'explore' : 'stable'
+  })).filter((item) => item.openingText);
 }
 
-async function callCreativeFeedingDoubao(prompt) {
+function normalizeCreativeFeedingImage(imageDataUrl) {
+  const image = normalizeBase64ImageInput(imageDataUrl);
+  const byteLength = Buffer.byteLength(image.base64Data, 'base64');
+  if (byteLength > MAX_IMAGE_ORIGINAL_UPLOAD_BYTES) {
+    const error = new Error('画作图片不能超过 10MB');
+    error.statusCode = 413;
+    throw error;
+  }
+  return image;
+}
+
+async function callCreativeFeedingDoubao(prompt, imageDataUrl = '') {
   const apiKey = readValue(SERVER_CONFIG.doubaoTopmodelApiKey) || readValue(SERVER_CONFIG.seedanceApiKey);
   if (!apiKey) {
     const error = new Error('未配置 Doubao API Key');
     error.statusCode = 500;
     throw error;
   }
+
+  const content = [];
+  if (readValue(imageDataUrl)) {
+    const image = normalizeCreativeFeedingImage(imageDataUrl);
+    content.push({ type: 'input_image', image_url: image.imageUrl });
+  }
+  content.push({ type: 'input_text', text: prompt });
 
   const upstreamRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/responses', {
     method: 'POST',
@@ -2938,7 +3031,7 @@ async function callCreativeFeedingDoubao(prompt) {
       input: [
         {
           role: 'user',
-          content: [{ type: 'input_text', text: prompt }]
+          content
         }
       ]
     }),
@@ -2957,6 +3050,33 @@ async function callCreativeFeedingDoubao(prompt) {
   }
 
   return extractDoubaoResponseText(json);
+}
+
+async function handleAnalyzeCreativeFeedingImage(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const imageDataUrl = readValue(body?.imageDataUrl);
+    if (!imageDataUrl) {
+      sendJson(res, 400, { error: '请先上传画作图片' });
+      return;
+    }
+    const prompt = [
+      '你是装饰画短视频文案的画作识别助手。请只根据上传图片中确实可见的内容，输出一份简洁、可编辑的中文分析。',
+      '不要虚构看不清的文字、人物、寓意或创作背景；不确定的内容明确写“无法确认”。',
+      '请严格按以下字段输出，每项一行：',
+      '主体题材：',
+      '风格与构图：',
+      '主要色彩：',
+      '可见文字：',
+      '可表达寓意：',
+      '推荐使用场景：',
+      '可探索文案角度：'
+    ].join('\n');
+    const analysis = await callCreativeFeedingDoubao(prompt, imageDataUrl);
+    sendJson(res, 200, { ok: true, model: '豆包 Seed 2.1 Pro', analysis });
+  } catch (error) {
+    sendJson(res, error.statusCode || 500, { error: error.message || '画作图片识别失败' });
+  }
 }
 
 async function handleGetCreativeFeedingSettings(req, res) {
@@ -3048,19 +3168,24 @@ async function handleGenerateCreativeFeeding(req, res) {
     const settings = await loadCreativeFeedingSettings();
     const library = await loadCreativeOpeningLibrary();
     const selectedIds = Array.isArray(body?.referenceIds) ? body.referenceIds.map((item) => String(item)) : [];
-    const referenceLimit = Math.min(50, Math.max(1, Number(body?.referenceLimit) || 20));
+    const referenceLimit = Math.min(12, Math.max(1, Number(body?.referenceLimit) || 12));
+    const referenceMode = selectedIds.length > 0 ? 'manual' : 'smart';
     const references = selectedIds.length > 0
       ? library.openings.filter((item) => selectedIds.includes(item.id))
-      : library.openings.slice(0, referenceLimit);
+      : selectSmartCreativeReferences(library.openings, body, referenceLimit);
+    const { stableCount, exploreCount } = getCreativeFeedingStrategyCounts(body?.count);
     const prompt = buildCreativeFeedingPrompt({ settings, references, requestBody: body });
-    const answer = await callCreativeFeedingDoubao(prompt);
+    const answer = await callCreativeFeedingDoubao(prompt, body?.imageDataUrl);
     sendJson(res, 200, {
       ok: true,
       model: 'doubao-seed-2.1-pro',
       modelId: 'doubao-seed-2-1-pro-260628',
       answer,
-      results: parseCreativeFeedingResults(answer),
-      referenceCount: references.length
+      results: parseCreativeFeedingResults(answer, stableCount),
+      referenceCount: references.length,
+      referenceMode,
+      stableCount,
+      exploreCount
     });
   } catch (error) {
     sendJson(res, error.statusCode || 500, { error: error.message || '文案仿写生成失败' });
@@ -13829,6 +13954,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/creative-feeding/generate') {
     await handleGenerateCreativeFeeding(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/creative-feeding/analyze-image') {
+    await handleAnalyzeCreativeFeedingImage(req, res);
     return;
   }
 
