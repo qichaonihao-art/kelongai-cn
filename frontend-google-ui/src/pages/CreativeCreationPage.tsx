@@ -3138,7 +3138,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                         : "bg-slate-300"
                     )}>
                       <span className={cn(
-                        "absolute top-0.5 size-3 rounded-full bg-white shadow-sm transition-transform",
+                        "absolute left-0 top-0.5 size-3 rounded-full bg-white shadow-sm transition-transform",
                         (reverseModel === 'qwen' ? qwenThinkingEnabled : doubaoThinkingEnabled)
                           ? "translate-x-3.5"
                           : "translate-x-0.5"
