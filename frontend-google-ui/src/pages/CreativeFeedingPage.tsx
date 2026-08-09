@@ -205,6 +205,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   const [savedGeneratedIndexes, setSavedGeneratedIndexes] = useState<number[]>([]);
   const [copiedGeneratedIndex, setCopiedGeneratedIndex] = useState<number | null>(null);
   const paintingImageInputRef = useRef<HTMLInputElement>(null);
+  const paintingAnalysisRequestRef = useRef(0);
 
   const tags = useMemo(
     () => Array.from(new Set(openings.flatMap((item) => item.tags || []).filter((tag) => tag && !isUrlLike(tag)))),
@@ -321,6 +322,14 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   }
 
   async function handleGenerate() {
+    if (isAnalyzingImage) {
+      setError('图片仍在分析中，请等待识别完成后再生成文案');
+      return;
+    }
+    if (paintingImage && !imageAnalysis.trim()) {
+      setError('图片尚未获得可用的识别结果，请重新识别或手动填写图片分析');
+      return;
+    }
     setIsGenerating(true);
     setError('');
     setGeneratedAnswer('');
@@ -355,15 +364,19 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
 
   async function analyzePaintingImage(dataUrl = paintingImage?.dataUrl || '') {
     if (!dataUrl) return;
+    const requestId = paintingAnalysisRequestRef.current + 1;
+    paintingAnalysisRequestRef.current = requestId;
     setIsAnalyzingImage(true);
     setError('');
     try {
       const response = await analyzeCreativePainting(dataUrl);
+      if (paintingAnalysisRequestRef.current !== requestId) return;
       setImageAnalysis(response.analysis || '');
     } catch (err) {
+      if (paintingAnalysisRequestRef.current !== requestId) return;
       setError(err instanceof Error ? err.message : '画作图片识别失败');
     } finally {
-      setIsAnalyzingImage(false);
+      if (paintingAnalysisRequestRef.current === requestId) setIsAnalyzingImage(false);
     }
   }
 
@@ -392,8 +405,10 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   }
 
   function removePaintingImage() {
+    paintingAnalysisRequestRef.current += 1;
     setPaintingImage(null);
     setImageAnalysis('');
+    setIsAnalyzingImage(false);
   }
 
   async function copyGeneratedOpening(item: CreativeGenerateResult, index: number) {
@@ -720,7 +735,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   onChange={handlePaintingImageChange}
                 />
                 {paintingImage ? (
-                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/70">
+                  <div className="overflow-hidden rounded-2xl border-2 border-slate-300 bg-white/90 shadow-sm">
                     <div className="flex items-center gap-3 p-3">
                       <img src={paintingImage.dataUrl} alt="本次画作" className="size-20 shrink-0 rounded-xl object-cover" />
                       <div className="min-w-0 flex-1">
@@ -739,14 +754,14 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                       value={imageAnalysis}
                       onChange={(event) => setImageAnalysis(event.target.value)}
                       placeholder={isAnalyzingImage ? 'AI 正在理解画作内容...' : '识别结果会显示在这里，你可以直接修改后再生成'}
-                      className="w-full resize-y border-t border-slate-100 bg-slate-50/70 px-4 py-3 text-xs font-semibold leading-6 text-slate-700 outline-none focus:bg-white"
+                      className="w-full resize-y border-t-2 border-slate-200 bg-slate-50/70 px-4 py-3 text-xs font-semibold leading-6 text-slate-700 outline-none transition focus:border-indigo-300 focus:bg-white"
                     />
                   </div>
                 ) : (
                   <button
                     type="button"
                     onClick={() => paintingImageInputRef.current?.click()}
-                    className="flex w-full items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/50 p-4 text-left transition hover:border-indigo-300 hover:bg-indigo-50/30"
+                    className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 bg-white/90 p-4 text-left shadow-sm transition hover:border-indigo-400 hover:bg-indigo-50/30"
                   >
                     <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600"><ImagePlus className="size-5" /></span>
                     <span>
@@ -755,22 +770,25 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                     </span>
                   </button>
                 )}
-                <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="画名，例如：日照金山" value={generateDraft.paintingName} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
-                <input className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="使用场景，例如：客厅沙发墙" value={generateDraft.scene} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, scene: event.target.value }))} />
-                <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" rows={3} placeholder="想强调的寓意 / 卖点" value={generateDraft.sellingPoint} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, sellingPoint: event.target.value }))} />
-                <textarea className="w-full resize-none rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" rows={4} placeholder="补充要求" value={generateDraft.extraRequirement} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, extraRequirement: event.target.value }))} />
+                <input className="h-11 w-full rounded-2xl border-2 border-slate-300 bg-white/90 px-4 text-sm font-semibold shadow-sm outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="画名（可选），例如：日照金山" value={generateDraft.paintingName} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
+                <input className="h-11 w-full rounded-2xl border-2 border-slate-300 bg-white/90 px-4 text-sm font-semibold shadow-sm outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="使用场景（可选），例如：客厅沙发墙" value={generateDraft.scene} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, scene: event.target.value }))} />
+                <textarea className="w-full resize-none rounded-2xl border-2 border-slate-300 bg-white/90 px-4 py-3 text-sm font-semibold leading-6 shadow-sm outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" rows={3} placeholder="想强调的寓意 / 卖点（可选）" value={generateDraft.sellingPoint} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, sellingPoint: event.target.value }))} />
+                <textarea className="w-full resize-none rounded-2xl border-2 border-slate-300 bg-white/90 px-4 py-3 text-sm font-semibold leading-6 shadow-sm outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" rows={4} placeholder="补充要求（可选）" value={generateDraft.extraRequirement} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, extraRequirement: event.target.value }))} />
                 <div>
                   <label className="mb-1 block text-xs font-black text-slate-500">生成数量</label>
-                  <input type="number" min={1} max={30} className="h-11 w-full rounded-2xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" value={generateDraft.count} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, count: Number(event.target.value) }))} />
+                  <input type="number" min={1} max={30} className="h-11 w-full rounded-2xl border-2 border-slate-300 bg-white/90 px-4 text-sm font-semibold shadow-sm outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" value={generateDraft.count} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, count: Number(event.target.value) }))} />
                 </div>
                 <button
                   onClick={() => void handleGenerate()}
-                  disabled={isGenerating}
+                  disabled={isGenerating || isAnalyzingImage || Boolean(paintingImage && !imageAnalysis.trim())}
                   className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 text-sm font-black text-white shadow-md transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {isGenerating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                  {isGenerating ? '正在仿写' : '生成爆款开头'}
+                  {isGenerating || isAnalyzingImage ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                  {isAnalyzingImage ? '等待图片分析完成' : isGenerating ? '正在仿写' : paintingImage && !imageAnalysis.trim() ? '请先完成图片分析' : '生成爆款开头'}
                 </button>
+                <p className="px-1 text-[11px] font-bold leading-5 text-slate-400">
+                  画名、使用场景、寓意和补充要求均可不填；填写得越具体，生成方向越准确。
+                </p>
                 <div className="rounded-2xl border border-slate-200 bg-white/60 px-4 py-3 text-xs font-bold leading-5 text-slate-500">
                   {selectedReferenceIds.length > 0
                     ? `已手动勾选 ${selectedReferenceIds.length} 条重点参考。`
