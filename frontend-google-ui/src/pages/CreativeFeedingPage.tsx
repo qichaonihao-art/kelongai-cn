@@ -206,6 +206,8 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
   const [copiedGeneratedIndex, setCopiedGeneratedIndex] = useState<number | null>(null);
   const paintingImageInputRef = useRef<HTMLInputElement>(null);
   const paintingAnalysisRequestRef = useRef(0);
+  const generateButtonRef = useRef<HTMLButtonElement>(null);
+  const generateResultSectionRef = useRef<HTMLElement>(null);
 
   const tags = useMemo(
     () => Array.from(new Set(openings.flatMap((item) => item.tags || []).filter((tag) => tag && !isUrlLike(tag)))),
@@ -340,6 +342,9 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
     setGenerateMeta(null);
     setSavedGeneratedIndexes([]);
     setCopiedGeneratedIndex(null);
+    window.requestAnimationFrame(() => {
+      generateResultSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
     try {
       const response = await generateCreativeOpenings({
         ...generateDraft,
@@ -376,6 +381,9 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
       const response = await analyzeCreativePainting(dataUrl);
       if (paintingAnalysisRequestRef.current !== requestId) return;
       setImageAnalysis(response.analysis || '');
+      window.setTimeout(() => {
+        generateButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 120);
     } catch (err) {
       if (paintingAnalysisRequestRef.current !== requestId) return;
       setError(err instanceof Error ? err.message : '画作图片识别失败');
@@ -820,6 +828,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   <input type="number" min={1} max={30} className="h-11 w-full rounded-2xl border-2 border-slate-300 bg-white/90 px-4 text-sm font-semibold shadow-sm outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" value={generateDraft.count} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, count: Number(event.target.value) }))} />
                 </div>
                 <button
+                  ref={generateButtonRef}
                   onClick={() => void handleGenerate()}
                   disabled={isGenerating || isAnalyzingImage || Boolean(paintingImage && !imageAnalysis.trim())}
                   className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 text-sm font-black text-white shadow-md transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
@@ -838,7 +847,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
               </div>
                 </section>
 
-                <section className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
+                <section ref={generateResultSectionRef} className="rounded-2xl border border-slate-200/90 bg-white/75 p-5 shadow-sm shadow-slate-200/70 ring-1 ring-white/70">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-black">仿写结果</h2>
