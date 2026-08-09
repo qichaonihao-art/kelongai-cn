@@ -2901,6 +2901,12 @@ function selectSmartCreativeReferences(openings, requestBody, limit) {
 
 function buildCreativeFeedingPrompt({ settings, references, requestBody }) {
   const { count, stableCount, exploreCount } = getCreativeFeedingStrategyCounts(requestBody?.count);
+  const excludedOpenings = Array.isArray(requestBody?.excludeOpenings)
+    ? requestBody.excludeOpenings
+        .slice(0, 30)
+        .map((item) => readValue(item).slice(0, 500))
+        .filter(Boolean)
+    : [];
   const referenceText = references.length
     ? references.map((item, index) => [
         `案例 ${index + 1}: ${item.openingText}`,
@@ -2934,6 +2940,9 @@ function buildCreativeFeedingPrompt({ settings, references, requestBody }) {
     `补充要求：${readValue(requestBody?.extraRequirement) || '无'}`,
     `画作图片识别结果：${readValue(requestBody?.imageAnalysis) || '未提供图片识别结果'}`,
     `生成数量：${count} 条`,
+    excludedOpenings.length > 0
+      ? `上一批不合适的文案（本次必须避开这些表达、句式和核心切入角度）：\n${excludedOpenings.map((item, index) => `${index + 1}. ${item}`).join('\n')}`
+      : '',
     '',
     '【生成要求】',
     '1. 历史案例只用于学习有效的开头结构、语言节奏、受众心理和爆点逻辑，严禁照抄原句，也不能只做同义词替换。',
@@ -2948,6 +2957,9 @@ function buildCreativeFeedingPrompt({ settings, references, requestBody }) {
     '8. 各条文案的第一句话、核心角度和爆点逻辑要有明显差异，避免批量套模板感。',
     '9. 每条都包含“开头文案”和“爆点逻辑”。',
     '10. 每条开头文案必须由 4～6 个短句组成，正文控制在 60～100 个汉字；第一句制造钩子，后续短句逐步展开并自然承接，最后一句要方便同事继续往后续文案衔接。禁止只输出一句口号或一两句过短内容。爆点逻辑不计入正文的 60～100 字。',
+    excludedOpenings.length > 0
+      ? '11. 这是重新生成的一批。不得复用上一批的开场句、核心角度、句式骨架或简单同义改写，必须明显换一批思路。'
+      : '',
     '',
     '请按下面格式输出：',
     '1. [稳健参考] 开头文案：...',

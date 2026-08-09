@@ -34,6 +34,7 @@ export interface CreativeGenerateRequest {
   count: number;
   referenceLimit?: number;
   referenceIds?: string[];
+  excludeOpenings?: string[];
 }
 
 export interface CreativeGenerateResult {

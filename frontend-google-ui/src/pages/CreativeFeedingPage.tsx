@@ -321,7 +321,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
     }
   }
 
-  async function handleGenerate() {
+  async function handleGenerate(regenerate = false) {
     if (isAnalyzingImage) {
       setError('图片仍在分析中，请等待识别完成后再生成文案');
       return;
@@ -330,6 +330,9 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
       setError('图片尚未获得可用的识别结果，请重新识别或手动填写图片分析');
       return;
     }
+    const previousBatch = regenerate
+      ? generatedResults.map((item) => item.openingText).filter(Boolean)
+      : [];
     setIsGenerating(true);
     setError('');
     setGeneratedAnswer('');
@@ -345,6 +348,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
         count: Math.min(30, Math.max(1, Number(generateDraft.count) || 10)),
         referenceLimit: 12,
         referenceIds: selectedReferenceIds,
+        excludeOpenings: previousBatch,
       });
       setGeneratedAnswer(response.answer);
       setGeneratedResults(response.results || []);
@@ -795,13 +799,16 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   <button
                     type="button"
                     onClick={() => paintingImageInputRef.current?.click()}
-                    className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 bg-white/90 p-4 text-left shadow-sm transition hover:border-indigo-400 hover:bg-indigo-50/30"
+                    className="group flex min-h-[210px] w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white/90 p-6 text-center shadow-sm transition hover:border-indigo-400 hover:bg-indigo-50/35"
                   >
-                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600"><ImagePlus className="size-5" /></span>
-                    <span>
-                      <span className="block text-sm font-black text-slate-800">上传画作图片（可选）</span>
-                      <span className="mt-1 block text-xs font-bold text-slate-400">AI 先看懂画面，再结合文库创作，最大 10MB</span>
+                    <span className="relative flex size-16 items-center justify-center rounded-2xl border border-indigo-100 bg-indigo-50 text-indigo-600 shadow-sm transition group-hover:scale-105 group-hover:bg-indigo-100">
+                      <ImagePlus className="size-7" />
+                      <span className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-indigo-600 text-sm font-black text-white shadow-md">+</span>
                     </span>
+                    <span className="mt-4 block text-base font-black text-slate-800">上传画作图片</span>
+                    <span className="mt-1.5 block text-xs font-bold text-indigo-600">点击选择图片（可选）</span>
+                    <span className="mt-3 block text-[11px] font-semibold text-slate-400">支持 JPG、PNG、WEBP，单张最大 10MB</span>
+                    <span className="mt-1 block text-[11px] font-semibold text-slate-400">AI 将先理解画面，再结合文案库进行创作</span>
                   </button>
                 )}
                 <input className="h-11 w-full rounded-2xl border-2 border-slate-300 bg-white/90 px-4 text-sm font-semibold shadow-sm outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-500/20" placeholder="画名（可选），例如：日照金山" value={generateDraft.paintingName} onChange={(event) => setGenerateDraft((draft) => ({ ...draft, paintingName: event.target.value }))} />
@@ -842,13 +849,23 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
                   )}
                 </div>
                 {generatedAnswer && (
-                  <button
-                    onClick={() => void navigator.clipboard.writeText(generatedAnswer)}
-                    className="flex h-9 items-center gap-2 rounded-full border border-slate-200 px-4 text-xs font-black text-slate-600 hover:bg-slate-50"
-                  >
-                    <Copy className="size-4" />
-                    复制全文
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => void handleGenerate(true)}
+                      disabled={isGenerating}
+                      className="flex h-9 items-center gap-2 rounded-full border-2 border-indigo-200 bg-indigo-50 px-4 text-xs font-black text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RefreshCw className="size-4" />
+                      重新生成一批
+                    </button>
+                    <button
+                      onClick={() => void navigator.clipboard.writeText(generatedAnswer)}
+                      className="flex h-9 items-center gap-2 rounded-full border border-slate-200 px-4 text-xs font-black text-slate-600 hover:bg-slate-50"
+                    >
+                      <Copy className="size-4" />
+                      复制全文
+                    </button>
+                  </div>
                 )}
               </div>
               {isGenerating ? (
