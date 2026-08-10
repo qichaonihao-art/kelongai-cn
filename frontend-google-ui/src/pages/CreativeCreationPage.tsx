@@ -97,6 +97,7 @@ interface SeedanceHistoryItem {
   createdAt?: number;
   updatedAt?: number;
   savedAt: string;
+  resolution?: SeedanceResolution;
   ratio: string;
   duration: number;
   generateAudio: boolean;
@@ -131,7 +132,7 @@ interface TextHighlightState {
 
 type HistoryPreviewItem = UploadHistoryPreviewItem & {
   kind: 'video' | 'image';
-  source: 'video' | 'image-creative' | 'image-seedance';
+  source: 'video' | 'image-creative' | 'image-seedance' | 'video-edit-video' | 'video-edit-image';
   ownedPreviewUrl?: boolean;
 };
 
@@ -502,10 +503,13 @@ const IMAGE_TO_VIDEO_PROMPT = (options: {
   return `请把我上传的这张图片作为唯一的视觉基准，生成一份可以直接交给 Seedance 图生视频模型使用的完整视频提示词。目标视频总时长必须严格为 ${durationSeconds} 秒。不是简单描述图片，而是要在尽量保持图片内容一致的基础上，补全合理、真实、可执行的视频动作、镜头、时间顺序和动态细节。\n\n${imageIsolationRule}\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、图片生视频关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整提示词\n十二、负面提示词\n\n必须遵守以下规则：\n1. 先完整识别图片中的主体、人物年龄和性别（仅在确实可判断时）、服装、发型、姿态、道具、背景、空间层次、构图、景别、光线方向和色彩，再设计动态；不确定的内容不要臆造。\n2. 图片是本次唯一基准。除用户明确提出的调整外，主体身份、人物外观、场景、道具、画面布局、空间比例、色彩和氛围都要保持一致，不得凭借历史对话增加以前出现过的挂画、家具、人物或其他元素。\n3. 生成的视频动作必须从静态图片自然延伸出来，并围绕 ${durationSeconds} 秒总时长设计。所有时间段必须从 0 秒开始，连续且不重叠，按先后顺序排列，最后一个时间段必须准确结束于 ${durationSeconds} 秒；禁止时间倒置、区间交叉、时间断层或超过总时长。\n4. 镜头运动要克制、真实并服务于主体，不要凭空添加复杂运镜；同时明确固定机位、推近、横移、跟拍或轻微环绕等动作的起止时间。\n5. 如果有人物，正面或偏正面能看见眼睛时，必须表现出真人感：适当自然眨眼、视线轻微移动和真实聚焦变化，避免眼睛一直睁着、眼珠固定、空洞凝视和 AI 呆滞感。人物手部可见时，重点描述手指、手腕、手掌的自然动作、接触位置、发力方向和动作先后，避免手部畸形和穿模。\n6. 如果出现卷轴式挂画、卷筒挂画或挂画需要打开，必须明确写成沿轴向旋转的滚动展开，画布从卷筒中逐步释放；禁止滑动、平移、平铺或直接弹开。挂画、海报和其他平面元素必须保持原始宽高比、透视、边界和文字内容，不得拉伸变形。${PAINTING_WOOD_BAR_OUTPUT_RULE}\n7. ${subtitleRule}\n8. 画面要减少 AI 感，保持自然的动作惯性、真实材质、合理接触、柔和光影和生活化节奏，避免塑料感、过度磨皮、虚假高光、僵硬表情、异常肢体和过度电影化。\n${optionalRules ? `\n本次可选调整：\n${optionalRules}\n` : ''}\n最终提示词必须以“生成指令”开头，明确写出总时长 ${durationSeconds} 秒，内容完整、具体、可直接复制使用；不要把分析过程写成空泛建议。`;
 };
 const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const;
+const SEEDANCE_RESOLUTIONS_2_0 = ['480p', '720p', '1080p', '4k'] as const;
+const SEEDANCE_RESOLUTIONS_2_5 = ['480p', '720p'] as const;
 const SEEDANCE_DURATIONS = Array.from({ length: 12 }, (_, index) => index + 4);
 const SEEDANCE_DURATIONS_2_5 = Array.from({ length: 27 }, (_, index) => index + 4);
 type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-5-260628';
 type SeedanceTaskMode = 'generate' | 'video-edit-painting';
+type SeedanceResolution = '480p' | '720p' | '1080p' | '4k';
 
 function getSeedanceModelLabel(model: SeedanceModelId) {
   return model === 'doubao-seedance-2-5-260628' ? 'Seedance 2.5 测试版' : 'Seedance 2.0 稳定版';
@@ -808,6 +812,7 @@ function createSeedanceHistoryItem(
     prompt: string;
     model: SeedanceModelId;
     taskMode?: SeedanceTaskMode;
+    resolution: SeedanceResolution;
     ratio: string;
     duration: number;
     generateAudio: boolean;
@@ -828,6 +833,7 @@ function createSeedanceHistoryItem(
     createdAt,
     updatedAt: task.updatedAt,
     savedAt: new Date().toISOString(),
+    resolution: options.resolution,
     ratio: options.ratio,
     duration: options.duration,
     generateAudio: options.generateAudio,
@@ -1195,6 +1201,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [seedanceTaskMode, setSeedanceTaskMode] = useState<SeedanceTaskMode>('generate');
   const [seedanceModel, setSeedanceModel] = useState<SeedanceModelId>('doubao-seedance-2-0-260128');
   const [seedancePrompt, setSeedancePrompt] = useState("");
+  const [seedanceResolution, setSeedanceResolution] = useState<SeedanceResolution>('720p');
   const [seedanceRatio, setSeedanceRatio] = useState("9:16");
   const [seedanceDuration, setSeedanceDuration] = useState(5);
   const [seedanceGenerateAudio, setSeedanceGenerateAudio] = useState(false);
@@ -1241,7 +1248,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const videoHistoryRef = useRef<UploadHistoryPreviewItem[]>([]);
   const imageHistoryRef = useRef<UploadHistoryPreviewItem[]>([]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance'>('video');
+  const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance' | 'video-edit-video' | 'video-edit-image'>('video');
   const [historyPreviewItem, setHistoryPreviewItem] = useState<HistoryPreviewItem | null>(null);
   const [historyVideoDurations, setHistoryVideoDurations] = useState<Record<number, number>>({});
   const ownedHistoryPreviewUrlRef = useRef<string | null>(null);
@@ -1284,6 +1291,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const autoSyncToSeedanceRef = useRef(false);
   const normalSeedanceSettingsRef = useRef({
     model: 'doubao-seedance-2-0-260128' as SeedanceModelId,
+    resolution: '720p' as SeedanceResolution,
     ratio: '9:16',
     duration: 5,
     generateAudio: false,
@@ -1459,6 +1467,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setSeedanceTaskMode(activeItem.taskMode || 'generate');
     setSeedanceModel(activeItem.model);
     setSeedancePrompt(activeItem.prompt);
+    setSeedanceResolution(activeItem.resolution || '720p');
     setSeedanceRatio(activeItem.ratio);
     setSeedanceDuration(activeItem.duration);
     setSeedanceGenerateAudio(activeItem.generateAudio);
@@ -2123,12 +2132,14 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     if (nextMode === 'video-edit-painting') {
       normalSeedanceSettingsRef.current = {
         model: seedanceModel,
+        resolution: seedanceResolution,
         ratio: seedanceRatio,
         duration: seedanceDuration,
         generateAudio: seedanceGenerateAudio,
         watermark: seedanceWatermark,
       };
       setSeedanceModel('doubao-seedance-2-5-260628');
+      setSeedanceResolution('720p');
       setSeedanceRatio('adaptive');
       setSeedanceDuration(-1);
       setSeedanceGenerateAudio(true);
@@ -2139,6 +2150,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
     const previous = normalSeedanceSettingsRef.current;
     setSeedanceModel(previous.model);
+    setSeedanceResolution(previous.resolution);
     setSeedanceRatio(previous.ratio);
     setSeedanceDuration(previous.duration);
     setSeedanceGenerateAudio(previous.generateAudio);
@@ -2249,6 +2261,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         model: isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel,
         taskMode: isVideoEdit ? 'video_edit' : 'generate',
         prompt,
+        resolution: seedanceResolution,
         ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
         duration: isVideoEdit ? -1 : seedanceDuration,
         generateAudio: seedanceGenerateAudio,
@@ -2271,6 +2284,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               model: isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel,
               taskMode: seedanceTaskMode,
               prompt,
+              resolution: seedanceResolution,
               ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
               duration: isVideoEdit ? -1 : seedanceDuration,
               generateAudio: seedanceGenerateAudio,
@@ -2349,6 +2363,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setSeedancePrompt(item.prompt);
     setSeedanceReplaceHighlight(null);
     setSeedanceModel(item.model);
+    setSeedanceResolution(item.resolution || '720p');
     setSeedanceRatio(item.ratio);
     setSeedanceDuration(item.duration);
     setSeedanceGenerateAudio(item.generateAudio);
@@ -2678,7 +2693,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setSelectedMedia({ kind: 'video', file, previewUrl, fileName: file.name });
   }
 
-  async function openVideoHistoryPreview(item: UploadHistoryPreviewItem) {
+  async function openVideoHistoryPreview(item: UploadHistoryPreviewItem, source: 'video' | 'video-edit-video' = 'video') {
     const found = await getUploadHistoryItem(item.id);
     if (!found) return;
     const previewUrl = URL.createObjectURL(found.blob);
@@ -2689,7 +2704,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       previewUrl,
       duration: item.duration,
       kind: 'video',
-      source: 'video',
+      source,
       ownedPreviewUrl: true,
     });
     if (Number.isFinite(item.duration) && item.duration && item.duration > 0) {
@@ -2697,7 +2712,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     }
   }
 
-  async function openImageHistoryPreview(item: UploadHistoryPreviewItem, source: 'image-creative' | 'image-seedance') {
+  async function openImageHistoryPreview(item: UploadHistoryPreviewItem, source: 'image-creative' | 'image-seedance' | 'video-edit-image') {
     if (item.previewUrl) {
       setHistoryPreviewItem({
         id: item.id,
@@ -2737,6 +2752,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       await selectVideoFromHistory(item);
     } else if (item.source === 'image-creative') {
       await selectImageFromHistory(item, true);
+    } else if (item.source === 'video-edit-video' || item.source === 'video-edit-image') {
+      const found = await getUploadHistoryItem(item.id);
+      if (found) {
+        await handleVideoEditReference(blobToFile(found), item.source === 'video-edit-video' ? 'video' : 'image');
+      }
     } else {
       await selectSeedanceReferenceFromHistory(item, 'image');
     }
@@ -3994,6 +4014,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       // Each model starts from a predictable profile so switching
                       // models cannot carry incompatible settings across.
                       setSeedanceRatio('9:16');
+                      setSeedanceResolution('720p');
                       setSeedanceDuration(5);
                       setSeedanceGenerateAudio(nextModel === 'doubao-seedance-2-5-260628');
                       setSeedanceWatermark(false);
@@ -4055,30 +4076,47 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                         const reference = seedanceReferences.find((item) => item.kind === kind);
                         const isVideo = kind === 'video';
                         return (
-                          <button
-                            key={kind}
-                            type="button"
-                            onClick={() => (isVideo ? videoEditVideoInputRef : videoEditImageInputRef).current?.click()}
-                            disabled={isSeedanceLoading}
-                            className="flex min-h-20 items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-left transition-colors hover:border-violet-300 hover:bg-violet-50/40 disabled:opacity-60"
-                          >
-                            <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-slate-400 shadow-sm">
-                              {reference?.previewUrl ? (
-                                isVideo
-                                  ? <video src={reference.previewUrl} className="size-full object-cover" muted />
-                                  : <img src={reference.previewUrl} alt="目标挂画" className="size-full object-cover" />
-                              ) : isVideo ? <Film className="size-5" /> : <ImageIcon className="size-5" />}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="text-xs font-black text-slate-800">{isVideo ? '上传原视频' : '上传目标挂画'}</div>
-                              <div className="mt-1 truncate text-[11px] font-medium text-slate-400">
-                                {reference?.fileName || (isVideo ? '4-30 秒，最大 50MB' : '保持原图文字、比例与颜色')}
+                          <div key={kind} className="space-y-2">
+                            <button
+                              type="button"
+                              onClick={() => (isVideo ? videoEditVideoInputRef : videoEditImageInputRef).current?.click()}
+                              disabled={isSeedanceLoading}
+                              className="flex min-h-20 w-full items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-left transition-colors hover:border-violet-300 hover:bg-violet-50/40 disabled:opacity-60"
+                            >
+                              <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-slate-400 shadow-sm">
+                                {reference?.previewUrl ? (
+                                  isVideo
+                                    ? <video src={reference.previewUrl} className="size-full object-cover" muted />
+                                    : <img src={reference.previewUrl} alt="目标挂画" className="size-full object-cover" />
+                                ) : isVideo ? <Film className="size-5" /> : <ImageIcon className="size-5" />}
                               </div>
-                              {isVideo && videoEditSourceDuration && (
-                                <div className="mt-1 text-[10px] font-black text-emerald-600">视频时长 {videoEditSourceDuration.toFixed(1)} 秒</div>
-                              )}
-                            </div>
-                          </button>
+                              <div className="min-w-0">
+                                <div className="text-xs font-black text-slate-800">{isVideo ? '上传原视频' : '上传目标挂画'}</div>
+                                <div className="mt-1 truncate text-[11px] font-medium text-slate-400">
+                                  {reference?.fileName || (isVideo ? '4-30 秒，最大 50MB' : '保持原图文字、比例与颜色')}
+                                </div>
+                                {isVideo && videoEditSourceDuration && (
+                                  <div className="mt-1 text-[10px] font-black text-emerald-600">视频时长 {videoEditSourceDuration.toFixed(1)} 秒</div>
+                                )}
+                              </div>
+                            </button>
+                            {(isVideo ? videoHistory.length : imageHistory.length) > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setHistoryModalKind(isVideo ? 'video-edit-video' : 'video-edit-image');
+                                  setShowHistoryModal(true);
+                                }}
+                                className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-600 shadow-sm transition-colors hover:border-violet-300 hover:bg-violet-50/50 hover:text-violet-700"
+                              >
+                                <History className="size-3 text-slate-400" />
+                                <span>{isVideo ? '历史视频' : '历史图片'}</span>
+                                <span className="rounded-full bg-slate-100 px-1.5 text-[10px] text-slate-500">
+                                  {isVideo ? videoHistory.length : imageHistory.length}
+                                </span>
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
@@ -4290,6 +4328,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       className="flex h-9 w-full flex-wrap items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-left text-xs font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50"
                     >
                       <SlidersHorizontal className="size-3.5 text-slate-500" />
+                      <span>{seedanceResolution.toUpperCase()}</span>
+                      <span className="h-3.5 w-px bg-slate-200" />
                       <span>{seedanceTaskMode === 'video-edit-painting' ? '原视频比例' : getSeedanceRatioLabel(seedanceRatio)}</span>
                       <span className="h-3.5 w-px bg-slate-200" />
                       <span>{seedanceTaskMode === 'video-edit-painting' ? '原视频时长' : `${seedanceDuration} 秒`}</span>
@@ -4304,8 +4344,29 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
                     {showSeedanceSettings && (
                       <div className="absolute left-0 right-0 z-20 mt-2 rounded-2xl border border-slate-300 bg-white p-3 shadow-[0_18px_45px_rgba(15,23,42,0.14)]">
+                        <div>
+                          <div className="mb-2 text-xs font-black text-slate-700">视频清晰度</div>
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            {(seedanceModel === 'doubao-seedance-2-5-260628' ? SEEDANCE_RESOLUTIONS_2_5 : SEEDANCE_RESOLUTIONS_2_0).map((resolution) => (
+                              <button
+                                key={resolution}
+                                type="button"
+                                onClick={() => setSeedanceResolution(resolution)}
+                                className={cn(
+                                  "rounded-xl border px-2 py-2 text-xs font-black uppercase transition-colors",
+                                  seedanceResolution === resolution
+                                    ? "border-violet-300 bg-violet-50 text-violet-700"
+                                    : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
+                                )}
+                              >
+                                {resolution}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
                         {seedanceTaskMode === 'generate' && <div>
-                          <div className="mb-2 text-xs font-black text-slate-700">视频比例</div>
+                          <div className="mb-2 mt-4 text-xs font-black text-slate-700">视频比例</div>
                           <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
                             {SEEDANCE_RATIOS.map((ratio) => (
                               <button
@@ -4348,7 +4409,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
                         {seedanceTaskMode === 'video-edit-painting' && (
                           <div className="rounded-xl bg-violet-50 px-3 py-2 text-xs font-bold leading-5 text-violet-700">
-                            视频编辑固定使用智能比例和原视频时长，避免改变原片构图与动作节奏。
+                            视频编辑固定使用智能比例和原视频时长；清晰度可以在上方选择480P或720P。
                           </div>
                         )}
 
@@ -4500,7 +4561,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                             </span>
                           </div>
                           <span className="text-[11px] text-slate-400">
-                            {seedanceTaskMode === 'video-edit-painting' ? '原视频比例 · 原视频时长' : `${seedanceRatio} · ${seedanceDuration}秒`}
+                            {seedanceTaskMode === 'video-edit-painting' ? `${seedanceResolution.toUpperCase()} · 原视频比例 · 原视频时长` : `${seedanceResolution.toUpperCase()} · ${seedanceRatio} · ${seedanceDuration}秒`}
                           </span>
                         </div>
                         <div className="relative mx-auto w-full overflow-hidden rounded-xl bg-slate-950">
@@ -4664,6 +4725,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                                                 {getSeedanceHistoryModeLabel(item)}
                                               </span>
                                               <span>{formatSessionTime(item.savedAt)}</span>
+                                              <span>{item.resolution ? item.resolution.toUpperCase() : '默认分辨率'}</span>
                                               <span>{getSeedanceHistoryRatioLabel(item)}</span>
                                               <span>{getSeedanceHistoryDurationLabel(item)}</span>
                                               <span>{getSeedanceStatusLabel(item.status, !!item.videoUrl)}</span>
@@ -4970,14 +5032,14 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               <div className="flex items-center gap-2">
                 <History className="size-4 text-slate-400" />
                 <h3 className="text-sm font-black text-slate-800">
-                  {historyModalKind === 'video'
+                  {historyModalKind === 'video' || historyModalKind === 'video-edit-video'
                     ? '最近上传的视频'
                     : historyModalKind === 'image-creative'
                       ? '最近上传的图片'
                       : '最近上传的图片'}
                 </h3>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">
-                  {historyModalKind === 'video'
+                  {historyModalKind === 'video' || historyModalKind === 'video-edit-video'
                     ? videoHistory.length
                     : imageHistory.length}
                 </span>
@@ -4991,7 +5053,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-5">
-              {historyModalKind === 'video' && (
+              {(historyModalKind === 'video' || historyModalKind === 'video-edit-video') && (
                 <>
                   {videoHistory.length === 0 ? (
                     <div className="py-12 text-center text-sm text-slate-400">暂无视频记录</div>
@@ -5002,7 +5064,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                           key={item.id}
                           className={cn(
                             "group relative cursor-pointer rounded-xl border bg-white p-2 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md",
-                            historyPreviewItem?.kind === 'video' && historyPreviewItem.id === item.id
+                            historyPreviewItem?.kind === 'video'
+                              && historyPreviewItem.source === (historyModalKind === 'video-edit-video' ? 'video-edit-video' : 'video')
+                              && historyPreviewItem.id === item.id
                               ? 'border-indigo-300 ring-2 ring-indigo-100'
                               : 'border-slate-200'
                           )}
@@ -5011,7 +5075,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                               clearTimeout(hoverPreviewTimerRef.current);
                               hoverPreviewTimerRef.current = null;
                             }
-                            void openVideoHistoryPreview(item);
+                            void openVideoHistoryPreview(item, historyModalKind === 'video-edit-video' ? 'video-edit-video' : 'video');
                           }}
                         >
                           <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-lg bg-slate-950">
@@ -5098,7 +5162,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   )}
                 </>
               )}
-              {historyModalKind === 'image-seedance' && (
+              {(historyModalKind === 'image-seedance' || historyModalKind === 'video-edit-image') && (
                 <>
                   {imageHistory.length === 0 ? (
                     <div className="py-12 text-center text-sm text-slate-400">暂无图片记录</div>
@@ -5109,7 +5173,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                           key={`img_${item.id}`}
                           className={cn(
                             "group relative cursor-pointer rounded-xl border bg-white p-2 shadow-sm transition-all hover:border-violet-200 hover:shadow-md",
-                            historyPreviewItem?.kind === 'image' && historyPreviewItem.source === 'image-seedance' && historyPreviewItem.id === item.id
+                            historyPreviewItem?.kind === 'image'
+                              && historyPreviewItem.source === (historyModalKind === 'video-edit-image' ? 'video-edit-image' : 'image-seedance')
+                              && historyPreviewItem.id === item.id
                               ? 'border-violet-300 ring-2 ring-violet-100'
                               : 'border-slate-200'
                           )}
@@ -5118,7 +5184,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                               clearTimeout(hoverPreviewTimerRef.current);
                               hoverPreviewTimerRef.current = null;
                             }
-                            void openImageHistoryPreview(item, 'image-seedance');
+                            void openImageHistoryPreview(item, historyModalKind === 'video-edit-image' ? 'video-edit-image' : 'image-seedance');
                           }}
                         >
                           <div className="relative overflow-hidden rounded-lg bg-slate-950">

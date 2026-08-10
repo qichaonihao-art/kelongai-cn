@@ -46,7 +46,7 @@ const APIMART_CHAT_FETCH_TIMEOUT_MS = 8 * 60 * 1000;
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || path.join(__dirname, '.runtime-state'));
 const VIDEO_LIBRARY_DIR = path.resolve(process.env.VIDEO_LIBRARY_DIR || path.join(path.dirname(RUNTIME_STATE_DIR), 'kelongai-media', 'video-library'));
-const VIDEO_LIBRARY_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const VIDEO_LIBRARY_MAX_FILE_BYTES = 20 * 1024 * 1024;
 const VIDEO_LIBRARY_THUMBNAIL_MAX_WIDTH = 640;
 const VIDEO_LIBRARY_THUMBNAIL_CONCURRENCY = 2;
 const VIDEO_LIBRARY_MIME_BY_EXTENSION = new Map([
@@ -1542,7 +1542,7 @@ async function ensureVideoLibraryPreview(rowOrItem) {
 async function readVideoLibraryUploadBody(req) {
   const contentLength = Number(req.headers['content-length'] || 0);
   if (contentLength && contentLength > VIDEO_LIBRARY_MAX_FILE_BYTES + 256 * 1024) {
-    throw new Error('视频文件不能超过 10MB');
+    throw new Error('视频文件不能超过 20MB');
   }
   const request = new Request('http://localhost/video-library-upload', {
     method: req.method || 'POST',
@@ -1592,7 +1592,7 @@ async function handleGetVideoLibraryFolders(req, res) {
 async function readVideoLibraryRemoteBuffer(response) {
   const declaredSize = Number(response.headers.get('content-length') || 0);
   if (declaredSize > VIDEO_LIBRARY_MAX_FILE_BYTES) {
-    throw new Error('生成视频超过 10MB，暂时不能保存到视频素材库');
+    throw new Error('生成视频超过 20MB，暂时不能保存到视频素材库');
   }
   if (!response.body) throw new Error('生成视频没有可读取的文件内容');
 
@@ -1606,7 +1606,7 @@ async function readVideoLibraryRemoteBuffer(response) {
     totalBytes += chunk.length;
     if (totalBytes > VIDEO_LIBRARY_MAX_FILE_BYTES) {
       await reader.cancel().catch(() => {});
-      throw new Error('生成视频超过 10MB，暂时不能保存到视频素材库');
+      throw new Error('生成视频超过 20MB，暂时不能保存到视频素材库');
     }
     chunks.push(chunk);
   }
@@ -1735,7 +1735,7 @@ async function handleUploadVideoLibrary(req, res) {
       return;
     }
     if (file.size > VIDEO_LIBRARY_MAX_FILE_BYTES) {
-      sendJson(res, 413, { error: '视频文件不能超过 10MB' });
+      sendJson(res, 413, { error: '视频文件不能超过 20MB' });
       return;
     }
     const mimeType = normalizeVideoLibraryMimeType(file.name, file.type);
@@ -9030,6 +9030,7 @@ async function readSeedanceTaskFormBody(req) {
     prompt: readValue(formData.get('prompt')),
     model: readValue(formData.get('model')),
     taskMode: readValue(formData.get('taskMode')) || 'generate',
+    resolution: readValue(formData.get('resolution')) || '720p',
     ratio: readValue(formData.get('ratio')),
     duration: Number.parseInt(String(formData.get('duration') || 5), 10),
     generateAudio: readValue(formData.get('generateAudio')).toLowerCase() !== 'false',
@@ -12282,6 +12283,7 @@ async function handleSeedanceCreateTask(req, res) {
     const prompt = readValue(body?.prompt);
     const model = readValue(body?.model) || 'doubao-seedance-2-0-260128';
     const taskMode = readValue(body?.taskMode) || 'generate';
+    const resolution = readValue(body?.resolution) || '720p';
     const ratio = readValue(body?.ratio) || '16:9';
     const duration = Number.parseInt(String(body?.duration || 5), 10);
     const isSeedance25 = model === 'doubao-seedance-2-5-260628';
@@ -12294,6 +12296,7 @@ async function handleSeedanceCreateTask(req, res) {
       requestId,
       model,
       taskMode,
+      resolution,
       ratio,
       duration,
       generateAudio,
@@ -12319,6 +12322,16 @@ async function handleSeedanceCreateTask(req, res) {
 
     if (!['generate', 'video_edit'].includes(taskMode)) {
       sendJson(res, 400, { error: '不支持的 Seedance 任务类型' });
+      return;
+    }
+
+    const supportedResolutions = isSeedance25
+      ? ['480p', '720p']
+      : ['480p', '720p', '1080p', '4k'];
+    if (!supportedResolutions.includes(resolution)) {
+      sendJson(res, 400, {
+        error: `${isSeedance25 ? 'Seedance 2.5' : 'Seedance 2.0'} 不支持 ${resolution} 分辨率，可选：${supportedResolutions.join('、')}`
+      });
       return;
     }
 
@@ -12492,6 +12505,7 @@ async function handleSeedanceCreateTask(req, res) {
       model,
       content,
       generate_audio: generateAudio,
+      resolution,
       ratio,
       duration,
       watermark
@@ -12499,6 +12513,7 @@ async function handleSeedanceCreateTask(req, res) {
 
     console.log('[seedance create task] upstream payload preview', {
       requestId,
+      resolution,
       contentTypes: content.map((c) => ({ type: c.type, role: c.role })),
       referenceVideoCount: referenceVideoUrls.length,
     });

@@ -513,6 +513,7 @@ export async function createSeedanceTask(options: {
   model: 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-5-260628';
   taskMode?: 'generate' | 'video_edit';
   prompt: string;
+  resolution: '480p' | '720p' | '1080p' | '4k';
   ratio: string;
   duration: number;
   generateAudio: boolean;
@@ -529,6 +530,7 @@ export async function createSeedanceTask(options: {
     formData.append('prompt', options.prompt);
     formData.append('model', options.model);
     formData.append('taskMode', options.taskMode || 'generate');
+    formData.append('resolution', options.resolution);
     formData.append('ratio', options.ratio);
     formData.append('duration', String(options.duration));
     formData.append('generateAudio', String(options.generateAudio));
@@ -543,6 +545,7 @@ export async function createSeedanceTask(options: {
       prompt: options.prompt,
       model: options.model,
       taskMode: options.taskMode || 'generate',
+      resolution: options.resolution,
       ratio: options.ratio,
       duration: options.duration,
       generateAudio: options.generateAudio,
