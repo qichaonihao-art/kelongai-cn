@@ -468,9 +468,9 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
             <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void refresh(); }} placeholder="搜索素材" className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-xs font-semibold outline-none focus:border-sky-300 focus:bg-white" />
           </div>
-          <button type="button" onClick={() => void refresh()} className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 text-xs font-black text-slate-600 hover:bg-slate-50"><RefreshCw className={cn('size-3.5', isLoading && 'animate-spin')} />刷新</button>
+          <button type="button" onClick={() => void refresh()} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border-2 border-sky-300 bg-sky-50 px-4 text-sm font-black text-sky-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-400 hover:bg-sky-100 hover:shadow-md"><RefreshCw className={cn('size-4.5', isLoading && 'animate-spin')} />刷新</button>
           <div className="flex gap-2 overflow-x-auto">
-            {selectedFolder && <button type="button" onClick={() => setSelectedFolder('')} className="whitespace-nowrap rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 transition-colors hover:bg-emerald-100">返回文件夹</button>}
+            {selectedFolder && <button type="button" onClick={() => setSelectedFolder('')} className="inline-flex h-11 whitespace-nowrap items-center gap-2 rounded-xl border-2 border-slate-800 bg-slate-900 px-4 text-sm font-black text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg"><ArrowLeft className="size-4.5" />返回文件夹</button>}
           </div>
         </div>
         {(error || notice) && <div className={cn('mt-3 rounded-2xl px-4 py-3 text-sm font-bold', error ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700')}>{error || notice}</div>}
