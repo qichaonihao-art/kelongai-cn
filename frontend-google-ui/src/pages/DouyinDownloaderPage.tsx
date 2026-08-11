@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
+import HomeBackButton from "@/src/components/HomeBackButton";
 import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import {
@@ -1184,15 +1185,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       <header className="sticky top-0 z-30 border-b border-white/70 bg-white/90 px-4 shadow-sm">
         <div className="flex h-16 items-center">
           <div className="flex min-w-0 items-center gap-8">
-            <button
-              onClick={onBack}
-              className="group flex h-9 items-center gap-2.5 rounded-full border border-slate-200/80 bg-white/70 pl-1 pr-4 shadow-sm transition-all duration-300 hover:bg-white hover:shadow-md"
-            >
-              <div className="flex size-7 items-center justify-center rounded-full bg-slate-900 text-white transition-transform group-hover:scale-105">
-                <ArrowLeft className="size-3.5" />
-              </div>
-              <span className="text-xs font-bold text-slate-700">返回</span>
-            </button>
+            <HomeBackButton onClick={onBack} />
             <ModuleQuickNav current="douyin" onNavigate={onNavigate} />
           </div>
         </div>

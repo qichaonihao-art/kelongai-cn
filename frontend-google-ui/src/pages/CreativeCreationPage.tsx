@@ -3,7 +3,6 @@ import {
   Send,
   Film,
   Sparkles,
-  ArrowLeft,
   Loader2,
   X,
   History,
@@ -26,6 +25,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
+import HomeBackButton from "@/src/components/HomeBackButton";
 import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import {
@@ -3083,16 +3083,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
       <header className="h-14 border-b border-slate-300 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 shrink-0 sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onBack}
-            className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
-          >
-            <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
-              <ArrowLeft className="size-3.5" />
-            </div>
-            <span className="text-xs font-bold text-slate-700">返回</span>
-          </button>
+          <HomeBackButton onClick={onBack} />
           <ModuleQuickNav current="creative" onNavigate={onNavigate} />
         </div>
         <div className="flex items-center gap-4">

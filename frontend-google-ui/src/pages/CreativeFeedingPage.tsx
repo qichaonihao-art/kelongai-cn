@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeft,
   BookOpenText,
   CheckSquare,
   Copy,
@@ -18,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
+import HomeBackButton from "@/src/components/HomeBackButton";
 import { cn } from "@/src/lib/utils";
 import {
   analyzeCreativePainting,
@@ -463,16 +463,7 @@ export default function CreativeFeedingPage({ onBack, onNavigate }: CreativeFeed
     <div className="min-h-screen bg-background text-slate-900">
       <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200/60 bg-white/50 px-6 backdrop-blur-xl">
         <div className="flex items-center gap-3">
-          <button
-            onClick={onBack}
-            className="group flex h-9 items-center gap-2.5 rounded-full border border-slate-200/80 bg-white/60 pl-1 pr-4 shadow-sm transition-all duration-300 hover:bg-white hover:shadow-md"
-            title="返回首页"
-          >
-            <div className="flex size-7 items-center justify-center rounded-full bg-slate-900 text-white transition-transform group-hover:scale-105">
-              <ArrowLeft className="size-3.5" />
-            </div>
-            <span className="text-xs font-bold text-slate-700">返回</span>
-          </button>
+          <HomeBackButton onClick={onBack} />
           <ModuleQuickNav current="feeding" onNavigate={onNavigate} />
         </div>
         <div className="text-right">

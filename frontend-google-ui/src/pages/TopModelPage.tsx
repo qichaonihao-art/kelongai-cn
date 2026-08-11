@@ -1,7 +1,6 @@
 import { memo, useEffect, useRef, useState, type KeyboardEvent, type ChangeEvent } from "react";
 import { flushSync } from "react-dom";
 import {
-  ArrowLeft,
   Crown,
   Send,
   Loader2,
@@ -39,6 +38,7 @@ function DoubaoLogo({ className }: { className?: string }) {
   );
 }
 import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
+import HomeBackButton from "@/src/components/HomeBackButton";
 import { cn } from "@/src/lib/utils";
 import { streamChatCompletion, type ChatMessage, AVAILABLE_MODELS } from "@/src/lib/topmodel";
 import ReactMarkdown from "react-markdown";
@@ -944,15 +944,7 @@ export default function TopModelPage({ onBack, onNavigate }: TopModelPageProps) 
         {/* Header */}
         <header className="flex shrink-0 items-center justify-between border-b border-slate-200/80 bg-white px-4 py-2.5">
           <div className="flex items-center gap-3">
-            <button
-              onClick={onBack}
-              className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
-            >
-              <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
-                <ArrowLeft className="size-3.5" />
-              </div>
-              <span className="text-xs font-bold text-slate-700">返回</span>
-            </button>
+            <HomeBackButton onClick={onBack} />
             {!sidebarOpen && (
               <button
                 onClick={() => setSidebarOpen(true)}

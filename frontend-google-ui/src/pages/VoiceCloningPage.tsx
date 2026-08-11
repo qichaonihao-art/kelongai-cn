@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   Loader2,
   X,
-  ArrowLeft,
   Wand2,
   Pause,
   Trash2,
@@ -19,6 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
+import HomeBackButton from "@/src/components/HomeBackButton";
 import SiteFooter from "@/src/components/SiteFooter";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
@@ -1285,15 +1285,7 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
 
       <header className="h-16 border-b border-slate-200/60 bg-white/50 backdrop-blur-xl flex items-center justify-between px-6 sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
-          >
-            <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
-              <ArrowLeft className="size-3.5" />
-            </div>
-            <span className="text-xs font-bold text-slate-700">返回</span>
-          </button>
+          <HomeBackButton onClick={onBack} />
           <ModuleQuickNav current="voice" onNavigate={onNavigate} />
         </div>
         <button

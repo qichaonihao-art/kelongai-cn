@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ArrowLeft, Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
+import HomeBackButton from '@/src/components/HomeBackButton';
 
 interface TeamTimelinePageProps {
   onBack: () => void;
@@ -149,9 +150,7 @@ export default function TeamTimelinePage({ onBack, onNavigate }: TeamTimelinePag
       <style>{`@keyframes team-timeline-flow { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }`}</style>
       <div className="mx-auto max-w-6xl">
         <div className="mb-5 flex min-w-0 items-center gap-3 px-1">
-          <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-sm font-bold text-slate-400 transition hover:text-slate-800">
-            <ArrowLeft className="size-4" /> 返回主页
-          </button>
+          <HomeBackButton onClick={onBack} />
           <ModuleQuickNav current="timeline" onNavigate={onNavigate} />
         </div>
 

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
 import {
-  ArrowLeft,
   Loader2,
   Trash2,
   Download,
@@ -19,6 +18,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
+import HomeBackButton from "@/src/components/HomeBackButton";
 import SiteFooter from "@/src/components/SiteFooter";
 import { Button } from "@/src/components/ui/button";
 import { Label } from "@/src/components/ui/label";
@@ -793,15 +793,7 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
       {/* Top Header */}
       <header className="flex shrink-0 items-center justify-between border-b border-slate-200/80 bg-white px-4 py-2.5">
         <div className="flex items-center gap-3">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-2.5 h-9 rounded-full pl-1 pr-4 bg-white/60 hover:bg-white border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300 group"
-          >
-            <div className="size-7 rounded-full bg-slate-900 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
-              <ArrowLeft className="size-3.5" />
-            </div>
-            <span className="text-xs font-bold text-slate-700">返回</span>
-          </button>
+          <HomeBackButton onClick={onBack} />
         </div>
 
         <div className="flex items-center gap-2">

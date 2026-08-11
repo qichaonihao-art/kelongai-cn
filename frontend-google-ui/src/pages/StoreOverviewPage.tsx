@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import {
-  ArrowLeft,
   ChevronLeft,
   ChevronRight,
   Boxes,
@@ -24,6 +23,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
+import HomeBackButton from '@/src/components/HomeBackButton';
 import SiteFooter from '@/src/components/SiteFooter';
 import { cn } from '@/src/lib/utils';
 import {
@@ -834,16 +834,7 @@ export default function StoreOverviewPage({ onBack, onNavigate }: StoreOverviewP
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/85 backdrop-blur-md">
         <div className="flex h-14 items-center justify-between gap-4 px-5">
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={onBack}
-              className="flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white pl-1 pr-4 text-xs font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-50"
-            >
-              <span className="flex size-7 items-center justify-center rounded-full bg-slate-900 text-white">
-                <ArrowLeft className="size-3.5" />
-              </span>
-              返回
-            </button>
+            <HomeBackButton onClick={onBack} />
             <ModuleQuickNav current="collection" onNavigate={onNavigate} />
           </div>
           <div className="flex items-center gap-2">

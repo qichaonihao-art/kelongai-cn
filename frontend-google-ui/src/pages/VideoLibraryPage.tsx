@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Download, FolderInput, FolderOpen, Loader2, Play, Plus, RefreshCw, Search, Trash2, Upload, Video, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
+import HomeBackButton from '@/src/components/HomeBackButton';
 import {
   deleteVideoLibraryVideo,
   createVideoLibraryFolder,
@@ -453,9 +454,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     <main className="min-h-screen bg-slate-100 px-3 py-4 text-slate-900 md:px-6">
       <section className="mx-auto max-w-7xl rounded-2xl border border-white/80 bg-white/90 p-3 shadow-sm md:p-4">
         <div className="mb-3 flex min-w-0 items-center gap-2 border-b border-slate-100 pb-3">
-          <button type="button" onClick={onBack} className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50" title="返回首页">
-            <ArrowLeft className="size-4" />
-          </button>
+          <HomeBackButton onClick={onBack} />
           <div className="min-w-0 flex-1 overflow-hidden">
             <ModuleQuickNav current="video-library" onNavigate={onNavigate} />
           </div>
