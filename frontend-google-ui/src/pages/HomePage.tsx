@@ -4,6 +4,12 @@ import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import { motion } from "motion/react";
 import type { ModuleId } from "@/src/components/ModuleQuickNav";
+import {
+  calculateVideoLibraryUnread,
+  getVideoLibrarySummary,
+  VIDEO_LIBRARY_READ_CHANGE_EVENT,
+  VIDEO_LIBRARY_READ_STATE_KEY,
+} from "@/src/lib/videoLibrary";
 
 interface HomePageProps {
   onNavigate: (page: ModuleId) => void;
@@ -144,6 +150,39 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
   const [cultureDraft, setCultureDraft] = useState(() => DEFAULT_CULTURE_MOTTOS.join('\n'));
   const [cultureSaveError, setCultureSaveError] = useState("");
   const [isCultureSaving, setIsCultureSaving] = useState(false);
+  const [videoLibraryUnreadCount, setVideoLibraryUnreadCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshVideoLibraryUnread() {
+      try {
+        const items = await getVideoLibrarySummary();
+        if (!cancelled) setVideoLibraryUnreadCount(calculateVideoLibraryUnread(items).total);
+      } catch {
+        // 首页提醒读取失败不影响其他模块使用。
+      }
+    }
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void refreshVideoLibraryUnread();
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === VIDEO_LIBRARY_READ_STATE_KEY) void refreshVideoLibraryUnread();
+    };
+    void refreshVideoLibraryUnread();
+    const timer = window.setInterval(refreshVideoLibraryUnread, 30_000);
+    window.addEventListener('focus', refreshVideoLibraryUnread);
+    window.addEventListener(VIDEO_LIBRARY_READ_CHANGE_EVENT, refreshVideoLibraryUnread);
+    window.addEventListener('storage', handleStorage);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refreshVideoLibraryUnread);
+      window.removeEventListener(VIDEO_LIBRARY_READ_CHANGE_EVENT, refreshVideoLibraryUnread);
+      window.removeEventListener('storage', handleStorage);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -380,6 +419,11 @@ export default function HomePage({ onNavigate, onLogout }: HomePageProps) {
                     className={`relative inline-flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br ${module.gradient} text-white shadow-md`}
                   >
                     <Icon className="size-7" />
+                    {module.id === 'video-library' && videoLibraryUnreadCount > 0 && (
+                      <span className="absolute -right-2.5 -top-2.5 flex min-w-6 h-6 items-center justify-center rounded-full border-2 border-white bg-red-500 px-1.5 text-[10px] font-black text-white shadow-md">
+                        {videoLibraryUnreadCount > 99 ? '99+' : videoLibraryUnreadCount}
+                      </span>
+                    )}
                   </motion.div>
                 </div>
 

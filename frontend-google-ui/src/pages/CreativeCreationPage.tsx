@@ -51,6 +51,7 @@ import {
 } from "@/src/lib/uploadHistory";
 import {
   getVideoLibraryFolders,
+  markVideoLibraryItemsRead,
   saveSeedanceVideoToLibrary,
 } from "@/src/lib/videoLibrary";
 
@@ -2408,6 +2409,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       if (result.sourceBytes !== result.savedBytes) {
         throw new Error('保存后文件大小校验失败，请重试');
       }
+      if (result.item?.id) markVideoLibraryItemsRead([result.item.id]);
       setSeedanceHistory((previous) => previous.map((item) => (
         item.taskId === target.taskId
           ? { ...item, libraryFolder: result.item.folderName }

@@ -7,7 +7,10 @@ import {
   createVideoLibraryFolder,
   formatVideoLibrarySize,
   formatVideoLibraryTime,
+  calculateVideoLibraryUnread,
   getVideoLibrary,
+  getVideoLibrarySummary,
+  markVideoLibraryItemsRead,
   updateVideoLibraryItem,
   uploadVideoLibraryVideo,
   type VideoLibraryItem,
@@ -88,17 +91,37 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [unreadVideoIds, setUnreadVideoIds] = useState<Set<number>>(() => new Set());
+  const [folderUnreadCounts, setFolderUnreadCounts] = useState<Map<string, number>>(() => new Map());
+
+  function applyUnreadSummary(summary: Awaited<ReturnType<typeof getVideoLibrarySummary>>) {
+    const unread = calculateVideoLibraryUnread(summary);
+    setUnreadVideoIds(unread.unreadIds);
+    setFolderUnreadCounts(unread.byFolder);
+  }
+
+  async function refreshUnreadSummary() {
+    try {
+      applyUnreadSummary(await getVideoLibrarySummary());
+    } catch {
+      // 未看提醒更新失败不影响素材的上传、移动或删除。
+    }
+  }
 
   async function refresh(overrides?: { folder?: string; query?: string }) {
     setIsLoading(true);
     setError('');
     try {
-      const result = await getVideoLibrary({
-        folder: overrides?.folder ?? selectedFolder,
-        query: overrides?.query ?? search.trim(),
-      });
+      const [result, summary] = await Promise.all([
+        getVideoLibrary({
+          folder: overrides?.folder ?? selectedFolder,
+          query: overrides?.query ?? search.trim(),
+        }),
+        getVideoLibrarySummary().catch(() => null),
+      ]);
       setItems(result.items);
       setFolders(result.folders);
+      if (summary) applyUnreadSummary(summary);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '读取视频库失败');
     } finally {
@@ -137,7 +160,12 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const folderHomeContent = (
     <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
       {folders.map((folder) => (
-        <button key={folder} type="button" onClick={() => setSelectedFolder(folder)} className="group flex aspect-[1.35] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-4 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-md">
+        <button key={folder} type="button" onClick={() => setSelectedFolder(folder)} className="group relative flex aspect-[1.35] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-4 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-md">
+          {(folderUnreadCounts.get(folder) || 0) > 0 && (
+            <span className="absolute right-3 top-3 flex min-w-6 h-6 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-black text-white shadow-sm">
+              {(folderUnreadCounts.get(folder) || 0) > 99 ? '99+' : folderUnreadCounts.get(folder)}
+            </span>
+          )}
           <FolderOpen className="size-11 text-sky-400 transition-colors group-hover:text-sky-500" />
           <span className="mt-3 max-w-full truncate text-sm font-black text-slate-700">{folder}</span>
           <span className="mt-1 text-[11px] font-bold text-slate-400">{folderCounts.get(folder) || 0} 个视频</span>
@@ -198,6 +226,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       setUploadProgress(progress);
       try {
         const result = await uploadVideoLibraryVideo(file, folderDraft);
+        if (result.item?.id) markVideoLibraryItemsRead([result.item.id]);
         progress = {
           ...progress,
           completed: progress.completed + 1,
@@ -280,6 +309,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       await deleteVideoLibraryVideo(item.id);
       setItems((previous) => previous.filter((current) => current.id !== item.id));
       setSelectedItem(null);
+      void refreshUnreadSummary();
       setNotice('视频已删除');
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : '删除视频失败');
@@ -305,6 +335,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       if (selectedItem?.id === updated.id) setSelectedItem(updated);
       setMovingItem(null);
       setMoveTargetFolder('');
+      void refreshUnreadSummary();
       setNotice(`“${updated.originalName}”已移动到“${updated.folderName}”，所有设备都会同步`);
     } catch (moveError) {
       setError(moveError instanceof Error ? moveError.message : '移动视频失败');
@@ -329,7 +360,27 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     previewWarmupRef.current = { id: item.id, video };
   }
 
+  function openVideoPreview(item: VideoLibraryItem) {
+    if (unreadVideoIds.has(item.id)) {
+      markVideoLibraryItemsRead([item.id]);
+      setUnreadVideoIds((previous) => {
+        const next = new Set(previous);
+        next.delete(item.id);
+        return next;
+      });
+      setFolderUnreadCounts((previous) => {
+        const next = new Map(previous);
+        const remaining = Math.max(0, (next.get(item.folderName) || 0) - 1);
+        if (remaining) next.set(item.folderName, remaining);
+        else next.delete(item.folderName);
+        return next;
+      });
+    }
+    setSelectedItem(item);
+  }
+
   function renderVideoCard(item: VideoLibraryItem) {
+    const isUnread = unreadVideoIds.has(item.id);
     return (
       <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md">
         <button
@@ -337,7 +388,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
           onPointerEnter={() => warmVideoPreview(item)}
           onFocus={() => warmVideoPreview(item)}
           onTouchStart={() => warmVideoPreview(item)}
-          onClick={() => setSelectedItem(item)}
+          onClick={() => openVideoPreview(item)}
           className="group relative flex aspect-video w-full items-center justify-center overflow-hidden bg-slate-900 text-left"
         >
           <Video className="size-8 text-slate-600" />
@@ -352,6 +403,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
           <span className="absolute inset-0 flex items-center justify-center bg-slate-950/0 text-white transition-colors group-hover:bg-slate-950/30">
             <Play className="size-7 opacity-0 drop-shadow transition-opacity group-hover:opacity-100" />
           </span>
+          {isUnread && <span className="absolute right-2 top-2 rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-black text-white shadow-sm">新</span>}
         </button>
         <div className="p-2.5">
           <div className="flex items-center gap-1">
@@ -372,7 +424,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
                 {item.originalName}
               </h3>
             )}
-            <button type="button" onClick={() => setSelectedItem(item)} className={cn('shrink-0 rounded-md px-1.5 py-1 text-[10px] font-black', item.note ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200')}>
+            <button type="button" onClick={() => openVideoPreview(item)} className={cn('shrink-0 rounded-md px-1.5 py-1 text-[10px] font-black', item.note ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400 hover:bg-slate-200')}>
               备注
             </button>
           </div>
@@ -442,6 +494,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
               <FolderOpen className="size-4 text-sky-500" />
               <h2 className="text-base font-black">{folder}</h2>
               <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-black text-slate-500">{folderItems.length}</span>
+              {(folderUnreadCounts.get(folder) || 0) > 0 && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-black text-red-500">{folderUnreadCounts.get(folder)} 个未看</span>}
               <button type="button" onClick={() => openUpload(folder)} className="ml-auto inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-600 hover:bg-slate-50"><Plus className="size-3" />上传</button>
             </div>
             <div className="space-y-6">

@@ -1397,6 +1397,18 @@ function dbGetVideoLibraryFolders() {
   return [...new Set(['通用素材', ...rows.map((row) => row.folder_name), ...itemFolders.map((row) => row.folder_name)])];
 }
 
+function dbGetVideoLibrarySummary() {
+  return getCollectionDb().prepare(`
+    SELECT id, folder_name, created_at
+    FROM video_library_items
+    ORDER BY id ASC
+  `).all().map((row) => ({
+    id: Number(row.id),
+    folderName: row.folder_name,
+    createdAt: Number(row.created_at || 0),
+  }));
+}
+
 function dbCreateVideoLibraryFolder(folderName) {
   const normalized = sanitizeVideoLibraryFolder(folderName);
   getCollectionDb().prepare('INSERT OR IGNORE INTO video_library_folders (folder_name) VALUES (?)').run(normalized);
@@ -1587,6 +1599,10 @@ async function handleCreateVideoLibraryFolder(req, res) {
 
 async function handleGetVideoLibraryFolders(req, res) {
   sendJson(res, 200, { ok: true, folders: dbGetVideoLibraryFolders() });
+}
+
+async function handleGetVideoLibrarySummary(req, res) {
+  sendJson(res, 200, { ok: true, items: dbGetVideoLibrarySummary() });
 }
 
 async function readVideoLibraryRemoteBuffer(response) {
@@ -14213,6 +14229,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/video-library/folders') {
     await handleGetVideoLibraryFolders(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/video-library/summary') {
+    await handleGetVideoLibrarySummary(req, res);
     return;
   }
 
