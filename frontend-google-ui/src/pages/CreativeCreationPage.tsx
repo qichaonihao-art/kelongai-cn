@@ -1176,12 +1176,17 @@ function renderAssistantMessageContent(content: string) {
 }
 
 export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCreationPageProps) {
-  const [savedSessions, setSavedSessions] = useState<SavedCreativeSession[]>(loadSavedCreativeSessions);
-  const [activeSessionId, setActiveSessionId] = useState<string>(() => loadSavedCreativeSessions()[0]?.id || createSessionId());
-  const [messages, setMessages] = useState<Message[]>(() => {
-    const savedSessions = loadSavedCreativeSessions();
-    return savedSessions[0] ? inflateSavedMessages(savedSessions[0].messages) : getDefaultMessages();
-  });
+  const initialSessionState = useMemo(() => {
+    const sessions = loadSavedCreativeSessions();
+    return {
+      sessions,
+      activeSessionId: sessions[0]?.id || createSessionId(),
+      messages: sessions[0] ? inflateSavedMessages(sessions[0].messages) : getDefaultMessages(),
+    };
+  }, []);
+  const [savedSessions, setSavedSessions] = useState<SavedCreativeSession[]>(initialSessionState.sessions);
+  const [activeSessionId, setActiveSessionId] = useState(initialSessionState.activeSessionId);
+  const [messages, setMessages] = useState<Message[]>(initialSessionState.messages);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -1193,11 +1198,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [dashscopeApiConfigured, setDashscopeApiConfigured] = useState(true);
   const [seedanceApiConfigured, setSeedanceApiConfigured] = useState(true);
   const [publicBaseUrlConfigured, setPublicBaseUrlConfigured] = useState(false);
-  const [doubaoMultimodalModel, setDoubaoMultimodalModel] = useState('');
+  const [doubaoMultimodalModel, setDoubaoMultimodalModel] = useState('doubao-seed-2-1-pro-260628');
   const [qwenMultimodalModel, setQwenMultimodalModel] = useState('qwen3.8-max');
   const [reverseModel, setReverseModel] = useState<CreativeReverseModel>('doubao');
-  const [doubaoThinkingEnabled, setDoubaoThinkingEnabled] = useState(false);
-  const [qwenThinkingEnabled, setQwenThinkingEnabled] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<SelectedCreativeMedia | null>(null);
   const [seedanceTaskMode, setSeedanceTaskMode] = useState<SeedanceTaskMode>('generate');
   const [seedanceModel, setSeedanceModel] = useState<SeedanceModelId>('doubao-seedance-2-0-260128');
@@ -1215,7 +1218,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [isSeedancePolling, setIsSeedancePolling] = useState(false);
   const [seedanceError, setSeedanceError] = useState("");
   const [seedanceTask, setSeedanceTask] = useState<SeedanceTaskResult | null>(null);
-  const [seedanceHistory, setSeedanceHistory] = useState<SeedanceHistoryItem[]>(loadSeedanceHistory);
+  const [seedanceHistory, setSeedanceHistory] = useState<SeedanceHistoryItem[]>([]);
+  const seedanceHistoryHydratedRef = useRef(false);
   const [selectedHistoryDate, setSelectedHistoryDate] = useState<string>(() => toISODate(new Date()));
   const [showSeedanceSettings, setShowSeedanceSettings] = useState(false);
   const [seedanceClock, setSeedanceClock] = useState(Date.now());
@@ -1252,6 +1256,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance' | 'video-edit-video' | 'video-edit-image'>('video');
   const [historyPreviewItem, setHistoryPreviewItem] = useState<HistoryPreviewItem | null>(null);
   const [historyVideoDurations, setHistoryVideoDurations] = useState<Record<number, number>>({});
+  const [isUploadHistoryLoading, setIsUploadHistoryLoading] = useState(false);
+  const uploadHistoryLoadedRef = useRef(false);
+  const uploadHistoryLoadPromiseRef = useRef<Promise<void> | null>(null);
   const ownedHistoryPreviewUrlRef = useRef<string | null>(null);
   const hoverPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seedanceCostStats = getSeedanceCostStats();
@@ -1388,33 +1395,41 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         previewUrl: item.previewBlob ? URL.createObjectURL(item.previewBlob) : '',
       }));
     });
+    uploadHistoryLoadedRef.current = true;
+  }
+
+  function ensureUploadHistoriesLoaded() {
+    if (uploadHistoryLoadedRef.current) return Promise.resolve();
+    if (uploadHistoryLoadPromiseRef.current) return uploadHistoryLoadPromiseRef.current;
+
+    setIsUploadHistoryLoading(true);
+    const loadingPromise = refreshUploadHistories()
+      .catch(() => undefined)
+      .finally(() => {
+        setIsUploadHistoryLoading(false);
+        uploadHistoryLoadPromiseRef.current = null;
+      });
+    uploadHistoryLoadPromiseRef.current = loadingPromise;
+    return loadingPromise;
   }
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadAll() {
-      await refreshUploadHistories();
-      if (cancelled) return;
-
-      try {
-        const raw = window.localStorage.getItem(ADDITIONAL_CHANGE_HISTORY_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          const normalized = persistAdditionalChangeHistory(parsed);
-          setAdditionalChangeHistory(normalized);
-        }
-      } catch {
-        // ignore parse errors
+    try {
+      const raw = window.localStorage.getItem(ADDITIONAL_CHANGE_HISTORY_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const normalized = persistAdditionalChangeHistory(parsed);
+        setAdditionalChangeHistory(normalized);
       }
+    } catch {
+      // ignore parse errors
     }
 
-    loadAll();
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    if (showHistoryModal) void ensureUploadHistoriesLoaded();
+  }, [showHistoryModal]);
 
   useEffect(() => {
     videoHistoryRef.current = videoHistory;
@@ -1452,9 +1467,24 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      const history = loadSeedanceHistory();
+      seedanceHistoryHydratedRef.current = true;
+      if (!cancelled) setSeedanceHistory(history);
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
+    if (!seedanceHistoryHydratedRef.current) return;
 
     window.localStorage.setItem(SEEDANCE_HISTORY_STORAGE_KEY, JSON.stringify(seedanceHistory));
   }, [seedanceHistory]);
@@ -2993,7 +3023,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         media: mediaToSend,
         history,
         provider: reverseModel,
-        enableThinking: reverseModel === 'qwen' ? qwenThinkingEnabled : doubaoThinkingEnabled,
+        enableThinking: false,
         onDelta: (text) => {
           updateMessage(assistantMessageId, (message) => ({
             ...message,
@@ -3129,40 +3159,6 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   <h2 className="text-base font-black text-slate-900">视频反推提示词</h2>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={reverseModel === 'qwen' ? qwenThinkingEnabled : doubaoThinkingEnabled}
-                    onClick={() => {
-                      if (reverseModel === 'qwen') {
-                        setQwenThinkingEnabled((enabled) => !enabled);
-                      } else {
-                        setDoubaoThinkingEnabled((enabled) => !enabled);
-                      }
-                    }}
-                    disabled={isLoading}
-                    className={cn(
-                      "inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-[10px] font-black transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-                      (reverseModel === 'qwen' ? qwenThinkingEnabled : doubaoThinkingEnabled)
-                        ? "border-amber-300 bg-amber-50 text-amber-700"
-                        : "border-slate-300 bg-slate-50 text-slate-500"
-                    )}
-                  >
-                    <span className={cn(
-                      "relative h-4 w-7 rounded-full transition-colors",
-                      (reverseModel === 'qwen' ? qwenThinkingEnabled : doubaoThinkingEnabled)
-                        ? "bg-amber-500"
-                        : "bg-slate-300"
-                    )}>
-                      <span className={cn(
-                        "absolute left-0 top-0.5 size-3 rounded-full bg-white shadow-sm transition-transform",
-                        (reverseModel === 'qwen' ? qwenThinkingEnabled : doubaoThinkingEnabled)
-                          ? "translate-x-3.5"
-                          : "translate-x-0.5"
-                      )} />
-                    </span>
-                    Thinking
-                  </button>
                   <div className={cn(
                     "relative rounded-full border px-1 shadow-sm transition-colors",
                     reverseModel === 'qwen'
@@ -5046,7 +5042,12 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-5">
-              {(historyModalKind === 'video' || historyModalKind === 'video-edit-video') && (
+              {isUploadHistoryLoading ? (
+                <div className="flex items-center justify-center gap-2 py-14 text-sm font-bold text-slate-400">
+                  <Loader2 className="size-5 animate-spin text-indigo-500" />
+                  正在读取历史记录
+                </div>
+              ) : (historyModalKind === 'video' || historyModalKind === 'video-edit-video') && (
                 <>
                   {videoHistory.length === 0 ? (
                     <div className="py-12 text-center text-sm text-slate-400">暂无视频记录</div>
@@ -5106,7 +5107,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   )}
                 </>
               )}
-              {historyModalKind === 'image-creative' && (
+              {!isUploadHistoryLoading && historyModalKind === 'image-creative' && (
                 <>
                   {imageHistory.length === 0 ? (
                     <div className="py-12 text-center text-sm text-slate-400">暂无图片记录</div>
@@ -5155,7 +5156,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   )}
                 </>
               )}
-              {(historyModalKind === 'image-seedance' || historyModalKind === 'video-edit-image') && (
+              {!isUploadHistoryLoading && (historyModalKind === 'image-seedance' || historyModalKind === 'video-edit-image') && (
                 <>
                   {imageHistory.length === 0 ? (
                     <div className="py-12 text-center text-sm text-slate-400">暂无图片记录</div>

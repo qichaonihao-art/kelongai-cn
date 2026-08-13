@@ -403,7 +403,7 @@ export async function sendCreativeMessage(options: {
       if (options.model) {
         formData.append('model', options.model);
       }
-      formData.append('enable_thinking', String(options.enableThinking === true));
+      formData.append('enable_thinking', 'false');
       if (mediaArray.length === 1) {
         formData.append('media_kind', mediaArray[0].kind);
         formData.append('file', mediaArray[0].file, mediaArray[0].fileName);
@@ -425,7 +425,7 @@ export async function sendCreativeMessage(options: {
         question: options.question,
         history: options.history,
         stream,
-        enable_thinking: options.enableThinking === true,
+        enable_thinking: false,
         ...(options.model ? { model: options.model } : {}),
       }),
     };

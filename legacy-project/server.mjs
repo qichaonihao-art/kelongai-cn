@@ -11428,7 +11428,7 @@ async function handleDoubaoMultimodal(req, res) {
     const resolvedModel = readValue(model) || DEFAULT_DOUBAO_MULTIMODAL_MODEL;
     const hasUploadedFile = file instanceof File && file.size > 0;
     const hasMultipleFiles = Array.isArray(files) && files.length > 0;
-    const enableThinking = body.enableThinking === true || body.enable_thinking === true;
+    const enableThinking = false;
 
     console.log('[doubao multimodal] request start', {
       requestId,
@@ -11987,7 +11987,7 @@ async function handleQwenCreativeMultimodal(req, res) {
     const resolvedQuestion = readValue(question);
     const hasUploadedFile = file instanceof File && file.size > 0;
     const hasMultipleFiles = Array.isArray(files) && files.length > 0;
-    const enableThinking = body.enableThinking === true || body.enable_thinking === true;
+    const enableThinking = false;
 
     if (!apiKey) {
       sendJson(res, 500, { error: '服务端未配置 DASHSCOPE_API_KEY' });
