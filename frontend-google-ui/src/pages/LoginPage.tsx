@@ -327,7 +327,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     onFocus={() => setIsTyping(true)}
                     onBlur={() => setIsTyping(false)}
                     required
-                    className="h-12 pr-10"
+                    className="h-12 px-10 text-center placeholder:text-center"
                   />
                   <button
                     type="button"
