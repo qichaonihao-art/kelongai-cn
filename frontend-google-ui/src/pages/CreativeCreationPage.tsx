@@ -2783,7 +2783,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     if (item.source === 'video') {
       await selectVideoFromHistory(item);
     } else if (item.source === 'image-creative') {
-      await selectImageFromHistory(item, true);
+      await selectImageFromHistory(item, reverseMode !== 'image');
     } else if (item.source === 'video-edit-video' || item.source === 'video-edit-image') {
       const found = await getUploadHistoryItem(item.id);
       if (found) {
@@ -3283,18 +3283,22 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               </div>
 
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                {videoHistory.length > 0 && !selectedMedia && (
+                {!selectedMedia && reverseMode !== 'replace' && (
                   <button
                     type="button"
                     onClick={() => {
-                      setHistoryModalKind('video');
+                      setHistoryModalKind(reverseMode === 'image' ? 'image-creative' : 'video');
                       setShowHistoryModal(true);
                     }}
                     className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
                   >
                     <History className="size-3 text-slate-400" />
-                    <span>历史视频</span>
-                    <span className="rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">{videoHistory.length}</span>
+                    <span>{reverseMode === 'image' ? '历史图片' : '历史视频'}</span>
+                    {(reverseMode === 'image' ? imageHistory.length : videoHistory.length) > 0 && (
+                      <span className="rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">
+                        {reverseMode === 'image' ? imageHistory.length : videoHistory.length}
+                      </span>
+                    )}
                   </button>
                 )}
                 <div className="relative">
@@ -3538,7 +3542,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                     )}
                   </div>
 
-                  {imageHistory.length > 0 && !replaceImage && (
+                  {!replaceImage && (
                     <button
                       type="button"
                       onClick={() => {
