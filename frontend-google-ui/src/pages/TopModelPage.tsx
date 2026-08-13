@@ -112,6 +112,7 @@ const STREAM_RENDER_THROTTLE_MS = 90;
 const DOUBAO_MODEL_ID = 'doubao-seed-2-1-pro-260628';
 const QWEN_MODEL_ID = 'qwen3.7-plus';
 const OPENAI_MODEL_ID = 'gpt-5';
+const DEEPSEEK_MODEL_ID = 'deepseek-v4-pro';
 
 function getModelTone(modelId: string) {
   if (modelId === DOUBAO_MODEL_ID) {
@@ -132,6 +133,15 @@ function getModelTone(modelId: string) {
       hoverBorder: 'hover:border-emerald-300',
     };
   }
+  if (modelId === DEEPSEEK_MODEL_ID) {
+    return {
+      text: 'text-sky-500',
+      activeBg: 'bg-sky-100 text-sky-700',
+      selectedText: 'font-bold text-sky-600',
+      gradient: 'bg-gradient-to-br from-sky-500 to-blue-600',
+      hoverBorder: 'hover:border-sky-300',
+    };
+  }
   return {
     text: 'text-fuchsia-500',
     activeBg: 'bg-fuchsia-100 text-fuchsia-700',
@@ -144,6 +154,7 @@ function getModelTone(modelId: string) {
 function ModelLogo({ modelId, className }: { modelId: string; className?: string }) {
   if (modelId === DOUBAO_MODEL_ID) return <DoubaoLogo className={className} />;
   if (modelId === OPENAI_MODEL_ID) return <Sparkles className={className} />;
+  if (modelId === DEEPSEEK_MODEL_ID) return <Sparkles className={className} />;
   return <AnthropicLogo className={className} />;
 }
 

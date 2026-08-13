@@ -98,6 +98,7 @@ const SERVER_CONFIG = {
   douyinApiToken: process.env.DOUYIN_API_TOKEN || process.env.WECHAT_API_TOKEN || '',
   gptImageApiKey: process.env.GPT_IMAGE_API_KEY || '',
   doubaoTopmodelApiKey: process.env.DOUBAO_TOPMODEL_API_KEY || '',
+  deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
   webSearchApiKey: process.env.WEB_SEARCH_API_KEY || '',
   dashscopeApiKey: process.env.DASHSCOPE_API_KEY || ''
 };
@@ -107,6 +108,8 @@ const TIKHUB_API_BASE_URL = 'https://api.tikhub.io';
 const DOUYIN_RETRY_DELAYS_MS = [250, 700];
 const DASHSCOPE_API_BASE_URL = String(process.env.DASHSCOPE_API_BASE_URL || 'https://llm-7725kgx72thqls1n.cn-beijing.maas.aliyuncs.com/compatible-mode/v1').trim().replace(/\/+$/g, '');
 const QWEN_TOPMODEL_MODEL = 'qwen3.7-plus';
+const DEEPSEEK_API_BASE_URL = String(process.env.DEEPSEEK_API_BASE_URL || 'https://api.deepseek.com').trim().replace(/\/+$/g, '');
+const DEEPSEEK_TOPMODEL_MODEL = 'deepseek-v4-pro';
 const SILICONFLOW_API_BASE_URL = String(process.env.SILICONFLOW_API_BASE_URL || 'https://api.siliconflow.cn/v1').trim().replace(/\/+$/g, '');
 const SILICONFLOW_ASR_MODEL = String(process.env.SILICONFLOW_ASR_MODEL || 'FunAudioLLM/SenseVoiceSmall').trim();
 const DEFAULT_SILICONFLOW_VOICE_MODEL = 'FunAudioLLM/CosyVoice2-0.5B';
@@ -3757,6 +3760,87 @@ async function handleDoubaoChatCompletions(req, res) {
     }
   } catch (error) {
     sendJson(res, 500, { error: error.message || '对话请求失败' });
+  }
+}
+
+async function handleDeepSeekChatCompletions(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const messages = body.messages;
+    const stream = body.stream !== false;
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      sendJson(res, 400, { error: 'messages 不能为空' });
+      return;
+    }
+
+    const apiKey = readValue(SERVER_CONFIG.deepseekApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '未配置 DeepSeek API Key，请设置 DEEPSEEK_API_KEY' });
+      return;
+    }
+
+    const requestPayload = {
+      model: DEEPSEEK_TOPMODEL_MODEL,
+      messages,
+      stream,
+      thinking: { type: 'enabled' },
+      reasoning_effort: 'high',
+    };
+    if (typeof body.temperature === 'number') requestPayload.temperature = body.temperature;
+    if (typeof body.max_tokens === 'number') requestPayload.max_tokens = body.max_tokens;
+    if (typeof body.top_p === 'number') requestPayload.top_p = body.top_p;
+
+    const upstreamRes = await fetch(`${DEEPSEEK_API_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        Accept: stream ? 'text/event-stream' : 'application/json',
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    if (!upstreamRes.ok) {
+      const text = await upstreamRes.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch {}
+      sendJson(res, upstreamRes.status, {
+        error: json?.error?.message || json?.message || text || `DeepSeek API 请求失败（状态码 ${upstreamRes.status}）`,
+      });
+      return;
+    }
+
+    if (!stream) {
+      const text = await upstreamRes.text();
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(text);
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    const reader = upstreamRes.body.getReader();
+    const decoder = new TextDecoder();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(decoder.decode(value, { stream: true }));
+        if (res.flush) res.flush();
+      }
+    } finally {
+      const tail = decoder.decode();
+      if (tail) res.write(tail);
+      reader.releaseLock();
+      res.end();
+    }
+  } catch (error) {
+    sendJson(res, 500, { error: error.message || 'DeepSeek 对话请求失败' });
   }
 }
 
@@ -14307,6 +14391,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/chat/qwen') {
     await handleQwenChatCompletions(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/chat/deepseek') {
+    await handleDeepSeekChatCompletions(req, res);
     return;
   }
 

@@ -19,6 +19,7 @@ export const AVAILABLE_MODELS: ModelOption[] = [
   { id: 'gpt-5', name: 'ChatGPT 5.5', description: 'OpenAI 顶级通用对话模型' },
   { id: 'doubao-seed-2-1-pro-260628', name: 'Doubao Seed 2.1 Pro', description: '字节跳动最新多模态大模型', supportsMultimodal: true, supportsWebSearch: true },
   { id: 'qwen3.7-plus', name: '千问 3.7-Plus', description: '阿里云百炼最新深度思考模型', supportsMultimodal: true, supportsWebSearch: true },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', description: 'DeepSeek 最新旗舰推理模型' },
 ];
 
 function toApiMessages(messages: ChatMessage[]) {
@@ -53,7 +54,8 @@ export async function* streamChatCompletion(
   const model = options?.model || 'claude-fable-5';
   const isDoubao = model === 'doubao-seed-2-1-pro-260628';
   const isQwen = model === 'qwen3.7-plus';
-  const endpoint = isDoubao ? '/api/chat/doubao' : isQwen ? '/api/chat/qwen' : '/api/chat/completions';
+  const isDeepSeek = model === 'deepseek-v4-pro';
+  const endpoint = isDoubao ? '/api/chat/doubao' : isQwen ? '/api/chat/qwen' : isDeepSeek ? '/api/chat/deepseek' : '/api/chat/completions';
 
   const body: Record<string, unknown> = { model, stream: true };
 
@@ -63,7 +65,7 @@ export async function* streamChatCompletion(
     if (options?.tools && options.tools.length > 0) {
       body.tools = options.tools;
     }
-  } else if (isQwen) {
+  } else if (isQwen || isDeepSeek) {
     body.messages = toApiMessages(messages);
     if (options?.tools && options.tools.length > 0) {
       body.tools = options.tools;
