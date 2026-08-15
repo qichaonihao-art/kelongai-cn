@@ -3283,7 +3283,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
               </div>
 
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                {!selectedMedia && reverseMode !== 'replace' && (
+                {!selectedMedia && (
                   <button
                     type="button"
                     onClick={() => {
