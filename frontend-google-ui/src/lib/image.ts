@@ -161,6 +161,17 @@ export async function getImageTaskStatus(id: number): Promise<ImageTask> {
   return task;
 }
 
+export async function getImageTaskResultBlob(taskId: number, resultIndex: number): Promise<Blob> {
+  const response = await fetch(`/api/image/tasks/${taskId}/results/${resultIndex}`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const json = await parseJsonSafely(response);
+    throw new Error(buildErrorMessage(json, '读取生成图片失败'));
+  }
+  return response.blob();
+}
+
 export async function getImageTasks(params?: {
   limit?: number;
   offset?: number;

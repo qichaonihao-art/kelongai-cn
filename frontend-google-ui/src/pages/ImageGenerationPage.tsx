@@ -32,7 +32,9 @@ import {
   getImageConfigStatus,
   replaceImageTaskSnapshot,
   saveImageTaskSnapshot,
+  getImageTaskResultBlob,
 } from "@/src/lib/image";
+import { saveUploadHistory } from "@/src/lib/uploadHistory";
 
 interface ImageGenerationPageProps {
   onBack: () => void;
@@ -94,6 +96,8 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
   const [isProcessingImages, setIsProcessingImages] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
+  const [pushingImageKey, setPushingImageKey] = useState<string | null>(null);
+  const [pushedImageKeys, setPushedImageKeys] = useState<Set<string>>(() => new Set());
   const pollingRefs = useRef<Map<number, number>>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -397,6 +401,38 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
     }
   }
 
+  async function handlePushToCreative(task: ImageTask, resultIndex: number) {
+    const imageKey = `${task.id}-${resultIndex}`;
+    if (pushingImageKey) return;
+
+    setError('');
+    setPushingImageKey(imageKey);
+    try {
+      const blob = await getImageTaskResultBlob(task.id, resultIndex);
+      const mimeType = blob.type.startsWith('image/') ? blob.type : 'image/png';
+      const extension = mimeType === 'image/jpeg'
+        ? 'jpg'
+        : mimeType === 'image/webp'
+          ? 'webp'
+          : 'png';
+      const file = new File(
+        [blob],
+        `GPT-Image-${task.id}-${resultIndex + 1}.${extension}`,
+        { type: mimeType, lastModified: Date.now() }
+      );
+      await saveUploadHistory(file, 'image');
+      setPushedImageKeys((previous) => {
+        const next = new Set(previous);
+        next.add(imageKey);
+        return next;
+      });
+    } catch (pushError) {
+      setError(pushError instanceof Error ? pushError.message : '推送到创意创作失败');
+    } finally {
+      setPushingImageKey(null);
+    }
+  }
+
   function formatTime(timestamp: number | null) {
     if (!timestamp) return '-';
     return new Date(timestamp * 1000).toLocaleString('zh-CN');
@@ -559,7 +595,11 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
                   task.result_urls.length === 2 ? 'grid-cols-2 max-w-lg' :
                   'grid-cols-2 sm:grid-cols-3'
                 )}>
-                  {task.result_urls.map((url, idx) => (
+                  {task.result_urls.map((url, idx) => {
+                    const imageKey = `${task.id}-${idx}`;
+                    const isPushing = pushingImageKey === imageKey;
+                    const isPushed = pushedImageKeys.has(imageKey);
+                    return (
                     <div
                       key={idx}
                       className="group relative overflow-hidden rounded-xl border border-slate-200 bg-slate-100 shadow-sm"
@@ -576,12 +616,35 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
                         <button
                           onClick={(e) => { e.stopPropagation(); handleDownload(url); }}
                           className="flex h-9 w-9 scale-75 items-center justify-center rounded-full bg-white text-slate-700 opacity-0 shadow-lg transition-all group-hover:scale-100 group-hover:opacity-100"
+                          title="下载图片"
                         >
                           <Download className="size-4" />
                         </button>
                       </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handlePushToCreative(task, idx);
+                        }}
+                        disabled={Boolean(pushingImageKey) || isPushed}
+                        className={cn(
+                          'absolute bottom-2 right-2 z-10 inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold shadow-lg transition-all disabled:cursor-default',
+                          isPushed ? 'bg-emerald-500 text-white' : 'bg-white text-amber-600 hover:bg-amber-50'
+                        )}
+                        title={isPushed ? '已推送到创意创作历史图片' : '推送到创意创作历史图片'}
+                      >
+                        {isPushing ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : isPushed ? (
+                          <CheckCircle2 className="size-3.5" />
+                        ) : (
+                          <ImagePlus className="size-3.5" />
+                        )}
+                        {isPushing ? '推送中' : isPushed ? '已推送' : '推送'}
+                      </button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="flex items-center gap-3 text-[10px] text-slate-400">
                   <span>{task.size} · {task.resolution}</span>

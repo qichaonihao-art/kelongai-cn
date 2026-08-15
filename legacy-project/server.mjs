@@ -3438,6 +3438,59 @@ async function handleDeleteImageTask(req, res, id) {
   }
 }
 
+async function handleGetImageTaskResult(req, res, id, resultIndex) {
+  try {
+    const task = dbGetImageTaskById(Number(id));
+    if (!task) {
+      sendJson(res, 404, { error: '图片生成任务不存在' });
+      return;
+    }
+
+    const index = Number(resultIndex);
+    const resultUrls = Array.isArray(task.result_urls) ? task.result_urls : [];
+    const targetUrl = resultUrls[index];
+    if (!Number.isInteger(index) || index < 0 || !targetUrl) {
+      sendJson(res, 404, { error: '生成图片不存在' });
+      return;
+    }
+
+    const parsedUrl = new URL(targetUrl);
+    if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+      sendJson(res, 400, { error: '生成图片地址无效' });
+      return;
+    }
+
+    const upstreamRes = await fetch(parsedUrl, {
+      headers: { Accept: 'image/*' },
+    });
+    if (!upstreamRes.ok) {
+      sendJson(res, 502, { error: `读取生成图片失败（HTTP ${upstreamRes.status}）` });
+      return;
+    }
+
+    const contentType = String(upstreamRes.headers.get('content-type') || 'image/png').split(';')[0].trim();
+    if (!contentType.startsWith('image/')) {
+      sendJson(res, 502, { error: '上游返回的内容不是图片' });
+      return;
+    }
+
+    const content = Buffer.from(await upstreamRes.arrayBuffer());
+    if (content.length > 60 * 1024 * 1024) {
+      sendJson(res, 413, { error: '生成图片超过 60MB，无法推送' });
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Length': content.length,
+      'Cache-Control': 'private, max-age=300',
+    });
+    res.end(content);
+  } catch (error) {
+    sendJson(res, 502, { error: error.message || '读取生成图片失败' });
+  }
+}
+
 async function handleChatCompletions(req, res) {
   try {
     const body = await readRequestBody(req);
@@ -14368,6 +14421,12 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/image/tasks') {
     await handleGetImageTasks(req, res);
+    return;
+  }
+
+  const imageTaskResultMatch = url.pathname.match(/^\/api\/image\/tasks\/(\d+)\/results\/(\d+)$/);
+  if (req.method === 'GET' && imageTaskResultMatch) {
+    await handleGetImageTaskResult(req, res, imageTaskResultMatch[1], imageTaskResultMatch[2]);
     return;
   }
 
