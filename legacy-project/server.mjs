@@ -49,6 +49,9 @@ const VIDEO_LIBRARY_DIR = path.resolve(process.env.VIDEO_LIBRARY_DIR || path.joi
 const VIDEO_LIBRARY_MAX_FILE_BYTES = 20 * 1024 * 1024;
 const VIDEO_LIBRARY_THUMBNAIL_MAX_WIDTH = 640;
 const VIDEO_LIBRARY_THUMBNAIL_CONCURRENCY = 2;
+const VIDEO_LIBRARY_PREVIEW_MAX_WIDTH = 540;
+const VIDEO_LIBRARY_STREAM_HIGH_WATER_MARK = 1024 * 1024;
+const VIDEO_LIBRARY_ACCEL_REDIRECT_PREFIX = String(process.env.VIDEO_LIBRARY_ACCEL_REDIRECT_PREFIX || '').trim().replace(/\/$/, '');
 const VIDEO_LIBRARY_MIME_BY_EXTENSION = new Map([
   ['.mp4', 'video/mp4'],
   ['.m4v', 'video/x-m4v'],
@@ -1338,6 +1341,11 @@ function getVideoLibraryThumbnailName(row) {
 
 function getVideoLibraryPreviewName(row) {
   const sha256 = readValue(row?.sha256).replace(/[^a-f0-9]/gi, '').toLowerCase();
+  return `${sha256 || `video-${Number(row?.id || 0)}`}.preview-v2.mp4`;
+}
+
+function getLegacyVideoLibraryPreviewName(row) {
+  const sha256 = readValue(row?.sha256).replace(/[^a-f0-9]/gi, '').toLowerCase();
   return `${sha256 || `video-${Number(row?.id || 0)}`}.preview.mp4`;
 }
 
@@ -1529,23 +1537,52 @@ async function ensureVideoLibraryPreview(rowOrItem) {
       await execFileAsync('ffmpeg', [
         '-y',
         '-i', sourcePath,
-        '-map', '0',
-        '-c', 'copy',
+        '-map', '0:v:0',
+        '-map', '0:a:0?',
+        '-vf', `scale=${VIDEO_LIBRARY_PREVIEW_MAX_WIDTH}:-2:force_original_aspect_ratio=decrease`,
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '27',
+        '-maxrate', '1400k',
+        '-bufsize', '2800k',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '96k',
+        '-ac', '2',
+        '-threads', '1',
         '-movflags', '+faststart',
         temporaryPath,
       ], {
-        timeout: 30 * 1000,
+        timeout: 2 * 60 * 1000,
         killSignal: 'SIGKILL',
       });
       await rename(temporaryPath, previewPath);
+      await unlink(path.join(VIDEO_LIBRARY_DIR, getLegacyVideoLibraryPreviewName(row))).catch(() => {});
       return previewPath;
     } catch (error) {
       await unlink(temporaryPath).catch(() => {});
-      console.warn('[video library] preview_faststart_failed', {
+      console.warn('[video library] preview_transcode_failed', {
         id: Number(row.id || 0),
         message: error?.message || '',
       });
-      return sourcePath;
+      try {
+        await execFileAsync('ffmpeg', [
+          '-y',
+          '-i', sourcePath,
+          '-map', '0',
+          '-c', 'copy',
+          '-movflags', '+faststart',
+          temporaryPath,
+        ], {
+          timeout: 30 * 1000,
+          killSignal: 'SIGKILL',
+        });
+        await rename(temporaryPath, previewPath);
+        return previewPath;
+      } catch {
+        await unlink(temporaryPath).catch(() => {});
+        return sourcePath;
+      }
     }
   }).finally(() => {
     videoLibraryPreviewPromises.delete(previewPath);
@@ -1579,7 +1616,7 @@ async function handleGetVideoLibrary(req, res, url) {
   const query = readValue(url.searchParams.get('q'));
   const items = dbGetVideoLibraryItems({ folderName: url.searchParams.get('folder') ? folderName : '', query });
   const folders = dbGetVideoLibraryFolders();
-  items.slice(0, 12).forEach((item) => {
+  items.slice(0, 4).forEach((item) => {
     void ensureVideoLibraryPreview(item).catch(() => {});
   });
   sendJson(res, 200, { ok: true, items, folders });
@@ -1834,6 +1871,7 @@ async function handleDeleteVideoLibrary(req, res, id) {
       unlink(path.join(VIDEO_LIBRARY_DIR, deleted.stored_name)).catch(() => {}),
       unlink(path.join(VIDEO_LIBRARY_DIR, getVideoLibraryThumbnailName(deleted))).catch(() => {}),
       unlink(path.join(VIDEO_LIBRARY_DIR, getVideoLibraryPreviewName(deleted))).catch(() => {}),
+      unlink(path.join(VIDEO_LIBRARY_DIR, getLegacyVideoLibraryPreviewName(deleted))).catch(() => {}),
     ]);
     sendJson(res, 200, { ok: true });
   } catch (error) {
@@ -1892,9 +1930,18 @@ async function handleVideoLibraryFile(req, res, id, url) {
       'Cache-Control': 'private, max-age=31536000, immutable',
       'ETag': etag,
       'X-Content-Type-Options': 'nosniff',
+      'X-Accel-Buffering': 'no',
+      'Content-Encoding': 'identity',
+      'X-Video-Library-Variant': wantsFastPreview ? 'preview' : 'original',
     };
     if (!range && req.headers['if-none-match'] === etag) {
       res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+    if (VIDEO_LIBRARY_ACCEL_REDIRECT_PREFIX) {
+      headers['X-Accel-Redirect'] = `${VIDEO_LIBRARY_ACCEL_REDIRECT_PREFIX}/${encodeURIComponent(path.basename(filePath))}`;
+      res.writeHead(200, headers);
       res.end();
       return;
     }
@@ -1914,13 +1961,13 @@ async function handleVideoLibraryFile(req, res, id, url) {
       headers['Content-Length'] = String(end - start + 1);
       res.writeHead(206, headers);
       if (req.method === 'HEAD') res.end();
-      else createReadStream(filePath, { start, end }).pipe(res);
+      else createReadStream(filePath, { start, end, highWaterMark: VIDEO_LIBRARY_STREAM_HIGH_WATER_MARK }).pipe(res);
       return;
     }
     headers['Content-Length'] = String(info.size);
     res.writeHead(200, headers);
     if (req.method === 'HEAD') res.end();
-    else createReadStream(filePath).pipe(res);
+    else createReadStream(filePath, { highWaterMark: VIDEO_LIBRARY_STREAM_HIGH_WATER_MARK }).pipe(res);
   } catch (error) {
     sendJson(res, 404, { error: '视频文件不存在或已损坏' });
   }

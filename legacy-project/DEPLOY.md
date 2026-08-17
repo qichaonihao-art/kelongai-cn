@@ -218,6 +218,16 @@ server {
     tcp_nopush on;
     tcp_nodelay on;
 
+    # === 视频素材库文件：Node 鉴权后交给 Nginx 直接发送 ===
+    # 必须和 .env 中 VIDEO_LIBRARY_DIR 指向同一个真实目录。
+    location /_protected_video_library/ {
+        internal;
+        alias /www/wwwroot/kelongai-media/video-library/;
+        sendfile on;
+        tcp_nopush on;
+        gzip off;
+    }
+
     # === 视频下载接口：零缓冲、零压缩、直接透传 ===
     location ~ ^/api/douyin/(download-video|video-stream)$ {
         proxy_pass http://127.0.0.1:3000;
@@ -261,6 +271,14 @@ server {
     }
 }
 ```
+
+同时在生产环境 `.env` 中增加：
+
+```env
+VIDEO_LIBRARY_ACCEL_REDIRECT_PREFIX=/_protected_video_library
+```
+
+应用修改后需要依次校验并重载 Nginx，再用 `pm2 restart legacy-project --update-env` 让 Node 读取新变量。该配置不会改变或删除素材文件，只把已鉴权的文件传输工作交给 Nginx。
 
 ### 5.2 关键配置说明
 

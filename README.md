@@ -189,11 +189,14 @@ cp legacy-project/.env.example legacy-project/.env
   - 生产环境建议使用 `/www/wwwroot/kelongai-media/video-library`
   - 不属于 Git 项目目录，也不属于运行状态目录；部署前端时不要清理它
   - 如果不配置，后端会根据 `RUNTIME_STATE_DIR` 自动放在同级的 `kelongai-media/video-library` 目录
-- 第一版单个视频限制为 10MB，原文件直接保存，不做转码压缩
+- 单个视频限制为 20MB，原文件直接保存，不做转码压缩
 - 上传界面支持多选；系统逐个上传，单个文件失败不会中断其他文件
 - 新上传视频会生成 JPEG 封面；旧视频首次显示时自动补封面
 - 视频预览支持正确的分段读取、悬停预热和浏览器长期缓存，重复打开不会重新下载完整文件
-- MP4 会额外生成不转码的快速起播副本，把播放索引移动到文件开头；预览使用该副本，下载仍使用原文件
+- MP4 会额外生成约 540P 的轻量快速起播副本；预览使用该副本，下载仍使用未经转码的原文件
+- `VIDEO_LIBRARY_ACCEL_REDIRECT_PREFIX`
+  - 可选，生产环境配合 Nginx `internal + alias` 使用，让 Nginx 直接发送预览和下载文件
+  - 推荐设置为 `/_protected_video_library`，具体配置见 `legacy-project/DEPLOY.md`
 - “创意创作”的 Seedance 生成结果支持直接选择素材库文件夹保存，无需先下载再上传
 - 直接保存沿用生成平台的原始 MP4 字节，不转码，并在写入后校验文件大小
 - 保存时会在 Seedance 临时链接失效前把视频复制到本地素材库；此后的预览和下载只读取本地文件，不再依赖 Seedance 链接
