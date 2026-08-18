@@ -1386,6 +1386,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   });
   const [paintingIdeas, setPaintingIdeas] = useState<PaintingIdeaSummary[]>([]);
   const [paintingSelectedIdea, setPaintingSelectedIdea] = useState<PaintingIdeaSummary | null>(null);
+  const [usedIdeaIds, setUsedIdeaIds] = useState<Record<string, boolean>>({});
   const [paintingFullPrompt, setPaintingFullPrompt] = useState('');
   const [paintingLoading, setPaintingLoading] = useState<'idle' | 'analyze' | 'ideas' | 'prompt'>('idle');
   const [paintingHistory, setPaintingHistory] = useState<PaintingHistoryItem[]>([]);
@@ -2835,6 +2836,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       setPaintingIdeas([]);
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
+      setUsedIdeaIds({});
       await saveUploadHistory(file, 'image');
       await refreshUploadHistories();
     } catch (error) {
@@ -2878,6 +2880,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       setPaintingIdeas(ideas);
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
+      setUsedIdeaIds({});
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '创意方案生成失败，请稍后重试。');
     } finally {
@@ -2900,6 +2903,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         audio: paintingPlan.audio,
       });
       setPaintingFullPrompt(prompt);
+      setUsedIdeaIds((previous) => ({ ...previous, [idea.id]: true }));
 
       // 生成后自动填入右侧 Seedance 面板：提示词、时长、比例、挂画参考图。
       const ratio = paintingPlan.ratio || '9:16';
@@ -2963,6 +2967,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setPaintingIdeas(item.ideas || []);
     setPaintingFullPrompt(item.fullPrompt || '');
     setPaintingSelectedIdea(null);
+    setUsedIdeaIds({});
     if (item.ratio) setPaintingPlan((previous) => ({ ...previous, ratio: item.ratio }));
     setPaintingError('');
   }
@@ -3173,6 +3178,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setPaintingIdeas([]);
     setPaintingSelectedIdea(null);
     setPaintingFullPrompt('');
+    setUsedIdeaIds({});
     setPaintingError('');
   }
 
@@ -3820,31 +3826,51 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                         </button>
                       </div>
                       <div className="grid gap-2">
-                        {paintingIdeas.map((idea) => (
+                        {paintingIdeas.map((idea) => {
+                          const isUsed = Boolean(usedIdeaIds[idea.id]);
+                          return (
                           <div
                             key={idea.id}
                             className={cn(
-                              'rounded-xl border bg-white p-3 shadow-sm',
-                              paintingSelectedIdea?.id === idea.id ? 'border-rose-300 ring-1 ring-rose-200' : 'border-slate-200'
+                              'rounded-xl border p-3 shadow-sm',
+                              paintingSelectedIdea?.id === idea.id
+                                ? 'border-rose-300 bg-white ring-1 ring-rose-200'
+                                : isUsed
+                                  ? 'border-emerald-200 bg-emerald-50/40'
+                                  : 'border-slate-200 bg-white'
                             )}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="text-xs font-black text-slate-800">{idea.title}</div>
+                                <div className="flex items-center gap-1.5">
+                                  <div className="text-xs font-black text-slate-800">{idea.title}</div>
+                                  {isUsed && (
+                                    <span className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">
+                                      <Check className="size-2.5" />
+                                      已使用
+                                    </span>
+                                  )}
+                                </div>
                                 <div className="mt-1 text-xs leading-5 text-slate-500">{idea.summary}</div>
                               </div>
                               <button
                                 type="button"
                                 onClick={() => handlePaintingGeneratePrompt(idea)}
                                 disabled={paintingLoading !== 'idle'}
-                                className="shrink-0 inline-flex h-8 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-bold text-slate-600 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
+                                className={cn(
+                                  'shrink-0 inline-flex h-8 items-center gap-1 rounded-full border px-3 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                                  isUsed
+                                    ? 'border-emerald-200 bg-white text-emerald-600 hover:border-emerald-300 hover:bg-emerald-50'
+                                    : 'border-slate-200 bg-white text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600'
+                                )}
                               >
                                 {paintingLoading === 'prompt' && paintingSelectedIdea?.id === idea.id ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
-                                生成完整提示词
+                                {isUsed ? '再次生成' : '生成完整提示词'}
                               </button>
                             </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
