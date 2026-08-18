@@ -369,11 +369,13 @@ function getYearKey() {
 }
 
 function recordSeedanceCost(durationSeconds: number, model: SeedanceModelId) {
-  const cost = model === 'doubao-seedance-2-5-260628'
-    ? Number((Math.max(0, durationSeconds) * 1.5).toFixed(2))
+  // 单价按 720P 档位估算（元/秒），仅用于右上角本地消耗统计。
+  const ratePerSecond = model === 'doubao-seedance-2-5-260628'
+    ? 1.5
     : model === 'doubao-seedance-2-0-mini-260615'
-      ? Number((Math.max(0, durationSeconds) * 0.5).toFixed(2))
-      : Math.max(1, Math.round(durationSeconds));
+      ? 0.2
+      : 1.0;
+  const cost = Number((Math.max(0, durationSeconds) * ratePerSecond).toFixed(2));
   const today = getTodayKey();
   const month = getMonthKey();
   const year = getYearKey();

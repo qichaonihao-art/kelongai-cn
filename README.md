@@ -189,7 +189,7 @@ cp legacy-project/.env.example legacy-project/.env
   - 生产环境建议使用 `/www/wwwroot/kelongai-media/video-library`
   - 不属于 Git 项目目录，也不属于运行状态目录；部署前端时不要清理它
   - 如果不配置，后端会根据 `RUNTIME_STATE_DIR` 自动放在同级的 `kelongai-media/video-library` 目录
-- 单个视频限制为 20MB，原文件直接保存，不做转码压缩
+- 单个视频限制为 40MB，原文件直接保存，不做转码压缩
 - 上传界面支持多选；系统逐个上传，单个文件失败不会中断其他文件
 - 新上传视频会生成 JPEG 封面；旧视频首次显示时自动补封面
 - 视频预览支持正确的分段读取、悬停预热和浏览器长期缓存，重复打开不会重新下载完整文件

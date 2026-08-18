@@ -22,7 +22,7 @@ interface VideoLibraryPageProps {
   onNavigate: (page: ModuleId) => void;
 }
 
-const VIDEO_LIBRARY_MAX_FILE_BYTES = 20 * 1024 * 1024;
+const VIDEO_LIBRARY_MAX_FILE_BYTES = 40 * 1024 * 1024;
 
 interface UploadProgress {
   total: number;
@@ -201,7 +201,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     const oversizedFiles = validFiles.filter((file) => file.size > VIDEO_LIBRARY_MAX_FILE_BYTES);
     const uploadableFiles = validFiles.filter((file) => file.size <= VIDEO_LIBRARY_MAX_FILE_BYTES);
     if (!uploadableFiles.length) {
-      setError('视频文件不能超过20MB');
+      setError('视频文件不能超过40MB');
       return;
     }
 
@@ -217,7 +217,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       currentName: '',
       errors: [
         ...invalidFiles.map((file) => `${file.name}：不是支持的视频格式`),
-        ...oversizedFiles.map((file) => `${file.name}：视频文件不能超过20MB`),
+        ...oversizedFiles.map((file) => `${file.name}：视频文件不能超过40MB`),
       ],
     };
     setUploadProgress(progress);
@@ -522,7 +522,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-black">批量上传共享视频</h2>
-                <p className="mt-1 text-xs font-semibold text-slate-400">一次可选择多个视频，原文件不压缩；每个文件不超过20MB</p>
+                <p className="mt-1 text-xs font-semibold text-slate-400">一次可选择多个视频，原文件不压缩；每个文件不超过40MB</p>
               </div>
               <button type="button" onClick={() => setIsUploadOpen(false)} disabled={isUploading} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 disabled:opacity-40"><X className="size-5" /></button>
             </div>

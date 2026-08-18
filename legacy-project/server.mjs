@@ -46,7 +46,7 @@ const APIMART_CHAT_FETCH_TIMEOUT_MS = 8 * 60 * 1000;
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const RUNTIME_STATE_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || path.join(__dirname, '.runtime-state'));
 const VIDEO_LIBRARY_DIR = path.resolve(process.env.VIDEO_LIBRARY_DIR || path.join(path.dirname(RUNTIME_STATE_DIR), 'kelongai-media', 'video-library'));
-const VIDEO_LIBRARY_MAX_FILE_BYTES = 20 * 1024 * 1024;
+const VIDEO_LIBRARY_MAX_FILE_BYTES = 40 * 1024 * 1024;
 const VIDEO_LIBRARY_THUMBNAIL_MAX_WIDTH = 640;
 const VIDEO_LIBRARY_THUMBNAIL_CONCURRENCY = 2;
 const VIDEO_LIBRARY_PREVIEW_MAX_WIDTH = 540;
@@ -1594,7 +1594,7 @@ async function ensureVideoLibraryPreview(rowOrItem) {
 async function readVideoLibraryUploadBody(req) {
   const contentLength = Number(req.headers['content-length'] || 0);
   if (contentLength && contentLength > VIDEO_LIBRARY_MAX_FILE_BYTES + 256 * 1024) {
-    throw new Error('视频文件不能超过 20MB');
+    throw new Error('视频文件不能超过 40MB');
   }
   const request = new Request('http://localhost/video-library-upload', {
     method: req.method || 'POST',
@@ -1648,7 +1648,7 @@ async function handleGetVideoLibrarySummary(req, res) {
 async function readVideoLibraryRemoteBuffer(response) {
   const declaredSize = Number(response.headers.get('content-length') || 0);
   if (declaredSize > VIDEO_LIBRARY_MAX_FILE_BYTES) {
-    throw new Error('生成视频超过 20MB，暂时不能保存到视频素材库');
+    throw new Error('生成视频超过 40MB，暂时不能保存到视频素材库');
   }
   if (!response.body) throw new Error('生成视频没有可读取的文件内容');
 
@@ -1662,7 +1662,7 @@ async function readVideoLibraryRemoteBuffer(response) {
     totalBytes += chunk.length;
     if (totalBytes > VIDEO_LIBRARY_MAX_FILE_BYTES) {
       await reader.cancel().catch(() => {});
-      throw new Error('生成视频超过 20MB，暂时不能保存到视频素材库');
+      throw new Error('生成视频超过 40MB，暂时不能保存到视频素材库');
     }
     chunks.push(chunk);
   }
@@ -1791,7 +1791,7 @@ async function handleUploadVideoLibrary(req, res) {
       return;
     }
     if (file.size > VIDEO_LIBRARY_MAX_FILE_BYTES) {
-      sendJson(res, 413, { error: '视频文件不能超过 20MB' });
+      sendJson(res, 413, { error: '视频文件不能超过 40MB' });
       return;
     }
     const mimeType = normalizeVideoLibraryMimeType(file.name, file.type);
