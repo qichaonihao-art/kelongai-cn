@@ -390,6 +390,10 @@ function getYearKey() {
   return String(new Date().getFullYear());
 }
 
+function roundCost(value: number) {
+  return Math.round((value || 0) * 100) / 100;
+}
+
 function recordSeedanceCost(durationSeconds: number, model: SeedanceModelId) {
   // 单价按 720P 档位估算（元/秒），仅用于右上角本地消耗统计。
   const ratePerSecond = model === 'doubao-seedance-2-5-260628'
@@ -397,16 +401,16 @@ function recordSeedanceCost(durationSeconds: number, model: SeedanceModelId) {
     : model === 'doubao-seedance-2-0-mini-260615'
       ? 0.2
       : 1.0;
-  const cost = Number((Math.max(0, durationSeconds) * ratePerSecond).toFixed(2));
+  const cost = roundCost(Math.max(0, durationSeconds) * ratePerSecond);
   const today = getTodayKey();
   const month = getMonthKey();
   const year = getYearKey();
   try {
     const raw = window.localStorage.getItem(SEEDANCE_COST_KEY);
     const data: Record<string, number> = raw ? JSON.parse(raw) : {};
-    data[today] = (data[today] || 0) + cost;
-    data[month] = (data[month] || 0) + cost;
-    data[year] = (data[year] || 0) + cost;
+    data[today] = roundCost((data[today] || 0) + cost);
+    data[month] = roundCost((data[month] || 0) + cost);
+    data[year] = roundCost((data[year] || 0) + cost);
     window.localStorage.setItem(SEEDANCE_COST_KEY, JSON.stringify(data));
   } catch {
     // ignore storage errors
@@ -418,9 +422,9 @@ function getSeedanceCostStats(): { daily: number; monthly: number; yearly: numbe
     const raw = window.localStorage.getItem(SEEDANCE_COST_KEY);
     const data: Record<string, number> = raw ? JSON.parse(raw) : {};
     return {
-      daily: data[getTodayKey()] || 0,
-      monthly: data[getMonthKey()] || 0,
-      yearly: data[getYearKey()] || 0,
+      daily: roundCost(data[getTodayKey()] || 0),
+      monthly: roundCost(data[getMonthKey()] || 0),
+      yearly: roundCost(data[getYearKey()] || 0),
     };
   } catch {
     return { daily: 0, monthly: 0, yearly: 0 };
@@ -2797,6 +2801,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setRequestError('');
     setPaintingError('');
     setReverseMode(nextMode);
+    if (nextMode === 'painting') {
+      setSeedanceModel('doubao-seedance-2-0-mini-260615');
+    }
   }
 
   function clearPaintingImage() {
@@ -2958,6 +2965,14 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setPaintingSelectedIdea(null);
     if (item.ratio) setPaintingPlan((previous) => ({ ...previous, ratio: item.ratio }));
     setPaintingError('');
+  }
+
+  function handlePaintingDeleteHistory(id: string) {
+    setPaintingHistory((previous) => {
+      const next = previous.filter((item) => item.id !== id);
+      persistPaintingHistory(next);
+      return next;
+    });
   }
 
   async function handleImageToVideoPaintingChange(file: File | null) {
@@ -3792,7 +3807,18 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
                   {paintingIdeas.length > 0 && (
                     <div className="space-y-2">
-                      <div className="text-xs font-black text-slate-800">创意方案（{paintingIdeas.length} 条）</div>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs font-black text-slate-800">创意方案（{paintingIdeas.length} 条）</div>
+                        <button
+                          type="button"
+                          onClick={handlePaintingGenerateIdeas}
+                          disabled={paintingLoading !== 'idle'}
+                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-500 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {paintingLoading === 'ideas' ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+                          重新生成一批
+                        </button>
+                      </div>
                       <div className="grid gap-2">
                         {paintingIdeas.map((idea) => (
                           <div
@@ -3858,26 +3884,38 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       </div>
                       <div className="space-y-2">
                         {paintingHistory.map((item) => (
-                          <button
-                            type="button"
+                          <div
                             key={item.id}
-                            onClick={() => handlePaintingLoadHistory(item)}
-                            className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left transition-colors hover:border-rose-200 hover:bg-rose-50/40"
+                            className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 transition-colors hover:border-rose-200"
                           >
-                            {item.thumbnail ? (
-                              <img src={item.thumbnail} alt={item.title} className="size-10 shrink-0 rounded-lg bg-slate-100 object-cover" />
-                            ) : (
-                              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-300">
-                                <ImageIcon className="size-4" />
+                            <button
+                              type="button"
+                              onClick={() => handlePaintingLoadHistory(item)}
+                              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                            >
+                              {item.thumbnail ? (
+                                <img src={item.thumbnail} alt={item.title} className="size-10 shrink-0 rounded-lg bg-slate-100 object-cover" />
+                              ) : (
+                                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-300">
+                                  <ImageIcon className="size-4" />
+                                </span>
+                              )}
+                              <span className="min-w-0">
+                                <span className="block truncate text-xs font-bold text-slate-700">{item.title}</span>
+                                <span className="block truncate text-[10px] text-slate-400">
+                                  {formatHistoryTime(new Date(item.savedAt).getTime())} · {item.ratio}
+                                </span>
                               </span>
-                            )}
-                            <span className="min-w-0">
-                              <span className="block truncate text-xs font-bold text-slate-700">{item.title}</span>
-                              <span className="block truncate text-[10px] text-slate-400">
-                                {formatHistoryTime(new Date(item.savedAt).getTime())} · {item.ratio}
-                              </span>
-                            </span>
-                          </button>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePaintingDeleteHistory(item.id)}
+                              className="flex size-7 shrink-0 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                              aria-label="删除这条历史记录"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
                         ))}
                       </div>
                     </div>
