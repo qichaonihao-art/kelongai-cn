@@ -34,11 +34,17 @@ import {
   getCreativeConfigStatus,
   querySeedanceTask,
   sendCreativeMessage,
+  analyzePainting,
+  generatePaintingIdeas,
+  generatePaintingIdeaPrompt,
   type CreativeReverseModel,
   type CreativeHistoryItem,
   type SeedanceReferenceFile,
   type SeedanceTaskResult,
   type SelectedCreativeMedia,
+  type PaintingProfile,
+  type PaintingIdeaSummary,
+  type PaintingMaterialPlan,
 } from "@/src/lib/creative";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -113,6 +119,18 @@ interface SeedanceLibrarySaveTarget {
   createdAt?: number;
 }
 
+interface PaintingHistoryItem {
+  id: string;
+  savedAt: string;
+  title: string;
+  profile: PaintingProfile;
+  ideas: PaintingIdeaSummary[];
+  fullPrompt: string;
+  thumbnail?: string;
+  ratio: string;
+  duration: number;
+}
+
 interface UploadHistoryPreviewItem {
   id: number;
   name: string;
@@ -146,6 +164,10 @@ const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
 const SEEDANCE_COST_KEY = 'kelongai.seedanceCost';
+const PAINTING_HISTORY_STORAGE_KEY = 'kelongai.paintingHistory';
+const PAINTING_HISTORY_MAX_AGE_DAYS = 30;
+const PAINTING_HISTORY_MAX_AGE_MS = PAINTING_HISTORY_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+const MAX_PAINTING_HISTORY_ITEMS = 100;
 const ADDITIONAL_CHANGE_HISTORY_KEY = 'kelongai.additionalChangeHistory';
 const ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS = 180;
 const ADDITIONAL_CHANGE_HISTORY_RETENTION_MS = ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
@@ -516,6 +538,7 @@ const SEEDANCE_DURATIONS_2_5 = Array.from({ length: 27 }, (_, index) => index + 
 type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628';
 type SeedanceTaskMode = 'generate' | 'video-edit-painting';
 type SeedanceResolution = '480p' | '720p' | '1080p' | '4k';
+type ReverseMode = 'direct' | 'replace' | 'image' | 'painting';
 
 function getSeedanceModelLabel(model: SeedanceModelId) {
   if (model === 'doubao-seedance-2-5-260628') return 'Seedance 2.5 测试版';
@@ -917,6 +940,103 @@ function loadSeedanceHistory() {
   }
 }
 
+function imageFileToThumbnailDataUrl(file: File, maxDimension = 320): Promise<string> {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined' || typeof URL === 'undefined') {
+      resolve('');
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    let settled = false;
+    const cleanup = () => {
+      URL.revokeObjectURL(objectUrl);
+      image.onload = null;
+      image.onerror = null;
+    };
+    const finish = (value = '') => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    image.onload = () => {
+      try {
+        const sourceWidth = image.naturalWidth || maxDimension;
+        const sourceHeight = image.naturalHeight || maxDimension;
+        const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+        canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+        canvas.getContext('2d')?.drawImage(image, 0, 0, canvas.width, canvas.height);
+        finish(canvas.toDataURL('image/jpeg', 0.7));
+      } catch {
+        finish();
+      }
+    };
+    image.onerror = () => finish();
+    image.src = objectUrl;
+  });
+}
+
+function loadPaintingHistory() {
+  if (typeof window === 'undefined') return [];
+
+  try {
+    const raw = window.localStorage.getItem(PAINTING_HISTORY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    const maxAgeMs = PAINTING_HISTORY_MAX_AGE_MS;
+    const now = Date.now();
+
+    const filtered = parsed
+      .filter((item): item is PaintingHistoryItem => (
+        item &&
+        typeof item === 'object' &&
+        typeof item.id === 'string' &&
+        typeof item.savedAt === 'string' &&
+        item.profile &&
+        typeof item.profile === 'object'
+      ))
+      .filter((item) => {
+        const savedTime = new Date(item.savedAt).getTime();
+        return now - savedTime < maxAgeMs;
+      })
+      .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())
+      .slice(0, MAX_PAINTING_HISTORY_ITEMS);
+
+    if (filtered.length < parsed.length) {
+      window.localStorage.setItem(PAINTING_HISTORY_STORAGE_KEY, JSON.stringify(filtered));
+    }
+
+    return filtered;
+  } catch {
+    window.localStorage.removeItem(PAINTING_HISTORY_STORAGE_KEY);
+    return [];
+  }
+}
+
+function mergePaintingHistoryItem(previous: PaintingHistoryItem[], item: PaintingHistoryItem) {
+  const next = [
+    item,
+    ...previous.filter((historyItem) => historyItem.id !== item.id),
+  ];
+  return next
+    .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())
+    .slice(0, MAX_PAINTING_HISTORY_ITEMS);
+}
+
+function persistPaintingHistory(items: PaintingHistoryItem[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PAINTING_HISTORY_STORAGE_KEY, JSON.stringify(items));
+  } catch {
+    // 浏览器禁止本地存储时，仍允许本次流程正常进行。
+  }
+}
+
 function seedanceTaskToHistoryPatch(task: SeedanceTaskResult) {
   return {
     status: task.status,
@@ -1248,7 +1368,25 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [showAtMenu, setShowAtMenu] = useState(false);
   const [atMenuFilter, setAtMenuFilter] = useState("");
   const [atMenuSelectedIndex, setAtMenuSelectedIndex] = useState(0);
-  const [reverseMode, setReverseMode] = useState<'direct' | 'replace' | 'image'>('direct');
+  const [reverseMode, setReverseMode] = useState<ReverseMode>('direct');
+  const [paintingImage, setPaintingImage] = useState<SelectedCreativeMedia | null>(null);
+  const [paintingProfile, setPaintingProfile] = useState<PaintingProfile | null>(null);
+  const [paintingPlan, setPaintingPlan] = useState<PaintingMaterialPlan>({
+    count: 10,
+    durationMin: 5,
+    durationMax: 10,
+    character: '',
+    audio: '',
+    ratio: '9:16',
+    scene: '',
+  });
+  const [paintingIdeas, setPaintingIdeas] = useState<PaintingIdeaSummary[]>([]);
+  const [paintingSelectedIdea, setPaintingSelectedIdea] = useState<PaintingIdeaSummary | null>(null);
+  const [paintingFullPrompt, setPaintingFullPrompt] = useState('');
+  const [paintingLoading, setPaintingLoading] = useState<'idle' | 'analyze' | 'ideas' | 'prompt'>('idle');
+  const [paintingHistory, setPaintingHistory] = useState<PaintingHistoryItem[]>([]);
+  const [paintingError, setPaintingError] = useState('');
+  const paintingFileInputRef = useRef<HTMLInputElement>(null);
   const [replaceImage, setReplaceImage] = useState<SelectedCreativeMedia | null>(null);
   const [replaceTarget, setReplaceTarget] = useState('');
   const [replaceWith, setReplaceWith] = useState('');
@@ -1485,6 +1623,19 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       const history = loadSeedanceHistory();
       seedanceHistoryHydratedRef.current = true;
       if (!cancelled) setSeedanceHistory(history);
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      const history = loadPaintingHistory();
+      if (!cancelled) setPaintingHistory(history);
     }, 0);
 
     return () => {
@@ -2637,13 +2788,158 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     }
   }
 
-  function switchReverseMode(nextMode: 'direct' | 'replace' | 'image') {
+  function switchReverseMode(nextMode: ReverseMode) {
     if (nextMode === reverseMode) return;
     clearSelectedMedia();
     clearReplaceImage();
     clearImageToVideoPainting();
+    clearPaintingImage();
     setRequestError('');
+    setPaintingError('');
     setReverseMode(nextMode);
+  }
+
+  function clearPaintingImage() {
+    if (paintingImage) {
+      URL.revokeObjectURL(paintingImage.previewUrl);
+    }
+    setPaintingImage(null);
+    if (paintingFileInputRef.current) {
+      paintingFileInputRef.current.value = '';
+    }
+  }
+
+  async function handlePaintingImageChange(file: File | null) {
+    setPaintingError('');
+    if (!file) return;
+    try {
+      if (!file.type.startsWith('image/')) {
+        throw new Error('挂画创意素材必须是图片格式。');
+      }
+      if (file.size > MAX_VIDEO_SIZE_BYTES) {
+        throw new Error('挂画图片请控制在 150MB 以内。');
+      }
+      const previewUrl = createMediaPreviewUrl(file);
+      if (paintingImage) {
+        URL.revokeObjectURL(paintingImage.previewUrl);
+      }
+      setPaintingImage({ kind: 'image', file, previewUrl, fileName: file.name });
+      setPaintingProfile(null);
+      setPaintingIdeas([]);
+      setPaintingSelectedIdea(null);
+      setPaintingFullPrompt('');
+      await saveUploadHistory(file, 'image');
+      await refreshUploadHistories();
+    } catch (error) {
+      setPaintingError(error instanceof Error ? error.message : '挂画图片读取失败，请换一张再试。');
+    } finally {
+      if (paintingFileInputRef.current) {
+        paintingFileInputRef.current.value = '';
+      }
+    }
+  }
+
+  async function handlePaintingAnalyze() {
+    if (!paintingImage) {
+      setPaintingError('请先上传一张挂画图片。');
+      return;
+    }
+    setPaintingError('');
+    setPaintingLoading('analyze');
+    try {
+      const profile = await analyzePainting(paintingImage.file);
+      setPaintingProfile(profile);
+      setPaintingIdeas([]);
+      setPaintingSelectedIdea(null);
+      setPaintingFullPrompt('');
+    } catch (error) {
+      setPaintingError(error instanceof Error ? error.message : '挂画分析失败，请稍后重试。');
+    } finally {
+      setPaintingLoading('idle');
+    }
+  }
+
+  async function handlePaintingGenerateIdeas() {
+    if (!paintingProfile) {
+      setPaintingError('请先完成产品分析。');
+      return;
+    }
+    setPaintingError('');
+    setPaintingLoading('ideas');
+    try {
+      const ideas = await generatePaintingIdeas(paintingProfile, paintingPlan);
+      setPaintingIdeas(ideas);
+      setPaintingSelectedIdea(null);
+      setPaintingFullPrompt('');
+    } catch (error) {
+      setPaintingError(error instanceof Error ? error.message : '创意方案生成失败，请稍后重试。');
+    } finally {
+      setPaintingLoading('idle');
+    }
+  }
+
+  async function handlePaintingGeneratePrompt(idea: PaintingIdeaSummary) {
+    if (!paintingProfile) return;
+    setPaintingError('');
+    setPaintingSelectedIdea(idea);
+    setPaintingFullPrompt('');
+    setPaintingLoading('prompt');
+    try {
+      const duration = Math.round((paintingPlan.durationMin + paintingPlan.durationMax) / 2);
+      const prompt = await generatePaintingIdeaPrompt(paintingProfile, idea, {
+        duration,
+        ratio: paintingPlan.ratio,
+        character: paintingPlan.character,
+        audio: paintingPlan.audio,
+      });
+      setPaintingFullPrompt(prompt);
+
+      const thumbnail = await imageFileToThumbnailDataUrl(paintingImage?.file as File).catch(() => '');
+      const historyItem: PaintingHistoryItem = {
+        id: createMessageId('painting_history'),
+        savedAt: new Date().toISOString(),
+        title: [paintingProfile.name, idea.title].filter(Boolean).join(' · ') || idea.title,
+        profile: paintingProfile,
+        ideas: paintingIdeas,
+        fullPrompt: prompt,
+        thumbnail: thumbnail || undefined,
+        ratio: paintingPlan.ratio,
+        duration,
+      };
+      setPaintingHistory((previous) => {
+        const next = mergePaintingHistoryItem(previous, historyItem);
+        persistPaintingHistory(next);
+        return next;
+      });
+    } catch (error) {
+      setPaintingError(error instanceof Error ? error.message : '完整提示词生成失败，请稍后重试。');
+    } finally {
+      setPaintingLoading('idle');
+    }
+  }
+
+  function handlePaintingFillToSeedance() {
+    if (!paintingFullPrompt.trim()) {
+      setPaintingError('请先生成完整提示词。');
+      return;
+    }
+    setSeedancePrompt(paintingFullPrompt.trim());
+    const ratio = paintingPlan.ratio || '9:16';
+    setSeedanceRatio(ratio);
+    const duration = Math.round((paintingPlan.durationMin + paintingPlan.durationMax) / 2);
+    setSeedanceDuration(duration);
+    setSeedancePromptHighlight(true);
+    setTimeout(() => setSeedancePromptHighlight(false), 2000);
+    scrollToRef(seedancePromptRef);
+  }
+
+  function handlePaintingLoadHistory(item: PaintingHistoryItem) {
+    setPaintingProfile(item.profile);
+    setPaintingIdeas(item.ideas || []);
+    setPaintingFullPrompt(item.fullPrompt || '');
+    setPaintingSelectedIdea(null);
+    if (item.ratio) setPaintingPlan((previous) => ({ ...previous, ratio: item.ratio }));
+    setPaintingError('');
   }
 
   async function handleImageToVideoPaintingChange(file: File | null) {
@@ -3239,8 +3535,310 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                     图片生视频
                   </span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => switchReverseMode('painting')}
+                  className={cn(
+                    'flex-1 rounded-lg px-3 text-xs font-bold transition-all',
+                    reverseMode === 'painting'
+                      ? 'bg-rose-500 text-white shadow-[0_5px_14px_rgba(244,63,94,0.28)]'
+                      : 'text-slate-500 hover:text-slate-700'
+                  )}
+                >
+                  <span className="flex items-center justify-center gap-1.5">
+                    <ImageIcon className="size-3.5" />
+                    挂画创意素材
+                  </span>
+                </button>
               </div>
 
+              {reverseMode === 'painting' ? (
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3">
+                    {paintingImage ? (
+                      <div className="space-y-3">
+                        <img
+                          src={paintingImage.previewUrl}
+                          alt={paintingImage.fileName}
+                          className="aspect-video w-full rounded-xl bg-slate-950 object-contain"
+                        />
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 text-xs font-semibold text-slate-500">
+                            <span className="block truncate">{paintingImage.fileName}</span>
+                            <span className="text-slate-400">待分析的挂画/装饰画</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={clearPaintingImage}
+                            className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-white hover:text-slate-600"
+                            aria-label="移除挂画图片"
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => paintingFileInputRef.current?.click()}
+                        disabled={paintingLoading !== 'idle'}
+                        className="flex min-h-[160px] w-full flex-col items-center justify-center gap-3 rounded-xl text-center transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <span className="flex size-12 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+                          <Plus className="size-5" />
+                        </span>
+                        <span className="text-sm font-bold text-slate-700">上传挂画图片</span>
+                        <span className="max-w-xs text-xs leading-5 text-slate-400">上传一张挂画/卷轴图片，AI 会分析成产品固定档案。</span>
+                      </button>
+                    )}
+                    <input
+                      ref={paintingFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] ?? null;
+                        void handlePaintingImageChange(file);
+                      }}
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handlePaintingAnalyze}
+                      disabled={!paintingImage || paintingLoading !== 'idle'}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-full bg-rose-600 px-4 text-xs font-bold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {paintingLoading === 'analyze' ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+                      分析产品
+                    </button>
+                    {paintingProfile && (
+                      <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-600">产品档案已生成</span>
+                    )}
+                  </div>
+
+                  {paintingProfile && (
+                    <div className="rounded-2xl border border-slate-300 bg-white p-3">
+                      <div className="mb-2 text-xs font-black text-slate-800">产品固定档案</div>
+                      <dl className="grid gap-2 text-xs leading-5 text-slate-600 sm:grid-cols-2">
+                        {[
+                          ['名称', paintingProfile.name],
+                          ['风格', paintingProfile.style],
+                          ['主体', paintingProfile.subject],
+                          ['材质', paintingProfile.material],
+                          ['构图', paintingProfile.composition],
+                          ['外框结构', paintingProfile.frameStructure],
+                          ['纹理', paintingProfile.texture],
+                          ['氛围', paintingProfile.atmosphere],
+                          ['比例', paintingProfile.ratio],
+                        ].filter(([, value]) => typeof value === 'string' && value.trim()).map(([label, value]) => (
+                          <div key={label} className="flex items-start gap-2">
+                            <span className="shrink-0 font-bold text-slate-400">{label}</span>
+                            <span className="min-w-0 break-words text-slate-700">{value}</span>
+                          </div>
+                        ))}
+                        {Array.isArray(paintingProfile.colors) && paintingProfile.colors.length > 0 && (
+                          <div className="flex items-start gap-2 sm:col-span-2">
+                            <span className="shrink-0 font-bold text-slate-400">主色调</span>
+                            <span className="min-w-0 break-words text-slate-700">{paintingProfile.colors.join('、')}</span>
+                          </div>
+                        )}
+                      </dl>
+                    </div>
+                  )}
+
+                  {paintingProfile && (
+                    <div className="space-y-2 rounded-2xl border border-slate-300 bg-slate-50 p-3">
+                      <div className="text-xs font-black text-slate-800">素材计划</div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <label className="text-[11px] font-semibold text-slate-500">
+                          方案数量
+                          <input
+                            type="number"
+                            min={1}
+                            max={30}
+                            value={paintingPlan.count}
+                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, count: Math.min(30, Math.max(1, Number(event.target.value) || 1)) }))}
+                            className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
+                          />
+                        </label>
+                        <label className="text-[11px] font-semibold text-slate-500">
+                          画面比例
+                          <select
+                            value={paintingPlan.ratio}
+                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, ratio: event.target.value }))}
+                            className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
+                          >
+                            <option value="9:16">9:16 竖屏</option>
+                            <option value="16:9">16:9 横屏</option>
+                            <option value="1:1">1:1 方形</option>
+                          </select>
+                        </label>
+                        <label className="text-[11px] font-semibold text-slate-500">
+                          时长下限（秒）
+                          <input
+                            type="number"
+                            min={4}
+                            max={15}
+                            value={paintingPlan.durationMin}
+                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, durationMin: Math.min(15, Math.max(4, Number(event.target.value) || 5)) }))}
+                            className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
+                          />
+                        </label>
+                        <label className="text-[11px] font-semibold text-slate-500">
+                          时长上限（秒）
+                          <input
+                            type="number"
+                            min={4}
+                            max={15}
+                            value={paintingPlan.durationMax}
+                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, durationMax: Math.min(15, Math.max(4, Number(event.target.value) || 10)) }))}
+                            className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
+                          />
+                        </label>
+                        <label className="text-[11px] font-semibold text-slate-500 sm:col-span-2">
+                          人物偏好（可选）
+                          <input
+                            type="text"
+                            value={paintingPlan.character}
+                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, character: event.target.value }))}
+                            placeholder="例如：年轻女性、茶室主人、家居博主"
+                            className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
+                          />
+                        </label>
+                        <label className="text-[11px] font-semibold text-slate-500 sm:col-span-2">
+                          声音/音乐偏好（可选）
+                          <input
+                            type="text"
+                            value={paintingPlan.audio}
+                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, audio: event.target.value }))}
+                            placeholder="例如：舒缓古风背景音乐、轻声旁白"
+                            className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
+                          />
+                        </label>
+                        <label className="text-[11px] font-semibold text-slate-500 sm:col-span-2">
+                          场景偏好（可选）
+                          <input
+                            type="text"
+                            value={paintingPlan.scene}
+                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, scene: event.target.value }))}
+                            placeholder="例如：新中式客厅、茶室、书房、展厅"
+                            className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
+                          />
+                        </label>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handlePaintingGenerateIdeas}
+                        disabled={paintingLoading !== 'idle'}
+                        className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {paintingLoading === 'ideas' ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+                        生成创意方案
+                      </button>
+                    </div>
+                  )}
+
+                  {paintingIdeas.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-xs font-black text-slate-800">创意方案（{paintingIdeas.length} 条）</div>
+                      <div className="grid gap-2">
+                        {paintingIdeas.map((idea) => (
+                          <div
+                            key={idea.id}
+                            className={cn(
+                              'rounded-xl border bg-white p-3 shadow-sm',
+                              paintingSelectedIdea?.id === idea.id ? 'border-rose-300 ring-1 ring-rose-200' : 'border-slate-200'
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-xs font-black text-slate-800">{idea.title}</div>
+                                <div className="mt-1 text-xs leading-5 text-slate-500">{idea.summary}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handlePaintingGeneratePrompt(idea)}
+                                disabled={paintingLoading !== 'idle'}
+                                className="shrink-0 inline-flex h-8 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-bold text-slate-600 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {paintingLoading === 'prompt' && paintingSelectedIdea?.id === idea.id ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+                                生成完整提示词
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {paintingFullPrompt && (
+                    <div className="rounded-2xl border border-slate-300 bg-white p-3">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div className="text-xs font-black text-slate-800">完整提示词</div>
+                        <button
+                          type="button"
+                          onClick={() => navigator.clipboard?.writeText(paintingFullPrompt)}
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                        >
+                          <Copy className="size-3" />
+                          复制
+                        </button>
+                      </div>
+                      <div className="max-h-52 overflow-y-auto whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-xs leading-6 text-slate-700">
+                        {paintingFullPrompt}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handlePaintingFillToSeedance}
+                        className="mt-3 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-full bg-rose-600 px-4 text-xs font-bold text-white transition-colors hover:bg-rose-700"
+                      >
+                        <Film className="size-3.5" />
+                        填入右侧 Seedance
+                      </button>
+                    </div>
+                  )}
+
+                  {paintingError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-medium leading-5 text-red-500">{paintingError}</div>
+                  )}
+
+                  {paintingHistory.length > 0 && (
+                    <div className="rounded-2xl border border-slate-300 bg-slate-50 p-3">
+                      <div className="mb-2 flex items-center gap-2 text-xs font-black text-slate-800">
+                        <History className="size-3.5 text-slate-400" />
+                        历史记录
+                      </div>
+                      <div className="space-y-2">
+                        {paintingHistory.map((item) => (
+                          <button
+                            type="button"
+                            key={item.id}
+                            onClick={() => handlePaintingLoadHistory(item)}
+                            className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-2 text-left transition-colors hover:border-rose-200 hover:bg-rose-50/40"
+                          >
+                            {item.thumbnail ? (
+                              <img src={item.thumbnail} alt={item.title} className="size-10 shrink-0 rounded-lg bg-slate-100 object-cover" />
+                            ) : (
+                              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-300">
+                                <ImageIcon className="size-4" />
+                              </span>
+                            )}
+                            <span className="min-w-0">
+                              <span className="block truncate text-xs font-bold text-slate-700">{item.title}</span>
+                              <span className="block truncate text-[10px] text-slate-400">
+                                {formatHistoryTime(new Date(item.savedAt).getTime())} · {item.ratio}
+                              </span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+              <>
               <div className="min-h-[190px] rounded-2xl border border-slate-300 bg-slate-100 p-3">
                 {selectedMedia ? (
                   <div className="space-y-3">
@@ -3998,6 +4596,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   {configReachable && !arkApiConfigured && <div>服务端缺少 ARK_API_KEY，创意创作暂时不可用。</div>}
                   {requestError && <div>{requestError}</div>}
                 </div>
+              )}
+              </>
               )}
 
             </div>

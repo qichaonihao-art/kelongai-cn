@@ -12053,6 +12053,295 @@ async function handleDoubaoMultimodal(req, res) {
   }
 }
 
+function parseStructuredJson(text) {
+  const raw = String(text || '').trim();
+  if (!raw) {
+    throw Object.assign(new Error('模型未返回可解析的内容'), { rawText: '' });
+  }
+
+  // 去掉 markdown 代码围栏
+  let candidate = raw
+    .replace(/^```(?:json|javascript|js)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+
+  // 定位首个 { 或 [，以及对应的结尾符号
+  const objectStart = candidate.indexOf('{');
+  const arrayStart = candidate.indexOf('[');
+  if (objectStart === -1 && arrayStart === -1) {
+    throw Object.assign(new Error('模型返回的内容不是 JSON 结构'), { rawText: raw });
+  }
+
+  const isObject = objectStart === -1 || (arrayStart !== -1 && arrayStart < objectStart);
+  const start = isObject ? arrayStart : objectStart;
+  const endChar = isObject ? ']' : '}';
+  const end = candidate.lastIndexOf(endChar);
+  if (end <= start) {
+    throw Object.assign(new Error('模型返回的 JSON 结构不完整'), { rawText: raw });
+  }
+
+  candidate = candidate.slice(start, end + 1);
+  try {
+    return JSON.parse(candidate);
+  } catch (parseError) {
+    throw Object.assign(new Error('模型返回的 JSON 解析失败'), {
+      rawText: raw,
+      parseError: parseError?.message || '',
+    });
+  }
+}
+
+async function callDoubaoArkText({ apiKey, model, content }) {
+  const upstreamUrl = 'https://ark.cn-beijing.volces.com/api/v3/responses';
+  const requestPayload = {
+    model: model || DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+    stream: false,
+    input: [{ role: 'user', content }],
+    thinking: { type: 'disabled' }
+  };
+
+  const upstreamRes = await fetch(upstreamUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(requestPayload),
+    signal: AbortSignal.timeout(DOUBAO_MULTIMODAL_TIMEOUT_MS)
+  });
+
+  const responseText = await upstreamRes.text();
+  let json = null;
+  try {
+    json = responseText ? JSON.parse(responseText) : null;
+  } catch {}
+
+  if (!upstreamRes.ok) {
+    const rawError = json?.error?.message || json?.message || json?.code || '';
+    throw new Error(translateUpstreamError(rawError, `方舟 API 请求失败（状态码 ${upstreamRes.status}）`));
+  }
+
+  const answer = extractResponsesText(json);
+  if (!answer) {
+    throw new Error('豆包返回为空，请稍后重试。');
+  }
+  return answer;
+}
+
+async function handlePaintingAnalyze(req, res) {
+  const requestId = randomBytes(6).toString('hex');
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+
+    const body = isMultipartFormRequest(req)
+      ? await readMultipartFormBody(req)
+      : await readRequestBody(req);
+
+    let imageUrl = '';
+    if (body.file instanceof File && body.file.size > 0) {
+      const compressedFile = await compressMediaForArk(body.file, 'image');
+      const normalized = await normalizeUploadedMediaInput(compressedFile, 'image');
+      imageUrl = normalized.imageUrl;
+    } else if (readValue(body.image)) {
+      imageUrl = normalizeBase64ImageInput(body.image, body.imageMimeType).imageUrl;
+    } else {
+      sendJson(res, 400, { error: '请先上传挂画图片。' });
+      return;
+    }
+
+    const prompt = `你是专业的挂画/卷轴产品分析专家。请仔细分析下面这张挂画/装饰画图片，输出一个「产品固定档案」JSON 对象。
+
+要求输出以下字段（能用中文就用中文描述）：
+- name：产品名称
+- style：风格（如国画、油画、书法、装饰画等）
+- subject：画面主体内容
+- colors：主色调数组（如 ["墨黑","赭石","宣纸白"]）
+- composition：构图方式
+- material：材质（宣纸、绢布、油画布等）
+- frameStructure：木条/挂轴/压杆等外框结构的形状、颜色、材质、粗细
+- texture：纹理与笔触细节
+- ratio：建议画面比例（如 9:16、16:9、1:1）
+- atmosphere：整体氛围气质
+
+严格只输出一个合法 JSON 对象，不要输出任何解释文字，不要用 markdown 代码块包裹。`;
+
+    console.log('[doubao painting] analyze request start', { requestId, hasFile: body.file instanceof File, fileSize: body.file?.size || 0 });
+
+    const answer = await callDoubaoArkText({
+      apiKey,
+      model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+      content: [
+        { type: 'input_image', image_url: imageUrl },
+        { type: 'input_text', text: prompt }
+      ]
+    });
+
+    const profile = parseStructuredJson(answer);
+    console.log('[doubao painting] analyze done', { requestId, profileKeys: profile && typeof profile === 'object' ? Object.keys(profile) : [] });
+    sendJson(res, 200, { ok: true, profile });
+  } catch (error) {
+    console.error('[doubao painting] analyze failed', { requestId, message: error?.message || '' });
+    sendJson(res, 500, {
+      error: error?.message || '挂画分析失败',
+      debug: { stage: 'analyze', rawText: error?.rawText }
+    });
+  }
+}
+
+async function handlePaintingIdeas(req, res) {
+  const requestId = randomBytes(6).toString('hex');
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const profile = body.profile;
+    const plan = body.plan && typeof body.plan === 'object' ? body.plan : {};
+    if (!profile || typeof profile !== 'object') {
+      sendJson(res, 400, { error: '缺少产品档案 profile' });
+      return;
+    }
+
+    const count = Math.min(30, Math.max(1, Number.parseInt(plan.count, 10) || 10));
+    const durationMin = Number(plan.durationMin) || 5;
+    const durationMax = Number(plan.durationMax) || 10;
+    const character = readValue(plan.character);
+    const audio = readValue(plan.audio);
+    const ratio = readValue(plan.ratio) || '9:16';
+    const scene = readValue(plan.scene);
+
+    const prompt = `你是短视频创意策划专家，为一块挂画/装饰画产品构思带货短视频创意。
+
+【产品固定档案】
+${JSON.stringify(profile, null, 2)}
+
+【素材计划】
+- 方案数量：${count} 条
+- 单条时长：${durationMin}-${durationMax} 秒
+- 画面比例：${ratio}
+${character ? `- 人物偏好：${character}` : ''}
+${audio ? `- 声音/音乐偏好：${audio}` : ''}
+${scene ? `- 场景偏好：${scene}` : ''}
+
+请基于产品档案，生成 ${count} 条创意方案摘要。每条只输出「标题 + 一句话核心创意」，用于卡片展示，不要输出完整提示词。
+严格只输出一个 JSON 数组，元素格式为 {"id":"1","title":"方案标题","summary":"一句话核心创意描述"}。
+不要输出任何解释文字，不要用 markdown 代码块包裹。`;
+
+    console.log('[doubao painting] ideas request start', { requestId, count });
+
+    const answer = await callDoubaoArkText({
+      apiKey,
+      model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+      content: [{ type: 'input_text', text: prompt }]
+    });
+
+    const parsed = parseStructuredJson(answer);
+    if (!Array.isArray(parsed)) {
+      throw Object.assign(new Error('模型返回的方案不是数组'), { rawText: answer });
+    }
+
+    const ideas = parsed
+      .filter((item) => item && typeof item === 'object')
+      .map((item, index) => ({
+        id: String(item.id || `idea-${index + 1}`),
+        title: readValue(item.title) || `方案 ${index + 1}`,
+        summary: readValue(item.summary) || readValue(item.desc) || readValue(item.text) || ''
+      }))
+      .filter((item) => item.summary);
+
+    if (!ideas.length) {
+      throw Object.assign(new Error('模型未生成有效方案'), { rawText: answer });
+    }
+
+    console.log('[doubao painting] ideas done', { requestId, count: ideas.length });
+    sendJson(res, 200, { ok: true, ideas });
+  } catch (error) {
+    console.error('[doubao painting] ideas failed', { requestId, message: error?.message || '' });
+    sendJson(res, 500, {
+      error: error?.message || '创意方案生成失败',
+      debug: { stage: 'ideas', rawText: error?.rawText }
+    });
+  }
+}
+
+async function handlePaintingIdeaPrompt(req, res) {
+  const requestId = randomBytes(6).toString('hex');
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const profile = body.profile;
+    const idea = body.idea && typeof body.idea === 'object' ? body.idea : {};
+    if (!profile || typeof profile !== 'object') {
+      sendJson(res, 400, { error: '缺少产品档案 profile' });
+      return;
+    }
+
+    const ideaTitle = readValue(idea.title);
+    const ideaSummary = readValue(idea.summary);
+    if (!ideaTitle && !ideaSummary) {
+      sendJson(res, 400, { error: '缺少创意方案内容 idea' });
+      return;
+    }
+
+    const duration = Number(idea.duration) || Number(body.duration) || 8;
+    const ratio = readValue(idea.ratio) || readValue(body.ratio) || '9:16';
+    const character = readValue(idea.character) || readValue(body.character);
+    const audio = readValue(idea.audio) || readValue(body.audio);
+
+    const prompt = `你是短视频提示词专家。请基于下面的「产品固定档案」和「创意方案」，写一段完整的 Seedance 视频生成提示词（中文，可直接提交给 Seedance）。
+
+【产品固定档案（产品外观必须严格复刻，不得改动）】
+${JSON.stringify(profile, null, 2)}
+
+【创意方案】
+标题：${ideaTitle}
+核心创意：${ideaSummary}
+
+【要求】
+1. 提示词必须分三部分：产品固定约束、创意内容、负面约束。
+2. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。
+3. 创意内容：结合创意方案，写清楚${character ? `人物设定（${character}）` : '人物设定'}、场景、构图、镜头运动、动作节奏、光影氛围、${audio ? `声音/音乐（${audio}）` : '声音'}等，展开成一个连贯自然的镜头脚本。
+4. 负面约束：明确列出不得改变的元素（挂画外观、木条结构、多余装饰物等）。
+5. 时长约 ${duration} 秒，画面比例 ${ratio}。
+
+严格只输出这段提示词文本本身，不要输出任何解释、标题、序号或 markdown 包裹。`;
+
+    console.log('[doubao painting] idea-prompt request start', { requestId, title: ideaTitle });
+
+    const answer = await callDoubaoArkText({
+      apiKey,
+      model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+      content: [{ type: 'input_text', text: prompt }]
+    });
+
+    const promptText = String(answer || '').trim();
+    if (!promptText) {
+      throw new Error('模型返回的提示词为空');
+    }
+
+    console.log('[doubao painting] idea-prompt done', { requestId, promptLength: promptText.length });
+    sendJson(res, 200, { ok: true, prompt: promptText });
+  } catch (error) {
+    console.error('[doubao painting] idea-prompt failed', { requestId, message: error?.message || '' });
+    sendJson(res, 500, {
+      error: error?.message || '完整提示词生成失败',
+      debug: { stage: 'idea-prompt', rawText: error?.rawText }
+    });
+  }
+}
+
 function extractQwenCreativeDelta(payload) {
   const delta = payload?.choices?.[0]?.delta;
   if (!delta || typeof delta !== 'object') return '';
@@ -14280,6 +14569,21 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/qwen/multimodal') {
     await handleQwenCreativeMultimodal(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/painting/analyze') {
+    await handlePaintingAnalyze(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/painting/ideas') {
+    await handlePaintingIdeas(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/painting/idea-prompt') {
+    await handlePaintingIdeaPrompt(req, res);
     return;
   }
 

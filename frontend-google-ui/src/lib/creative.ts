@@ -583,6 +583,107 @@ export async function createSeedanceTask(options: {
   };
 }
 
+export interface PaintingProfile {
+  name?: string;
+  style?: string;
+  subject?: string;
+  colors?: string[];
+  composition?: string;
+  material?: string;
+  frameStructure?: string;
+  texture?: string;
+  ratio?: string;
+  atmosphere?: string;
+  [key: string]: unknown;
+}
+
+export interface PaintingIdeaSummary {
+  id: string;
+  title: string;
+  summary: string;
+}
+
+export interface PaintingMaterialPlan {
+  count: number;
+  durationMin: number;
+  durationMax: number;
+  character: string;
+  audio: string;
+  ratio: string;
+  scene: string;
+}
+
+export async function analyzePainting(file: File): Promise<PaintingProfile> {
+  const formData = new FormData();
+  formData.append('file', file, file.name);
+
+  const response = await fetch('/api/painting/analyze', {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  });
+
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    let message = `挂画分析失败（HTTP ${response.status}）`;
+    if (json?.error) {
+      message = String(json.error);
+    }
+    throw new Error(message);
+  }
+
+  return json?.profile && typeof json.profile === 'object'
+    ? (json.profile as PaintingProfile)
+    : {};
+}
+
+export async function generatePaintingIdeas(
+  profile: PaintingProfile,
+  plan: PaintingMaterialPlan
+): Promise<PaintingIdeaSummary[]> {
+  const response = await fetch('/api/painting/ideas', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile, plan }),
+  });
+
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    let message = `创意方案生成失败（HTTP ${response.status}）`;
+    if (json?.error) {
+      message = String(json.error);
+    }
+    throw new Error(message);
+  }
+
+  return Array.isArray(json?.ideas) ? (json.ideas as PaintingIdeaSummary[]) : [];
+}
+
+export async function generatePaintingIdeaPrompt(
+  profile: PaintingProfile,
+  idea: PaintingIdeaSummary,
+  context?: { duration?: number; ratio?: string; character?: string; audio?: string }
+): Promise<string> {
+  const response = await fetch('/api/painting/idea-prompt', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile, idea, ...(context || {}) }),
+  });
+
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    let message = `完整提示词生成失败（HTTP ${response.status}）`;
+    if (json?.error) {
+      message = String(json.error);
+    }
+    throw new Error(message);
+  }
+
+  return String(json?.prompt || '').trim();
+}
+
 export async function querySeedanceTask(taskId: string): Promise<SeedanceTaskResult> {
   const response = await fetch(`/api/seedance/tasks/${encodeURIComponent(taskId)}`, {
     method: 'GET',
