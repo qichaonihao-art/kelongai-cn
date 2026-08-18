@@ -510,7 +510,7 @@ export async function sendCreativeMessage(options: {
 }
 
 export async function createSeedanceTask(options: {
-  model: 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-5-260628';
+  model: 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628';
   taskMode?: 'generate' | 'video_edit';
   prompt: string;
   resolution: '480p' | '720p' | '1080p' | '4k';

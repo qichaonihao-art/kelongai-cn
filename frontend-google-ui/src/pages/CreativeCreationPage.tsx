@@ -371,7 +371,9 @@ function getYearKey() {
 function recordSeedanceCost(durationSeconds: number, model: SeedanceModelId) {
   const cost = model === 'doubao-seedance-2-5-260628'
     ? Number((Math.max(0, durationSeconds) * 1.5).toFixed(2))
-    : Math.max(1, Math.round(durationSeconds));
+    : model === 'doubao-seedance-2-0-mini-260615'
+      ? Number((Math.max(0, durationSeconds) * 0.5).toFixed(2))
+      : Math.max(1, Math.round(durationSeconds));
   const today = getTodayKey();
   const month = getMonthKey();
   const year = getYearKey();
@@ -505,15 +507,24 @@ const IMAGE_TO_VIDEO_PROMPT = (options: {
 };
 const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const;
 const SEEDANCE_RESOLUTIONS_2_0 = ['480p', '720p', '1080p', '4k'] as const;
+const SEEDANCE_RESOLUTIONS_2_0_MINI = ['480p', '720p'] as const;
 const SEEDANCE_RESOLUTIONS_2_5 = ['480p', '720p'] as const;
 const SEEDANCE_DURATIONS = Array.from({ length: 12 }, (_, index) => index + 4);
 const SEEDANCE_DURATIONS_2_5 = Array.from({ length: 27 }, (_, index) => index + 4);
-type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-5-260628';
+type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628';
 type SeedanceTaskMode = 'generate' | 'video-edit-painting';
 type SeedanceResolution = '480p' | '720p' | '1080p' | '4k';
 
 function getSeedanceModelLabel(model: SeedanceModelId) {
-  return model === 'doubao-seedance-2-5-260628' ? 'Seedance 2.5 测试版' : 'Seedance 2.0 稳定版';
+  if (model === 'doubao-seedance-2-5-260628') return 'Seedance 2.5 测试版';
+  if (model === 'doubao-seedance-2-0-mini-260615') return 'Seedance 2.0 mini';
+  return 'Seedance 2.0 稳定版';
+}
+
+function getSeedanceResolutions(model: SeedanceModelId) {
+  if (model === 'doubao-seedance-2-5-260628') return SEEDANCE_RESOLUTIONS_2_5;
+  if (model === 'doubao-seedance-2-0-mini-260615') return SEEDANCE_RESOLUTIONS_2_0_MINI;
+  return SEEDANCE_RESOLUTIONS_2_0;
 }
 
 function getSeedanceHistoryModeLabel(item: SeedanceHistoryItem) {
@@ -890,8 +901,8 @@ function loadSeedanceHistory() {
       .map((item) => ({
         ...item,
         // Records created before model switching were all Seedance 2.0.
-        model: item.model === 'doubao-seedance-2-5-260628'
-          ? 'doubao-seedance-2-5-260628' as SeedanceModelId
+        model: item.model === 'doubao-seedance-2-5-260628' || item.model === 'doubao-seedance-2-0-mini-260615'
+          ? item.model as SeedanceModelId
           : 'doubao-seedance-2-0-260128' as SeedanceModelId,
         taskMode: item.taskMode === 'video-edit-painting'
           ? 'video-edit-painting' as SeedanceTaskMode
@@ -4017,11 +4028,14 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       "rounded-full border px-3 py-1 text-[10px] font-black outline-none transition-colors disabled:opacity-60",
                       seedanceModel === 'doubao-seedance-2-5-260628'
                         ? "border-violet-600 bg-violet-600 text-white shadow-[0_5px_14px_rgba(124,58,237,0.28)]"
-                        : "border-emerald-600 bg-emerald-600 text-white shadow-[0_5px_14px_rgba(5,150,105,0.28)]"
+                        : seedanceModel === 'doubao-seedance-2-0-mini-260615'
+                          ? "border-amber-600 bg-amber-600 text-white shadow-[0_5px_14px_rgba(217,119,6,0.28)]"
+                          : "border-emerald-600 bg-emerald-600 text-white shadow-[0_5px_14px_rgba(5,150,105,0.28)]"
                     )}
                     aria-label="选择 Seedance 模型"
                   >
                     <option className="bg-white text-slate-800" value="doubao-seedance-2-0-260128">Seedance 2.0 稳定版</option>
+                    <option className="bg-white text-slate-800" value="doubao-seedance-2-0-mini-260615">Seedance 2.0 mini</option>
                     <option className="bg-white text-slate-800" value="doubao-seedance-2-5-260628">Seedance 2.5 测试版</option>
                   </select>
                   <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[10px] font-semibold text-slate-500">
@@ -4340,7 +4354,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                         <div>
                           <div className="mb-2 text-xs font-black text-slate-700">视频清晰度</div>
                           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                            {(seedanceModel === 'doubao-seedance-2-5-260628' ? SEEDANCE_RESOLUTIONS_2_5 : SEEDANCE_RESOLUTIONS_2_0).map((resolution) => (
+                            {getSeedanceResolutions(seedanceModel).map((resolution) => (
                               <button
                                 key={resolution}
                                 type="button"
