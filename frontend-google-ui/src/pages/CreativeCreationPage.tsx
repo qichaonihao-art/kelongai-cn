@@ -1446,6 +1446,9 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const videoEditVideoInputRef = useRef<HTMLInputElement>(null);
   const videoEditImageInputRef = useRef<HTMLInputElement>(null);
   const seedanceSettingsRef = useRef<HTMLDivElement>(null);
+  const seedancePanelRef = useRef<HTMLDivElement>(null);
+  const paintingPlanRef = useRef<HTMLDivElement>(null);
+  const paintingIdeasRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const seedancePromptRef = useRef<HTMLTextAreaElement>(null);
   const additionalChangeRef = useRef<HTMLTextAreaElement>(null);
@@ -2862,6 +2865,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       setPaintingIdeas([]);
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
+      setTimeout(() => scrollToRef(paintingPlanRef), 80);
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '挂画分析失败，请稍后重试。');
     } finally {
@@ -2882,6 +2886,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
       setUsedIdeaIds({});
+      setTimeout(() => scrollToRef(paintingIdeasRef), 80);
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '创意方案生成失败，请稍后重试。');
     } finally {
@@ -2917,7 +2922,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       appendPaintingToSeedanceReferences();
       setSeedancePromptHighlight(true);
       setTimeout(() => setSeedancePromptHighlight(false), 2000);
-      scrollToRef(seedancePromptRef);
+      scrollToRef(seedancePanelRef);
 
       const thumbnail = await imageFileToThumbnailDataUrl(paintingImage?.file as File).catch(() => '');
       const historyItem: PaintingHistoryItem = {
@@ -3722,7 +3727,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   )}
 
                   {paintingProfile && (
-                    <div className="space-y-2 rounded-2xl border border-slate-300 bg-slate-50 p-3">
+                    <div ref={paintingPlanRef} className="space-y-2 rounded-2xl border border-slate-300 bg-slate-50 p-3">
                       <div className="text-xs font-black text-slate-800">素材计划</div>
                       <div className="grid gap-2 sm:grid-cols-2">
                         <label className="text-[11px] font-semibold text-slate-500">
@@ -3824,7 +3829,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                   )}
 
                   {paintingIdeas.length > 0 && (
-                    <div className="space-y-2">
+                    <div ref={paintingIdeasRef} className="space-y-2">
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-xs font-black text-slate-800">创意方案（{paintingIdeas.length} 条）</div>
                         <button
@@ -4724,7 +4729,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
 
             </div>
 
-            <div className="rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
+            <div ref={seedancePanelRef} className="rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
               <div className="mb-4 flex min-h-[49px] items-start justify-between gap-3">
                 <div>
                   <div className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-violet-500">
