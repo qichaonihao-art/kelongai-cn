@@ -663,8 +663,8 @@ export async function generatePaintingIdeas(
 export async function generatePaintingIdeaPrompt(
   profile: PaintingProfile,
   idea: PaintingIdeaSummary,
-  context?: { duration?: number; ratio?: string; character?: string; audio?: string }
-): Promise<string> {
+  context?: { durationMin?: number; durationMax?: number; ratio?: string; character?: string; audio?: string }
+): Promise<{ prompt: string; duration: number }> {
   const response = await fetch('/api/painting/idea-prompt', {
     method: 'POST',
     credentials: 'include',
@@ -681,7 +681,16 @@ export async function generatePaintingIdeaPrompt(
     throw new Error(message);
   }
 
-  return String(json?.prompt || '').trim();
+  const prompt = String(json?.prompt || '').trim();
+  const parsedDuration = Number(json?.duration);
+  const fallbackDuration =
+    context?.durationMin && context?.durationMax
+      ? Math.round((context.durationMin + context.durationMax) / 2)
+      : 8;
+  return {
+    prompt,
+    duration: Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : fallbackDuration,
+  };
 }
 
 export async function querySeedanceTask(taskId: string): Promise<SeedanceTaskResult> {

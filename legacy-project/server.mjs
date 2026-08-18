@@ -12295,7 +12295,12 @@ async function handlePaintingIdeaPrompt(req, res) {
       return;
     }
 
-    const duration = Number(idea.duration) || Number(body.duration) || 8;
+    const durationMin = Number(body.durationMin);
+    const durationMax = Number(body.durationMax);
+    const hasDurationRange =
+      Number.isFinite(durationMin) && Number.isFinite(durationMax) && durationMax >= durationMin && durationMax > 0;
+    const fallbackDuration =
+      Number(idea.duration) || Number(body.duration) || (hasDurationRange ? Math.round((durationMin + durationMax) / 2) : 8);
     const ratio = readValue(idea.ratio) || readValue(body.ratio) || '9:16';
     const character = readValue(idea.character) || readValue(body.character);
     const audio = readValue(idea.audio) || readValue(body.audio);
@@ -12314,7 +12319,7 @@ ${JSON.stringify(profile, null, 2)}
 2. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。
 3. 创意内容：结合创意方案，写清楚${character ? `人物设定（${character}）` : '人物设定'}、场景、构图、镜头运动、动作节奏、光影氛围、${audio ? `声音/音乐（${audio}）` : '声音'}等，展开成一个连贯自然的镜头脚本。
 4. 负面约束：明确列出不得改变的元素（挂画外观、木条结构、多余装饰物等）。
-5. 时长约 ${duration} 秒，画面比例 ${ratio}。
+${hasDurationRange ? `5. 总时长必须在 ${durationMin}~${durationMax} 秒之间，请你从该范围内挑选一个最合适的整数秒数；画面比例 ${ratio}。并在提示词最后单独写一行「总时长：X秒」（X 为你选定的整数，例如「总时长：8秒」）。` : `5. 总时长约 ${fallbackDuration} 秒，画面比例 ${ratio}。并在提示词最后单独写一行「总时长：${fallbackDuration}秒」。`}
 
 严格只输出这段提示词文本本身，不要输出任何解释、标题、序号或 markdown 包裹。`;
 
@@ -12331,8 +12336,18 @@ ${JSON.stringify(profile, null, 2)}
       throw new Error('模型返回的提示词为空');
     }
 
-    console.log('[doubao painting] idea-prompt done', { requestId, promptLength: promptText.length });
-    sendJson(res, 200, { ok: true, prompt: promptText });
+    let durationSec = null;
+    const durationMatch = promptText.match(/总时长\s*[：:]\s*(\d{1,3})\s*秒?/);
+    if (durationMatch) {
+      durationSec = Number.parseInt(durationMatch[1], 10);
+    }
+    if (!Number.isFinite(durationSec) || durationSec <= 0) {
+      durationSec = hasDurationRange ? Math.round((durationMin + durationMax) / 2) : fallbackDuration;
+    }
+    const resolvedDuration = Math.min(30, Math.max(4, Math.round(durationSec)));
+
+    console.log('[doubao painting] idea-prompt done', { requestId, promptLength: promptText.length, duration: resolvedDuration });
+    sendJson(res, 200, { ok: true, prompt: promptText, duration: resolvedDuration });
   } catch (error) {
     console.error('[doubao painting] idea-prompt failed', { requestId, message: error?.message || '' });
     sendJson(res, 500, {

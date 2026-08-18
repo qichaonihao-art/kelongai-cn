@@ -2885,14 +2885,26 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setPaintingFullPrompt('');
     setPaintingLoading('prompt');
     try {
-      const duration = Math.round((paintingPlan.durationMin + paintingPlan.durationMax) / 2);
-      const prompt = await generatePaintingIdeaPrompt(paintingProfile, idea, {
-        duration,
+      const { prompt, duration } = await generatePaintingIdeaPrompt(paintingProfile, idea, {
+        durationMin: paintingPlan.durationMin,
+        durationMax: paintingPlan.durationMax,
         ratio: paintingPlan.ratio,
         character: paintingPlan.character,
         audio: paintingPlan.audio,
       });
       setPaintingFullPrompt(prompt);
+
+      // 生成后自动填入右侧 Seedance 面板：提示词、时长、比例、挂画参考图。
+      const ratio = paintingPlan.ratio || '9:16';
+      const maxDuration = seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15;
+      const durationSeconds = Math.min(maxDuration, Math.max(4, Math.round(duration)));
+      setSeedancePrompt(prompt.trim());
+      setSeedanceRatio(ratio);
+      setSeedanceDuration(durationSeconds);
+      appendPaintingToSeedanceReferences();
+      setSeedancePromptHighlight(true);
+      setTimeout(() => setSeedancePromptHighlight(false), 2000);
+      scrollToRef(seedancePromptRef);
 
       const thumbnail = await imageFileToThumbnailDataUrl(paintingImage?.file as File).catch(() => '');
       const historyItem: PaintingHistoryItem = {
@@ -2903,8 +2915,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         ideas: paintingIdeas,
         fullPrompt: prompt,
         thumbnail: thumbnail || undefined,
-        ratio: paintingPlan.ratio,
-        duration,
+        ratio,
+        duration: durationSeconds,
       };
       setPaintingHistory((previous) => {
         const next = mergePaintingHistoryItem(previous, historyItem);
@@ -2918,19 +2930,25 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     }
   }
 
-  function handlePaintingFillToSeedance() {
-    if (!paintingFullPrompt.trim()) {
-      setPaintingError('请先生成完整提示词。');
+  function appendPaintingToSeedanceReferences() {
+    if (!paintingImage) return;
+    // 按文件名去重：右侧已有同名参考图时不再重复追加。
+    if (seedanceReferences.some((ref) => ref.kind === 'image' && ref.fileName === paintingImage.fileName)) {
       return;
     }
-    setSeedancePrompt(paintingFullPrompt.trim());
-    const ratio = paintingPlan.ratio || '9:16';
-    setSeedanceRatio(ratio);
-    const duration = Math.round((paintingPlan.durationMin + paintingPlan.durationMax) / 2);
-    setSeedanceDuration(duration);
-    setSeedancePromptHighlight(true);
-    setTimeout(() => setSeedancePromptHighlight(false), 2000);
-    scrollToRef(seedancePromptRef);
+    const isSeedance25 = seedanceModel === 'doubao-seedance-2-5-260628';
+    const maxImageCount = isSeedance25 ? 30 : 9;
+    if (seedanceReferences.filter((ref) => ref.kind === 'image').length >= maxImageCount) {
+      return;
+    }
+    const nextReference: SeedanceReferenceFile = {
+      id: createMessageId('seedance_ref'),
+      kind: 'image',
+      file: paintingImage.file,
+      previewUrl: createMediaPreviewUrl(paintingImage.file),
+      fileName: paintingImage.fileName,
+    };
+    setSeedanceReferences((previous) => [...previous, nextReference]);
   }
 
   function handlePaintingLoadHistory(item: PaintingHistoryItem) {
@@ -3092,7 +3110,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     if (item.source === 'video') {
       await selectVideoFromHistory(item);
     } else if (item.source === 'image-creative') {
-      await selectImageFromHistory(item, reverseMode !== 'image');
+      if (reverseMode === 'painting') {
+        await selectPaintingFromHistory(item);
+      } else {
+        await selectImageFromHistory(item, reverseMode !== 'image');
+      }
     } else if (item.source === 'video-edit-video' || item.source === 'video-edit-image') {
       const found = await getUploadHistoryItem(item.id);
       if (found) {
@@ -3121,6 +3143,22 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       }
       setSelectedMedia({ kind: 'image', file, previewUrl, fileName: file.name });
     }
+  }
+
+  async function selectPaintingFromHistory(item: { id: number; name: string; timestamp: number; previewUrl: string }) {
+    const found = await getUploadHistoryItem(item.id);
+    if (!found) return;
+    const file = blobToFile(found);
+    const previewUrl = createMediaPreviewUrl(file);
+    if (paintingImage) {
+      URL.revokeObjectURL(paintingImage.previewUrl);
+    }
+    setPaintingImage({ kind: 'image', file, previewUrl, fileName: file.name });
+    setPaintingProfile(null);
+    setPaintingIdeas([]);
+    setPaintingSelectedIdea(null);
+    setPaintingFullPrompt('');
+    setPaintingError('');
   }
 
   async function handleDeleteVideoHistory(id: number) {
@@ -3613,6 +3651,18 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       {paintingLoading === 'analyze' ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
                       分析产品
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHistoryModalKind('image-creative');
+                        setShowHistoryModal(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-rose-200 hover:bg-rose-50/40"
+                    >
+                      <History className="size-3 text-slate-400" />
+                      <span>历史图片</span>
+                      <span className="rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">{imageHistory.length}</span>
+                    </button>
                     {paintingProfile && (
                       <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-600">产品档案已生成</span>
                     )}
@@ -3789,14 +3839,10 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                       <div className="max-h-52 overflow-y-auto whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-xs leading-6 text-slate-700">
                         {paintingFullPrompt}
                       </div>
-                      <button
-                        type="button"
-                        onClick={handlePaintingFillToSeedance}
-                        className="mt-3 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-full bg-rose-600 px-4 text-xs font-bold text-white transition-colors hover:bg-rose-700"
-                      >
+                      <div className="mt-3 flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-600">
                         <Film className="size-3.5" />
-                        填入右侧 Seedance
-                      </button>
+                        已自动填入右侧 Seedance
+                      </div>
                     </div>
                   )}
 
