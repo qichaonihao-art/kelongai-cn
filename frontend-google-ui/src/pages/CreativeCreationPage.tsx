@@ -1383,6 +1383,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     audio: '',
     ratio: '9:16',
     scene: '',
+    extraRequirements: '',
   });
   const [paintingIdeas, setPaintingIdeas] = useState<PaintingIdeaSummary[]>([]);
   const [paintingSelectedIdea, setPaintingSelectedIdea] = useState<PaintingIdeaSummary | null>(null);
@@ -2901,6 +2902,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         ratio: paintingPlan.ratio,
         character: paintingPlan.character,
         audio: paintingPlan.audio,
+        extraRequirements: paintingPlan.extraRequirements,
       });
       setPaintingFullPrompt(prompt);
       setUsedIdeaIds((previous) => ({ ...previous, [idea.id]: true }));
@@ -3795,6 +3797,16 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                             value={paintingPlan.scene}
                             onChange={(event) => setPaintingPlan((previous) => ({ ...previous, scene: event.target.value }))}
                             placeholder="例如：新中式客厅、茶室、书房、展厅"
+                            className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
+                          />
+                        </label>
+                        <label className="text-[11px] font-semibold text-slate-500 sm:col-span-2">
+                          其他特殊要求（可选）
+                          <input
+                            type="text"
+                            value={paintingPlan.extraRequirements}
+                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, extraRequirements: event.target.value }))}
+                            placeholder="例如：不要出现人物、画面必须特写木条工艺、加入礼盒送礼元素"
                             className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
                           />
                         </label>

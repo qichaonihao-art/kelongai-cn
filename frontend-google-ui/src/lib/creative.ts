@@ -611,6 +611,7 @@ export interface PaintingMaterialPlan {
   audio: string;
   ratio: string;
   scene: string;
+  extraRequirements: string;
 }
 
 export async function analyzePainting(file: File): Promise<PaintingProfile> {
@@ -663,7 +664,7 @@ export async function generatePaintingIdeas(
 export async function generatePaintingIdeaPrompt(
   profile: PaintingProfile,
   idea: PaintingIdeaSummary,
-  context?: { durationMin?: number; durationMax?: number; ratio?: string; character?: string; audio?: string }
+  context?: { durationMin?: number; durationMax?: number; ratio?: string; character?: string; audio?: string; extraRequirements?: string }
 ): Promise<{ prompt: string; duration: number }> {
   const response = await fetch('/api/painting/idea-prompt', {
     method: 'POST',

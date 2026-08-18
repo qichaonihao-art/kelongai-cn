@@ -12216,6 +12216,7 @@ async function handlePaintingIdeas(req, res) {
     const audio = readValue(plan.audio);
     const ratio = readValue(plan.ratio) || '9:16';
     const scene = readValue(plan.scene);
+    const extraRequirements = readValue(plan.extraRequirements);
 
     const prompt = `你是短视频创意策划专家，为一块挂画/装饰画产品构思带货短视频创意。
 
@@ -12230,6 +12231,7 @@ ${JSON.stringify(profile, null, 2)}
 ${character ? `- 人物偏好：${character}` : ''}
 ${audio ? `- 声音/音乐偏好：${audio}` : ''}
 ${scene ? `- 场景偏好：${scene}` : ''}
+${extraRequirements ? `- 其他特殊要求：${extraRequirements}` : ''}
 
 请基于产品档案，生成 ${count} 条创意方案摘要。每条只输出「标题 + 一句话核心创意」，用于卡片展示，不要输出完整提示词。
 
@@ -12328,6 +12330,7 @@ async function handlePaintingIdeaPrompt(req, res) {
     const ratio = readValue(idea.ratio) || readValue(body.ratio) || '9:16';
     const character = readValue(idea.character) || readValue(body.character);
     const audio = readValue(idea.audio) || readValue(body.audio);
+    const extraRequirements = readValue(idea.extraRequirements) || readValue(body.extraRequirements);
 
     const prompt = `你是短视频提示词专家。请基于下面的「产品固定档案」和「创意方案」，写一段完整的 Seedance 视频生成提示词（中文，可直接提交给 Seedance）。
 
@@ -12340,6 +12343,7 @@ ${JSON.stringify(profile, null, 2)}
 
 【目标受众（大方向引导，不锁死）】
 这款挂画主要面向 40 岁以上的中老年人群（40 多岁到 60 岁以上均有），审美偏稳重、雅致、有文化底蕴（如中式、书法、山水、传统题材）。整体节奏宜舒缓沉稳、场景氛围偏雅致有文化感，但这是大方向，不必每条都硬套，保持创意的多样性与探索性。
+${extraRequirements ? `\n【其他特殊要求】\n${extraRequirements}` : ''}
 
 【要求】
 1. 无论视频采用何种形式（静态展示、挂墙、手持、展开、人物互动等），都绝对不得改变挂画的样式、颜色和外观，必须与产品固定档案完全一致。
