@@ -2922,7 +2922,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
       appendPaintingToSeedanceReferences();
       setSeedancePromptHighlight(true);
       setTimeout(() => setSeedancePromptHighlight(false), 2000);
-      scrollToRef(seedancePanelRef);
+      scrollToRef(seedancePromptRef);
 
       const thumbnail = await imageFileToThumbnailDataUrl(paintingImage?.file as File).catch(() => '');
       const historyItem: PaintingHistoryItem = {
