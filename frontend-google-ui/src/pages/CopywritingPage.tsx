@@ -441,6 +441,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
 
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [generateProgress, setGenerateProgress] = useState('');
   const [rewriting, setRewriting] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [confirmRegenerate, setConfirmRegenerate] = useState(false);
@@ -595,15 +596,21 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
     if (!profileConfirmed || !profile || generatingRef.current) return;
     generatingRef.current = true;
     setGenerating(true);
+    setGenerateProgress('');
     setError('');
     try {
-      const copies = await generateOriginalCopies(profile, { extraInfo, forbidden });
+      const copies = await generateOriginalCopies(profile, {
+        extraInfo,
+        forbidden,
+        onProgress: (completed, total) => setGenerateProgress(`${completed}/${total}`),
+      });
       setOriginalItems(copies.map((c) => ({ ...c, isLiked: false, savedId: null })));
     } catch (err) {
       setError(err instanceof Error ? err.message : '原创文案生成失败');
     } finally {
       generatingRef.current = false;
       setGenerating(false);
+      setGenerateProgress('');
       setConfirmRegenerate(false);
     }
   };
@@ -1036,7 +1043,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-900 px-5 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {generating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                {generating ? '生成中…' : originalItems.length ? '重新生成一批' : '生成 10 条'}
+                {generating ? (generateProgress ? `生成中… ${generateProgress}` : '生成中…') : originalItems.length ? '重新生成一批' : '生成 10 条'}
               </button>
             </div>
 

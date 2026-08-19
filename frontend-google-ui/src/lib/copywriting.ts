@@ -106,10 +106,19 @@ export async function analyzeCopyPainting(
   return json?.profile && typeof json.profile === 'object' ? (json.profile as CopyProfile) : {};
 }
 
+const COPY_TASK_POLL_INTERVAL_MS = 2000;
+const COPY_TASK_POLL_TIMEOUT_MS = 15 * 60 * 1000;
+
 export async function generateOriginalCopies(
   profile: CopyProfile,
-  opts: { extraInfo?: string; forbidden?: string } = {}
+  opts: {
+    extraInfo?: string;
+    forbidden?: string;
+    onProgress?: (completed: number, total: number) => void;
+  } = {}
 ): Promise<CopyOriginalItem[]> {
+  // 生成 10 条是分钟级长任务，同步等待会被网关超时切断（504）。
+  // 后端改为异步任务：先创建任务拿 taskId，再轮询进度直到完成。
   const response = await fetch('/api/copy/generate', {
     method: 'POST',
     credentials: 'include',
@@ -118,11 +127,44 @@ export async function generateOriginalCopies(
   });
 
   const json = await parseJsonSafely(response);
-  if (!response.ok) {
+  if (!response.ok || !json?.taskId) {
     throw new Error(buildErrorMessage(json, `原创文案生成失败（HTTP ${response.status}）`));
   }
 
-  return Array.isArray(json?.copies) ? (json.copies as CopyOriginalItem[]) : [];
+  const taskId = String(json.taskId);
+  const startedAt = Date.now();
+  let lastProgressReported = false;
+
+  while (Date.now() - startedAt < COPY_TASK_POLL_TIMEOUT_MS) {
+    await new Promise((resolve) => setTimeout(resolve, COPY_TASK_POLL_INTERVAL_MS));
+
+    const poll = await fetch(`/api/copy/tasks/${encodeURIComponent(taskId)}`, {
+      credentials: 'include',
+    });
+    const pollJson = await parseJsonSafely(poll);
+    if (!poll.ok) {
+      if (poll.status === 404) {
+        throw new Error(buildErrorMessage(pollJson, '生成任务不存在或已过期，请重新生成。'));
+      }
+      throw new Error(buildErrorMessage(pollJson, `查询生成进度失败（HTTP ${poll.status}）`));
+    }
+
+    const completed = Number(pollJson?.progress?.completed ?? 0);
+    const total = Number(pollJson?.progress?.total ?? 10);
+    if (opts.onProgress && (completed > 0 || lastProgressReported)) {
+      opts.onProgress(completed, total);
+      lastProgressReported = true;
+    }
+
+    if (pollJson?.status === 'failed') {
+      throw new Error(buildErrorMessage(pollJson, '原创文案生成失败'));
+    }
+    if (pollJson?.status === 'done') {
+      return Array.isArray(pollJson?.copies) ? (pollJson.copies as CopyOriginalItem[]) : [];
+    }
+  }
+
+  throw new Error('文案生成超时，请稍后在文案库中查看或重试。');
 }
 
 export async function regenerateCopy(

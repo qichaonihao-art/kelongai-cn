@@ -12827,24 +12827,26 @@ ${name ? `用户提供的挂画名称：${name}\n` : ''}${extraInfo ? `用户补
   }
 }
 
-async function handleCopyGenerate(req, res) {
-  const requestId = randomBytes(6).toString('hex');
+// 「生成 10 条文案」是分钟级长任务，同步等待会被线上 Nginx（约 60s 读超时）切断成 504。
+// 因此改为异步任务：POST 立即返回 taskId，前端轮询 GET /api/copy/tasks/:taskId 拿进度和结果。
+const COPY_GENERATE_TASKS = new Map(); // taskId -> task
+const COPY_GENERATE_TASK_TTL_MS = 30 * 60 * 1000;
+const COPY_GENERATE_TASK_MAX = 100;
+
+function pruneCopyGenerateTasks() {
+  const now = Date.now();
+  for (const [id, task] of COPY_GENERATE_TASKS) {
+    if (task.doneAt && now - task.doneAt > COPY_GENERATE_TASK_TTL_MS) COPY_GENERATE_TASKS.delete(id);
+  }
+  while (COPY_GENERATE_TASKS.size > COPY_GENERATE_TASK_MAX) {
+    const oldestKey = COPY_GENERATE_TASKS.keys().next().value;
+    COPY_GENERATE_TASKS.delete(oldestKey);
+  }
+}
+
+async function runCopyGenerateTask(task, { apiKey, profile, extraInfo, forbidden }) {
+  const requestId = task.id;
   try {
-    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
-    if (!apiKey) {
-      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
-      return;
-    }
-
-    const body = await readRequestBody(req);
-    const profile = body.profile && typeof body.profile === 'object' ? body.profile : null;
-    if (!profile) {
-      sendJson(res, 400, { error: '缺少挂画档案 profile' });
-      return;
-    }
-    const extraInfo = readValue(body.extraInfo);
-    const forbidden = readValue(body.forbidden);
-
     const stableSpecs = [
       { direction: '痛点解决', targetLength: 350 },
       { direction: '寓意价值', targetLength: 350 },
@@ -12857,15 +12859,19 @@ async function handleCopyGenerate(req, res) {
 
     console.log('[doubao copy] generate request start', { requestId });
 
-    // 拆成单条小请求（并发），避免一次性生成 10 条导致方舟 504 超时。
-    const stableCopies = await mapWithConcurrency(stableSpecs, 3, (spec) =>
-      generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode: 'stable', direction: spec.direction, targetLength: spec.targetLength, excludeTexts: [] })
-    );
+    // 拆成单条小请求（并发），避免一次性生成 10 条导致方舟 504 超时。每完成一条更新任务进度。
+    const stableCopies = await mapWithConcurrency(stableSpecs, 3, async (spec) => {
+      const copy = await generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode: 'stable', direction: spec.direction, targetLength: spec.targetLength, excludeTexts: [] });
+      task.progress.completed += 1;
+      return copy;
+    });
 
     const stableTexts = stableCopies.map((c) => c.fullText).filter(Boolean);
-    const exploreCopies = await mapWithConcurrency(exploreLengths, 2, (targetLength) =>
-      generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode: 'explore', direction: '', targetLength, excludeTexts: stableTexts })
-    );
+    const exploreCopies = await mapWithConcurrency(exploreLengths, 2, async (targetLength) => {
+      const copy = await generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode: 'explore', direction: '', targetLength, excludeTexts: stableTexts });
+      task.progress.completed += 1;
+      return copy;
+    });
 
     const copies = [...stableCopies, ...exploreCopies];
 
@@ -12884,15 +12890,73 @@ async function handleCopyGenerate(req, res) {
 
     copies.forEach((c, index) => { c.id = `copy-${index + 1}`; });
 
+    task.copies = copies;
+    task.error = '';
+    task.status = 'done';
+    task.doneAt = Date.now();
     console.log('[doubao copy] generate done', { requestId, count: copies.length });
-    sendJson(res, 200, { ok: true, copies });
   } catch (error) {
+    task.status = 'failed';
+    task.error = error?.message || '原创文案生成失败';
+    task.debug = { stage: 'generate', rawText: error?.rawText };
+    task.doneAt = Date.now();
     console.error('[doubao copy] generate failed', { requestId, message: error?.message || '' });
-    sendJson(res, 500, {
-      error: error?.message || '原创文案生成失败',
-      debug: { stage: 'generate', rawText: error?.rawText }
-    });
   }
+}
+
+async function handleCopyGenerate(req, res) {
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const profile = body.profile && typeof body.profile === 'object' ? body.profile : null;
+    if (!profile) {
+      sendJson(res, 400, { error: '缺少挂画档案 profile' });
+      return;
+    }
+    const extraInfo = readValue(body.extraInfo);
+    const forbidden = readValue(body.forbidden);
+
+    pruneCopyGenerateTasks();
+    const task = {
+      id: `copytask-${randomBytes(8).toString('hex')}`,
+      status: 'running',
+      progress: { completed: 0, total: 10 },
+      copies: null,
+      error: '',
+      debug: null,
+      createdAt: Date.now(),
+      doneAt: 0
+    };
+    COPY_GENERATE_TASKS.set(task.id, task);
+
+    // 后台执行，不被 await；所有异常都在 runCopyGenerateTask 内部消化，不会产生未处理 Promise。
+    runCopyGenerateTask(task, { apiKey, profile, extraInfo, forbidden });
+
+    sendJson(res, 202, { ok: true, taskId: task.id, status: task.status, progress: task.progress });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '原创文案生成失败' });
+  }
+}
+
+function handleCopyGenerateTaskStatus(req, res, taskId) {
+  const task = COPY_GENERATE_TASKS.get(readValue(taskId));
+  if (!task || (task.doneAt && Date.now() - task.doneAt > COPY_GENERATE_TASK_TTL_MS)) {
+    sendJson(res, 404, { error: '任务不存在或已过期' });
+    return;
+  }
+  sendJson(res, 200, {
+    ok: true,
+    taskId: task.id,
+    status: task.status,
+    progress: task.progress,
+    ...(task.status === 'done' ? { copies: task.copies } : {}),
+    ...(task.status === 'failed' ? { error: task.error, debug: task.debug } : {})
+  });
 }
 
 async function handleCopyRewrite(req, res) {
@@ -15405,6 +15469,12 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/copy/generate') {
     await handleCopyGenerate(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/api/copy/tasks/')) {
+    const taskId = decodeURIComponent(url.pathname.replace(/^\/api\/copy\/tasks\//, ''));
+    handleCopyGenerateTaskStatus(req, res, taskId);
     return;
   }
 
