@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpenText,
   Check,
@@ -12,13 +12,17 @@ import {
   ImagePlus,
   Loader2,
   PenLine,
+  PencilLine,
   RefreshCw,
   Save,
   Sparkles,
   Star,
   Trash2,
+  Upload,
+  Wand2,
   X,
 } from "lucide-react";
+import { motion } from "motion/react";
 import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
 import HomeBackButton from "@/src/components/HomeBackButton";
 import CreativeSubNav from "@/src/components/CreativeSubNav";
@@ -184,6 +188,49 @@ const PROFILE_LIST_FIELDS: Array<{ key: keyof ProfileDraft; label: string; rows?
   { key: 'uncertainClaims', label: '不确定/不可编造信息（每行一个）', rows: 3 },
 ];
 
+const STEPS = [
+  { label: '分析挂画', desc: '上传图片，豆包生成档案' },
+  { label: '确认档案', desc: '核对产品事实与卖点' },
+  { label: '生成文案', desc: '原创 10 条 · 爆款仿写' },
+];
+
+function StepIndicator({ current }: { current: number }) {
+  return (
+    <ol className="flex items-center justify-center gap-2 sm:gap-3">
+      {STEPS.map((step, index) => {
+        const num = index + 1;
+        const isDone = num < current;
+        const isActive = num === current;
+        return (
+          <Fragment key={step.label}>
+            <li className="flex items-center gap-2.5">
+              <span
+                className={cn(
+                  'flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-black transition-all',
+                  isDone && 'bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-sm',
+                  isActive && 'bg-slate-900 text-white ring-4 ring-violet-200/60',
+                  !isDone && !isActive && 'bg-white/80 text-slate-400 ring-1 ring-slate-200'
+                )}
+              >
+                {isDone ? <Check className="size-4" /> : num}
+              </span>
+              <span className="hidden flex-col md:flex">
+                <span className={cn('text-sm font-black leading-tight', isActive ? 'text-slate-900' : isDone ? 'text-slate-700' : 'text-slate-400')}>
+                  {step.label}
+                </span>
+                <span className="text-[11px] font-bold text-slate-400">{step.desc}</span>
+              </span>
+            </li>
+            {index < STEPS.length - 1 && (
+              <li className={cn('h-0.5 w-6 rounded-full sm:w-12', isDone ? 'bg-gradient-to-r from-violet-500 to-fuchsia-600' : 'bg-slate-200')} />
+            )}
+          </Fragment>
+        );
+      })}
+    </ol>
+  );
+}
+
 function ResultCard({
   index,
   badge,
@@ -219,8 +266,8 @@ function ResultCard({
   const [copied, setCopied] = useState(false);
 
   const previewText = useMemo(() => {
-    if (expanded || fullText.length <= 160) return fullText;
-    return `${fullText.slice(0, 160)}…`;
+    if (expanded || fullText.length <= 180) return fullText;
+    return `${fullText.slice(0, 180)}…`;
   }, [expanded, fullText]);
 
   const handleCopy = async () => {
@@ -242,7 +289,7 @@ function ResultCard({
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md md:p-5">
+    <div className="group rounded-2xl border border-slate-200/80 bg-white/90 p-5 shadow-sm transition-all hover:border-violet-200 hover:shadow-md">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-slate-900 text-xs font-black text-white">
@@ -251,19 +298,17 @@ function ResultCard({
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold', badgeClass)}>{badge}</span>
           {direction && <span className="truncate text-xs font-bold text-slate-500">{direction}</span>}
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            onClick={onToggleLike}
-            className={cn(
-              'flex h-8 w-8 items-center justify-center rounded-lg border transition-colors',
-              isLiked ? 'border-amber-200 bg-amber-50 text-amber-500' : 'border-slate-200 text-slate-400 hover:text-amber-500'
-            )}
-            title={isLiked ? '取消标记' : '标记为好'}
-          >
-            <Star className={cn('size-4', isLiked && 'fill-current')} />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onToggleLike}
+          className={cn(
+            'flex h-8 w-8 items-center justify-center rounded-lg border transition-colors',
+            isLiked ? 'border-amber-200 bg-amber-50 text-amber-500' : 'border-slate-200 text-slate-300 hover:border-amber-200 hover:text-amber-500'
+          )}
+          title={isLiked ? '取消标记' : '标记为好'}
+        >
+          <Star className={cn('size-4', isLiked && 'fill-current')} />
+        </button>
       </div>
 
       {editing ? (
@@ -271,8 +316,8 @@ function ResultCard({
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            rows={8}
-            className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm leading-relaxed text-slate-800 outline-none focus:border-slate-400"
+            rows={9}
+            className="w-full resize-y rounded-xl border border-violet-200 bg-white p-3 text-[15px] leading-relaxed text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
           />
           <div className="mt-2 flex items-center justify-end gap-2">
             <button
@@ -292,7 +337,7 @@ function ResultCard({
           </div>
         </div>
       ) : (
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700" onDoubleClick={startEdit}>
+        <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-slate-700" onDoubleClick={startEdit}>
           {previewText}
         </p>
       )}
@@ -300,7 +345,7 @@ function ResultCard({
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
         <span className="text-xs font-bold text-slate-400">共 {wordCount} 字</span>
         <div className="flex flex-wrap items-center gap-1.5">
-          {fullText.length > 160 && !editing && (
+          {fullText.length > 180 && !editing && (
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
@@ -313,9 +358,12 @@ function ResultCard({
           <button
             type="button"
             onClick={handleCopy}
-            className="flex h-8 items-center gap-1 rounded-full border border-slate-200 px-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+            className={cn(
+              'flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-bold transition-colors',
+              copied ? 'border-emerald-200 bg-emerald-50 text-emerald-600' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+            )}
           >
-            {copied ? <CheckCircle2 className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+            {copied ? <CheckCircle2 className="size-3.5" /> : <Copy className="size-3.5" />}
             {copied ? '复制成功' : '复制'}
           </button>
           <button
@@ -353,6 +401,8 @@ function ResultCard({
 
 export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }: CopywritingPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const generateSectionRef = useRef<HTMLElement>(null);
+  const profileSectionRef = useRef<HTMLElement>(null);
 
   const [paintingFile, setPaintingFile] = useState<File | null>(null);
   const [paintingPreviewUrl, setPaintingPreviewUrl] = useState<string | null>(null);
@@ -472,6 +522,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
         setImageThumb(null);
       }
       void saveUploadHistory(paintingFile, 'image');
+      window.setTimeout(() => profileSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
     } catch (err) {
       setError(err instanceof Error ? err.message : '挂画分析失败');
     } finally {
@@ -485,6 +536,14 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
     setProfile(next);
     setProfileConfirmed(true);
     setError('');
+    setNotice('挂画档案已确认，可以开始生成文案了');
+    window.setTimeout(() => setNotice(''), 3200);
+    window.setTimeout(() => generateSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  };
+
+  const handleEditProfile = () => {
+    setProfileConfirmed(false);
+    window.setTimeout(() => profileSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
   };
 
   const buildLibraryPayload = (item: { mode?: string; version?: string; direction: string; fullText: string; isLiked: boolean }, type: 'original' | 'rewrite') => {
@@ -578,7 +637,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
       const refreshed = await listCopyLibrary();
       setLibrary(refreshed);
       setNotice('已保存到文案库');
-      window.setTimeout(() => setNotice(''), 2000);
+      window.setTimeout(() => setNotice(''), 2200);
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存到文案库失败');
     }
@@ -618,8 +677,20 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
   };
 
   const profileReady = !!profile;
+  const currentStep = !profile ? 1 : !profileConfirmed ? 2 : 3;
   const generateDisabled = !profileConfirmed || generating;
   const rewriteDisabled = !profileConfirmed || rewriting || !rewriteOriginalText.trim();
+
+  const confirmedSummary = useMemo(() => {
+    if (!profileConfirmed || !profile) return null;
+    const chips = [
+      profileDraft.name,
+      profileDraft.style,
+      ...linesToArray(profileDraft.meanings),
+      ...linesToArray(profileDraft.sellingPoints),
+    ].filter(Boolean).slice(0, 5);
+    return chips;
+  }, [profileConfirmed, profile, profileDraft]);
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -631,34 +702,70 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[70rem] flex-1 px-4 py-6 md:px-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-black tracking-tight text-slate-900">文案创作</h1>
-          <p className="mt-1 text-sm text-slate-500">上传挂画 → 分析档案 → AI 原创口播文案 / 爆款仿写</p>
-        </div>
-
-        {error && (
-          <div className="mb-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-600">
-            <X className="mt-0.5 size-4 shrink-0" />
-            <span>{error}</span>
+      <main className="mx-auto w-full max-w-[70rem] flex-1 px-4 py-8 md:px-6">
+        {/* Hero */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6 flex items-center gap-4"
+        >
+          <div className="relative">
+            <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-600 opacity-30 blur-lg" />
+            <div className="relative flex size-12 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-md">
+              <FileText className="size-6" />
+            </div>
           </div>
-        )}
+          <div>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900">文案创作</h1>
+            <p className="mt-0.5 text-sm font-bold text-slate-500">上传挂画 → 分析档案 → 原创口播 / 爆款仿写</p>
+          </div>
+        </motion.div>
+
+        {/* Stepper */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+          className="glass-card mb-6 rounded-3xl px-4 py-4"
+        >
+          <StepIndicator current={currentStep} />
+        </motion.div>
+
+        {/* Notice / Error */}
         {notice && (
-          <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-600">
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-4 flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/90 px-4 py-3 text-sm font-bold text-emerald-700"
+          >
             <CheckCircle2 className="size-4 shrink-0" />
             <span>{notice}</span>
-          </div>
+          </motion.div>
+        )}
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-4 flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50/90 px-4 py-3 text-sm font-bold text-red-600"
+          >
+            <X className="mt-0.5 size-4 shrink-0" />
+            <span>{error}</span>
+          </motion.div>
         )}
 
-        {/* 步骤一：上传并分析挂画 */}
-        <section className="mb-6 rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
-          <div className="mb-3 flex items-center gap-2">
-            <span className="flex size-6 items-center justify-center rounded-md bg-emerald-500 text-xs font-black text-white">1</span>
-            <h2 className="text-base font-black text-slate-900">上传并分析挂画</h2>
+        {/* Step 1：分析挂画 */}
+        <section className="glass-card mb-5 scroll-mt-20 rounded-3xl p-5 md:p-6">
+          <div className="mb-4 flex items-center gap-2.5">
+            <span className="flex size-7 items-center justify-center rounded-lg bg-slate-900 text-sm font-black text-white">1</span>
+            <div>
+              <h2 className="text-base font-black text-slate-900">分析挂画</h2>
+              <p className="text-xs font-bold text-slate-400">上传挂画图片，豆包多模态识别并生成「挂画档案」</p>
+            </div>
           </div>
 
-          <div className="flex flex-col gap-4 md:flex-row">
-            <div className="flex shrink-0 flex-col items-center gap-2">
+          <div className="flex flex-col gap-5 md:flex-row">
+            {/* Upload */}
+            <div className="flex shrink-0 flex-col items-center gap-2.5">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -670,35 +777,40 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className={cn(
-                  'flex h-40 w-40 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed text-center transition-colors',
-                  paintingPreviewUrl ? 'border-slate-200 bg-white' : 'border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/50'
+                  'group flex h-44 w-44 flex-col items-center justify-center gap-2.5 rounded-2xl border-2 border-dashed text-center transition-all',
+                  paintingPreviewUrl
+                    ? 'border-violet-200 bg-white p-1'
+                    : 'border-slate-300 bg-white/60 hover:-translate-y-0.5 hover:border-violet-400 hover:bg-white hover:shadow-md'
                 )}
               >
                 {paintingPreviewUrl ? (
-                  <img src={paintingPreviewUrl} alt="挂画预览" className="h-full w-full rounded-2xl object-contain p-1" />
+                  <img src={paintingPreviewUrl} alt="挂画预览" className="h-full w-full rounded-xl object-contain" />
                 ) : (
                   <>
-                    <ImagePlus className="size-8 text-slate-400" />
-                    <span className="text-xs font-bold text-slate-500">点击上传挂画图片</span>
+                    <span className="flex size-12 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-sm transition-transform group-hover:scale-110">
+                      <Upload className="size-5" />
+                    </span>
+                    <span className="text-xs font-bold text-slate-600">点击上传挂画图片</span>
+                    <span className="text-[11px] font-bold text-slate-400">支持 JPG / PNG / WebP</span>
                   </>
                 )}
               </button>
               <button
                 type="button"
                 onClick={() => setHistoryOpen((v) => !v)}
-                className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200 px-3 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white/70 px-3 text-xs font-bold text-slate-600 transition-colors hover:bg-white"
               >
                 <History className="size-3.5" />
                 历史图片
               </button>
               {historyOpen && historyImages.length > 0 && (
-                <div className="flex max-h-40 w-40 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+                <div className="flex max-h-40 w-44 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-slate-200 bg-white/80 p-2">
                   {historyImages.map((img) => (
                     <button
                       key={img.id}
                       type="button"
                       onClick={() => void handlePickHistory(img.id)}
-                      className="h-14 w-14 overflow-hidden rounded-lg border border-slate-200 bg-white"
+                      className="h-14 w-14 overflow-hidden rounded-lg border border-slate-200 bg-white transition-colors hover:border-violet-300"
                       title={img.name}
                     >
                       <img src={img.previewUrl} alt={img.name} className="h-full w-full object-cover" />
@@ -706,8 +818,14 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   ))}
                 </div>
               )}
+              {historyOpen && historyImages.length === 0 && (
+                <div className="w-44 rounded-xl border border-slate-200 bg-white/80 p-3 text-center text-[11px] font-bold text-slate-400">
+                  暂无历史图片
+                </div>
+              )}
             </div>
 
+            {/* Optional inputs */}
             <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block text-xs font-bold text-slate-600">挂画名称（可选）</span>
@@ -715,7 +833,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="例如：家和万事兴书法挂画"
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-emerald-400"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                 />
               </label>
               <label className="block">
@@ -724,7 +842,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   value={sellingPoints}
                   onChange={(event) => setSellingPoints(event.target.value)}
                   placeholder="例如：家和万事兴、适合乔迁送礼"
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-emerald-400"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                 />
               </label>
               <label className="block sm:col-span-2">
@@ -734,7 +852,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   onChange={(event) => setExtraInfo(event.target.value)}
                   rows={2}
                   placeholder="材质、尺寸、工艺、销售场景等补充说明"
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400"
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                 />
               </label>
               <label className="block sm:col-span-2">
@@ -744,228 +862,300 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   onChange={(event) => setForbidden(event.target.value)}
                   rows={2}
                   placeholder="例如：不得出现风水、招财、治病等夸大表述"
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400"
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                 />
               </label>
             </div>
           </div>
 
-          <div className="mt-4 flex items-center justify-end">
+          <div className="mt-5 flex items-center justify-end">
             <button
               type="button"
               onClick={() => void handleAnalyze()}
               disabled={!paintingFile || analyzing}
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-900 px-5 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-11 items-center gap-2 rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-600 px-6 text-sm font-bold text-white shadow-md shadow-violet-500/20 transition-all hover:shadow-lg hover:shadow-violet-500/30 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none"
             >
-              {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+              {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
               {analyzing ? '豆包分析中…' : '分析产品'}
             </button>
           </div>
         </section>
 
-        {/* 分析结果档案 */}
+        {/* Step 2：确认档案 */}
         {profileReady && (
-          <section className="mb-6 rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
-            <div className="mb-3 flex items-center gap-2">
-              <span className="flex size-6 items-center justify-center rounded-md bg-emerald-500 text-xs font-black text-white">✓</span>
-              <h2 className="text-base font-black text-slate-900">挂画档案（可修改后确认）</h2>
+          <section ref={profileSectionRef} className="glass-card mb-5 scroll-mt-20 rounded-3xl p-5 md:p-6">
+            <div className="mb-4 flex flex-wrap items-center gap-2.5">
+              <span className="flex size-7 items-center justify-center rounded-lg bg-slate-900 text-sm font-black text-white">2</span>
+              <div className="mr-auto">
+                <h2 className="text-base font-black text-slate-900">确认挂画档案</h2>
+                <p className="text-xs font-bold text-slate-400">{profileConfirmed ? '档案已锁定，生成文案时将以此为准' : '核对并修改产品事实，确认后再生成'}</p>
+              </div>
               {profileConfirmed && (
-                <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-bold text-emerald-600">
+                <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">
                   <CheckCircle2 className="size-3.5" /> 已确认
                 </span>
               )}
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {PROFILE_TEXT_FIELDS.map((field) => (
-                <label key={field.key} className={cn('block', field.rows && field.rows >= 2 && 'sm:col-span-2')}>
-                  <span className="mb-1 block text-xs font-bold text-slate-600">{field.label}</span>
-                  {field.rows ? (
-                    <textarea
-                      value={profileDraft[field.key]}
-                      onChange={(event) => setProfileDraft((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                      rows={field.rows}
-                      className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400"
-                    />
-                  ) : (
-                    <input
-                      value={profileDraft[field.key]}
-                      onChange={(event) => setProfileDraft((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                      className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800 outline-none focus:border-emerald-400"
-                    />
-                  )}
-                </label>
-              ))}
-            </div>
-
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {PROFILE_LIST_FIELDS.map((field) => (
-                <label key={field.key} className="block">
-                  <span className="mb-1 block text-xs font-bold text-slate-600">{field.label}</span>
-                  <textarea
-                    value={profileDraft[field.key]}
-                    onChange={(event) => setProfileDraft((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                    rows={field.rows || 2}
-                    className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400"
-                  />
-                </label>
-              ))}
-            </div>
-
-            <div className="mt-4 flex items-center justify-end">
-              <button
-                type="button"
-                onClick={handleConfirmProfile}
-                disabled={profileConfirmed}
-                className="inline-flex h-10 items-center gap-2 rounded-full bg-emerald-600 px-5 text-sm font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+            {profileConfirmed ? (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4"
               >
-                <Check className="size-4" />
-                {profileConfirmed ? '已确认档案' : '确认档案'}
-              </button>
-            </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Check className="size-4 text-emerald-600" />
+                  <span className="text-sm font-black text-slate-800">
+                    {profileDraft.name || '挂画档案'} 已确认
+                  </span>
+                </div>
+                {confirmedSummary && confirmedSummary.length > 0 && (
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    {confirmedSummary.map((chip) => (
+                      <span key={chip} className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-slate-600 ring-1 ring-emerald-100">
+                        {chip}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleEditProfile}
+                  className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-white px-3 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-100/60"
+                >
+                  <PencilLine className="size-3.5" />
+                  修改档案
+                </button>
+              </motion.div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {PROFILE_TEXT_FIELDS.map((field) => (
+                    <label key={field.key} className={cn('block', field.rows && field.rows >= 2 && 'sm:col-span-2')}>
+                      <span className="mb-1 block text-xs font-bold text-slate-600">{field.label}</span>
+                      {field.rows ? (
+                        <textarea
+                          value={profileDraft[field.key]}
+                          onChange={(event) => setProfileDraft((prev) => ({ ...prev, [field.key]: event.target.value }))}
+                          rows={field.rows}
+                          className="w-full resize-y rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                        />
+                      ) : (
+                        <input
+                          value={profileDraft[field.key]}
+                          onChange={(event) => setProfileDraft((prev) => ({ ...prev, [field.key]: event.target.value }))}
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm text-slate-800 outline-none transition-colors focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                        />
+                      )}
+                    </label>
+                  ))}
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {PROFILE_LIST_FIELDS.map((field) => (
+                    <label key={field.key} className="block">
+                      <span className="mb-1 block text-xs font-bold text-slate-600">{field.label}</span>
+                      <textarea
+                        value={profileDraft[field.key]}
+                        onChange={(event) => setProfileDraft((prev) => ({ ...prev, [field.key]: event.target.value }))}
+                        rows={field.rows || 2}
+                        className="w-full resize-y rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                <div className="mt-5 flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={handleConfirmProfile}
+                    className="inline-flex h-11 items-center gap-2 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 px-6 text-sm font-bold text-white shadow-md shadow-emerald-500/20 transition-all hover:shadow-lg hover:shadow-emerald-500/30"
+                  >
+                    <Check className="size-4" />
+                    确认档案并继续
+                  </button>
+                </div>
+              </>
+            )}
           </section>
         )}
 
-        {/* 功能一：AI 原创 10 条 */}
-        <section className="mb-6 rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className="flex size-6 items-center justify-center rounded-md bg-violet-500 text-xs font-black text-white">2</span>
-              <h2 className="text-base font-black text-slate-900">AI 原创 10 条口播文案</h2>
+        {/* Step 3：生成文案 */}
+        <section ref={generateSectionRef} className="scroll-mt-20">
+          <div className="mb-4 flex items-center gap-2.5 px-1">
+            <span className="flex size-7 items-center justify-center rounded-lg bg-slate-900 text-sm font-black text-white">3</span>
+            <div>
+              <h2 className="text-base font-black text-slate-900">生成文案</h2>
+              <p className="text-xs font-bold text-slate-400">原创口播 10 条 + 爆款文案仿写 3 版</p>
             </div>
-            <button
-              type="button"
-              onClick={handleGenerateOriginal}
-              disabled={generateDisabled}
-              className="inline-flex h-9 items-center gap-2 rounded-full bg-slate-900 px-4 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {generating ? <Loader2 className="size-4 animate-spin" /> : <PenLine className="size-4" />}
-              {generating ? '生成中…' : '生成 10 条文案'}
-            </button>
           </div>
-          {!profileConfirmed && (
-            <p className="rounded-xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-400">请先完成挂画分析并「确认档案」后，再生成原创文案。</p>
-          )}
 
-          {originalItems.length > 0 && (
-            <div className="mt-3 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-500">共 {originalItems.length} 条（6 稳定型 + 4 探索型）</span>
-                <button
-                  type="button"
-                  onClick={handleConfirmRegenerateBatch}
-                  disabled={generating}
-                  className={cn(
-                    'flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition-colors',
-                    confirmRegenerate
-                      ? 'border-red-200 bg-red-50 text-red-600'
-                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                  )}
-                >
-                  <RefreshCw className={cn('size-3.5', generating && 'animate-spin')} />
-                  {confirmRegenerate ? '再次点击确认覆盖当前结果' : '一键重新生成一批'}
-                </button>
+          {/* 功能一：AI 原创 10 条 */}
+          <section className="glass-card mb-5 rounded-3xl p-5 md:p-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-sm">
+                  <PenLine className="size-4.5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">AI 原创 10 条口播文案</h3>
+                  <p className="text-xs font-bold text-slate-400">7×350 字 + 3×250 字 · 6 稳定型 + 4 探索型</p>
+                </div>
               </div>
-              {originalItems.map((item, index) => (
-                <ResultCard
-                  key={item.id}
-                  index={index + 1}
-                  badge={item.mode === 'stable' ? '稳定型' : '探索型'}
-                  badgeClass={item.mode === 'stable' ? 'bg-emerald-50 text-emerald-600' : 'bg-violet-50 text-violet-600'}
-                  direction={item.direction}
-                  fullText={item.fullText}
-                  wordCount={countCopyChars(item.fullText)}
-                  isLiked={item.isLiked}
-                  savedId={item.savedId}
-                  onEditCommit={(newText) => handleEditOriginal(item.id, newText)}
-                  onToggleLike={() => handleToggleLike('original', item.id)}
-                  onSave={() => void handleSaveItem(item, 'original', item.id)}
-                  onRegenerate={() => void handleRegenerateOne(item)}
-                  regenerateBusy={regeneratingId === item.id}
-                />
-              ))}
+              <button
+                type="button"
+                onClick={handleGenerateOriginal}
+                disabled={generateDisabled}
+                className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-900 px-5 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {generating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                {generating ? '生成中…' : originalItems.length ? '重新生成一批' : '生成 10 条'}
+              </button>
             </div>
-          )}
-        </section>
 
-        {/* 功能二：爆款文案仿写 */}
-        <section className="mb-6 rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
-          <div className="mb-3 flex items-center gap-2">
-            <span className="flex size-6 items-center justify-center rounded-md bg-violet-500 text-xs font-black text-white">3</span>
-            <h2 className="text-base font-black text-slate-900">爆款文案仿写</h2>
-          </div>
-          {!profileConfirmed && (
-            <p className="rounded-xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-400">请先完成挂画分析并「确认档案」后，再使用仿写。</p>
-          )}
-          <label className="mt-3 block">
-            <span className="mb-1 block text-xs font-bold text-slate-600">粘贴一条已在短视频平台取得较好效果的原文</span>
-            <textarea
-              value={rewriteOriginalText}
-              onChange={(event) => setRewriteOriginalText(event.target.value)}
-              rows={6}
-              placeholder="粘贴原文…"
-              className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-800 outline-none focus:border-violet-400"
-            />
-          </label>
-          <div className="mt-3 flex items-center justify-end">
-            <button
-              type="button"
-              onClick={() => void handleRewrite()}
-              disabled={rewriteDisabled}
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-900 px-5 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {rewriting ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-              {rewriting ? '仿写中…' : '仿写 3 个版本'}
-            </button>
-          </div>
+            {!profileConfirmed ? (
+              <p className="rounded-xl bg-white/70 px-4 py-3 text-sm font-bold text-slate-400 ring-1 ring-slate-100">
+                请先在上一步「确认档案」，再生成原创文案。
+              </p>
+            ) : generating ? (
+              <div className="flex items-center justify-center gap-3 rounded-xl bg-white/70 px-4 py-8 text-sm font-bold text-slate-500 ring-1 ring-slate-100">
+                <Loader2 className="size-5 animate-spin text-violet-500" />
+                豆包正在创作 10 条文案，预计需要 1～3 分钟…
+              </div>
+            ) : originalItems.length > 0 ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-500">共 {originalItems.length} 条 · 6 稳定型 + 4 探索型</span>
+                  <button
+                    type="button"
+                    onClick={handleConfirmRegenerateBatch}
+                    disabled={generating}
+                    className={cn(
+                      'flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition-colors',
+                      confirmRegenerate
+                        ? 'border-red-200 bg-red-50 text-red-600'
+                        : 'border-slate-200 bg-white/70 text-slate-600 hover:bg-white'
+                    )}
+                  >
+                    <RefreshCw className={cn('size-3.5', generating && 'animate-spin')} />
+                    {confirmRegenerate ? '再次点击确认覆盖当前结果' : '一键重新生成一批'}
+                  </button>
+                </div>
+                {originalItems.map((item, index) => (
+                  <ResultCard
+                    key={item.id}
+                    index={index + 1}
+                    badge={item.mode === 'stable' ? '稳定型' : '探索型'}
+                    badgeClass={item.mode === 'stable' ? 'bg-emerald-50 text-emerald-600' : 'bg-violet-50 text-violet-600'}
+                    direction={item.direction}
+                    fullText={item.fullText}
+                    wordCount={countCopyChars(item.fullText)}
+                    isLiked={item.isLiked}
+                    savedId={item.savedId}
+                    onEditCommit={(newText) => handleEditOriginal(item.id, newText)}
+                    onToggleLike={() => handleToggleLike('original', item.id)}
+                    onSave={() => void handleSaveItem(item, 'original', item.id)}
+                    onRegenerate={() => void handleRegenerateOne(item)}
+                    regenerateBusy={regeneratingId === item.id}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-xl bg-white/70 px-4 py-3 text-sm font-bold text-slate-400 ring-1 ring-slate-100">
+                点击「生成 10 条」开始创作。
+              </p>
+            )}
+          </section>
 
-          {rewriteItems.length > 0 && (
-            <div className="mt-3 space-y-3">
-              {rewriteItems.map((item, index) => (
-                <ResultCard
-                  key={index}
-                  index={index + 1}
-                  badge={item.version}
-                  badgeClass="bg-violet-50 text-violet-600"
-                  direction="仿写版本"
-                  fullText={item.content}
-                  wordCount={countCopyChars(item.content)}
-                  isLiked={item.isLiked}
-                  savedId={item.savedId}
-                  onEditCommit={(newText) => handleEditRewrite(index, newText)}
-                  onToggleLike={() => handleToggleLike('rewrite', index)}
-                  onSave={() => void handleSaveItem({ version: item.version, direction: item.version, fullText: item.content, isLiked: item.isLiked }, 'rewrite', index)}
-                />
-              ))}
+          {/* 功能二：爆款仿写 */}
+          <section className="glass-card mb-5 rounded-3xl p-5 md:p-6">
+            <div className="mb-4 flex items-center gap-2.5">
+              <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-fuchsia-500 to-pink-600 text-white shadow-sm">
+                <FileText className="size-4.5" />
+              </span>
+              <div>
+                <h3 className="text-base font-black text-slate-900">爆款文案仿写</h3>
+                <p className="text-xs font-bold text-slate-400">分析原文 → 稳定保守 / 情绪强化 / 结构重组 3 版</p>
+              </div>
             </div>
-          )}
+
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold text-slate-600">粘贴一条已在短视频平台取得较好效果的原文</span>
+              <textarea
+                value={rewriteOriginalText}
+                onChange={(event) => setRewriteOriginalText(event.target.value)}
+                rows={5}
+                placeholder="粘贴原文…"
+                className="w-full resize-y rounded-xl border border-slate-200 bg-white/90 px-3 py-2.5 text-sm leading-relaxed text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-fuchsia-400 focus:ring-2 focus:ring-fuchsia-100"
+              />
+            </label>
+            <div className="mt-3 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => void handleRewrite()}
+                disabled={rewriteDisabled}
+                className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-900 px-5 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {rewriting ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                {rewriting ? '仿写中…' : '仿写 3 个版本'}
+              </button>
+            </div>
+
+            {rewriteItems.length > 0 && (
+              <div className="mt-4 space-y-3">
+                {rewriteItems.map((item, index) => (
+                  <ResultCard
+                    key={index}
+                    index={index + 1}
+                    badge={item.version}
+                    badgeClass="bg-fuchsia-50 text-fuchsia-600"
+                    direction="仿写版本"
+                    fullText={item.content}
+                    wordCount={countCopyChars(item.content)}
+                    isLiked={item.isLiked}
+                    savedId={item.savedId}
+                    onEditCommit={(newText) => handleEditRewrite(index, newText)}
+                    onToggleLike={() => handleToggleLike('rewrite', index)}
+                    onSave={() => void handleSaveItem({ version: item.version, direction: item.version, fullText: item.content, isLiked: item.isLiked }, 'rewrite', index)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
         </section>
 
         {/* 文案库 */}
-        <section className="mb-6 rounded-[22px] border border-slate-300 bg-white p-4 shadow-[0_10px_40px_rgba(15,23,42,0.1)] md:p-5">
+        <section className="glass-card mb-8 rounded-3xl p-5 md:p-6">
           <button
             type="button"
             onClick={() => setLibraryOpen((v) => !v)}
             className="flex w-full items-center justify-between"
           >
-            <div className="flex items-center gap-2">
-              <BookOpenText className="size-5 text-slate-700" />
-              <h2 className="text-base font-black text-slate-900">文案库</h2>
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500">{library.length}</span>
+            <div className="flex items-center gap-2.5">
+              <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-rose-500 text-white shadow-sm">
+                <BookOpenText className="size-4.5" />
+              </span>
+              <div className="text-left">
+                <h3 className="text-base font-black text-slate-900">文案库</h3>
+                <p className="text-xs font-bold text-slate-400">已保存文案，多设备同步</p>
+              </div>
+              <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-bold text-slate-500 ring-1 ring-slate-200">{library.length}</span>
             </div>
             {libraryOpen ? <ChevronUp className="size-4 text-slate-400" /> : <ChevronDown className="size-4 text-slate-400" />}
           </button>
 
           {libraryOpen && (
-            <div className="mt-3 space-y-3">
+            <div className="mt-4 space-y-3">
               {library.length === 0 && (
-                <p className="rounded-xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-400">还没有保存的文案。生成后点「存文案库」即可在这里查看，多设备同步。</p>
+                <p className="rounded-xl bg-white/70 px-4 py-3 text-sm font-bold text-slate-400 ring-1 ring-slate-100">
+                  还没有保存的文案。生成后点「存文案库」即可在这里查看，多设备同步。
+                </p>
               )}
               {library.map((item) => (
-                <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div key={item.id} className="rounded-2xl border border-slate-200/80 bg-white/90 p-4">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold', item.type === 'original' ? (item.mode === 'explore' ? 'bg-violet-50 text-violet-600' : 'bg-emerald-50 text-emerald-600') : 'bg-violet-50 text-violet-600')}>
+                      <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold', item.type === 'original' ? (item.mode === 'explore' ? 'bg-violet-50 text-violet-600' : 'bg-emerald-50 text-emerald-600') : 'bg-fuchsia-50 text-fuchsia-600')}>
                         {item.type === 'original' ? (item.mode === 'explore' ? '探索型' : '稳定型') : item.version}
                       </span>
                       {item.direction && <span className="truncate text-xs font-bold text-slate-500">{item.direction}</span>}
