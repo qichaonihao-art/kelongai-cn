@@ -456,6 +456,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
 
   useEffect(() => {
     let cancelled = false;
+    let historyUrls: string[] = [];
     (async () => {
       try {
         const summaries = await loadUploadHistorySummaries('image');
@@ -467,6 +468,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
             name: s.name,
             previewUrl: URL.createObjectURL(s.previewBlob as Blob),
           }));
+        historyUrls = mapped.map((m) => m.previewUrl);
         setHistoryImages(mapped);
       } catch {
         // 历史图片读取失败不影响主流程
@@ -474,6 +476,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
     })();
     return () => {
       cancelled = true;
+      historyUrls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
 
