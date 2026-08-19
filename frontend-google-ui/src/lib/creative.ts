@@ -638,15 +638,22 @@ export async function analyzePainting(file: File): Promise<PaintingProfile> {
     : {};
 }
 
+export interface PaintingIdeasResult {
+  ideas: PaintingIdeaSummary[];
+  batch: number;
+  totalBatches: number;
+}
+
 export async function generatePaintingIdeas(
   profile: PaintingProfile,
-  plan: PaintingMaterialPlan
-): Promise<PaintingIdeaSummary[]> {
+  plan: PaintingMaterialPlan,
+  batch = 0
+): Promise<PaintingIdeasResult> {
   const response = await fetch('/api/painting/ideas', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ profile, plan }),
+    body: JSON.stringify({ profile, plan, batch }),
   });
 
   const json = await response.json().catch(() => null);
@@ -658,7 +665,11 @@ export async function generatePaintingIdeas(
     throw new Error(message);
   }
 
-  return Array.isArray(json?.ideas) ? (json.ideas as PaintingIdeaSummary[]) : [];
+  return {
+    ideas: Array.isArray(json?.ideas) ? (json.ideas as PaintingIdeaSummary[]) : [],
+    batch: Number.isFinite(Number(json?.batch)) ? Number(json.batch) : batch,
+    totalBatches: Number.isFinite(Number(json?.totalBatches)) ? Number(json.totalBatches) : 1,
+  };
 }
 
 export async function generatePaintingIdeaPrompt(

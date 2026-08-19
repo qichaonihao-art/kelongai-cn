@@ -1388,6 +1388,8 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
   const [paintingIdeas, setPaintingIdeas] = useState<PaintingIdeaSummary[]>([]);
   const [paintingSelectedIdea, setPaintingSelectedIdea] = useState<PaintingIdeaSummary | null>(null);
   const [usedIdeaIds, setUsedIdeaIds] = useState<Record<string, boolean>>({});
+  const [paintingFrameworkBatch, setPaintingFrameworkBatch] = useState(0);
+  const [paintingTotalBatches, setPaintingTotalBatches] = useState(4);
   const [paintingFullPrompt, setPaintingFullPrompt] = useState('');
   const [paintingLoading, setPaintingLoading] = useState<'idle' | 'analyze' | 'ideas' | 'prompt'>('idle');
   const [paintingHistory, setPaintingHistory] = useState<PaintingHistoryItem[]>([]);
@@ -2873,7 +2875,7 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     }
   }
 
-  async function handlePaintingGenerateIdeas() {
+  async function runPaintingIdeas(batch: number) {
     if (!paintingProfile) {
       setPaintingError('请先完成产品分析。');
       return;
@@ -2881,8 +2883,10 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     setPaintingError('');
     setPaintingLoading('ideas');
     try {
-      const ideas = await generatePaintingIdeas(paintingProfile, paintingPlan);
-      setPaintingIdeas(ideas);
+      const result = await generatePaintingIdeas(paintingProfile, paintingPlan, batch);
+      setPaintingIdeas(result.ideas);
+      setPaintingFrameworkBatch(result.batch);
+      if (result.totalBatches > 0) setPaintingTotalBatches(result.totalBatches);
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
       setUsedIdeaIds({});
@@ -2892,6 +2896,19 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
     } finally {
       setPaintingLoading('idle');
     }
+  }
+
+  // 生成创意方案：从第一批框架开始。
+  async function handlePaintingGenerateIdeas() {
+    setPaintingFrameworkBatch(0);
+    await runPaintingIdeas(0);
+  }
+
+  // 重新生成一批：轮换到下一批框架（循环）。
+  async function handlePaintingRegenerateIdeas() {
+    const next = (paintingFrameworkBatch + 1) % Math.max(1, paintingTotalBatches);
+    setPaintingFrameworkBatch(next);
+    await runPaintingIdeas(next);
   }
 
   async function handlePaintingGeneratePrompt(idea: PaintingIdeaSummary) {
@@ -3730,17 +3747,12 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                     <div ref={paintingPlanRef} className="space-y-2 rounded-2xl border border-slate-300 bg-slate-50 p-3">
                       <div className="text-xs font-black text-slate-800">素材计划</div>
                       <div className="grid gap-2 sm:grid-cols-2">
-                        <label className="text-[11px] font-semibold text-slate-500">
+                        <div className="text-[11px] font-semibold text-slate-500">
                           方案数量
-                          <input
-                            type="number"
-                            min={1}
-                            max={30}
-                            value={paintingPlan.count}
-                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, count: Math.min(30, Math.max(1, Number(event.target.value) || 1)) }))}
-                            className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
-                          />
-                        </label>
+                          <div className="mt-1 flex h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600">
+                            每批固定 10 条（8 框架 + 2 自由发挥）
+                          </div>
+                        </div>
                         <label className="text-[11px] font-semibold text-slate-500">
                           画面比例
                           <select
@@ -3834,12 +3846,12 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
                         <div className="text-xs font-black text-slate-800">创意方案（{paintingIdeas.length} 条）</div>
                         <button
                           type="button"
-                          onClick={handlePaintingGenerateIdeas}
+                          onClick={handlePaintingRegenerateIdeas}
                           disabled={paintingLoading !== 'idle'}
                           className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-500 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           {paintingLoading === 'ideas' ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
-                          重新生成一批
+                          重新生成一批（第 {paintingFrameworkBatch + 1}/{paintingTotalBatches} 批）
                         </button>
                       </div>
                       <div className="grid gap-2">
