@@ -8,6 +8,8 @@ import LoginPage from './pages/LoginPage';
 import HomePage from './pages/HomePage';
 import VoiceCloningPage from './pages/VoiceCloningPage';
 import CreativeCreationPage from './pages/CreativeCreationPage';
+import CreativeSelectPage from './pages/CreativeSelectPage';
+import CopywritingPage from './pages/CopywritingPage';
 import DouyinDownloaderPage from './pages/DouyinDownloaderPage';
 import StoreOverviewPage from './pages/StoreOverviewPage';
 import ImageGenerationPage from './pages/ImageGenerationPage';
@@ -19,7 +21,7 @@ import VideoLibraryPage from './pages/VideoLibraryPage';
 import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
 import type { ModuleId } from './components/ModuleQuickNav';
 
-type Page = 'login' | 'home' | 'universal' | ModuleId;
+type Page = 'login' | 'home' | 'universal' | 'creative-video' | 'creative-copy' | ModuleId;
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
@@ -56,12 +58,16 @@ export default function App() {
     return result;
   };
 
-  const handleNavigate = (page: ModuleId | 'universal') => {
+  const handleNavigate = (page: Page) => {
     setCurrentPage(page);
   };
 
   const handleBackToHome = () => {
     setCurrentPage('home');
+  };
+
+  const handleBackToCreative = () => {
+    setCurrentPage('creative');
   };
 
   const handleBackToDouyin = () => {
@@ -93,9 +99,25 @@ export default function App() {
         />
       )}
       {currentPage === 'creative' && (
-        <CreativeCreationPage
+        <CreativeSelectPage
           onBack={handleBackToHome}
           onNavigate={handleNavigate}
+          onSelectVideo={() => setCurrentPage('creative-video')}
+          onSelectCopy={() => setCurrentPage('creative-copy')}
+        />
+      )}
+      {currentPage === 'creative-video' && (
+        <CreativeCreationPage
+          onBack={handleBackToCreative}
+          onNavigate={handleNavigate}
+          onSwitchToCopy={() => setCurrentPage('creative-copy')}
+        />
+      )}
+      {currentPage === 'creative-copy' && (
+        <CopywritingPage
+          onBack={handleBackToCreative}
+          onNavigate={handleNavigate}
+          onSwitchToVideo={() => setCurrentPage('creative-video')}
         />
       )}
       {currentPage === 'douyin' && (

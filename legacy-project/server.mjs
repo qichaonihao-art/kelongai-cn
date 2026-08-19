@@ -70,6 +70,7 @@ const HOME_CULTURE_MOTTOS_FILE = path.join(RUNTIME_STATE_DIR, 'home-culture-mott
 const TEAM_TIMELINE_FILE = path.join(RUNTIME_STATE_DIR, 'team-timeline.json');
 const CREATIVE_FEEDING_SETTINGS_FILE = path.join(RUNTIME_STATE_DIR, 'creative-feeding-settings.json');
 const CREATIVE_OPENING_LIBRARY_FILE = path.join(RUNTIME_STATE_DIR, 'creative-opening-library.json');
+const CREATIVE_COPY_LIBRARY_FILE = path.join(RUNTIME_STATE_DIR, 'creative-copy-library.json');
 const VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS = 15 * 1000;
 const COLLECTION_DB_PATH = path.join(RUNTIME_STATE_DIR, 'collection.db');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
@@ -2878,6 +2879,65 @@ async function saveCreativeOpeningLibrary(openings) {
   };
   await writeRuntimeJsonWithBackup(CREATIVE_OPENING_LIBRARY_FILE, payload);
   return payload.openings;
+}
+
+function sanitizeCopyLibraryItem(input, previous = {}, options = {}) {
+  const now = new Date().toISOString();
+  const createdAt = readValue(input?.createdAt, previous?.createdAt) || now;
+  return {
+    id: readValue(input?.id, previous?.id) || randomBytes(8).toString('hex'),
+    type: readValue(input?.type, previous?.type) === 'rewrite' ? 'rewrite' : 'original',
+    profile: input?.profile && typeof input.profile === 'object' ? input.profile : (previous?.profile || {}),
+    imageThumb: readValue(input?.imageThumb, previous?.imageThumb),
+    extraInfo: readValue(input?.extraInfo, previous?.extraInfo),
+    forbidden: readValue(input?.forbidden, previous?.forbidden),
+    originalText: readValue(input?.originalText, previous?.originalText),
+    mode: readValue(input?.mode, previous?.mode),
+    version: readValue(input?.version, previous?.version),
+    direction: readValue(input?.direction, previous?.direction),
+    fullText: readValue(input?.fullText, previous?.fullText),
+    wordCount: Number.isFinite(Number(input?.wordCount))
+      ? Number(input.wordCount)
+      : countChars(readValue(input?.fullText, previous?.fullText)),
+    isLiked: Boolean(input?.isLiked ?? previous?.isLiked),
+    model: readValue(input?.model, previous?.model) || DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+    createdAt,
+    updatedAt: options.touch ? now : (readValue(input?.updatedAt, previous?.updatedAt) || createdAt)
+  };
+}
+
+async function loadCopyLibrary() {
+  try {
+    const raw = await readFile(CREATIVE_COPY_LIBRARY_FILE, 'utf8');
+    const parsed = parseJsonString(raw, {});
+    const items = Array.isArray(parsed?.items)
+      ? parsed.items
+          .map((item) => sanitizeCopyLibraryItem(item))
+          .filter((item) => item.fullText)
+          .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      : [];
+    return { version: 1, items };
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.error('[copy library] load_failed', { message: error?.message || '' });
+    }
+    const emptyLibrary = { version: 1, items: [] };
+    await writeRuntimeJsonWithBackup(CREATIVE_COPY_LIBRARY_FILE, emptyLibrary);
+    return emptyLibrary;
+  }
+}
+
+async function saveCopyLibrary(items) {
+  const payload = {
+    version: 1,
+    items: items
+      .map((item) => sanitizeCopyLibraryItem(item))
+      .filter((item) => item.fullText)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))),
+    updatedAt: new Date().toISOString()
+  };
+  await writeRuntimeJsonWithBackup(CREATIVE_COPY_LIBRARY_FILE, payload);
+  return payload.items;
 }
 
 function filterCreativeOpenings(openings, url) {
@@ -12091,6 +12151,55 @@ function parseStructuredJson(text) {
   }
 }
 
+function countChars(text) {
+  return String(text || '').replace(/\s/g, '').length;
+}
+
+function textBigrams(text) {
+  const normalized = String(text || '')
+    .toLowerCase()
+    .replace(/[#*_`>\-\s]/g, '')
+    .replace(/[，。、“”‘’；：:,.!?！？（）()【】\[\]《》<>]/g, '');
+  const bigrams = new Set();
+  for (let i = 0; i < normalized.length - 1; i += 1) {
+    bigrams.add(normalized.slice(i, i + 2));
+  }
+  return bigrams;
+}
+
+function textSimilarity(a, b) {
+  const bigramsA = textBigrams(a);
+  const bigramsB = textBigrams(b);
+  if (!bigramsA.size || !bigramsB.size) return 0;
+  let intersection = 0;
+  for (const gram of bigramsA) {
+    if (bigramsB.has(gram)) intersection += 1;
+  }
+  return intersection / Math.max(bigramsA.size, bigramsB.size);
+}
+
+function isRetriableUpstreamError(error) {
+  const message = String(error?.message || error || '');
+  return /network|fetch|failed|timeout|timed out|abort|terminated|connection|econn|socket|网络|连接|中断|超时|504|502|503|429/i.test(message);
+}
+
+async function withRetryOnce(fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (!isRetriableUpstreamError(error)) throw error;
+    console.warn('[copy] upstream retry', { message: error?.message || '' });
+    try {
+      return await fn();
+    } catch (retryError) {
+      if (isRetriableUpstreamError(retryError)) {
+        throw new Error('豆包连接偶发中断，已自动重试一次但仍未成功。请稍后再试。');
+      }
+      throw retryError;
+    }
+  }
+}
+
 async function callDoubaoArkText({ apiKey, model, content }) {
   const upstreamUrl = 'https://ark.cn-beijing.volces.com/api/v3/responses';
   const requestPayload = {
@@ -12196,49 +12305,49 @@ async function handlePaintingAnalyze(req, res) {
 // 每条只给「人物 + 场景 + 动作 + 镜头 + 动静」的骨架，具体挂画内容由豆包结合产品档案填充。
 // 这样「重新生成一批」能在框架层面强制错开，避免每批趋同。
 const PAINTING_FRAMEWORKS = [
-  // 第 1 批：人与画互动 + 家庭生活
+  // 第 1 批：前 2 条扫拍 + 人与画互动/家庭生活
   [
+    '纯产品扫拍：挂画挂在客厅的纯白色墙面，镜头从左到右缓慢横摇扫过房间，最后定格在墙上的挂画并轻微推近',
+    '纯产品扫拍：挂画挂在书房的纯白色墙面，镜头从右到左缓慢横摇，扫到挂画后定格',
     '单人（年轻女性）在雅致客厅，双手捧着挂画正面朝镜头微笑展示，镜头缓慢推近',
     '两人（中年夫妇）在书房，丈夫把挂画挂上墙，妻子在一旁递工具并抬头端详，固定机位中景',
     '一家三口在客厅，父亲指着画上的文字给孩子轻声讲解，母亲微笑旁听，镜头从左到右缓慢横摇扫过三人与画',
     '单人（中老年男性）在茶室，坐在挂画旁饮茶，转头欣赏画作，镜头从画缓慢拉远到全景',
-    '纯产品空镜：挂画挂在素净墙面，晨光斜照，镜头从右到左缓慢横摇扫过整幅画',
-    '单人（年轻女性）穿旗袍，在玄关踮脚调整挂画角度，后退两步端详，固定机位',
     '两人（祖孙）在客厅，爷爷指着画给孙辈讲画里的故事，孙辈仰头看画，镜头缓慢推近到画',
     '纯产品特写：固定机位特写挂画上的书法大字与笔触细节，缓缓推近',
   ],
-  // 第 2 批：发现式叙事 + 空间融入 + 场景切换
+  // 第 2 批：前 2 条扫拍 + 发现式叙事/空间融入
   [
+    '纯产品扫拍：挂画挂在玄关的纯白色墙面，镜头从右到左缓慢横摇，扫到挂画后定格并轻微推近',
+    '纯产品扫拍：挂画挂在茶室的纯白色墙面，镜头从左到右缓慢横摇扫过墙面，最后定格在挂画上',
     '空镜开场：先拍空房间，门被推开，单人（中年男性）走入并抬头发现墙上挂画，镜头跟随人物再切到画',
     '挂画在不同房间分别出现（客厅、书房、茶室），每处配不同人物或空镜，镜头硬切转场，人物保持一致',
     '单人（年轻女性）在书房读书，抬头看画，镜头从人物缓慢摇到墙上的画，再推近',
     '两人（朋友）在茶室，一人倒茶、一人指着画介绍，镜头轻微环绕移动',
     '纯产品：先特写挂画笔触与木条细节（固定机位），再缓慢拉远揭示整幅画',
     '家庭（三代）在客厅围坐，长辈指着画讲家族故事，镜头从画摇到众人',
-    '单人（中老年女性）在卧室，站在挂画前整理衣襟、抬头端详，固定机位中景',
-    '纯产品：挂画在晨光、暖灯、黄昏三种光影下硬切切换，固定机位，突出质感',
   ],
-  // 第 3 批：展示 + 动作过程 + 声画分离
+  // 第 3 批：前 2 条扫拍 + 展示/动作过程
   [
+    '纯产品扫拍：挂画挂在卧室的纯白色墙面，镜头从左到右缓慢横摇，最后定格在挂画上并轻微推近',
+    '纯产品扫拍：挂画挂在餐厅的纯白色墙面，镜头从右到左缓慢横摇，扫到挂画后定格',
     '单人（年轻男性）在展厅，拿着挂画对镜头旋转展示正反面，镜头跟随',
     '卷轴展开过程：一人以手部为主缓缓展开卷轴挂画，从卷起到平铺，镜头俯拍',
     '两人（夫妻）在客厅，丈夫挂画、妻子在远处指点位置，镜头左右横摇',
     '声画分离：镜头始终聚焦挂画细节，人物在画面外旁白介绍，固定机位加轻微推近',
-    '单人（年轻女性）在庭院，捧画站在花木前展示，阳光斑驳，镜头缓慢环绕',
     '纯产品开箱：从包装盒取出挂画、揭开保护膜第一次亮相，镜头跟随手部',
     '两人（父女）在书房，女儿递画、父亲挂，挂好后两人并肩欣赏，固定机位',
-    '纯产品：挂画与家具、人身高同框对照突出尺寸，镜头缓慢拉远',
   ],
-  // 第 4 批：仪式感 + 送礼 + 细节工艺
+  // 第 4 批：前 2 条扫拍 + 仪式感/送礼/细节工艺
   [
+    '纯产品扫拍：挂画挂在展厅的纯白色墙面，镜头从右到左缓慢横摇，扫到挂画后定格并轻微推近',
+    '纯产品扫拍：挂画挂在禅意空间的纯白色墙面，镜头从左到右缓慢横摇，最后定格在挂画上',
     '仪式感：一人净手、焚香，随后郑重地把挂画挂上墙，镜头缓慢推近',
     '送礼场景：一人双手提着卷轴状态或展开的挂画送给另一人，对方接过并欣赏，固定机位',
     '纯产品：特写木条、挂轴、挂绳与福字挂钩的工艺细节，镜头从左到右缓慢横摇',
     '单人（年轻女性）在餐厅，把挂画挂好后后退几步拍照分享，镜头跟随',
-    '两人（祖孙）在禅意空间，长辈挂画、晚辈上香，氛围宁静，固定机位',
     '纯产品：俯拍挂画平铺在桌面，一只手轻轻抚过画面纹理，镜头缓慢推近',
     '家庭（三口）在玄关，一起抬着挂画比划挂的位置、有说有笑，镜头左右横摇',
-    '纯产品：挂画已挂墙，镜头从下往上缓慢仰拍，突出庄重感',
   ],
 ];
 
@@ -12399,9 +12508,9 @@ ${extraRequirements ? `\n【其他特殊要求】\n${extraRequirements}` : ''}
 2. 画面中的一切动作、镜头、展开方式、光影、透视、材质表现都必须符合真实物理逻辑，不得出现穿模、悬浮、违反重力/光影/透视等不合理现象。如果出现卷轴式挂画或卷起后展开的画作，必须是卷轴沿自身轴线旋转、画布从卷筒中逐步释放的「滚动展开」，严禁滑动、平移、平铺或直接弹开。画面中任何物体的运动（挂画的上升、下降、平移、旋转、展开、翻面）都必须有明确的施动者（人的手、人的动作或合理的物理机制），严禁挂画或任何物体在没有手/人操作的情况下自行悬浮、漂浮、上升、移动、旋转——挂画要动，必须有人来拿、挂、展开或展示它，不能自己悬空位移。同一视频内如果出现人物（无论单人还是多人、无论跨多少个镜头或场景），所有人物必须长相、性别、年龄、发型、服装保持一致，严禁中途换人、换装或人物数量无故增减。
 3. 动作密度：整个视频必须包含 3-4 个连续、不同的动作阶段，节奏清晰、有起承转合；禁止通过慢放、降速或循环来凑够时长，禁止长时间静止画面，每个阶段的动作都要真实发生在对应时间段内。
 4. 提示词必须分三部分：产品固定约束、创意内容、负面约束。
-5. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。如画面中的挂画带有木条、挂轴或压杆等边框结构，这些结构必须保持档案中的形状、颜色、材质、粗细、长度、截面和两端轮廓不变；如涉及卷起或展开，全程不得变形、不得把木条变成圆柱形卷轴或圆杆、不得变色，也不得在两端或旁边新增任何圆柱、轴头、端帽、圆球、把手等构件。
-6. 创意内容：结合创意方案，写清楚${character ? `人物设定（${character}）` : '人物设定'}、人物着装（着装要符合中式挂画的雅致基调：年轻女性可穿旗袍或中式改良服饰，中老年人物可穿中式对襟、盘扣、禅意棉麻；衣着颜色从中式雅致色系中挑选，如淡青、月白、藕荷、黛蓝、水红、竹绿、鹅黄、黑色、浅紫色、浅绿色、米白色、浅灰色等，避免每次都用同一种颜色，让颜色丰富、有变化）、场景、构图、动作节奏、光影氛围、${audio ? `声音/音乐（${audio}）` : '声音'}等，并重点落实镜头语言——按方案里已规划的运镜（缓慢推近/缓慢拉远/横向缓摇/纵向缓移/固定机位特写等）为每个动作阶段配一种景别或机位变化，把整个视频按时间轴拆成 3-4 个连续的动作阶段（从 0 秒开始、按先后顺序无重叠地铺满到总时长结束），每个阶段写明起止时间、对应的动作与镜头的景别/机位变化（例如「0-3 秒固定机位特写笔触 → 3-6 秒缓慢拉远至全景展示整幅画 → 6-8 秒横向缓摇收尾」），展开成一个连贯自然的镜头脚本；所有运镜必须舒缓、稳定、慢速、幅度小。
-7. 负面约束：明确列出不得改变的元素（挂画外观、木条结构、多余装饰物等）、必须避免的物理违背现象（穿模、悬浮、违反重力/光影/透视等）、禁止单一动作慢放/循环凑时长、禁止长时间静止画面、禁止镜头快速晃动/快速变焦/急推/剧烈运镜/手持抖动、严禁挂画在没有人物/手操作的情况下自行位移或改变姿态；如涉及卷轴或木条，还要禁止滑动式展开、禁止木条变成圆柱或变色、禁止在木条两端或旁边新增圆柱/轴头/端帽等构件。
+5. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。如画面中的挂画带有木条、挂轴或压杆等边框结构，这些结构必须保持档案中的形状、颜色、材质、粗细、长度、截面和两端轮廓不变；如涉及卷起或展开，全程不得变形、不得把木条变成圆柱形卷轴或圆杆、不得变色，也不得在两端或旁边新增任何圆柱、轴头、端帽、圆球、把手等构件。挂画实际尺寸为宽 40 厘米、高 80 厘米（竖幅，宽高比约 1:2）；画面中挂画与人物、家具、墙面的相对比例必须符合这一真实尺寸——挂画高度应明显小于成人身高（约到成人腰部至肩部高度），宽度较窄，严禁把挂画渲染成比人还高、比人还宽或占据整面墙的巨幅画。
+6. 创意内容：结合创意方案，写清楚${character ? `人物设定（${character}）` : '人物设定'}、人物着装（着装要符合中式挂画的雅致基调：年轻女性可穿旗袍或中式改良服饰，中老年人物可穿中式对襟、盘扣、禅意棉麻；衣着颜色从中式雅致色系中挑选，如淡青、月白、藕荷、黛蓝、水红、竹绿、鹅黄、黑色、浅紫色、浅绿色、米白色、浅灰色等，避免每次都用同一种颜色，让颜色丰富、有变化）、场景、构图、动作节奏、光影氛围（墙面统一为纯白色，光线为正常的自然光、中性白光，不要暖色调、不要米黄墙面）、${audio ? `声音/音乐（${audio}）` : '声音'}等，并重点落实镜头语言——按方案里已规划的运镜（缓慢推近/缓慢拉远/横向缓摇/纵向缓移/固定机位特写等）为每个动作阶段配一种景别或机位变化，把整个视频按时间轴拆成 3-4 个连续的动作阶段（从 0 秒开始、按先后顺序无重叠地铺满到总时长结束），每个阶段写明起止时间、对应的动作与镜头的景别/机位变化（例如「0-3 秒固定机位特写笔触 → 3-6 秒缓慢拉远至全景展示整幅画 → 6-8 秒横向缓摇收尾」），展开成一个连贯自然的镜头脚本；所有运镜必须舒缓、稳定、慢速、幅度小。
+7. 负面约束：明确列出不得改变的元素（挂画外观、木条结构、多余装饰物等）、必须避免的物理违背现象（穿模、悬浮、违反重力/光影/透视等）、禁止单一动作慢放/循环凑时长、禁止长时间静止画面、禁止镜头快速晃动/快速变焦/急推/剧烈运镜/手持抖动、严禁挂画在没有人物/手操作的情况下自行位移或改变姿态、禁止暖色调画面、禁止米黄/暖白墙面、禁止暖光或黄昏氛围；如涉及卷轴或木条，还要禁止滑动式展开、禁止木条变成圆柱或变色、禁止在木条两端或旁边新增圆柱/轴头/端帽等构件。
 ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之间，请你从该范围内挑选一个最合适的整数秒数；画面比例 ${ratio}。并在提示词最后单独写一行「总时长：X秒」（X 为你选定的整数，例如「总时长：8秒」）。` : `8. 总时长约 ${fallbackDuration} 秒，画面比例 ${ratio}。并在提示词最后单独写一行「总时长：${fallbackDuration}秒」。`}
 
 严格只输出这段提示词文本本身，不要输出任何解释、标题、序号或 markdown 包裹。`;
@@ -12437,6 +12546,510 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
       error: error?.message || '完整提示词生成失败',
       debug: { stage: 'idea-prompt', rawText: error?.rawText }
     });
+  }
+}
+
+// ===== 文案创作（copywriting）=====
+// 挂画分析 / AI 原创 10 条 / 爆款仿写 3 版，全部复用豆包 Seed 2.1 多模态 + callDoubaoArkText。
+// 独立文案库存储于 RUNTIME_STATE_DIR/creative-copy-library.json，不动现有任何运行状态文件。
+
+function normalizeCopyItem(item, index) {
+  const hook = readValue(item?.hook);
+  const content = readValue(item?.content);
+  const closing = readValue(item?.closing);
+  const fullText = readValue(item?.fullText) || [hook, content, closing].filter(Boolean).join('\n');
+  return {
+    id: readValue(item?.id) || `copy-${index + 1}`,
+    mode: readValue(item?.mode) === 'explore' ? 'explore' : 'stable',
+    direction: readValue(item?.direction) || (readValue(item?.mode) === 'explore' ? '探索' : '稳定'),
+    targetLength: Number(item?.targetLength) === 250 ? 250 : 350,
+    title: readValue(item?.title),
+    hook,
+    content,
+    closing,
+    fullText
+  };
+}
+
+function normalizeCopyItems(copies) {
+  return (Array.isArray(copies) ? copies : [])
+    .filter((item) => item && typeof item === 'object')
+    .map((item, index) => normalizeCopyItem(item, index))
+    .filter((item) => item.fullText);
+}
+
+function copyWordCountBoundary(targetLength) {
+  return targetLength === 250 ? { min: 235, max: 265 } : { min: 330, max: 370 };
+}
+
+function validateCopies(copies) {
+  if (!copies.length) return '模型未返回有效文案';
+  if (copies.length !== 10) return `文案数量不正确（应为 10 条，实得 ${copies.length} 条）`;
+
+  const count350 = copies.filter((c) => c.targetLength === 350).length;
+  const count250 = copies.filter((c) => c.targetLength === 250).length;
+  if (count350 !== 7 || count250 !== 3) {
+    return `字数档位不正确（350 字应为 7 条、250 字应为 3 条，实得 350:${count350}、250:${count250}）`;
+  }
+
+  const stableCount = copies.filter((c) => c.mode === 'stable').length;
+  if (stableCount !== 6) return `稳定型应为 6 条，实得 ${stableCount} 条`;
+
+  for (const copy of copies) {
+    const chars = countChars(copy.fullText);
+    const { min, max } = copyWordCountBoundary(copy.targetLength);
+    if (chars < min || chars > max) {
+      return `「${copy.direction || copy.id}」字数 ${chars} 不在 ${min}~${max} 区间`;
+    }
+  }
+
+  for (let i = 0; i < copies.length; i += 1) {
+    for (let j = i + 1; j < copies.length; j += 1) {
+      if (textSimilarity(copies[i].fullText, copies[j].fullText) > 0.85) {
+        return `第 ${i + 1} 条与第 ${j + 1} 条内容高度重复`;
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeRewriteVersions(versions) {
+  const labels = ['稳定保守版', '情绪强化版', '结构重组版'];
+  return (Array.isArray(versions) ? versions : [])
+    .filter((item) => item && typeof item === 'object')
+    .map((item, index) => ({
+      version: readValue(item?.version) || labels[index] || `版本${index + 1}`,
+      content: readValue(item?.content) || readValue(item?.fullText) || ''
+    }))
+    .filter((item) => item.content);
+}
+
+async function handleCopyAnalyze(req, res) {
+  const requestId = randomBytes(6).toString('hex');
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+
+    const body = isMultipartFormRequest(req)
+      ? await readMultipartFormBody(req)
+      : await readRequestBody(req);
+
+    let imageUrl = '';
+    if (body.file instanceof File && body.file.size > 0) {
+      const compressedFile = await compressMediaForArk(body.file, 'image');
+      const normalized = await normalizeUploadedMediaInput(compressedFile, 'image');
+      imageUrl = normalized.imageUrl;
+    } else if (readValue(body.image)) {
+      imageUrl = normalizeBase64ImageInput(body.image, body.imageMimeType).imageUrl;
+    } else {
+      sendJson(res, 400, { error: '请先上传挂画图片。' });
+      return;
+    }
+
+    const name = readValue(body.name);
+    const extraInfo = readValue(body.extraInfo);
+    const sellingPoints = readValue(body.sellingPoints);
+    const forbidden = readValue(body.forbidden);
+
+    const prompt = `你是专业的挂画/卷轴产品分析专家。请仔细分析下面这张挂画/装饰画图片，输出一个「挂画档案」JSON 对象。
+
+${name ? `用户提供的挂画名称：${name}\n` : ''}${extraInfo ? `用户补充的产品信息：${extraInfo}\n` : ''}${sellingPoints ? `用户提供的核心寓意或卖点：${sellingPoints}\n` : ''}${forbidden ? `用户明确禁止出现、不可编造的内容：${forbidden}\n` : ''}
+要求输出以下字段（能用中文就用中文描述，无法从图片判断的字段用空字符串或空数组，不要臆造）：
+- name：挂画名称
+- visualDescription：画面主体和内容（画了什么、构图、有无人物/山水/花鸟/书法等）
+- colors：主要颜色数组（如 ["墨黑","赭石","宣纸白"]）
+- style：视觉风格（如国画、书法、油画、装饰画、现代简约等）
+- textCalligraphySeals：画面中的文字、书法内容、印章（没有则为空字符串）
+- material：材质与形态（宣纸、绢布、油画布、亚克力等）
+- structure：边框、木条、挂轴和挂绳结构（形状、颜色、材质、粗细）
+- suitableScenes：适合悬挂的空间数组（如 ["客厅","书房","茶室","玄关"]）
+- targetAudiences：适合的人群数组（如 ["中年人","读书人","家庭经营者"]）
+- meanings：核心寓意和情绪价值数组
+- sellingPoints：可以表达的产品卖点数组
+- uncertainClaims：图片无法确定、不可随意编造的信息数组（如具体年代、作者、材质真假、风水功效等）
+
+严格只输出一个合法 JSON 对象，不要输出任何解释文字，不要用 markdown 代码块包裹。`;
+
+    console.log('[doubao copy] analyze request start', { requestId, hasFile: body.file instanceof File, fileSize: body.file?.size || 0 });
+
+    const answer = await withRetryOnce(() => callDoubaoArkText({
+      apiKey,
+      model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+      content: [
+        { type: 'input_image', image_url: imageUrl },
+        { type: 'input_text', text: prompt }
+      ]
+    }));
+
+    const profile = parseStructuredJson(answer);
+    console.log('[doubao copy] analyze done', { requestId, profileKeys: profile && typeof profile === 'object' ? Object.keys(profile) : [] });
+    sendJson(res, 200, { ok: true, profile });
+  } catch (error) {
+    console.error('[doubao copy] analyze failed', { requestId, message: error?.message || '' });
+    sendJson(res, 500, {
+      error: error?.message || '挂画分析失败',
+      debug: { stage: 'analyze', rawText: error?.rawText }
+    });
+  }
+}
+
+async function handleCopyGenerate(req, res) {
+  const requestId = randomBytes(6).toString('hex');
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const profile = body.profile && typeof body.profile === 'object' ? body.profile : null;
+    if (!profile) {
+      sendJson(res, 400, { error: '缺少挂画档案 profile' });
+      return;
+    }
+    const extraInfo = readValue(body.extraInfo);
+    const forbidden = readValue(body.forbidden);
+
+    const prompt = `你是短视频口播文案创作专家，为一块挂画/装饰画产品创作 10 条不同方向的短视频口播文案。
+
+【挂画档案（产品事实以此为准，不得虚构）】
+${JSON.stringify(profile, null, 2)}
+${extraInfo ? `\n【用户补充信息】\n${extraInfo}` : ''}
+${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
+
+【数量与字数（硬性要求，必须严格满足）】
+- 共输出 10 条。
+- 其中 7 条为 350 字档（字数范围 330～370，忽略空白字符计数），3 条为 250 字档（字数范围 235～265）。
+- 不得为了凑字数重复表达、堆砌同义句。
+
+【创作比例 6+4（硬性要求）】
+- 6 条「稳定型」（mode=stable）：按装饰画销售的成熟经验创作，方向固定如下，每条对应一个方向、共 6 个：
+  1. 痛点解决（空墙单调、装修缺少文化氛围、空间没有精神气质）
+  2. 寓意价值（家风、祝福、处世态度、家庭愿景、文化含义）
+  3. 空间改造（客厅/书房/茶室/玄关/卧室等空间前后变化）
+  4. 人物共鸣（中年人、父母、家庭经营者、读书人、创业者等）
+  5. 故事情绪（家庭经历、人生阶段、父母教导、生活感悟）
+  6. 购买转化（为什么值得挂、适合谁、适合哪里、什么时候购买或送礼）
+- 4 条「探索型」（mode=explore）：根据挂画内容、目标人群和营销场景探索新角度，可参考：反常识或观点冲突、热门生活话题、人物第一视角、家庭关系、传统文化的新解释、情绪治愈、装修审美、送礼场景、由画面文字引发的人生思考等。探索可以新，但不能跑偏。
+- 字数分配：稳定型里 5 条 350 字、1 条 250 字；探索型里 2 条 350 字、2 条 250 字。
+
+【探索边界（必须遵守）】
+- 不虚构历史出处、销量、功效、名人评价。
+- 不夸大风水、财富、健康等无法证明的作用。
+- 不写成与产品无关的纯鸡汤。
+- 所有产品事实以挂画档案和用户补充信息为准。
+
+【每条文案必备结构】
+1. 开头钩子：前 1～3 句抓住注意力（可用疑问、冲突、痛点、反常识、具体场景或人物对话）。
+2. 中间展开：讲人物、情绪、场景、挂画内容、寓意和实际价值。
+3. 自然转化：促进收藏、咨询或购买，但不能突然、生硬地要求下单。
+
+【其他要求】
+- 10 条开头不得高度重复；叙事结构不能只是替换同义词。
+- 语言适合真人口播，口语化，避免过度书面化。
+
+【输出格式】
+严格只输出一个 JSON 对象，结构如下：
+{"copies":[{"id":"1","mode":"stable","direction":"痛点解决","targetLength":350,"title":"标题","hook":"开头钩子","content":"中间展开","closing":"自然转化","fullText":"完整口播文案全文"}]}
+- mode 只能是 "stable" 或 "explore"；direction 写清本条方向；targetLength 为 350 或 250。
+- fullText 是本条完整口播文案，hook/content/closing 为分段落拆分。
+- 不要输出任何解释文字，不要用 markdown 代码块包裹。`;
+
+    const buildCopies = async () => {
+      const answer = await callDoubaoArkText({
+        apiKey,
+        model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+        content: [{ type: 'input_text', text: prompt }]
+      });
+      const parsed = parseStructuredJson(answer);
+      const copies = Array.isArray(parsed?.copies) ? parsed.copies : (Array.isArray(parsed) ? parsed : []);
+      return { copies, answer };
+    };
+
+    console.log('[doubao copy] generate request start', { requestId });
+
+    let result = await withRetryOnce(() => buildCopies());
+    let copies = normalizeCopyItems(result.copies);
+    let validationError = validateCopies(copies);
+    if (validationError) {
+      console.warn('[doubao copy] generate validation retry', { requestId, validationError });
+      result = await withRetryOnce(() => buildCopies());
+      copies = normalizeCopyItems(result.copies);
+      validationError = validateCopies(copies);
+    }
+
+    if (validationError) {
+      throw Object.assign(new Error(validationError), { rawText: result?.answer || '' });
+    }
+
+    console.log('[doubao copy] generate done', { requestId, count: copies.length });
+    sendJson(res, 200, { ok: true, copies });
+  } catch (error) {
+    console.error('[doubao copy] generate failed', { requestId, message: error?.message || '' });
+    sendJson(res, 500, {
+      error: error?.message || '原创文案生成失败',
+      debug: { stage: 'generate', rawText: error?.rawText }
+    });
+  }
+}
+
+async function handleCopyRewrite(req, res) {
+  const requestId = randomBytes(6).toString('hex');
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const originalText = readValue(body.originalText);
+    if (!originalText) {
+      sendJson(res, 400, { error: '请粘贴需要仿写的原文。' });
+      return;
+    }
+    const profile = body.profile && typeof body.profile === 'object' ? body.profile : {};
+    const extraInfo = readValue(body.extraInfo);
+    const forbidden = readValue(body.forbidden);
+
+    const prompt = `你是短视频文案仿写专家。请对用户粘贴的一条已在短视频平台取得较好效果的文案，先做结构分析，再输出 3 个仿写版本。
+
+【原文】
+${originalText}
+
+【挂画档案（产品事实以此为准，与原文冲突时以档案为准）】
+${JSON.stringify(profile, null, 2)}
+${extraInfo ? `\n【用户补充信息】\n${extraInfo}` : ''}
+${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
+
+【第一步：分析原文】输出以下字段：
+- hookMechanism：开头钩子机制
+- targetAudience：目标人群
+- coreSellingPoint：核心卖点
+- emotionProgression：情绪推进方式
+- narrativeStructure：叙事结构
+- conversionMethod：转化方式
+- keepableCore：可以保留的核心意思
+- claimsToDrop：不应继续使用的夸张或不实信息
+
+【第二步：生成 3 个仿写版本】version 字段分别为：
+1. 稳定保守版：保留原文传播逻辑，但重新表达。
+2. 情绪强化版：加强人物、场景与情绪共鸣。
+3. 结构重组版：改变叙述顺序、视角和展开方式。
+
+【仿写要求】
+- 保留核心意思、真实卖点和转化逻辑。
+- 文字、句式、段落顺序、视角、场景举例和情绪铺垫都要重新组织，不能只做同义词替换，不得复制原文中的连续长句。
+- 原文存在虚构或夸张内容时，不继续照搬；原文信息与挂画档案冲突时以档案为准。
+
+【输出格式】
+严格只输出一个 JSON 对象：
+{"analysis":{"hookMechanism":"","targetAudience":"","coreSellingPoint":"","emotionProgression":"","narrativeStructure":"","conversionMethod":"","keepableCore":"","claimsToDrop":""},"versions":[{"version":"稳定保守版","content":"完整仿写文案"}]}
+- versions 必须恰好 3 个，version 分别为「稳定保守版」「情绪强化版」「结构重组版」。
+- 不要输出任何解释文字，不要用 markdown 代码块包裹。`;
+
+    const build = async () => {
+      const answer = await callDoubaoArkText({
+        apiKey,
+        model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+        content: [{ type: 'input_text', text: prompt }]
+      });
+      const parsed = parseStructuredJson(answer);
+      return {
+        analysis: parsed?.analysis && typeof parsed.analysis === 'object' ? parsed.analysis : {},
+        versions: Array.isArray(parsed?.versions) ? parsed.versions : [],
+        answer
+      };
+    };
+
+    console.log('[doubao copy] rewrite request start', { requestId, originalLength: countChars(originalText) });
+
+    let result = await withRetryOnce(() => build());
+    let versions = normalizeRewriteVersions(result.versions);
+    if (!versions.length) {
+      throw Object.assign(new Error('模型未返回有效仿写版本'), { rawText: result.answer });
+    }
+
+    const tooSimilar = versions.filter((v) => textSimilarity(v.content, originalText) > 0.35);
+    if (tooSimilar.length) {
+      console.warn('[doubao copy] rewrite similarity retry', { requestId, count: tooSimilar.length });
+      const retry = await withRetryOnce(() => build());
+      const retryVersions = normalizeRewriteVersions(retry.versions);
+      if (retryVersions.length) {
+        versions = versions.map((v) => {
+          const replacement = retryVersions.find((rv) => rv.version === v.version);
+          if (replacement && textSimilarity(replacement.content, originalText) <= 0.35) return replacement;
+          return v;
+        });
+      }
+    }
+
+    console.log('[doubao copy] rewrite done', { requestId, count: versions.length });
+    sendJson(res, 200, { ok: true, analysis: result.analysis, versions });
+  } catch (error) {
+    console.error('[doubao copy] rewrite failed', { requestId, message: error?.message || '' });
+    sendJson(res, 500, {
+      error: error?.message || '爆款文案仿写失败',
+      debug: { stage: 'rewrite', rawText: error?.rawText }
+    });
+  }
+}
+
+async function handleCopyRegenerate(req, res) {
+  const requestId = randomBytes(6).toString('hex');
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const profile = body.profile && typeof body.profile === 'object' ? body.profile : null;
+    if (!profile) {
+      sendJson(res, 400, { error: '缺少挂画档案 profile' });
+      return;
+    }
+    const target = body.target && typeof body.target === 'object' ? body.target : {};
+    const mode = readValue(target.mode) === 'explore' ? 'explore' : 'stable';
+    const direction = readValue(target.direction) || (mode === 'explore' ? '探索' : '稳定');
+    const targetLength = Number(target.targetLength) === 250 ? 250 : 350;
+    const extraInfo = readValue(body.extraInfo);
+    const forbidden = readValue(body.forbidden);
+    const excludeTexts = (Array.isArray(body.excludeTexts) ? body.excludeTexts : [])
+      .filter((t) => typeof t === 'string' && t.trim());
+
+    const { min, max } = copyWordCountBoundary(targetLength);
+
+    const prompt = `你是短视频口播文案创作专家。请为下面的挂画重新创作一条口播文案。
+
+【挂画档案（产品事实以此为准，不得虚构）】
+${JSON.stringify(profile, null, 2)}
+${extraInfo ? `\n【用户补充信息】\n${extraInfo}` : ''}
+${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
+
+【本条要求】
+- 类型：${mode === 'explore' ? '探索型' : '稳定型'}
+- 创作方向：${direction}
+- 字数：${targetLength} 字档（${min}～${max} 字，忽略空白字符计数，不得为凑字数重复）
+${excludeTexts.length ? `\n【避免重复】请与以下已生成文案明显区分、不要雷同：\n${excludeTexts.map((t, i) => `${i + 1}. ${t}`).join('\n')}` : ''}
+
+【结构】开头钩子（前 1～3 句）+ 中间展开 + 自然转化；口语化、适合真人口播；不虚构历史出处/销量/功效/名人评价、不夸大风水财富健康。
+
+【输出格式】严格只输出一个 JSON 对象：
+{"id":"1","mode":"${mode}","direction":"${direction}","targetLength":${targetLength},"title":"","hook":"","content":"","closing":"","fullText":""}
+不要输出任何解释文字，不要用 markdown 代码块包裹。`;
+
+    console.log('[doubao copy] regenerate request start', { requestId, direction, targetLength });
+
+    const answer = await withRetryOnce(() => callDoubaoArkText({
+      apiKey,
+      model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+      content: [{ type: 'input_text', text: prompt }]
+    }));
+
+    const parsed = parseStructuredJson(answer);
+    const copyObj = parsed?.copy && typeof parsed.copy === 'object'
+      ? parsed.copy
+      : (parsed && typeof parsed === 'object' && readValue(parsed.fullText) ? parsed : null);
+    if (!copyObj) {
+      throw Object.assign(new Error('模型未返回有效文案'), { rawText: answer });
+    }
+
+    const copy = normalizeCopyItem(copyObj, 0);
+    copy.mode = mode;
+    copy.direction = direction || copy.direction;
+    copy.targetLength = targetLength;
+    if (!copy.fullText) {
+      throw Object.assign(new Error('模型返回的文案为空'), { rawText: answer });
+    }
+    const chars = countChars(copy.fullText);
+    if (chars < min || chars > max) {
+      throw Object.assign(new Error(`重新生成的文案字数 ${chars} 不在 ${min}~${max} 区间`), { rawText: answer });
+    }
+
+    console.log('[doubao copy] regenerate done', { requestId, chars });
+    sendJson(res, 200, { ok: true, copy });
+  } catch (error) {
+    console.error('[doubao copy] regenerate failed', { requestId, message: error?.message || '' });
+    sendJson(res, 500, {
+      error: error?.message || '单独重新生成失败',
+      debug: { stage: 'regenerate', rawText: error?.rawText }
+    });
+  }
+}
+
+async function handleCopyLibraryList(req, res, url) {
+  try {
+    const library = await loadCopyLibrary();
+    const q = readValue(url.searchParams.get('q')).toLowerCase();
+    let items = library.items;
+    if (q) {
+      items = items.filter((item) =>
+        [item.fullText, item.direction, item.version, item.mode, item.title, JSON.stringify(item.profile || {})]
+          .some((field) => String(field || '').toLowerCase().includes(q))
+      );
+    }
+    sendJson(res, 200, { ok: true, items, total: items.length });
+  } catch (error) {
+    console.error('[copy library] list failed', { message: error?.message || '' });
+    sendJson(res, 500, { error: error?.message || '读取文案库失败' });
+  }
+}
+
+async function handleCopyLibraryCreate(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const library = await loadCopyLibrary();
+    const item = sanitizeCopyLibraryItem(body, {}, { touch: true });
+    if (!item.fullText) {
+      sendJson(res, 400, { error: '缺少文案内容 fullText' });
+      return;
+    }
+    const items = await saveCopyLibrary([item, ...library.items]);
+    sendJson(res, 200, { ok: true, item: items.find((i) => i.id === item.id) || item });
+  } catch (error) {
+    console.error('[copy library] create failed', { message: error?.message || '' });
+    sendJson(res, 500, { error: error?.message || '保存到文案库失败' });
+  }
+}
+
+async function handleCopyLibraryUpdate(req, res, id) {
+  try {
+    const body = await readRequestBody(req);
+    const library = await loadCopyLibrary();
+    const existing = library.items.find((item) => item.id === id);
+    if (!existing) {
+      sendJson(res, 404, { error: '文案不存在或已被删除' });
+      return;
+    }
+    const item = sanitizeCopyLibraryItem({ ...body, id }, existing, { touch: true });
+    const items = await saveCopyLibrary(library.items.map((i) => (i.id === id ? item : i)));
+    sendJson(res, 200, { ok: true, item: items.find((i) => i.id === id) || item });
+  } catch (error) {
+    console.error('[copy library] update failed', { message: error?.message || '' });
+    sendJson(res, 500, { error: error?.message || '更新文案失败' });
+  }
+}
+
+async function handleCopyLibraryDelete(req, res, id) {
+  try {
+    const library = await loadCopyLibrary();
+    const next = library.items.filter((item) => item.id !== id);
+    if (next.length === library.items.length) {
+      sendJson(res, 404, { error: '文案不存在或已被删除' });
+      return;
+    }
+    await saveCopyLibrary(next);
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    console.error('[copy library] delete failed', { message: error?.message || '' });
+    sendJson(res, 500, { error: error?.message || '删除文案失败' });
   }
 }
 
@@ -14682,6 +15295,48 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/painting/idea-prompt') {
     await handlePaintingIdeaPrompt(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/copy/analyze') {
+    await handleCopyAnalyze(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/copy/generate') {
+    await handleCopyGenerate(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/copy/rewrite') {
+    await handleCopyRewrite(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/copy/regenerate') {
+    await handleCopyRegenerate(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/copy/library') {
+    await handleCopyLibraryList(req, res, url);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/copy/library') {
+    await handleCopyLibraryCreate(req, res);
+    return;
+  }
+
+  if (req.method === 'PATCH' && url.pathname.startsWith('/api/copy/library/')) {
+    const id = decodeURIComponent(url.pathname.replace(/^\/api\/copy\/library\//, ''));
+    await handleCopyLibraryUpdate(req, res, id);
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/copy/library/')) {
+    const id = decodeURIComponent(url.pathname.replace(/^\/api\/copy\/library\//, ''));
+    await handleCopyLibraryDelete(req, res, id);
     return;
   }
 

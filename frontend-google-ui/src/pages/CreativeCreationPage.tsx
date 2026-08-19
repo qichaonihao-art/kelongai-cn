@@ -26,6 +26,7 @@ import {
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
 import HomeBackButton from "@/src/components/HomeBackButton";
+import CreativeSubNav from "@/src/components/CreativeSubNav";
 import SiteFooter from "@/src/components/SiteFooter";
 import { cn } from "@/src/lib/utils";
 import {
@@ -76,6 +77,7 @@ interface Message {
 interface CreativeCreationPageProps {
   onBack: () => void;
   onNavigate: (page: ModuleId) => void;
+  onSwitchToCopy?: () => void;
 }
 
 interface PersistedCreativeMessage {
@@ -1312,7 +1314,7 @@ function renderAssistantMessageContent(content: string) {
   );
 }
 
-export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCreationPageProps) {
+export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCopy }: CreativeCreationPageProps) {
   const initialSessionState = useMemo(() => {
     const sessions = loadSavedCreativeSessions();
     return {
@@ -3507,6 +3509,11 @@ export default function CreativeCreationPage({ onBack, onNavigate }: CreativeCre
         <div className="flex items-center gap-3">
           <HomeBackButton onClick={onBack} />
           <ModuleQuickNav current="creative" onNavigate={onNavigate} />
+          <CreativeSubNav
+            current="video"
+            onSwitchVideo={() => {}}
+            onSwitchCopy={onSwitchToCopy ?? (() => {})}
+          />
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center">
