@@ -612,6 +612,27 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
       setProfileConfirmed(false);
       setOriginalItems([]);
       setRewriteItems([]);
+      // 分析成功即自动存档到本机：重进页面可直接恢复并点选，无需先手动确认
+      const archiveName = name.trim() || valueToText(result.name) || valueToText(result.visualDescription).slice(0, 12) || '未命名挂画';
+      void (async () => {
+        try {
+          const blob = currentImageBlobRef.current
+            ? await compressImageToBlob(currentImageBlobRef.current).catch(() => currentImageBlobRef.current as Blob)
+            : null;
+          if (!blob) return;
+          const saved = await savePainting({
+            name: archiveName,
+            imageBlob: blob,
+            profile: result,
+            extraInfo,
+            forbidden,
+          });
+          setActivePaintingId(saved.id);
+          setArchiveItems(await listPaintings());
+        } catch {
+          setArchiveUnavailable(true);
+        }
+      })();
       try {
         setImageThumb(await fileToThumbnailDataUrl(paintingFile));
       } catch {
