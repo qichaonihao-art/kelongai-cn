@@ -36,6 +36,9 @@ const MAX_VIDEO_ORIGINAL_UPLOAD_BYTES = 45 * 1024 * 1024;
 const MAX_COMPRESSED_VIDEO_BYTES = 49 * 1024 * 1024;
 const DEFAULT_DOUBAO_MULTIMODAL_MODEL = 'doubao-seed-2-1-pro-260628';
 const DOUBAO_MULTIMODAL_TIMEOUT_MS = 8 * 60 * 1000;
+// 文案创作走单条小请求，单条 350 字档十几秒内应返回；用较短超时让卡住的请求快速失败并重试，
+// 避免单条卡住 8 分钟把整批推到 nginx 代理超时（504）。
+const DOUBAO_COPY_TEXT_TIMEOUT_MS = 3 * 60 * 1000;
 const QWEN_CREATIVE_MULTIMODAL_MODEL = 'qwen3.8-max';
 const QWEN_CREATIVE_MULTIMODAL_TIMEOUT_MS = 10 * 60 * 1000;
 const APIMART_API_BASE_URL = String(process.env.APIMART_API_BASE_URL || 'https://api.apimart.ai/v1').trim().replace(/\/+$/g, '');
@@ -12224,7 +12227,7 @@ function findDuplicatePair(copies) {
   return null;
 }
 
-async function callDoubaoArkText({ apiKey, model, content }) {
+async function callDoubaoArkText({ apiKey, model, content, timeoutMs }) {
   const upstreamUrl = 'https://ark.cn-beijing.volces.com/api/v3/responses';
   const requestPayload = {
     model: model || DEFAULT_DOUBAO_MULTIMODAL_MODEL,
@@ -12240,7 +12243,7 @@ async function callDoubaoArkText({ apiKey, model, content }) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(requestPayload),
-    signal: AbortSignal.timeout(DOUBAO_MULTIMODAL_TIMEOUT_MS)
+    signal: AbortSignal.timeout(timeoutMs || DOUBAO_MULTIMODAL_TIMEOUT_MS)
   });
 
   const responseText = await upstreamRes.text();
@@ -12668,7 +12671,8 @@ ${avoidLine}
     const answer = await callDoubaoArkText({
       apiKey,
       model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-      content: [{ type: 'input_text', text: buildPrompt(correction) }]
+      content: [{ type: 'input_text', text: buildPrompt(correction) }],
+      timeoutMs: DOUBAO_COPY_TEXT_TIMEOUT_MS
     });
     const parsed = parseStructuredJson(answer);
     const copyObj = parsed?.copy && typeof parsed.copy === 'object'
@@ -12950,7 +12954,8 @@ ${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
       const answer = await callDoubaoArkText({
         apiKey,
         model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-        content: [{ type: 'input_text', text: prompt }]
+        content: [{ type: 'input_text', text: prompt }],
+        timeoutMs: DOUBAO_COPY_TEXT_TIMEOUT_MS
       });
       const parsed = parseStructuredJson(answer);
       return {
@@ -13043,7 +13048,8 @@ ${excludeTexts.length ? `\n【避免重复】请与以下已生成文案明显�
     const answer = await withRetryOnce(() => callDoubaoArkText({
       apiKey,
       model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-      content: [{ type: 'input_text', text: prompt }]
+      content: [{ type: 'input_text', text: prompt }],
+      timeoutMs: DOUBAO_COPY_TEXT_TIMEOUT_MS
     }));
 
     const parsed = parseStructuredJson(answer);
