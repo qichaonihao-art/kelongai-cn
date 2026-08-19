@@ -198,6 +198,8 @@ export async function rewriteCopy(
   profile: CopyProfile,
   opts: { extraInfo?: string; forbidden?: string } = {}
 ): Promise<{ analysis: CopyRewriteAnalysis; versions: CopyRewriteVersion[] }> {
+  // 仿写含结构分析 + 3 版本 + 相似度重试，是分钟级长任务，同步等待会被网关超时切断（504）。
+  // 与「生成 10 条」相同：先创建任务拿 taskId，再轮询进度直到完成。
   const response = await fetch('/api/copy/rewrite', {
     method: 'POST',
     credentials: 'include',
@@ -206,14 +208,39 @@ export async function rewriteCopy(
   });
 
   const json = await parseJsonSafely(response);
-  if (!response.ok) {
+  if (!response.ok || !json?.taskId) {
     throw new Error(buildErrorMessage(json, `爆款文案仿写失败（HTTP ${response.status}）`));
   }
 
-  return {
-    analysis: (json?.analysis && typeof json.analysis === 'object' ? json.analysis : {}) as CopyRewriteAnalysis,
-    versions: Array.isArray(json?.versions) ? (json.versions as CopyRewriteVersion[]) : [],
-  };
+  const taskId = String(json.taskId);
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < COPY_TASK_POLL_TIMEOUT_MS) {
+    await new Promise((resolve) => setTimeout(resolve, COPY_TASK_POLL_INTERVAL_MS));
+
+    const poll = await fetch(`/api/copy/tasks/${encodeURIComponent(taskId)}`, {
+      credentials: 'include',
+    });
+    const pollJson = await parseJsonSafely(poll);
+    if (!poll.ok) {
+      if (poll.status === 404) {
+        throw new Error(buildErrorMessage(pollJson, '仿写任务不存在或已过期，请重新仿写。'));
+      }
+      throw new Error(buildErrorMessage(pollJson, `查询仿写进度失败（HTTP ${poll.status}）`));
+    }
+
+    if (pollJson?.status === 'failed') {
+      throw new Error(buildErrorMessage(pollJson, '爆款文案仿写失败'));
+    }
+    if (pollJson?.status === 'done') {
+      return {
+        analysis: (pollJson?.analysis && typeof pollJson.analysis === 'object' ? pollJson.analysis : {}) as CopyRewriteAnalysis,
+        versions: Array.isArray(pollJson?.versions) ? (pollJson.versions as CopyRewriteVersion[]) : [],
+      };
+    }
+  }
+
+  throw new Error('爆款仿写超时，请重试。');
 }
 
 export async function listCopyLibrary(q?: string): Promise<CopyLibraryItem[]> {

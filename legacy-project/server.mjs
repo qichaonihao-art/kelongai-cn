@@ -12827,7 +12827,7 @@ ${name ? `用户提供的挂画名称：${name}\n` : ''}${extraInfo ? `用户补
   }
 }
 
-// 「生成 10 条文案」是分钟级长任务，同步等待会被线上 Nginx（约 60s 读超时）切断成 504。
+// 「生成 10 条文案」「爆款文案仿写」是分钟级长任务，同步等待会被线上 Nginx（约 60s 读超时）切断成 504。
 // 因此改为异步任务：POST 立即返回 taskId，前端轮询 GET /api/copy/tasks/:taskId 拿进度和结果。
 const COPY_GENERATE_TASKS = new Map(); // taskId -> task
 const COPY_GENERATE_TASK_TTL_MS = 30 * 60 * 1000;
@@ -12955,29 +12955,14 @@ function handleCopyGenerateTaskStatus(req, res, taskId) {
     status: task.status,
     progress: task.progress,
     ...(task.status === 'done' ? { copies: task.copies } : {}),
+    ...(task.status === 'done' && task.result ? { analysis: task.result.analysis, versions: task.result.versions } : {}),
     ...(task.status === 'failed' ? { error: task.error, debug: task.debug } : {})
   });
 }
 
-async function handleCopyRewrite(req, res) {
-  const requestId = randomBytes(6).toString('hex');
+async function runCopyRewriteTask(task, { apiKey, originalText, profile, extraInfo, forbidden }) {
+  const requestId = task.id;
   try {
-    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
-    if (!apiKey) {
-      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
-      return;
-    }
-
-    const body = await readRequestBody(req);
-    const originalText = readValue(body.originalText);
-    if (!originalText) {
-      sendJson(res, 400, { error: '请粘贴需要仿写的原文。' });
-      return;
-    }
-    const profile = body.profile && typeof body.profile === 'object' ? body.profile : {};
-    const extraInfo = readValue(body.extraInfo);
-    const forbidden = readValue(body.forbidden);
-
     const prompt = `你是短视频文案仿写专家。请对用户粘贴的一条已在短视频平台取得较好效果的文案，先做结构分析，再输出 3 个仿写版本。
 
 【原文】
@@ -13052,13 +13037,58 @@ ${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
     }
 
     console.log('[doubao copy] rewrite done', { requestId, count: versions.length });
-    sendJson(res, 200, { ok: true, analysis: result.analysis, versions });
+    task.result = { analysis: result.analysis, versions };
+    task.progress.completed = 1;
+    task.error = '';
+    task.status = 'done';
+    task.doneAt = Date.now();
   } catch (error) {
+    task.status = 'failed';
+    task.error = error?.message || '爆款文案仿写失败';
+    task.debug = { stage: 'rewrite', rawText: error?.rawText };
+    task.doneAt = Date.now();
     console.error('[doubao copy] rewrite failed', { requestId, message: error?.message || '' });
-    sendJson(res, 500, {
-      error: error?.message || '爆款文案仿写失败',
-      debug: { stage: 'rewrite', rawText: error?.rawText }
-    });
+  }
+}
+
+async function handleCopyRewrite(req, res) {
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+
+    const body = await readRequestBody(req);
+    const originalText = readValue(body.originalText);
+    if (!originalText) {
+      sendJson(res, 400, { error: '请粘贴需要仿写的原文。' });
+      return;
+    }
+    const profile = body.profile && typeof body.profile === 'object' ? body.profile : {};
+    const extraInfo = readValue(body.extraInfo);
+    const forbidden = readValue(body.forbidden);
+
+    pruneCopyGenerateTasks();
+    const task = {
+      id: `copytask-${randomBytes(8).toString('hex')}`,
+      status: 'running',
+      progress: { completed: 0, total: 1 },
+      copies: null,
+      result: null,
+      error: '',
+      debug: null,
+      createdAt: Date.now(),
+      doneAt: 0
+    };
+    COPY_GENERATE_TASKS.set(task.id, task);
+
+    // 后台执行，不被 await；所有异常都在 runCopyRewriteTask 内部消化，不会产生未处理 Promise。
+    runCopyRewriteTask(task, { apiKey, originalText, profile, extraInfo, forbidden });
+
+    sendJson(res, 202, { ok: true, taskId: task.id, status: task.status, progress: task.progress });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '爆款文案仿写失败' });
   }
 }
 
