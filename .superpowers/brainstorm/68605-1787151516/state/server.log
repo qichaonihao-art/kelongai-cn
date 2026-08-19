@@ -1,0 +1,5 @@
+{"type":"server-started","port":55511,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:55511","screen_dir":"/Users/qichao/Documents/kelongai-cn/.superpowers/brainstorm/68605-1787151516/content","state_dir":"/Users/qichao/Documents/kelongai-cn/.superpowers/brainstorm/68605-1787151516/state"}
+{"type":"screen-added","file":"/Users/qichao/Documents/kelongai-cn/.superpowers/brainstorm/68605-1787151516/content/layout.html"}
+{"type":"screen-added","file":"/Users/qichao/Documents/kelongai-cn/.superpowers/brainstorm/68605-1787151516/content/visual-style.html"}
+{"type":"screen-added","file":"/Users/qichao/Documents/kelongai-cn/.superpowers/brainstorm/68605-1787151516/content/waiting.html"}
+{"type":"server-stopped","reason":"idle timeout"}
