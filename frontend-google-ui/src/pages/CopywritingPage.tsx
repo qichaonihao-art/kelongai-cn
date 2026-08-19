@@ -82,8 +82,23 @@ interface ProfileDraft {
   uncertainClaims: string;
 }
 
-function linesToArray(value: string): string[] {
-  return String(value || '')
+function valueToText(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(valueToText).filter(Boolean).join('\n');
+  if (value && typeof value === 'object') {
+    return Object.values(value).map(valueToText).filter(Boolean).join('\n');
+  }
+  return '';
+}
+
+function valueToLines(value: unknown): string {
+  if (Array.isArray(value)) return value.map(valueToText).filter(Boolean).join('\n');
+  return valueToText(value);
+}
+
+function linesToArray(value: unknown): string[] {
+  return valueToLines(value)
     .split(/\n+/)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -91,29 +106,29 @@ function linesToArray(value: string): string[] {
 
 function profileToDraft(profile: CopyProfile): ProfileDraft {
   return {
-    name: profile.name || '',
-    visualDescription: profile.visualDescription || '',
-    style: profile.style || '',
-    textCalligraphySeals: profile.textCalligraphySeals || '',
-    material: profile.material || '',
-    structure: profile.structure || '',
-    colors: (profile.colors || []).join('\n'),
-    suitableScenes: (profile.suitableScenes || []).join('\n'),
-    targetAudiences: (profile.targetAudiences || []).join('\n'),
-    meanings: (profile.meanings || []).join('\n'),
-    sellingPoints: (profile.sellingPoints || []).join('\n'),
-    uncertainClaims: (profile.uncertainClaims || []).join('\n'),
+    name: valueToText(profile.name),
+    visualDescription: valueToText(profile.visualDescription),
+    style: valueToText(profile.style),
+    textCalligraphySeals: valueToText(profile.textCalligraphySeals),
+    material: valueToText(profile.material),
+    structure: valueToText(profile.structure),
+    colors: valueToLines(profile.colors),
+    suitableScenes: valueToLines(profile.suitableScenes),
+    targetAudiences: valueToLines(profile.targetAudiences),
+    meanings: valueToLines(profile.meanings),
+    sellingPoints: valueToLines(profile.sellingPoints),
+    uncertainClaims: valueToLines(profile.uncertainClaims),
   };
 }
 
 function draftToProfile(draft: ProfileDraft): CopyProfile {
   return {
-    name: draft.name.trim(),
-    visualDescription: draft.visualDescription.trim(),
-    style: draft.style.trim(),
-    textCalligraphySeals: draft.textCalligraphySeals.trim(),
-    material: draft.material.trim(),
-    structure: draft.structure.trim(),
+    name: valueToText(draft.name),
+    visualDescription: valueToText(draft.visualDescription),
+    style: valueToText(draft.style),
+    textCalligraphySeals: valueToText(draft.textCalligraphySeals),
+    material: valueToText(draft.material),
+    structure: valueToText(draft.structure),
     colors: linesToArray(draft.colors),
     suitableScenes: linesToArray(draft.suitableScenes),
     targetAudiences: linesToArray(draft.targetAudiences),
@@ -207,8 +222,8 @@ function StepIndicator({ current }: { current: number }) {
               <span
                 className={cn(
                   'flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-black transition-all',
-                  isDone && 'bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-sm',
-                  isActive && 'bg-slate-900 text-white ring-4 ring-violet-200/60',
+                  isDone && 'bg-emerald-600 text-white shadow-sm',
+                  isActive && 'bg-slate-900 text-white ring-4 ring-slate-200',
                   !isDone && !isActive && 'bg-white/80 text-slate-400 ring-1 ring-slate-200'
                 )}
               >
@@ -222,7 +237,7 @@ function StepIndicator({ current }: { current: number }) {
               </span>
             </li>
             {index < STEPS.length - 1 && (
-              <li className={cn('h-0.5 w-6 rounded-full sm:w-12', isDone ? 'bg-gradient-to-r from-violet-500 to-fuchsia-600' : 'bg-slate-200')} />
+              <li className={cn('h-0.5 w-6 rounded-full sm:w-12', isDone ? 'bg-emerald-500' : 'bg-slate-200')} />
             )}
           </Fragment>
         );
@@ -289,7 +304,7 @@ function ResultCard({
   };
 
   return (
-    <div className="group rounded-2xl border border-slate-200/80 bg-white/90 p-5 shadow-sm transition-all hover:border-violet-200 hover:shadow-md">
+    <div className="group rounded-lg border border-slate-300 bg-white p-5 shadow-sm transition-all hover:border-slate-400 hover:shadow-md">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-slate-900 text-xs font-black text-white">
@@ -532,13 +547,26 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
   };
 
   const handleConfirmProfile = () => {
-    const next = draftToProfile(profileDraft);
-    setProfile(next);
-    setProfileConfirmed(true);
-    setError('');
-    setNotice('挂画档案已确认，可以开始生成文案了');
-    window.setTimeout(() => setNotice(''), 3200);
-    window.setTimeout(() => generateSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+    try {
+      const next = draftToProfile(profileDraft);
+      if (!next.name && !next.visualDescription) {
+        setError('档案缺少挂画名称和画面内容，请至少补充一项后再继续。');
+        return;
+      }
+      setProfile(next);
+      setProfileDraft(profileToDraft(next));
+      setProfileConfirmed(true);
+      setError('');
+      setNotice('挂画档案已确认，可以开始生成文案了');
+      window.setTimeout(() => setNotice(''), 3200);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          generateSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      });
+    } catch (err) {
+      setError(err instanceof Error ? `档案确认失败：${err.message}` : '档案确认失败，请检查档案内容后重试。');
+    }
   };
 
   const handleEditProfile = () => {
@@ -702,22 +730,21 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[70rem] flex-1 px-4 py-8 md:px-6">
+      <main className="mx-auto w-full max-w-[72rem] flex-1 px-4 py-6 md:px-6">
         {/* Hero */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-6 flex items-center gap-4"
+          className="mb-4 flex items-center justify-between gap-4"
         >
-          <div className="relative">
-            <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-600 opacity-30 blur-lg" />
-            <div className="relative flex size-12 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-md">
-              <FileText className="size-6" />
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-lg bg-slate-900 text-white shadow-sm">
+              <FileText className="size-5" />
             </div>
-          </div>
-          <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-900">文案创作</h1>
-            <p className="mt-0.5 text-sm font-bold text-slate-500">上传挂画 → 分析档案 → 原创口播 / 爆款仿写</p>
+            <div>
+              <h1 className="text-xl font-black text-slate-900">文案创作</h1>
+              <p className="mt-0.5 text-xs font-bold text-slate-500">挂画识别、原创口播与爆款仿写</p>
+            </div>
           </div>
         </motion.div>
 
@@ -726,7 +753,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.05 }}
-          className="glass-card mb-6 rounded-3xl px-4 py-4"
+          className="mb-5 rounded-lg border border-slate-300 bg-white px-4 py-3 shadow-sm"
         >
           <StepIndicator current={currentStep} />
         </motion.div>
@@ -736,7 +763,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mb-4 flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/90 px-4 py-3 text-sm font-bold text-emerald-700"
+            className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700"
           >
             <CheckCircle2 className="size-4 shrink-0" />
             <span>{notice}</span>
@@ -746,7 +773,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mb-4 flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50/90 px-4 py-3 text-sm font-bold text-red-600"
+            className="mb-4 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-bold text-red-600"
           >
             <X className="mt-0.5 size-4 shrink-0" />
             <span>{error}</span>
@@ -754,7 +781,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
         )}
 
         {/* Step 1：分析挂画 */}
-        <section className="glass-card mb-5 scroll-mt-20 rounded-3xl p-5 md:p-6">
+        <section className="mb-5 scroll-mt-20 rounded-lg border border-slate-300 bg-white p-5 shadow-sm md:p-6">
           <div className="mb-4 flex items-center gap-2.5">
             <span className="flex size-7 items-center justify-center rounded-lg bg-slate-900 text-sm font-black text-white">1</span>
             <div>
@@ -777,7 +804,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className={cn(
-                  'group flex h-44 w-44 flex-col items-center justify-center gap-2.5 rounded-2xl border-2 border-dashed text-center transition-all',
+                  'group flex h-44 w-44 flex-col items-center justify-center gap-2.5 rounded-lg border-2 border-dashed text-center transition-all',
                   paintingPreviewUrl
                     ? 'border-violet-200 bg-white p-1'
                     : 'border-slate-300 bg-white/60 hover:-translate-y-0.5 hover:border-violet-400 hover:bg-white hover:shadow-md'
@@ -787,7 +814,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   <img src={paintingPreviewUrl} alt="挂画预览" className="h-full w-full rounded-xl object-contain" />
                 ) : (
                   <>
-                    <span className="flex size-12 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-sm transition-transform group-hover:scale-110">
+                    <span className="flex size-12 items-center justify-center rounded-lg bg-slate-900 text-white shadow-sm transition-transform group-hover:scale-105">
                       <Upload className="size-5" />
                     </span>
                     <span className="text-xs font-bold text-slate-600">点击上传挂画图片</span>
@@ -873,7 +900,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
               type="button"
               onClick={() => void handleAnalyze()}
               disabled={!paintingFile || analyzing}
-              className="inline-flex h-11 items-center gap-2 rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-600 px-6 text-sm font-bold text-white shadow-md shadow-violet-500/20 transition-all hover:shadow-lg hover:shadow-violet-500/30 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none"
+              className="inline-flex h-11 items-center gap-2 rounded-lg bg-slate-900 px-6 text-sm font-bold text-white shadow-sm transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
               {analyzing ? '豆包分析中…' : '分析产品'}
@@ -883,7 +910,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
 
         {/* Step 2：确认档案 */}
         {profileReady && (
-          <section ref={profileSectionRef} className="glass-card mb-5 scroll-mt-20 rounded-3xl p-5 md:p-6">
+          <section ref={profileSectionRef} className="mb-5 scroll-mt-20 rounded-lg border border-slate-300 bg-white p-5 shadow-sm md:p-6">
             <div className="mb-4 flex flex-wrap items-center gap-2.5">
               <span className="flex size-7 items-center justify-center rounded-lg bg-slate-900 text-sm font-black text-white">2</span>
               <div className="mr-auto">
@@ -901,7 +928,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4"
+                className="rounded-lg border border-emerald-300 bg-emerald-50 p-4"
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <Check className="size-4 text-emerald-600" />
@@ -969,7 +996,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   <button
                     type="button"
                     onClick={handleConfirmProfile}
-                    className="inline-flex h-11 items-center gap-2 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 px-6 text-sm font-bold text-white shadow-md shadow-emerald-500/20 transition-all hover:shadow-lg hover:shadow-emerald-500/30"
+                    className="inline-flex h-11 items-center gap-2 rounded-lg bg-emerald-600 px-6 text-sm font-bold text-white shadow-sm transition-colors hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-100"
                   >
                     <Check className="size-4" />
                     确认档案并继续
@@ -991,10 +1018,10 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
           </div>
 
           {/* 功能一：AI 原创 10 条 */}
-          <section className="glass-card mb-5 rounded-3xl p-5 md:p-6">
+          <section className="mb-5 rounded-lg border border-slate-300 bg-white p-5 shadow-sm md:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2.5">
-                <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-sm">
+                <span className="flex size-9 items-center justify-center rounded-lg bg-violet-600 text-white shadow-sm">
                   <PenLine className="size-4.5" />
                 </span>
                 <div>
@@ -1068,9 +1095,9 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
           </section>
 
           {/* 功能二：爆款仿写 */}
-          <section className="glass-card mb-5 rounded-3xl p-5 md:p-6">
+          <section className="mb-5 rounded-lg border border-slate-300 bg-white p-5 shadow-sm md:p-6">
             <div className="mb-4 flex items-center gap-2.5">
-              <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-fuchsia-500 to-pink-600 text-white shadow-sm">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-rose-600 text-white shadow-sm">
                 <FileText className="size-4.5" />
               </span>
               <div>
@@ -1125,14 +1152,14 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
         </section>
 
         {/* 文案库 */}
-        <section className="glass-card mb-8 rounded-3xl p-5 md:p-6">
+        <section className="mb-8 rounded-lg border border-slate-300 bg-white p-5 shadow-sm md:p-6">
           <button
             type="button"
             onClick={() => setLibraryOpen((v) => !v)}
             className="flex w-full items-center justify-between"
           >
             <div className="flex items-center gap-2.5">
-              <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-rose-500 text-white shadow-sm">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-amber-600 text-white shadow-sm">
                 <BookOpenText className="size-4.5" />
               </span>
               <div className="text-left">
@@ -1152,7 +1179,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 </p>
               )}
               {library.map((item) => (
-                <div key={item.id} className="rounded-2xl border border-slate-200/80 bg-white/90 p-4">
+                <div key={item.id} className="rounded-lg border border-slate-300 bg-white p-4">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold', item.type === 'original' ? (item.mode === 'explore' ? 'bg-violet-50 text-violet-600' : 'bg-emerald-50 text-emerald-600') : 'bg-fuchsia-50 text-fuchsia-600')}>

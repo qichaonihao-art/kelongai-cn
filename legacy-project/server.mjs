@@ -12578,6 +12578,37 @@ function normalizeCopyItems(copies) {
     .filter((item) => item.fullText);
 }
 
+function normalizeCopyProfile(profile) {
+  const source = profile && typeof profile === 'object' && !Array.isArray(profile) ? profile : {};
+  const text = (value) => {
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) return value.map(text).filter(Boolean).join('；');
+    if (value && typeof value === 'object') return Object.values(value).map(text).filter(Boolean).join('；');
+    return '';
+  };
+  const list = (value) => {
+    if (Array.isArray(value)) return value.map(text).filter(Boolean);
+    const valueText = text(value);
+    return valueText ? valueText.split(/[\n,，；;]+/).map((item) => item.trim()).filter(Boolean) : [];
+  };
+
+  return {
+    name: text(source.name),
+    visualDescription: text(source.visualDescription),
+    colors: list(source.colors),
+    style: text(source.style),
+    textCalligraphySeals: text(source.textCalligraphySeals),
+    material: text(source.material),
+    structure: text(source.structure),
+    suitableScenes: list(source.suitableScenes),
+    targetAudiences: list(source.targetAudiences),
+    meanings: list(source.meanings),
+    sellingPoints: list(source.sellingPoints),
+    uncertainClaims: list(source.uncertainClaims)
+  };
+}
+
 function copyWordCountBoundary(targetLength) {
   return targetLength === 250 ? { min: 235, max: 265 } : { min: 330, max: 370 };
 }
@@ -12685,7 +12716,7 @@ ${name ? `用户提供的挂画名称：${name}\n` : ''}${extraInfo ? `用户补
       ]
     }));
 
-    const profile = parseStructuredJson(answer);
+    const profile = normalizeCopyProfile(parseStructuredJson(answer));
     console.log('[doubao copy] analyze done', { requestId, profileKeys: profile && typeof profile === 'object' ? Object.keys(profile) : [] });
     sendJson(res, 200, { ok: true, profile });
   } catch (error) {
