@@ -75,8 +75,9 @@ export function compressImageToBlob(file: Blob, maxEdge = 720, quality = 0.82): 
   });
 }
 
-/** 有 id 更新、无 id 插入；返回带 id 的完整记录 */
-export async function savePainting(data: {
+/** 有 id 更新、无 id 插入；返回带 id 的完整记录。
+ * 注意：同一事务内的请求用 .then 链发出，避免 await 中间结果导致事务提前提交。 */
+export function savePainting(data: {
   id?: number;
   name: string;
   imageBlob: Blob;
@@ -84,25 +85,28 @@ export async function savePainting(data: {
   extraInfo: string;
   forbidden: string;
 }): Promise<SavedPainting> {
-  const db = await openDB();
-  try {
+  return openDB().then((db) => {
     const store = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME);
     const now = Date.now();
+    const finish = () => db.close();
     if (data.id != null) {
-      const existing = await requestToPromise<SavedPainting | undefined>(store.get(data.id));
-      if (existing) {
-        const record: SavedPainting = { ...existing, ...data, id: data.id, updatedAt: now };
-        await requestToPromise(store.put(record));
-        return record;
-      }
-      // id 不存在时按 upsert 语义降级为插入（保持原规格行为）
+      return requestToPromise<SavedPainting | undefined>(store.get(data.id))
+        .then((existing) => {
+          if (existing) {
+            const record: SavedPainting = { ...existing, ...data, id: data.id, updatedAt: now };
+            return requestToPromise(store.put(record)).then(() => record);
+          }
+          // id 不存在时按 upsert 语义降级为插入
+          const insert = { ...data, createdAt: now, updatedAt: now };
+          return requestToPromise<IDBValidKey>(store.add(insert)).then((key) => ({ ...insert, id: Number(key) }));
+        })
+        .finally(finish);
     }
     const insert = { ...data, createdAt: now, updatedAt: now };
-    const key = await requestToPromise<IDBValidKey>(store.add(insert));
-    return { ...insert, id: Number(key) };
-  } finally {
-    db.close();
-  }
+    return requestToPromise<IDBValidKey>(store.add(insert))
+      .then((key) => ({ ...insert, id: Number(key) }) as SavedPainting)
+      .finally(finish);
+  });
 }
 
 /** 按 updatedAt 倒序返回摘要列表 */
@@ -144,13 +148,11 @@ export async function deletePainting(id: number): Promise<void> {
 }
 
 /** 仅更新 updatedAt（选中即"最近使用"） */
-export async function touchPainting(id: number): Promise<void> {
-  const db = await openDB();
-  try {
+export function touchPainting(id: number): Promise<void> {
+  return openDB().then((db) => {
     const store = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME);
-    const item = await requestToPromise<SavedPainting | undefined>(store.get(id));
-    if (item) await requestToPromise(store.put({ ...item, updatedAt: Date.now() }));
-  } finally {
-    db.close();
-  }
+    return requestToPromise<SavedPainting | undefined>(store.get(id))
+      .then((item) => (item ? requestToPromise(store.put({ ...item, updatedAt: Date.now() })).then(() => undefined) : undefined))
+      .finally(() => db.close());
+  });
 }
