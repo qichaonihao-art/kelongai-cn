@@ -251,15 +251,9 @@ function ResultCard({
   onRegenerate?: () => void;
   regenerateBusy?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(fullText);
   const [copied, setCopied] = useState(false);
-
-  const previewText = useMemo(() => {
-    if (expanded || fullText.length <= 180) return fullText;
-    return `${fullText.slice(0, 180)}…`;
-  }, [expanded, fullText]);
 
   const handleCopy = async () => {
     const ok = await copyToClipboard(fullText);
@@ -329,23 +323,13 @@ function ResultCard({
         </div>
       ) : (
         <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-slate-700" onDoubleClick={startEdit}>
-          {previewText}
+          {fullText}
         </p>
       )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
         <span className="text-xs font-bold text-slate-400">共 {wordCount} 字</span>
         <div className="flex flex-wrap items-center gap-1.5">
-          {fullText.length > 180 && !editing && (
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="flex h-8 items-center gap-1 rounded-full px-2.5 text-xs font-bold text-slate-500 hover:bg-slate-100"
-            >
-              {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-              {expanded ? '收起' : '展开'}
-            </button>
-          )}
           <button
             type="button"
             onClick={handleCopy}
@@ -1226,8 +1210,8 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 豆包正在创作 10 条文案，预计需要 1～3 分钟…
               </div>
             ) : originalItems.length > 0 ? (
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                <div className="col-span-1 xl:col-span-2 flex items-center justify-between">
+              <div className="grid grid-cols-1 gap-3">
+                <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-500">共 {originalItems.length} 条 · 6 稳定型 + 4 探索型</span>
                   <button
                     type="button"
