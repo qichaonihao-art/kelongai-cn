@@ -12635,10 +12635,9 @@ function normalizeCopyProfile(profile) {
 
 async function generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode, direction, targetLength, excludeTexts }) {
   const { min, max } = copyWordCountBoundary(targetLength);
-  // 模型字数会有正常浮动，允许在目标区间上下各浮动 10 字直接通过，避免 372 vs 370 这类微小偏差就整批失败。
-  const tolerance = 10;
-  const acceptMin = min - tolerance;
-  const acceptMax = max + tolerance;
+  // 模型字数浮动较大（实测常写到 350～400 字），放宽到较宽容差直接通过；只有明显偏离档位才触发修正重写。
+  const acceptMin = min - 30;
+  const acceptMax = max + 50;
   const exploreHint = '反常识或观点冲突、热门生活话题、人物第一视角、家庭关系、传统文化的新解释、情绪治愈、装修审美、送礼场景、由画面文字引发的人生思考';
   const directionLine = mode === 'explore'
     ? `- 类型：探索型（mode=explore），请从以下角度挑选一个新角度作为创作方向并填入 direction 字段：${exploreHint}`
@@ -12657,7 +12656,7 @@ ${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
 
 【本条要求】
 ${directionLine}
-- 字数：${targetLength} 字档（${min}～${max} 字，忽略空白字符计数，不得为凑字数重复）
+- 字数：${targetLength} 字档（${min}～${max} 字，忽略空白字符计数，不得为凑字数重复；写完后请自行数一遍，超出就删减、不足就补充）
 ${avoidLine}
 【结构】开头钩子（前 1～3 句）+ 中间展开 + 自然转化；口语化、适合真人口播；不虚构历史出处/销量/功效/名人评价、不夸大风水财富健康。
 
@@ -12697,9 +12696,9 @@ ${avoidLine}
     result = await withRetryOnce(() => run(correction));
   }
 
-  // 修正后仍明显偏离，才报错，避免把明显不合格的文案返回给用户。
+  // 字数只做软约束：明显偏离时已尽力修正一次，不再因字数硬性失败整批（用户可对单条再编辑/重生成）。
   if (result.chars < acceptMin || result.chars > acceptMax) {
-    throw Object.assign(new Error(`文案字数 ${result.chars} 不在 ${min}~${max} 区间`), { rawText: result.answer });
+    console.warn('[doubao copy] word count soft-accept', { targetLength, chars: result.chars, min, max });
   }
 
   return result.copy;
@@ -13030,7 +13029,7 @@ ${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
 【本条要求】
 - 类型：${mode === 'explore' ? '探索型' : '稳定型'}
 - 创作方向：${direction}
-- 字数：${targetLength} 字档（${min}～${max} 字，忽略空白字符计数，不得为凑字数重复）
+- 字数：${targetLength} 字档（${min}～${max} 字，忽略空白字符计数，不得为凑字数重复；写完后请自行数一遍，超出就删减、不足就补充）
 ${excludeTexts.length ? `\n【避免重复】请与以下已生成文案明显区分、不要雷同：\n${excludeTexts.map((t, i) => `${i + 1}. ${t}`).join('\n')}` : ''}
 
 【结构】开头钩子（前 1～3 句）+ 中间展开 + 自然转化；口语化、适合真人口播；不虚构历史出处/销量/功效/名人评价、不夸大风水财富健康。
@@ -13063,8 +13062,9 @@ ${excludeTexts.length ? `\n【避免重复】请与以下已生成文案明显�
       throw Object.assign(new Error('模型返回的文案为空'), { rawText: answer });
     }
     const chars = countChars(copy.fullText);
-    if (chars < min || chars > max) {
-      throw Object.assign(new Error(`重新生成的文案字数 ${chars} 不在 ${min}~${max} 区间`), { rawText: answer });
+    // 字数软约束：单条重生成不因字数浮动而失败，用户可在结果卡看到实际字数并继续编辑。
+    if (chars < min - 30 || chars > max + 50) {
+      console.warn('[doubao copy] regenerate word count soft-accept', { targetLength, chars, min, max });
     }
 
     console.log('[doubao copy] regenerate done', { requestId, chars });
