@@ -12635,6 +12635,10 @@ function normalizeCopyProfile(profile) {
 
 async function generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode, direction, targetLength, excludeTexts }) {
   const { min, max } = copyWordCountBoundary(targetLength);
+  // 模型字数会有正常浮动，允许在目标区间上下各浮动 10 字直接通过，避免 372 vs 370 这类微小偏差就整批失败。
+  const tolerance = 10;
+  const acceptMin = min - tolerance;
+  const acceptMax = max + tolerance;
   const exploreHint = '反常识或观点冲突、热门生活话题、人物第一视角、家庭关系、传统文化的新解释、情绪治愈、装修审美、送礼场景、由画面文字引发的人生思考';
   const directionLine = mode === 'explore'
     ? `- 类型：探索型（mode=explore），请从以下角度挑选一个新角度作为创作方向并填入 direction 字段：${exploreHint}`
@@ -12644,7 +12648,7 @@ async function generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode,
     ? `\n【避免重复】请与以下已生成文案明显区分、不要雷同：\n${avoidTexts.slice(0, 6).map((t, i) => `${i + 1}. ${t.slice(0, 80)}`).join('\n')}`
     : '';
 
-  const prompt = `你是短视频口播文案创作专家。请为下面的挂画创作一条口播文案。
+  const buildPrompt = (correction) => `你是短视频口播文案创作专家。请为下面的挂画创作一条口播文案。
 
 【挂画档案（产品事实以此为准，不得虚构）】
 ${JSON.stringify(profile, null, 2)}
@@ -12659,13 +12663,13 @@ ${avoidLine}
 
 【输出格式】严格只输出一个 JSON 对象：
 {"id":"1","mode":"${mode}","direction":"${mode === 'explore' ? '创作方向' : (direction || '稳定')}","targetLength":${targetLength},"title":"","hook":"","content":"","closing":"","fullText":""}
-不要输出任何解释文字，不要用 markdown 代码块包裹。`;
+不要输出任何解释文字，不要用 markdown 代码块包裹。${correction}`;
 
-  const attempt = async () => {
+  const run = async (correction) => {
     const answer = await callDoubaoArkText({
       apiKey,
       model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-      content: [{ type: 'input_text', text: prompt }]
+      content: [{ type: 'input_text', text: buildPrompt(correction) }]
     });
     const parsed = parseStructuredJson(answer);
     const copyObj = parsed?.copy && typeof parsed.copy === 'object'
@@ -12681,21 +12685,24 @@ ${avoidLine}
     if (!copy.fullText) {
       throw Object.assign(new Error('模型返回的文案为空'), { rawText: answer });
     }
-    const chars = countChars(copy.fullText);
-    if (chars < min || chars > max) {
-      throw Object.assign(new Error(`文案字数 ${chars} 不在 ${min}~${max} 区间`), { rawText: answer });
-    }
-    return copy;
+    return { copy, chars: countChars(copy.fullText), answer };
   };
 
-  try {
-    return await withRetryOnce(attempt);
-  } catch (error) {
-    if (!isRetriableUpstreamError(error)) {
-      return await withRetryOnce(attempt);
-    }
-    throw error;
+  // 第一次生成（网络错误自动重试一次）。
+  let result = await withRetryOnce(() => run(''));
+
+  // 字数明显偏离目标档位时，带具体字数做一次修正重写。
+  if (result.chars < acceptMin || result.chars > acceptMax) {
+    const correction = `\n\n【字数修正】你上一次输出的文案共 ${result.chars} 字，${result.chars > max ? '超出' : '不足'} ${targetLength} 字档的要求（${min}～${max} 字）。请重写，把字数严格控制在 ${min}～${max} 字之间，不要为凑字数重复。`;
+    result = await withRetryOnce(() => run(correction));
   }
+
+  // 修正后仍明显偏离，才报错，避免把明显不合格的文案返回给用户。
+  if (result.chars < acceptMin || result.chars > acceptMax) {
+    throw Object.assign(new Error(`文案字数 ${result.chars} 不在 ${min}~${max} 区间`), { rawText: result.answer });
+  }
+
+  return result.copy;
 }
 
 function copyWordCountBoundary(targetLength) {
