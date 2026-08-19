@@ -43,6 +43,15 @@ import {
   type CopyRewriteVersion,
 } from "@/src/lib/copywriting";
 import {
+  compressImageToBlob,
+  deletePainting,
+  getPainting,
+  listPaintings,
+  savePainting,
+  touchPainting,
+  type SavedPaintingSummary,
+} from '@/src/lib/paintingArchive';
+import {
   blobToFile,
   formatHistoryTime,
   getUploadHistoryItem,
@@ -452,6 +461,13 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
   const [historyImages, setHistoryImages] = useState<Array<{ id: number; name: string; previewUrl: string }>>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
 
+  const [archiveItems, setArchiveItems] = useState<SavedPaintingSummary[]>([]);
+  const [activePaintingId, setActivePaintingId] = useState<number | null>(null);
+  const [archiveUnavailable, setArchiveUnavailable] = useState(false);
+  /** 当前挂画的图片 blob 来源：新上传的 File 或从档案恢复的 Blob，确认档案时用于存档 */
+  const currentImageBlobRef = useRef<Blob | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
   const analyzingRef = useRef(false);
   const generatingRef = useRef(false);
   const rewritingRef = useRef(false);
@@ -494,9 +510,43 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = '';
+    (async () => {
+      try {
+        const items = await listPaintings();
+        if (cancelled || items.length === 0) return;
+        const latest = await getPainting(items[0].id);
+        if (!latest || cancelled) return;
+        objectUrl = URL.createObjectURL(latest.imageBlob);
+        currentImageBlobRef.current = latest.imageBlob;
+        setActivePaintingId(latest.id);
+        setProfile(latest.profile);
+        setProfileDraft(profileToDraft(latest.profile));
+        setProfileConfirmed(true);
+        setImageThumb(objectUrl);
+        setPaintingPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return objectUrl;
+        });
+        setExtraInfo(latest.extraInfo || '');
+        setForbidden(latest.forbidden || '');
+        void touchPainting(latest.id);
+      } catch {
+        if (!cancelled) setArchiveUnavailable(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, []);
+
   const applyPaintingFile = useCallback((file: File | null) => {
     if (paintingPreviewUrl) URL.revokeObjectURL(paintingPreviewUrl);
     setPaintingFile(file);
+    currentImageBlobRef.current = file;
     setPaintingPreviewUrl(file ? URL.createObjectURL(file) : null);
     setProfile(null);
     setProfileConfirmed(false);
@@ -518,6 +568,73 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
     } catch {
       setError('读取历史图片失败，请重新上传。');
     }
+  };
+
+  const refreshArchive = async () => {
+    try {
+      setArchiveItems(await listPaintings());
+    } catch {
+      setArchiveUnavailable(true);
+    }
+  };
+
+  const handleSelectPainting = async (id: number) => {
+    if (id === activePaintingId || generatingRef.current) return;
+    try {
+      const item = await getPainting(id);
+      if (!item) return;
+      if (paintingPreviewUrl) URL.revokeObjectURL(paintingPreviewUrl);
+      const objectUrl = URL.createObjectURL(item.imageBlob);
+      currentImageBlobRef.current = item.imageBlob;
+      setActivePaintingId(item.id);
+      setPaintingFile(null);
+      setPaintingPreviewUrl(objectUrl);
+      setProfile(item.profile);
+      setProfileDraft(profileToDraft(item.profile));
+      setProfileConfirmed(true);
+      setImageThumb(objectUrl);
+      setName(item.name || '');
+      setExtraInfo(item.extraInfo || '');
+      setForbidden(item.forbidden || '');
+      setOriginalItems([]);
+      setRewriteItems([]);
+      setError('');
+      void touchPainting(item.id).then(refreshArchive);
+    } catch {
+      setError('读取本机档案失败，请重试。');
+    }
+  };
+
+  const handleDeletePainting = async (id: number) => {
+    try {
+      await deletePainting(id);
+      const items = await listPaintings();
+      setArchiveItems(items);
+      if (id === activePaintingId) {
+        if (items.length > 0) {
+          await handleSelectPainting(items[0].id);
+        } else {
+          handleFileChange(null);
+          setActivePaintingId(null);
+        }
+      }
+      setNotice('已删除本机档案');
+      window.setTimeout(() => setNotice(''), 2200);
+    } catch {
+      setError('删除本机档案失败');
+    }
+  };
+
+  const handleNewPainting = () => {
+    handleFileChange(null);
+    setActivePaintingId(null);
+    setName('');
+    setExtraInfo('');
+    setForbidden('');
+    setSellingPoints('');
+    setOriginalItems([]);
+    setRewriteItems([]);
+    setRewriteOriginalText('');
   };
 
   const handleAnalyze = async () => {
@@ -554,6 +671,27 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
         setError('档案缺少挂画名称和画面内容，请至少补充一项后再继续。');
         return;
       }
+      const paintingIdToSave = activePaintingId;
+      void (async () => {
+        try {
+          const blob = currentImageBlobRef.current
+            ? await compressImageToBlob(currentImageBlobRef.current).catch(() => currentImageBlobRef.current as Blob)
+            : null;
+          if (!blob) return;
+          const saved = await savePainting({
+            id: paintingIdToSave ?? undefined,
+            name: next.name || next.visualDescription?.slice(0, 12) || '未命名挂画',
+            imageBlob: blob,
+            profile: next,
+            extraInfo,
+            forbidden,
+          });
+          setActivePaintingId(saved.id);
+          setArchiveItems(await listPaintings());
+        } catch {
+          setArchiveUnavailable(true);
+        }
+      })();
       setProfile(next);
       setProfileDraft(profileToDraft(next));
       setProfileConfirmed(true);
