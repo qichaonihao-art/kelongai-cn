@@ -525,7 +525,11 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
         setProfile(latest.profile);
         setProfileDraft(profileToDraft(latest.profile));
         setProfileConfirmed(true);
-        setImageThumb(objectUrl);
+        void fileToThumbnailDataUrl(new File([latest.imageBlob], 'painting.jpg', { type: latest.imageBlob.type }))
+          .then((dataUrl) => {
+            if (!cancelled) setImageThumb(dataUrl);
+          })
+          .catch(() => {});
         setPaintingPreviewUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev);
           return objectUrl;
@@ -592,7 +596,11 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
       setProfile(item.profile);
       setProfileDraft(profileToDraft(item.profile));
       setProfileConfirmed(true);
-      setImageThumb(objectUrl);
+      try {
+        setImageThumb(await fileToThumbnailDataUrl(new File([item.imageBlob], 'painting.jpg', { type: item.imageBlob.type })));
+      } catch {
+        setImageThumb(null);
+      }
       setName(item.name || '');
       setExtraInfo(item.extraInfo || '');
       setForbidden(item.forbidden || '');
