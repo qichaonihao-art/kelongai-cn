@@ -469,7 +469,9 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
     (async () => {
       try {
         const items = await listPaintings();
-        if (cancelled || items.length === 0) return;
+        if (cancelled) return;
+        setArchiveItems(items);
+        if (items.length === 0) return;
         const latest = await getPainting(items[0].id);
         if (!latest || cancelled) return;
         objectUrl = URL.createObjectURL(latest.imageBlob);
