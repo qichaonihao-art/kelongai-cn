@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpenText,
   Check,
@@ -212,48 +212,16 @@ const PROFILE_LIST_FIELDS: Array<{ key: keyof ProfileDraft; label: string; rows?
   { key: 'uncertainClaims', label: '不确定/不可编造信息（每行一个）', rows: 3 },
 ];
 
-const STEPS = [
-  { label: '分析挂画', desc: '上传图片，豆包生成档案' },
-  { label: '确认档案', desc: '核对产品事实与卖点' },
-  { label: '生成文案', desc: '原创 10 条 · 爆款仿写' },
-];
-
-function StepIndicator({ current }: { current: number }) {
-  return (
-    <ol className="flex items-center justify-center gap-2 sm:gap-3">
-      {STEPS.map((step, index) => {
-        const num = index + 1;
-        const isDone = num < current;
-        const isActive = num === current;
-        return (
-          <Fragment key={step.label}>
-            <li className="flex items-center gap-2.5">
-              <span
-                className={cn(
-                  'flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-black transition-all',
-                  isDone && 'bg-emerald-600 text-white shadow-sm',
-                  isActive && 'bg-slate-900 text-white ring-4 ring-slate-200',
-                  !isDone && !isActive && 'bg-white/80 text-slate-400 ring-1 ring-slate-200'
-                )}
-              >
-                {isDone ? <Check className="size-4" /> : num}
-              </span>
-              <span className="hidden flex-col md:flex">
-                <span className={cn('text-sm font-black leading-tight', isActive ? 'text-slate-900' : isDone ? 'text-slate-700' : 'text-slate-400')}>
-                  {step.label}
-                </span>
-                <span className="text-[11px] font-bold text-slate-400">{step.desc}</span>
-              </span>
-            </li>
-            {index < STEPS.length - 1 && (
-              <li className={cn('h-0.5 w-6 rounded-full sm:w-12', isDone ? 'bg-emerald-500' : 'bg-slate-200')} />
-            )}
-          </Fragment>
-        );
-      })}
-    </ol>
-  );
-}
+// 宣纸墨韵（仅本页）：宣纸米底 / 卡面 / 边框 / 墨字 / 赭石强调
+const INK = {
+  page: 'bg-[#f7f3ea]',
+  card: 'bg-[#fffdf8] border-[#ddd3bd]',
+  text: 'text-[#2d2a26]',
+  sub: 'text-[#8a8272]',
+  accent: 'bg-[#9a3412] text-[#fffdf8] hover:bg-[#7c2d0e]',
+  accentRing: 'border-[#9a3412]',
+  chip: 'bg-[#f3ecdd] text-[#6b5d45]',
+};
 
 function ResultCard({
   index,
@@ -313,10 +281,10 @@ function ResultCard({
   };
 
   return (
-    <div className="group rounded-lg border border-slate-300 bg-white p-5 shadow-sm transition-all hover:border-slate-400 hover:shadow-md">
+    <div className={cn('group rounded border p-5 transition-all', INK.card, 'hover:-translate-y-0.5 hover:shadow-md')}>
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-slate-900 text-xs font-black text-white">
+          <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-[#9a3412] text-xs font-black text-[#fffdf8]">
             {index}
           </span>
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold', badgeClass)}>{badge}</span>
@@ -327,7 +295,7 @@ function ResultCard({
           onClick={onToggleLike}
           className={cn(
             'flex h-8 w-8 items-center justify-center rounded-lg border transition-colors',
-            isLiked ? 'border-amber-200 bg-amber-50 text-amber-500' : 'border-slate-200 text-slate-300 hover:border-amber-200 hover:text-amber-500'
+            isLiked ? 'border-amber-200 bg-amber-50 text-amber-500' : 'border-[#ddd3bd] text-slate-300 hover:border-amber-200 hover:text-amber-500'
           )}
           title={isLiked ? '取消标记' : '标记为好'}
         >
@@ -341,7 +309,7 @@ function ResultCard({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             rows={9}
-            className="w-full resize-y rounded-xl border border-violet-200 bg-white p-3 text-[15px] leading-relaxed text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+            className="w-full resize-y rounded-xl border border-violet-200 bg-white p-3 text-[15px] leading-relaxed text-slate-800 outline-none focus:border-[#9a3412] focus:ring-2 focus:ring-[#f3ecdd]"
           />
           <div className="mt-2 flex items-center justify-end gap-2">
             <button
@@ -354,14 +322,14 @@ function ResultCard({
             <button
               type="button"
               onClick={commitEdit}
-              className="h-8 rounded-full bg-slate-900 px-3 text-xs font-bold text-white hover:bg-slate-800"
+              className={cn('h-8 rounded-full px-3 text-xs font-bold text-white hover:bg-slate-800', INK.accent)}
             >
               保存修改
             </button>
           </div>
         </div>
       ) : (
-        <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-slate-700" onDoubleClick={startEdit}>
+        <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-[#4a443a]" onDoubleClick={startEdit}>
           {previewText}
         </p>
       )}
@@ -393,7 +361,7 @@ function ResultCard({
           <button
             type="button"
             onClick={startEdit}
-            className="flex h-8 items-center gap-1 rounded-full border border-slate-200 px-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+            className={cn('flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50', 'border-[#ddd3bd]')}
           >
             <Edit3 className="size-3.5" />
             编辑
@@ -403,7 +371,7 @@ function ResultCard({
               type="button"
               onClick={onRegenerate}
               disabled={regenerateBusy}
-              className="flex h-8 items-center gap-1 rounded-full border border-slate-200 px-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className={cn('flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60', 'border-[#ddd3bd]')}
             >
               <RefreshCw className={cn('size-3.5', regenerateBusy && 'animate-spin')} />
               重生成
@@ -412,7 +380,7 @@ function ResultCard({
           <button
             type="button"
             onClick={onSave}
-            className="flex h-8 items-center gap-1 rounded-full bg-slate-900 px-2.5 text-xs font-bold text-white hover:bg-slate-800"
+            className={cn('flex h-8 items-center gap-1 rounded-full px-2.5 text-xs font-bold text-white hover:bg-slate-800', INK.accent)}
           >
             {savedId ? <Check className="size-3.5" /> : <Save className="size-3.5" />}
             {savedId ? '已入库' : '存文案库'}
@@ -425,8 +393,6 @@ function ResultCard({
 
 export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }: CopywritingPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const generateSectionRef = useRef<HTMLElement>(null);
-  const profileSectionRef = useRef<HTMLElement>(null);
 
   const [paintingFile, setPaintingFile] = useState<File | null>(null);
   const [paintingPreviewUrl, setPaintingPreviewUrl] = useState<string | null>(null);
@@ -447,6 +413,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
 
   const [library, setLibrary] = useState<CopyLibraryItem[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [rewriteOpen, setRewriteOpen] = useState(false);
 
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -663,7 +630,6 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
         setImageThumb(null);
       }
       void saveUploadHistory(paintingFile, 'image');
-      window.setTimeout(() => profileSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
     } catch (err) {
       setError(err instanceof Error ? err.message : '挂画分析失败');
     } finally {
@@ -706,11 +672,6 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
       setError('');
       setNotice('挂画档案已确认，可以开始生成文案了');
       window.setTimeout(() => setNotice(''), 3200);
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          generateSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-      });
     } catch (err) {
       setError(err instanceof Error ? `档案确认失败：${err.message}` : '档案确认失败，请检查档案内容后重试。');
     }
@@ -718,7 +679,6 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
 
   const handleEditProfile = () => {
     setProfileConfirmed(false);
-    window.setTimeout(() => profileSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
   };
 
   const buildLibraryPayload = (item: { mode?: string; version?: string; direction: string; fullText: string; isLiked: boolean }, type: 'original' | 'rewrite') => {
@@ -858,7 +818,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
   };
 
   const profileReady = !!profile;
-  const currentStep = !profile ? 1 : !profileConfirmed ? 2 : 3;
+  const view = !profile ? 'setup' : !profileConfirmed ? 'profile' : 'workspace';
   const generateDisabled = !profileConfirmed || generating;
   const rewriteDisabled = !profileConfirmed || rewriting || !rewriteOriginalText.trim();
 
@@ -875,7 +835,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between border-b border-slate-300 bg-white/80 px-6 backdrop-blur-md">
+      <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between border-b border-slate-300 bg-[#fffdf8]/90 px-6 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <HomeBackButton onClick={onBack} />
           <ModuleQuickNav current="creative" onNavigate={onNavigate} />
@@ -883,7 +843,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[72rem] flex-1 px-4 py-6 md:px-6">
+      <main className={cn('mx-auto w-full max-w-[80rem] flex-1 px-4 py-6 md:px-6', INK.page)}>
         {/* Hero */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -891,7 +851,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
           className="mb-4 flex items-center justify-between gap-4"
         >
           <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-lg bg-slate-900 text-white shadow-sm">
+            <div className="flex size-10 items-center justify-center rounded-lg bg-[#9a3412] text-white shadow-sm">
               <FileText className="size-5" />
             </div>
             <div>
@@ -901,15 +861,64 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
           </div>
         </motion.div>
 
-        {/* Stepper */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.05 }}
-          className="mb-5 rounded-lg border border-slate-300 bg-white px-4 py-3 shadow-sm"
-        >
-          <StepIndicator current={currentStep} />
-        </motion.div>
+        {/* 移动端档案横条（<lg） */}
+        <div className="mb-4 flex gap-2 overflow-x-auto pb-1 lg:hidden">
+          {archiveItems.map((p) => (
+            <button key={p.id} type="button" onClick={() => void handleSelectPainting(p.id)}
+              className={cn('shrink-0 rounded border px-3 py-1.5 text-xs font-bold',
+                p.id === activePaintingId ? cn('border-[1.5px]', INK.accentRing, INK.text, 'bg-[#fffdf8]') : cn(INK.card, INK.sub))}>
+              {p.name}
+            </button>
+          ))}
+          <button type="button" onClick={handleNewPainting}
+            className={cn('shrink-0 rounded border border-dashed border-[#ddd3bd] px-3 py-1.5 text-xs font-bold', INK.sub)}>
+            ＋ 新挂画
+          </button>
+        </div>
+
+        <div className="flex gap-5">
+          {/* 左侧档案栏（≥lg） */}
+          <aside className="hidden w-64 shrink-0 lg:flex lg:flex-col">
+            <div className={cn('rounded border p-3', INK.card)}>
+              <div className={cn('mb-2.5 text-sm font-black tracking-widest', INK.text)}>本机挂画档案</div>
+              <div className="flex flex-col gap-1.5">
+                {archiveUnavailable && (
+                  <p className={cn('text-[11px] font-bold', INK.sub)}>本机存储不可用，档案不会保留</p>
+                )}
+                {!archiveUnavailable && archiveItems.length === 0 && (
+                  <p className={cn('text-[11px] font-bold', INK.sub)}>还没有档案，分析并确认第一张挂画后会自动保存</p>
+                )}
+                {archiveItems.map((p) => (
+                  <div key={p.id}
+                    className={cn('group flex items-center gap-2 rounded border px-2 py-1.5 transition-colors',
+                      p.id === activePaintingId ? cn('border-[1.5px]', INK.accentRing) : 'border-transparent hover:bg-[#f3ecdd]')}>
+                    <button type="button" onClick={() => void handleSelectPainting(p.id)}
+                      className={cn('min-w-0 flex-1 truncate text-left text-xs font-bold', p.id === activePaintingId ? INK.text : INK.sub)}>
+                      {p.name}
+                    </button>
+                    {confirmDeleteId === p.id ? (
+                      <span className="flex shrink-0 items-center gap-1">
+                        <button type="button" onClick={() => void handleDeletePainting(p.id)} className="text-[10px] font-bold text-red-600">删</button>
+                        <button type="button" onClick={() => setConfirmDeleteId(null)} className={cn('text-[10px] font-bold', INK.sub)}>取消</button>
+                      </span>
+                    ) : (
+                      <button type="button" onClick={() => setConfirmDeleteId(p.id)}
+                        className="hidden shrink-0 text-[#b8ae98] hover:text-red-500 group-hover:block" title="删除档案">
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <button type="button" onClick={handleNewPainting}
+                className={cn('mt-3 rounded border border-dashed border-[#ddd3bd] py-1.5 text-xs font-bold', INK.sub, 'hover:border-[#9a3412] hover:text-[#9a3412]')}>
+                ＋ 新挂画
+              </button>
+            </div>
+          </aside>
+
+          {/* 右侧工作区 */}
+          <div className="min-w-0 flex-1">
 
         {/* Notice / Error */}
         {notice && (
@@ -933,15 +942,16 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
           </motion.div>
         )}
 
-        {/* Step 1：分析挂画 */}
-        <section className="mb-5 scroll-mt-20 rounded-lg border border-slate-300 bg-white p-5 shadow-sm md:p-6">
-          <div className="mb-4 flex items-center gap-2.5">
-            <span className="flex size-7 items-center justify-center rounded-lg bg-slate-900 text-sm font-black text-white">1</span>
-            <div>
-              <h2 className="text-base font-black text-slate-900">分析挂画</h2>
-              <p className="text-xs font-bold text-slate-400">上传挂画图片，豆包多模态识别并生成「挂画档案」</p>
-            </div>
-          </div>
+        {/* setup 视图 */}
+        {view === 'setup' && (
+          <>
+            <section className={cn('mb-5 rounded border p-5 shadow-sm md:p-6', INK.card)}>
+              <div className="mb-4 flex items-center gap-2.5">
+                <div>
+                  <h2 className="text-base font-black text-slate-900">分析挂画</h2>
+                  <p className="text-xs font-bold text-slate-400">上传挂画图片，豆包多模态识别并生成「挂画档案」</p>
+                </div>
+              </div>
 
           <div className="flex flex-col gap-5 md:flex-row">
             {/* Upload */}
@@ -959,8 +969,8 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 className={cn(
                   'group flex h-44 w-44 flex-col items-center justify-center gap-2.5 rounded-lg border-2 border-dashed text-center transition-all',
                   paintingPreviewUrl
-                    ? 'border-violet-200 bg-white p-1'
-                    : 'border-slate-300 bg-white/60 hover:-translate-y-0.5 hover:border-violet-400 hover:bg-white hover:shadow-md'
+                    ? 'border-[#9a3412] bg-white p-1'
+                    : 'border-[#ddd3bd] bg-white/60 hover:-translate-y-0.5 hover:border-[#9a3412] hover:bg-white hover:shadow-md'
                 )}
               >
                 {paintingPreviewUrl ? (
@@ -978,19 +988,19 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
               <button
                 type="button"
                 onClick={() => setHistoryOpen((v) => !v)}
-                className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white/70 px-3 text-xs font-bold text-slate-600 transition-colors hover:bg-white"
+                className={cn('flex h-8 items-center gap-1.5 rounded-full border border-[#ddd3bd] bg-white/70 px-3 text-xs font-bold text-slate-600 transition-colors hover:bg-white')}
               >
                 <History className="size-3.5" />
                 历史图片
               </button>
               {historyOpen && historyImages.length > 0 && (
-                <div className="flex max-h-40 w-44 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-slate-200 bg-white/80 p-2">
+                <div className={cn('flex max-h-40 w-44 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-[#ddd3bd] bg-white/80 p-2')}>
                   {historyImages.map((img) => (
                     <button
                       key={img.id}
                       type="button"
                       onClick={() => void handlePickHistory(img.id)}
-                      className="h-14 w-14 overflow-hidden rounded-lg border border-slate-200 bg-white transition-colors hover:border-violet-300"
+                      className="h-14 w-14 overflow-hidden rounded-lg border border-[#ddd3bd] bg-white transition-colors hover:border-[#9a3412]"
                       title={img.name}
                     >
                       <img src={img.previewUrl} alt={img.name} className="h-full w-full object-cover" />
@@ -999,7 +1009,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 </div>
               )}
               {historyOpen && historyImages.length === 0 && (
-                <div className="w-44 rounded-xl border border-slate-200 bg-white/80 p-3 text-center text-[11px] font-bold text-slate-400">
+                <div className={cn('w-44 rounded-xl border border-[#ddd3bd] bg-white/80 p-3 text-center text-[11px] font-bold text-slate-400')}>
                   暂无历史图片
                 </div>
               )}
@@ -1013,7 +1023,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="例如：家和万事兴书法挂画"
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-[#9a3412] focus:ring-2 focus:ring-[#f3ecdd]"
                 />
               </label>
               <label className="block">
@@ -1022,7 +1032,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   value={sellingPoints}
                   onChange={(event) => setSellingPoints(event.target.value)}
                   placeholder="例如：家和万事兴、适合乔迁送礼"
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-[#9a3412] focus:ring-2 focus:ring-[#f3ecdd]"
                 />
               </label>
               <label className="block sm:col-span-2">
@@ -1032,7 +1042,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   onChange={(event) => setExtraInfo(event.target.value)}
                   rows={2}
                   placeholder="材质、尺寸、工艺、销售场景等补充说明"
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-[#9a3412] focus:ring-2 focus:ring-[#f3ecdd]"
                 />
               </label>
               <label className="block sm:col-span-2">
@@ -1042,7 +1052,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   onChange={(event) => setForbidden(event.target.value)}
                   rows={2}
                   placeholder="例如：不得出现风水、招财、治病等夸大表述"
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-[#9a3412] focus:ring-2 focus:ring-[#f3ecdd]"
                 />
               </label>
             </div>
@@ -1053,25 +1063,26 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
               type="button"
               onClick={() => void handleAnalyze()}
               disabled={!paintingFile || analyzing}
-              className="inline-flex h-11 items-center gap-2 rounded-lg bg-slate-900 px-6 text-sm font-bold text-white shadow-sm transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className={cn('inline-flex h-11 items-center gap-2 rounded-lg px-6 text-sm font-bold shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60', INK.accent)}
             >
               {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />}
               {analyzing ? '豆包分析中…' : '分析产品'}
             </button>
           </div>
         </section>
+          </>
+        )}
 
-        {/* Step 2：确认档案 */}
-        {profileReady && (
-          <section ref={profileSectionRef} className="mb-5 scroll-mt-20 rounded-lg border border-slate-300 bg-white p-5 shadow-sm md:p-6">
+        {/* profile 视图 */}
+        {view === 'profile' && (
+          <section className={cn('mb-5 rounded border p-5 shadow-sm md:p-6', INK.card)}>
             <div className="mb-4 flex flex-wrap items-center gap-2.5">
-              <span className="flex size-7 items-center justify-center rounded-lg bg-slate-900 text-sm font-black text-white">2</span>
               <div className="mr-auto">
                 <h2 className="text-base font-black text-slate-900">确认挂画档案</h2>
                 <p className="text-xs font-bold text-slate-400">{profileConfirmed ? '档案已锁定，生成文案时将以此为准' : '核对并修改产品事实，确认后再生成'}</p>
               </div>
               {profileConfirmed && (
-                <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                <span className={cn('flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold', INK.chip)}>
                   <CheckCircle2 className="size-3.5" /> 已确认
                 </span>
               )}
@@ -1081,10 +1092,10 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="rounded-lg border border-emerald-300 bg-emerald-50 p-4"
+                className={cn('rounded-lg border bg-[#f3ecdd] p-4', INK.accentRing)}
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <Check className="size-4 text-emerald-600" />
+                  <Check className={cn('size-4', INK.accent)} />
                   <span className="text-sm font-black text-slate-800">
                     {profileDraft.name || '挂画档案'} 已确认
                   </span>
@@ -1092,7 +1103,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 {confirmedSummary && confirmedSummary.length > 0 && (
                   <div className="mt-2.5 flex flex-wrap gap-1.5">
                     {confirmedSummary.map((chip) => (
-                      <span key={chip} className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-slate-600 ring-1 ring-emerald-100">
+                      <span key={chip} className={cn('rounded-full bg-white px-2.5 py-1 text-xs font-bold text-slate-600 ring-1 ring-[#ddd3bd]')}>
                         {chip}
                       </span>
                     ))}
@@ -1101,7 +1112,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 <button
                   type="button"
                   onClick={handleEditProfile}
-                  className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-white px-3 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-100/60"
+                  className={cn('mt-3 inline-flex h-8 items-center gap-1.5 rounded-full border border-[#ddd3bd] bg-white px-3 text-xs font-bold transition-colors hover:bg-[#f3ecdd]', INK.text)}
                 >
                   <PencilLine className="size-3.5" />
                   修改档案
@@ -1118,13 +1129,13 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                           value={profileDraft[field.key]}
                           onChange={(event) => setProfileDraft((prev) => ({ ...prev, [field.key]: event.target.value }))}
                           rows={field.rows}
-                          className="w-full resize-y rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                          className="w-full resize-y rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors focus:border-[#9a3412] focus:ring-2 focus:ring-[#f3ecdd]"
                         />
                       ) : (
                         <input
                           value={profileDraft[field.key]}
                           onChange={(event) => setProfileDraft((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                          className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm text-slate-800 outline-none transition-colors focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm text-slate-800 outline-none transition-colors focus:border-[#9a3412] focus:ring-2 focus:ring-[#f3ecdd]"
                         />
                       )}
                     </label>
@@ -1139,7 +1150,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                         value={profileDraft[field.key]}
                         onChange={(event) => setProfileDraft((prev) => ({ ...prev, [field.key]: event.target.value }))}
                         rows={field.rows || 2}
-                        className="w-full resize-y rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                        className="w-full resize-y rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm text-slate-800 outline-none transition-colors focus:border-[#9a3412] focus:ring-2 focus:ring-[#f3ecdd]"
                       />
                     </label>
                   ))}
@@ -1149,7 +1160,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                   <button
                     type="button"
                     onClick={handleConfirmProfile}
-                    className="inline-flex h-11 items-center gap-2 rounded-lg bg-emerald-600 px-6 text-sm font-bold text-white shadow-sm transition-colors hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-100"
+                    className={cn('inline-flex h-11 items-center gap-2 rounded-lg px-6 text-sm font-bold shadow-sm transition-colors', INK.accent)}
                   >
                     <Check className="size-4" />
                     确认档案并继续
@@ -1160,21 +1171,31 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
           </section>
         )}
 
-        {/* Step 3：生成文案 */}
-        <section ref={generateSectionRef} className="scroll-mt-20">
-          <div className="mb-4 flex items-center gap-2.5 px-1">
-            <span className="flex size-7 items-center justify-center rounded-lg bg-slate-900 text-sm font-black text-white">3</span>
-            <div>
-              <h2 className="text-base font-black text-slate-900">生成文案</h2>
-              <p className="text-xs font-bold text-slate-400">原创口播 10 条 + 爆款文案仿写 3 版</p>
+        {/* workspace 视图 */}
+        {view === 'workspace' && (
+          <>
+            {/* 当前挂画条 */}
+            <div className={cn('mb-4 flex items-center gap-3 rounded border p-3', INK.card)}>
+              {paintingPreviewUrl && <img src={paintingPreviewUrl} alt={profileDraft.name} className="h-16 w-12 rounded-sm object-cover" />}
+              <div className="min-w-0 flex-1">
+                <div className={cn('truncate text-sm font-black', INK.text)}>{profileDraft.name || '挂画档案'}</div>
+                <div className={cn('mt-1 flex flex-wrap gap-1.5')}>
+                  {(confirmedSummary || []).map((chip) => (
+                    <span key={chip} className={cn('rounded px-2 py-0.5 text-[11px] font-bold', INK.chip)}>{chip}</span>
+                  ))}
+                </div>
+              </div>
+              <button type="button" onClick={handleEditProfile}
+                className={cn('shrink-0 rounded border px-3 py-1.5 text-xs font-bold', INK.card, INK.text, 'hover:border-[#9a3412]')}>
+                编辑档案
+              </button>
             </div>
-          </div>
 
           {/* 功能一：AI 原创 10 条 */}
-          <section className="mb-5 rounded-lg border border-slate-300 bg-white p-5 shadow-sm md:p-6">
+          <section className={cn('mb-5 rounded border p-5 shadow-sm md:p-6', INK.card)}>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2.5">
-                <span className="flex size-9 items-center justify-center rounded-lg bg-violet-600 text-white shadow-sm">
+                <span className="flex size-9 items-center justify-center rounded-lg bg-[#9a3412] text-white shadow-sm">
                   <PenLine className="size-4.5" />
                 </span>
                 <div>
@@ -1186,7 +1207,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 type="button"
                 onClick={handleGenerateOriginal}
                 disabled={generateDisabled}
-                className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-900 px-5 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className={cn('inline-flex h-10 items-center gap-2 rounded-full px-5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60', INK.accent)}
               >
                 {generating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                 {generating ? (generateProgress ? `生成中… ${generateProgress}` : '生成中…') : originalItems.length ? '重新生成一批' : '生成 10 条'}
@@ -1194,17 +1215,17 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
             </div>
 
             {!profileConfirmed ? (
-              <p className="rounded-xl bg-white/70 px-4 py-3 text-sm font-bold text-slate-400 ring-1 ring-slate-100">
+              <p className={cn('rounded-xl bg-[#f3ecdd]/60 px-4 py-3 text-sm font-bold text-[#8a8272]', 'ring-1 ring-[#ddd3bd]')}>
                 请先在上一步「确认档案」，再生成原创文案。
               </p>
             ) : generating ? (
-              <div className="flex items-center justify-center gap-3 rounded-xl bg-white/70 px-4 py-8 text-sm font-bold text-slate-500 ring-1 ring-slate-100">
-                <Loader2 className="size-5 animate-spin text-violet-500" />
+              <div className={cn('flex items-center justify-center gap-3 rounded-xl bg-[#f3ecdd]/60 px-4 py-8 text-sm font-bold text-[#8a8272]', 'ring-1 ring-[#ddd3bd]')}>
+                <Loader2 className="size-5 animate-spin text-[#9a3412]" />
                 豆包正在创作 10 条文案，预计需要 1～3 分钟…
               </div>
             ) : originalItems.length > 0 ? (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                <div className="col-span-1 xl:col-span-2 flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-500">共 {originalItems.length} 条 · 6 稳定型 + 4 探索型</span>
                   <button
                     type="button"
@@ -1214,7 +1235,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                       'flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition-colors',
                       confirmRegenerate
                         ? 'border-red-200 bg-red-50 text-red-600'
-                        : 'border-slate-200 bg-white/70 text-slate-600 hover:bg-white'
+                        : cn('border-[#ddd3bd] bg-white/70 text-slate-600 hover:bg-white')
                     )}
                   >
                     <RefreshCw className={cn('size-3.5', generating && 'animate-spin')} />
@@ -1226,7 +1247,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                     key={item.id}
                     index={index + 1}
                     badge={item.mode === 'stable' ? '稳定型' : '探索型'}
-                    badgeClass={item.mode === 'stable' ? 'bg-emerald-50 text-emerald-600' : 'bg-violet-50 text-violet-600'}
+                    badgeClass={item.mode === 'stable' ? INK.chip : 'bg-[#efe9db] text-[#9a3412]'}
                     direction={item.direction}
                     fullText={item.fullText}
                     wordCount={countCopyChars(item.fullText)}
@@ -1241,23 +1262,20 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 ))}
               </div>
             ) : (
-              <p className="rounded-xl bg-white/70 px-4 py-3 text-sm font-bold text-slate-400 ring-1 ring-slate-100">
+              <p className={cn('rounded-xl bg-[#f3ecdd]/60 px-4 py-3 text-sm font-bold text-[#8a8272]', 'ring-1 ring-[#ddd3bd]')}>
                 点击「生成 10 条」开始创作。
               </p>
             )}
           </section>
 
           {/* 功能二：爆款仿写 */}
-          <section className="mb-5 rounded-lg border border-slate-300 bg-white p-5 shadow-sm md:p-6">
-            <div className="mb-4 flex items-center gap-2.5">
-              <span className="flex size-9 items-center justify-center rounded-lg bg-rose-600 text-white shadow-sm">
-                <FileText className="size-4.5" />
-              </span>
-              <div>
-                <h3 className="text-base font-black text-slate-900">爆款文案仿写</h3>
-                <p className="text-xs font-bold text-slate-400">分析原文 → 稳定保守 / 情绪强化 / 结构重组 3 版</p>
-              </div>
-            </div>
+          <div className={cn('mb-4 rounded border', INK.card)}>
+            <button type="button" onClick={() => setRewriteOpen((v) => !v)} className="flex w-full items-center justify-between p-4">
+              <span className={cn('text-sm font-black', INK.text)}>爆款文案仿写 <span className={cn('ml-1 text-xs font-bold', INK.sub)}>分析原文 → 3 个版本</span></span>
+              {rewriteOpen ? <ChevronUp className="size-4 text-[#8a8272]" /> : <ChevronDown className="size-4 text-[#8a8272]" />}
+            </button>
+            {rewriteOpen && (
+              <div className="border-t border-[#ddd3bd] p-4">
 
             <label className="block">
               <span className="mb-1 block text-xs font-bold text-slate-600">粘贴一条已在短视频平台取得较好效果的原文</span>
@@ -1266,7 +1284,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 onChange={(event) => setRewriteOriginalText(event.target.value)}
                 rows={5}
                 placeholder="粘贴原文…"
-                className="w-full resize-y rounded-xl border border-slate-200 bg-white/90 px-3 py-2.5 text-sm leading-relaxed text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-fuchsia-400 focus:ring-2 focus:ring-fuchsia-100"
+                className="w-full resize-y rounded-xl border border-slate-200 bg-white/90 px-3 py-2.5 text-sm leading-relaxed text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-[#9a3412] focus:ring-2 focus:ring-[#f3ecdd]"
               />
             </label>
             <div className="mt-3 flex items-center justify-end">
@@ -1274,7 +1292,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 type="button"
                 onClick={() => void handleRewrite()}
                 disabled={rewriteDisabled}
-                className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-900 px-5 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className={cn('inline-flex h-10 items-center gap-2 rounded-full px-5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60', INK.accent)}
               >
                 {rewriting ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                 {rewriting ? '仿写中…' : '仿写 3 个版本'}
@@ -1288,7 +1306,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                     key={index}
                     index={index + 1}
                     badge={item.version}
-                    badgeClass="bg-fuchsia-50 text-fuchsia-600"
+                    badgeClass="bg-[#efe9db] text-[#9a3412]"
                     direction="仿写版本"
                     fullText={item.content}
                     wordCount={countCopyChars(item.content)}
@@ -1301,15 +1319,16 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 ))}
               </div>
             )}
-          </section>
-        </section>
+              </div>
+            )}
+          </div>
 
         {/* 文案库 */}
-        <section className="mb-8 rounded-lg border border-slate-300 bg-white p-5 shadow-sm md:p-6">
+        <div className={cn('mb-4 rounded border', INK.card)}>
           <button
             type="button"
             onClick={() => setLibraryOpen((v) => !v)}
-            className="flex w-full items-center justify-between"
+            className="flex w-full items-center justify-between p-4"
           >
             <div className="flex items-center gap-2.5">
               <span className="flex size-9 items-center justify-center rounded-lg bg-amber-600 text-white shadow-sm">
@@ -1319,23 +1338,23 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                 <h3 className="text-base font-black text-slate-900">文案库</h3>
                 <p className="text-xs font-bold text-slate-400">已保存文案，多设备同步</p>
               </div>
-              <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-bold text-slate-500 ring-1 ring-slate-200">{library.length}</span>
+              <span className={cn('rounded-full px-2 py-0.5 text-xs font-bold ring-1 ring-[#ddd3bd]', INK.chip)}>{library.length}</span>
             </div>
             {libraryOpen ? <ChevronUp className="size-4 text-slate-400" /> : <ChevronDown className="size-4 text-slate-400" />}
           </button>
 
           {libraryOpen && (
-            <div className="mt-4 space-y-3">
+            <div className="border-t border-[#ddd3bd] p-4">
               {library.length === 0 && (
-                <p className="rounded-xl bg-white/70 px-4 py-3 text-sm font-bold text-slate-400 ring-1 ring-slate-100">
+                <p className={cn('rounded-xl bg-[#f3ecdd]/60 px-4 py-3 text-sm font-bold text-[#8a8272]', 'ring-1 ring-[#ddd3bd]')}>
                   还没有保存的文案。生成后点「存文案库」即可在这里查看，多设备同步。
                 </p>
               )}
               {library.map((item) => (
-                <div key={item.id} className="rounded-lg border border-slate-300 bg-white p-4">
+                <div key={item.id} className={cn('rounded-lg border p-4', INK.card)}>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold', item.type === 'original' ? (item.mode === 'explore' ? 'bg-violet-50 text-violet-600' : 'bg-emerald-50 text-emerald-600') : 'bg-fuchsia-50 text-fuchsia-600')}>
+                      <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold', item.type === 'original' ? (item.mode === 'explore' ? 'bg-[#efe9db] text-[#9a3412]' : INK.chip) : 'bg-[#efe9db] text-[#9a3412]')}>
                         {item.type === 'original' ? (item.mode === 'explore' ? '探索型' : '稳定型') : item.version}
                       </span>
                       {item.direction && <span className="truncate text-xs font-bold text-slate-500">{item.direction}</span>}
@@ -1344,7 +1363,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                       <button
                         type="button"
                         onClick={() => void handleToggleLibraryLike(item)}
-                        className={cn('flex h-7 w-7 items-center justify-center rounded-lg border', item.isLiked ? 'border-amber-200 bg-amber-50 text-amber-500' : 'border-slate-200 text-slate-400')}
+                        className={cn('flex h-7 w-7 items-center justify-center rounded-lg border', item.isLiked ? 'border-amber-200 bg-amber-50 text-amber-500' : 'border-[#ddd3bd] text-slate-400')}
                         title="标记好"
                       >
                         <Star className={cn('size-3.5', item.isLiked && 'fill-current')} />
@@ -1352,7 +1371,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
                       <button
                         type="button"
                         onClick={() => void handleDeleteLibraryItem(item.id)}
-                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:text-red-500"
+                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#ddd3bd] text-slate-400 hover:text-red-500"
                         title="删除"
                       >
                         <Trash2 className="size-3.5" />
@@ -1368,7 +1387,11 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
               ))}
             </div>
           )}
-        </section>
+        </div>
+          </>
+        )}
+          </div>
+        </div>
       </main>
     </div>
   );
