@@ -86,25 +86,20 @@ export async function savePainting(data: {
 }): Promise<SavedPainting> {
   const db = await openDB();
   try {
+    const store = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME);
     const now = Date.now();
-    let record: SavedPainting;
     if (data.id != null) {
-      const existing = await requestToPromise<SavedPainting | undefined>(
-        db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(data.id)
-      );
+      const existing = await requestToPromise<SavedPainting | undefined>(store.get(data.id));
       if (existing) {
-        record = { ...existing, ...data, id: data.id, updatedAt: now };
-        await requestToPromise(
-          db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).put(record)
-        );
+        const record: SavedPainting = { ...existing, ...data, id: data.id, updatedAt: now };
+        await requestToPromise(store.put(record));
         return record;
       }
+      // id 不存在时按 upsert 语义降级为插入（保持原规格行为）
     }
-    record = { ...data, id: undefined as unknown as number, createdAt: now, updatedAt: now };
-    const key = await requestToPromise<IDBValidKey>(
-      db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).add(record)
-    );
-    return { ...record, id: Number(key) };
+    const insert = { ...data, createdAt: now, updatedAt: now };
+    const key = await requestToPromise<IDBValidKey>(store.add(insert));
+    return { ...insert, id: Number(key) };
   } finally {
     db.close();
   }
