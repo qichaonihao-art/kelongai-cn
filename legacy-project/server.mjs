@@ -12200,6 +12200,30 @@ async function withRetryOnce(fn) {
   }
 }
 
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (cursor < items.length) {
+      const i = cursor;
+      cursor += 1;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+function findDuplicatePair(copies) {
+  for (let i = 0; i < copies.length; i += 1) {
+    for (let j = i + 1; j < copies.length; j += 1) {
+      if (textSimilarity(copies[i].fullText, copies[j].fullText) > 0.85) return [i, j];
+    }
+  }
+  return null;
+}
+
 async function callDoubaoArkText({ apiKey, model, content }) {
   const upstreamUrl = 'https://ark.cn-beijing.volces.com/api/v3/responses';
   const requestPayload = {
@@ -12609,6 +12633,71 @@ function normalizeCopyProfile(profile) {
   };
 }
 
+async function generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode, direction, targetLength, excludeTexts }) {
+  const { min, max } = copyWordCountBoundary(targetLength);
+  const exploreHint = '反常识或观点冲突、热门生活话题、人物第一视角、家庭关系、传统文化的新解释、情绪治愈、装修审美、送礼场景、由画面文字引发的人生思考';
+  const directionLine = mode === 'explore'
+    ? `- 类型：探索型（mode=explore），请从以下角度挑选一个新角度作为创作方向并填入 direction 字段：${exploreHint}`
+    : `- 类型：稳定型（mode=stable），创作方向固定为「${direction || '稳定'}」，与其他稳定型文案（痛点解决、寓意价值、空间改造、人物共鸣、故事情绪、购买转化）在立意与开头要明显区分、不要趋同。`;
+  const avoidTexts = (Array.isArray(excludeTexts) ? excludeTexts : []).filter((t) => typeof t === 'string' && t.trim());
+  const avoidLine = avoidTexts.length
+    ? `\n【避免重复】请与以下已生成文案明显区分、不要雷同：\n${avoidTexts.slice(0, 6).map((t, i) => `${i + 1}. ${t.slice(0, 80)}`).join('\n')}`
+    : '';
+
+  const prompt = `你是短视频口播文案创作专家。请为下面的挂画创作一条口播文案。
+
+【挂画档案（产品事实以此为准，不得虚构）】
+${JSON.stringify(profile, null, 2)}
+${extraInfo ? `\n【用户补充信息】\n${extraInfo}` : ''}
+${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
+
+【本条要求】
+${directionLine}
+- 字数：${targetLength} 字档（${min}～${max} 字，忽略空白字符计数，不得为凑字数重复）
+${avoidLine}
+【结构】开头钩子（前 1～3 句）+ 中间展开 + 自然转化；口语化、适合真人口播；不虚构历史出处/销量/功效/名人评价、不夸大风水财富健康。
+
+【输出格式】严格只输出一个 JSON 对象：
+{"id":"1","mode":"${mode}","direction":"${mode === 'explore' ? '创作方向' : (direction || '稳定')}","targetLength":${targetLength},"title":"","hook":"","content":"","closing":"","fullText":""}
+不要输出任何解释文字，不要用 markdown 代码块包裹。`;
+
+  const attempt = async () => {
+    const answer = await callDoubaoArkText({
+      apiKey,
+      model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+      content: [{ type: 'input_text', text: prompt }]
+    });
+    const parsed = parseStructuredJson(answer);
+    const copyObj = parsed?.copy && typeof parsed.copy === 'object'
+      ? parsed.copy
+      : (parsed && typeof parsed === 'object' && readValue(parsed.fullText) ? parsed : null);
+    if (!copyObj) {
+      throw Object.assign(new Error('模型未返回有效文案'), { rawText: answer });
+    }
+    const copy = normalizeCopyItem(copyObj, 0);
+    copy.mode = mode;
+    copy.direction = direction || copy.direction;
+    copy.targetLength = targetLength;
+    if (!copy.fullText) {
+      throw Object.assign(new Error('模型返回的文案为空'), { rawText: answer });
+    }
+    const chars = countChars(copy.fullText);
+    if (chars < min || chars > max) {
+      throw Object.assign(new Error(`文案字数 ${chars} 不在 ${min}~${max} 区间`), { rawText: answer });
+    }
+    return copy;
+  };
+
+  try {
+    return await withRetryOnce(attempt);
+  } catch (error) {
+    if (!isRetriableUpstreamError(error)) {
+      return await withRetryOnce(attempt);
+    }
+    throw error;
+  }
+}
+
 function copyWordCountBoundary(targetLength) {
   return targetLength === 250 ? { min: 235, max: 265 } : { min: 330, max: 370 };
 }
@@ -12746,77 +12835,44 @@ async function handleCopyGenerate(req, res) {
     const extraInfo = readValue(body.extraInfo);
     const forbidden = readValue(body.forbidden);
 
-    const prompt = `你是短视频口播文案创作专家，为一块挂画/装饰画产品创作 10 条不同方向的短视频口播文案。
-
-【挂画档案（产品事实以此为准，不得虚构）】
-${JSON.stringify(profile, null, 2)}
-${extraInfo ? `\n【用户补充信息】\n${extraInfo}` : ''}
-${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
-
-【数量与字数（硬性要求，必须严格满足）】
-- 共输出 10 条。
-- 其中 7 条为 350 字档（字数范围 330～370，忽略空白字符计数），3 条为 250 字档（字数范围 235～265）。
-- 不得为了凑字数重复表达、堆砌同义句。
-
-【创作比例 6+4（硬性要求）】
-- 6 条「稳定型」（mode=stable）：按装饰画销售的成熟经验创作，方向固定如下，每条对应一个方向、共 6 个：
-  1. 痛点解决（空墙单调、装修缺少文化氛围、空间没有精神气质）
-  2. 寓意价值（家风、祝福、处世态度、家庭愿景、文化含义）
-  3. 空间改造（客厅/书房/茶室/玄关/卧室等空间前后变化）
-  4. 人物共鸣（中年人、父母、家庭经营者、读书人、创业者等）
-  5. 故事情绪（家庭经历、人生阶段、父母教导、生活感悟）
-  6. 购买转化（为什么值得挂、适合谁、适合哪里、什么时候购买或送礼）
-- 4 条「探索型」（mode=explore）：根据挂画内容、目标人群和营销场景探索新角度，可参考：反常识或观点冲突、热门生活话题、人物第一视角、家庭关系、传统文化的新解释、情绪治愈、装修审美、送礼场景、由画面文字引发的人生思考等。探索可以新，但不能跑偏。
-- 字数分配：稳定型里 5 条 350 字、1 条 250 字；探索型里 2 条 350 字、2 条 250 字。
-
-【探索边界（必须遵守）】
-- 不虚构历史出处、销量、功效、名人评价。
-- 不夸大风水、财富、健康等无法证明的作用。
-- 不写成与产品无关的纯鸡汤。
-- 所有产品事实以挂画档案和用户补充信息为准。
-
-【每条文案必备结构】
-1. 开头钩子：前 1～3 句抓住注意力（可用疑问、冲突、痛点、反常识、具体场景或人物对话）。
-2. 中间展开：讲人物、情绪、场景、挂画内容、寓意和实际价值。
-3. 自然转化：促进收藏、咨询或购买，但不能突然、生硬地要求下单。
-
-【其他要求】
-- 10 条开头不得高度重复；叙事结构不能只是替换同义词。
-- 语言适合真人口播，口语化，避免过度书面化。
-
-【输出格式】
-严格只输出一个 JSON 对象，结构如下：
-{"copies":[{"id":"1","mode":"stable","direction":"痛点解决","targetLength":350,"title":"标题","hook":"开头钩子","content":"中间展开","closing":"自然转化","fullText":"完整口播文案全文"}]}
-- mode 只能是 "stable" 或 "explore"；direction 写清本条方向；targetLength 为 350 或 250。
-- fullText 是本条完整口播文案，hook/content/closing 为分段落拆分。
-- 不要输出任何解释文字，不要用 markdown 代码块包裹。`;
-
-    const buildCopies = async () => {
-      const answer = await callDoubaoArkText({
-        apiKey,
-        model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-        content: [{ type: 'input_text', text: prompt }]
-      });
-      const parsed = parseStructuredJson(answer);
-      const copies = Array.isArray(parsed?.copies) ? parsed.copies : (Array.isArray(parsed) ? parsed : []);
-      return { copies, answer };
-    };
+    const stableSpecs = [
+      { direction: '痛点解决', targetLength: 350 },
+      { direction: '寓意价值', targetLength: 350 },
+      { direction: '空间改造', targetLength: 350 },
+      { direction: '人物共鸣', targetLength: 350 },
+      { direction: '故事情绪', targetLength: 350 },
+      { direction: '购买转化', targetLength: 250 },
+    ];
+    const exploreLengths = [350, 350, 250, 250];
 
     console.log('[doubao copy] generate request start', { requestId });
 
-    let result = await withRetryOnce(() => buildCopies());
-    let copies = normalizeCopyItems(result.copies);
-    let validationError = validateCopies(copies);
-    if (validationError) {
-      console.warn('[doubao copy] generate validation retry', { requestId, validationError });
-      result = await withRetryOnce(() => buildCopies());
-      copies = normalizeCopyItems(result.copies);
-      validationError = validateCopies(copies);
+    // 拆成单条小请求（并发），避免一次性生成 10 条导致方舟 504 超时。
+    const stableCopies = await mapWithConcurrency(stableSpecs, 3, (spec) =>
+      generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode: 'stable', direction: spec.direction, targetLength: spec.targetLength, excludeTexts: [] })
+    );
+
+    const stableTexts = stableCopies.map((c) => c.fullText).filter(Boolean);
+    const exploreCopies = await mapWithConcurrency(exploreLengths, 2, (targetLength) =>
+      generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode: 'explore', direction: '', targetLength, excludeTexts: stableTexts })
+    );
+
+    const copies = [...stableCopies, ...exploreCopies];
+
+    // 去重兜底：若仍有两条高度重复，重写靠后那条一次。
+    const duplicatePair = findDuplicatePair(copies);
+    if (duplicatePair) {
+      const laterIndex = duplicatePair[1];
+      const target = copies[laterIndex];
+      const excludeTexts = copies.filter((_, index) => index !== laterIndex).map((c) => c.fullText).filter(Boolean);
+      try {
+        copies[laterIndex] = await generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode: target.mode, direction: target.direction, targetLength: target.targetLength, excludeTexts });
+      } catch {
+        // 保留原结果，宁可用已有文案也不中断整批。
+      }
     }
 
-    if (validationError) {
-      throw Object.assign(new Error(validationError), { rawText: result?.answer || '' });
-    }
+    copies.forEach((c, index) => { c.id = `copy-${index + 1}`; });
 
     console.log('[doubao copy] generate done', { requestId, count: copies.length });
     sendJson(res, 200, { ok: true, copies });
