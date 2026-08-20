@@ -12500,6 +12500,26 @@ const PAINTING_FRAMEWORKS = [
   ],
 ];
 
+// 内容阶段数不等于切镜数。按 40 个方向预先分配镜头结构，避免模型为了“丰富”而机械频繁切镜。
+const PAINTING_SINGLE_TAKE_DIRECTIONS = new Set([2, 3, 4, 7, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 22]);
+const PAINTING_HYBRID_DIRECTIONS = new Set([1, 5, 8, 16, 21, 23, 24, 25, 30, 31]);
+
+function getPaintingShotStructure(directionNumber) {
+  if (PAINTING_SINGLE_TAKE_DIRECTIONS.has(directionNumber)) {
+    return '一镜到底：全程连续拍摄、禁止硬切；用人物连续动作与一次平稳的跟拍/横移/推近路径串联内容阶段。镜头连续不等于动作缓慢，人物必须按现实正常速度行动，每 0.8-1.8 秒出现新的有效动作、空间信息或构图变化。';
+  }
+  if (PAINTING_HYBRID_DIRECTIONS.has(directionNumber)) {
+    return '主镜头＋收尾特写：主体部分用一个连续主镜头完成，仅允许在结尾切 1 次挂画整体或材质特写，全片最多 2 个镜头；主镜头内仍要持续推进动作和空间关系。';
+  }
+  return '克制多镜头：只在时间、空间或视觉尺度无法自然连续时切镜，通常 2-4 个镜头；禁止每个动作阶段都切一次，连续发生的动作应保留在同一镜头内。';
+}
+
+function getPaintingShotStructureLabel(directionNumber) {
+  if (PAINTING_SINGLE_TAKE_DIRECTIONS.has(directionNumber)) return '一镜到底';
+  if (PAINTING_HYBRID_DIRECTIONS.has(directionNumber)) return '主镜头＋收尾特写';
+  return '克制多镜头';
+}
+
 function normalizePaintingIdeas(parsed) {
   if (!Array.isArray(parsed)) return [];
   return parsed
@@ -12539,7 +12559,7 @@ function requiredPaintingTimelineStages(duration) {
   return 8;
 }
 
-function inspectPaintingPromptQuality(promptText, duration) {
+function inspectPaintingPromptQuality(promptText, duration, ideaSummary = '') {
   const issues = [];
   const timelineRanges = String(promptText || '').match(/\d+(?:\.\d+)?\s*(?:-|–|—|~|～|至|到)\s*\d+(?:\.\d+)?\s*秒/g) || [];
   const requiredStages = requiredPaintingTimelineStages(duration);
@@ -12552,6 +12572,12 @@ function inspectPaintingPromptQuality(promptText, duration) {
   const furnishingMatches = String(promptText || '').match(/沙发|茶几|书架|绿植|地毯|落地灯|茶具|博古架|花瓶|文房摆件|餐桌|餐椅|玄关柜|书桌|边柜|床头柜|艺术灯具/g) || [];
   if (new Set(furnishingMatches).size < 2) {
     issues.push('没有明确写出至少 2 件家居陈设');
+  }
+  if (/一镜到底/.test(ideaSummary) && !/(一镜到底|连续镜头.*不切镜|不切镜.*连续镜头)/s.test(promptText)) {
+    issues.push('创意方案要求一镜到底，但完整提示词没有明确连续镜头、不切镜');
+  }
+  if (/主镜头.*收尾特写/.test(ideaSummary) && !/(最多\s*2\s*个镜头|仅.*切\s*1\s*次|主镜头.*收尾特写)/s.test(promptText)) {
+    issues.push('创意方案要求主镜头加收尾特写，但完整提示词没有限制为最多两个镜头');
   }
   return issues;
 }
@@ -12604,7 +12630,7 @@ ${scene ? `- 场景偏好：${scene}` : ''}
 ${extraRequirements ? `- 其他特殊要求：${extraRequirements}` : ''}
 
 【本批固定方向（共 ${frameworks.length} 条，必须严格逐条使用、顺序一一对应）】
-${frameworks.map((framework, index) => `${index + 1}. ${framework}\n   若出现人物，本条服装主色必须为「${wardrobeAssignments[index]}」，可用其他协调色做小面积辅助。`).join('\n')}
+${frameworks.map((framework, index) => `${index + 1}. ${framework}\n   镜头结构：${getPaintingShotStructure(globalOffset + index + 1)}\n   若出现人物，本条服装主色必须为「${wardrobeAssignments[index]}」，可用其他协调色做小面积辅助。`).join('\n')}
 
 【本轮变化与历史避重】
 - 当前为第 ${variationRound + 1} 轮变化。同一固定方向的大框架不变，但具体人物身份、家具组合、开场细节、动作衔接和构图必须形成这一轮的新执行版本。
@@ -12617,12 +12643,13 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
 3. 每条方案只输出「标题 + 一句话核心创意」，用于卡片展示，不要输出完整提示词。
 4. 每条方案的「标题」要能一眼看出它的镜头/创意类型与景别，如「全景跟拍」「空间横摇」「远景Reveal」「中景互动」「近景特写」等，不要全部雷同。
 5. 所有方案都必须遵守三条底线：不得改变挂画的样式、颜色和外观；画面动作与展示方式不得违背真实物理逻辑（不得出现穿模、悬浮等）；画面中任何物体的运动（挂画的上升、下降、平移、旋转、展开、翻面）都必须有明确的施动者（人的手、人的动作或合理的物理机制），严禁挂画或任何物体在没有手/人操作的情况下自行悬浮、漂浮、上升、移动、旋转。
-6. 每条方案的「一句话核心创意」里，要包含 2-3 个连续的动作节点，并写清本条的镜头语言，避免设计成单一动作拖满整段时长。
+6. 每条方案的「一句话核心创意」要写出足以支撑目标时长的连续内容节点，并明确继承方向指定的镜头结构。内容节点是人物动作、空间信息或构图关系的有效变化，不等于切镜；一镜到底也必须持续发生新内容，禁止用慢走、慢坐、慢喝茶、长时间凝视或过慢运镜拖满时长。
 7. 每条方案的「一句话核心创意」必须包含具体的空间环境描写，至少出现 2-3 件与挂画风格协调的家居陈设（如实木沙发、茶几、书架、绿植、地毯、落地灯、茶具、博古架、花瓶等），不能只有白墙和挂画。
 8. 每条方案必须包含至少 1 个全景或远景阶段，用于展示人物与空间的相对关系；允许同时存在中景和近景特写，但禁止全片只有近景/特写。
 9. 人物服装颜色严格按每条方向后给出的主色执行。同一批不得擅自全部改成米白、浅灰、卡其或其他近似浅色；服装款式、材质也应随人物身份和整体风格变化。
 10. 若方向写明挂画开场已经上墙，挂画必须全程固定静止，人物只能在空间中生活、观看或接触边缘/木条，不得把它重新取下、展开、移动或再次安装。
 11. 禁止出现送礼、方形礼盒、礼包盒、开箱和拆包装情节。本模块不生成包装场景。
+12. 严格区分“内容阶段”和“镜头数量”：不得为了满足阶段数而机械切镜。一镜到底方向禁止硬切；主镜头＋收尾特写方向最多 2 个镜头；多镜头方向只在时间、空间或视觉尺度不连续时切换。
 
 【镜头语言（多样且克制）】
 - 动态运镜（平稳、连贯、按正常叙事速度推进）：推近、拉远、横向摇移、纵向/斜向移动、轻微升降或极小幅度环绕；不得用过慢运镜拖延内容。
@@ -12663,6 +12690,14 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
     if (ideas.length !== count) {
       throw Object.assign(new Error(`模型未生成完整的 ${count} 条方案`), { rawText: answer });
     }
+
+    ideas = ideas.map((item, index) => {
+      const shotLabel = getPaintingShotStructureLabel(globalOffset + index + 1);
+      return {
+        ...item,
+        summary: item.summary.includes(shotLabel) ? item.summary : `【${shotLabel}】${item.summary}`,
+      };
+    });
 
     console.log('[doubao painting] ideas done', { requestId, count: ideas.length, batch: batchIndex });
     return { ideas, batch: batchIndex, totalBatches };
@@ -12759,11 +12794,11 @@ ${extraRequirements ? `\n【其他特殊要求】\n${extraRequirements}` : ''}
 【要求】
 1. 无论视频采用何种形式（静态展示、挂墙、手持、展开、人物互动等），都绝对不得改变挂画的样式、颜色和外观，必须与产品固定档案完全一致。
 2. 画面中的一切动作、镜头、展开方式、光影、透视、材质表现都必须符合真实物理逻辑，不得出现穿模、悬浮、违反重力/光影/透视等不合理现象。如果出现卷轴式挂画或卷起后展开的画作，必须是卷轴沿自身轴线旋转、画布从卷筒中逐步释放的「滚动展开」，严禁滑动、平移、平铺或直接弹开。画面中任何物体的运动（挂画的上升、下降、平移、旋转、展开、翻面）都必须有明确的施动者（人的手、人的动作或合理的物理机制），严禁挂画或任何物体在没有手/人操作的情况下自行悬浮、漂浮、上升、移动、旋转——挂画要动，必须有人来拿、挂、展开或展示它，不能自己悬空位移。同一视频内如果出现人物（无论单人还是多人、无论跨多少个镜头或场景），所有人物必须长相、性别、年龄、发型、服装保持一致，严禁中途换人、换装或人物数量无故增减。
-3. 内容密度：整个视频必须包含连续、不同的有效阶段，阶段数量按目标时长动态要求——4 秒至少 3 个阶段，5-6 秒至少 4 个阶段，7-8 秒至少 5 个阶段，9-10 秒至少 6 个阶段，11-12 秒至少 7 个阶段，13-15 秒至少 8 个阶段；每个阶段必须发生新的、可见的动作、镜头关系或空间信息变化，禁止把同一动作拆成两段凑数。人物肢体和行走必须按现实正常速度完成，只有摄像机可以平稳舒缓；禁止慢放、降速、停顿、重复动作、循环、人物发呆和超过 1 秒的空镜。
+3. 内容密度：整个视频必须包含连续、不同的有效阶段，阶段数量按目标时长动态要求——4 秒至少 3 个阶段，5-6 秒至少 4 个阶段，7-8 秒至少 5 个阶段，9-10 秒至少 6 个阶段，11-12 秒至少 7 个阶段，13-15 秒至少 8 个阶段；每个阶段必须发生新的、可见的人物动作、空间信息或构图关系变化，禁止把同一动作拆段凑数。内容阶段不等于镜头数量，一镜到底可以在同一个连续镜头中完成全部阶段。人物肢体、行走、坐下、翻书、喝茶和观看都必须按现实正常速度完成；禁止慢放、降速、停顿、重复、循环、人物发呆、长时间凝视和超过 0.8 秒没有新内容的空镜。
 4. 提示词必须分三部分：产品固定约束、创意内容、负面约束。
 5. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。如画面中的挂画带有木条、挂轴或压杆等边框结构，这些结构必须保持档案中的形状、颜色、材质、粗细、长度、截面和两端轮廓不变；如涉及卷起或展开，全程不得变形、不得把木条变成圆柱形卷轴或圆杆、不得变色，也不得在两端或旁边新增任何圆柱、轴头、端帽、圆球、把手等构件。挂画实际尺寸为宽 40 厘米、高 80 厘米（竖幅，宽高比约 1:2）；画面中挂画与人物、家具、墙面的相对比例必须符合这一真实尺寸——挂画高度应明显小于成人身高（约到成人腰部至肩部高度），宽度较窄，严禁把挂画渲染成比人还高、比人还宽或占据整面墙的巨幅画。
-6. 创意内容：结合创意方案，写清楚${character ? `人物设定（${character}）` : '人物设定'}、符合「${styleProfile.label}」的服装款式与方案指定主色、${scene ? `指定场景（${scene}）` : '场景'}、构图、动作节奏、光影氛围和${audio ? `声音/音乐（${audio}）` : '声音'}。服装不得擅自全部改成米白、浅灰或卡其，款式和材质必须符合人物身份与本轮整体风格。按创意方案为每个有效阶段配一种景别或机位变化，把视频从 0 秒开始按先后顺序无重叠地铺满到总时长结束；4 秒至少 3 段、5-6 秒至少 4 段、7-8 秒至少 5 段、9-10 秒至少 6 段、11-12 秒至少 7 段、13-15 秒至少 8 段，每段写明起止时间及新的动作、镜头关系或空间信息。整个视频必须包含至少 1 个远景或全景，场景中必须自然出现 2-3 件符合「${styleProfile.label}」的家具或陈设，不能只有人、墙和画。人物动作按现实正常速度完成；运镜可以平稳舒缓，但必须连贯推进内容，禁止快速甩镜、剧烈晃动、手持抖动、急推急转或旋转式环绕。若方案写明挂画开场已经上墙，则挂画全程保持固定静止，内容密度应来自人物生活动作、空间揭示、前后景变化和镜头推进，不得为了凑动作重新取画或安装。
-7. 负面约束：明确列出不得改变的元素（挂画外观、画面内容、木条结构等）、必须避免的物理违背现象（穿模、悬浮、违反重力/光影/透视等）、禁止单一动作慢放/循环凑时长、禁止长时间静止、禁止快速晃动/快速变焦/急推/手持抖动、严禁挂画在无人操作时自行位移；如涉及卷轴或木条，还要禁止滑动式展开、木条变成圆柱或变色、两端新增圆柱/轴头/端帽。禁止出现送礼、方形礼盒、礼包盒、开箱和拆包装情节。
+6. 创意内容：结合创意方案，写清楚${character ? `人物设定（${character}）` : '人物设定'}、符合「${styleProfile.label}」的服装款式与方案指定主色、${scene ? `指定场景（${scene}）` : '场景'}、构图、动作节奏、光影氛围和${audio ? `声音/音乐（${audio}）` : '声音'}。服装不得擅自全部改成米白、浅灰或卡其。必须严格继承创意方案标注的“一镜到底 / 主镜头＋收尾特写 / 克制多镜头”结构：一镜到底要在所有时间段明确写“连续镜头、不切镜”，用一条简单稳定的跟拍、横移或推近路径串联动作；主镜头＋收尾特写全片最多 2 个镜头；多镜头只在无法自然连续时切换。把视频从 0 秒开始按先后顺序无重叠地铺满到结束，每段写明起止时间及新的动作或空间信息，但不得因为进入新阶段就自动切镜；4 秒至少 3 段、5-6 秒至少 4 段、7-8 秒至少 5 段、9-10 秒至少 6 段、11-12 秒至少 7 段、13-15 秒至少 8 段。整个视频至少有 1 个远景或全景，场景中自然出现 2-3 件符合「${styleProfile.label}」的家具或陈设，不能只有人、墙和画。所有动作按现实正常速度连续完成，镜头平稳但不能缓慢拖延。若方案写明挂画开场已经上墙，则挂画全程固定静止，内容密度来自人物生活动作、空间揭示、前后景和连续构图变化，不得为了凑动作重新取画或安装。
+7. 负面约束：明确列出不得改变的元素（挂画外观、画面内容、木条结构等）、必须避免的物理违背现象（穿模、悬浮、违反重力/光影/透视等）、禁止单一动作慢放/循环凑时长、禁止长时间静止、禁止快速晃动/快速变焦/急推/手持抖动、严禁挂画在无人操作时自行位移；一镜到底方向禁止硬切、跳切、瞬间换景和人物位置突变，多镜头方向禁止无意义频繁切镜；如涉及卷轴或木条，还要禁止滑动式展开、木条变成圆柱或变色、两端新增圆柱/轴头/端帽。禁止出现送礼、方形礼盒、礼包盒、开箱和拆包装情节。
 ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之间，请你从该范围内挑选一个最合适的整数秒数；画面比例 ${ratio}。并在提示词最后单独写一行「总时长：X秒」（X 为你选定的整数，例如「总时长：8秒」）。` : `8. 总时长约 ${fallbackDuration} 秒，画面比例 ${ratio}。并在提示词最后单独写一行「总时长：${fallbackDuration}秒」。`}
 
 严格只输出这段提示词文本本身，不要输出任何解释、标题、序号或 markdown 包裹。`;
@@ -12791,7 +12826,7 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
       durationSec = hasDurationRange ? Math.round((durationMin + durationMax) / 2) : fallbackDuration;
     }
     let resolvedDuration = Math.min(30, Math.max(4, Math.round(durationSec)));
-    const qualityIssues = inspectPaintingPromptQuality(promptText, resolvedDuration);
+    const qualityIssues = inspectPaintingPromptQuality(promptText, resolvedDuration, ideaSummary);
     const hasRetryBudget = Date.now() - modelStartedAt < 25 * 1000;
     if (qualityIssues.length > 0 && hasRetryBudget) {
       const correctionPrompt = `${prompt}\n\n【质量检查未通过，必须重写】\n${qualityIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\n请重新输出一份完整提示词，保留产品与创意方向，严格补齐连续时间轴、远景/全景和家居陈设。只输出重写后的提示词文本。`;
