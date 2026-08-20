@@ -2951,8 +2951,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setTimeout(() => setSeedancePromptHighlight(false), 2000);
       scrollToRef(seedancePromptRef);
 
-      return { prompt: prompt.trim(), duration: durationSeconds, references: nextReferences };
-
       const thumbnail = await imageFileToThumbnailDataUrl(paintingImage?.file as File).catch(() => '');
       const historyItem: PaintingHistoryItem = {
         id: createMessageId('painting_history'),
@@ -2970,6 +2968,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         persistPaintingHistory(next);
         return next;
       });
+
+      return { prompt: prompt.trim(), duration: durationSeconds, references: nextReferences };
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '完整提示词生成失败，请稍后重试。');
     } finally {
@@ -2981,6 +2981,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (paintingLoading !== 'idle' || isSeedanceLoading) return;
     const result = await handlePaintingGeneratePrompt(idea);
     if (!result) return;
+    // 全自动流程必须带挂画参考图：无图直接终止，避免生成无画面的视频。
+    const hasImage = result.references.some((ref) => ref.kind === 'image');
+    if (!hasImage) {
+      window.alert('提示词没有包含图片，已终止自动生成视频，请先加载挂画参考图。');
+      return;
+    }
     await handleCreateSeedanceVideo({
       prompt: result.prompt,
       duration: result.duration,
