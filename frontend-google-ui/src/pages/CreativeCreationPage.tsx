@@ -2206,6 +2206,37 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setRequestError("");
     setSeedancePromptHighlight(true);
     setTimeout(() => setSeedancePromptHighlight(false), 2000);
+
+    // 反推完成自动带出：时长（源视频真实时长向上取整）+ 参考图（元素替换 / 图片生视频）。
+    syncReverseMediaToSeedance();
+  }
+
+  function syncReverseMediaToSeedance() {
+    // 挂画创意素材走自己的自动填充流程，这里不处理。
+    if (reverseMode === 'painting') return;
+
+    // 自动加载参考图：元素替换 → 替换参考图；图片生视频 → 上传的图片。
+    if (reverseMode === 'replace') {
+      setSeedanceReferences(computeSeedanceReferencesWithImage(replaceImage));
+    } else if (reverseMode === 'image') {
+      setSeedanceReferences(computeSeedanceReferencesWithImage(selectedMedia));
+    }
+
+    // 自动设置时长：直接反推 / 元素替换以「视频」为源，取源视频真实时长向上取整（4.3→5）。
+    // 图片生视频的时长是手动填的整数，已在上一步设置，这里不重复处理。
+    if (reverseMode === 'direct' || reverseMode === 'replace') {
+      if (selectedMedia?.kind === 'video') {
+        void (async () => {
+          try {
+            const duration = await readVideoDuration(selectedMedia.file);
+            const maxDuration = seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15;
+            setSeedanceDuration(Math.min(maxDuration, Math.max(4, Math.ceil(duration))));
+          } catch {
+            // 读不到源视频时长时不阻断流程，保持当前时长不变。
+          }
+        })();
+      }
+    }
   }
 
   function getAtReferenceLabel(ref: SeedanceReferenceFile, index: number) {
@@ -2994,10 +3025,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     });
   }
 
-  function computeNextSeedanceReferencesWithPainting(): SeedanceReferenceFile[] {
-    if (!paintingImage) return seedanceReferences;
+  function computeSeedanceReferencesWithImage(image: SelectedCreativeMedia | null): SeedanceReferenceFile[] {
+    if (!image || image.kind !== 'image') return seedanceReferences;
     // 按文件名去重：右侧已有同名参考图时不再重复追加。
-    if (seedanceReferences.some((ref) => ref.kind === 'image' && ref.fileName === paintingImage.fileName)) {
+    if (seedanceReferences.some((ref) => ref.kind === 'image' && ref.fileName === image.fileName)) {
       return seedanceReferences;
     }
     const isSeedance25 = seedanceModel === 'doubao-seedance-2-5-260628';
@@ -3008,11 +3039,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const nextReference: SeedanceReferenceFile = {
       id: createMessageId('seedance_ref'),
       kind: 'image',
-      file: paintingImage.file,
-      previewUrl: createMediaPreviewUrl(paintingImage.file),
-      fileName: paintingImage.fileName,
+      file: image.file,
+      previewUrl: createMediaPreviewUrl(image.file),
+      fileName: image.fileName,
     };
     return [...seedanceReferences, nextReference];
+  }
+
+  function computeNextSeedanceReferencesWithPainting(): SeedanceReferenceFile[] {
+    return computeSeedanceReferencesWithImage(paintingImage);
   }
 
   function appendPaintingToSeedanceReferences() {
