@@ -3914,20 +3914,31 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                 </div>
                                 <div className="mt-1 text-xs leading-5 text-slate-500">{idea.summary}</div>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => handlePaintingGeneratePrompt(idea)}
-                                disabled={paintingLoading !== 'idle'}
-                                className={cn(
-                                  'shrink-0 inline-flex h-8 items-center gap-1 rounded-full border px-3 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-                                  isUsed
-                                    ? 'border-emerald-200 bg-white text-emerald-600 hover:border-emerald-300 hover:bg-emerald-50'
-                                    : 'border-slate-200 bg-white text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600'
-                                )}
-                              >
-                                {paintingLoading === 'prompt' && paintingSelectedIdea?.id === idea.id ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
-                                {isUsed ? '再次生成' : '生成完整提示词'}
-                              </button>
+                              <div className="flex shrink-0 items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handlePaintingGeneratePrompt(idea)}
+                                  disabled={paintingLoading !== 'idle'}
+                                  className={cn(
+                                    'inline-flex h-8 items-center gap-1 rounded-full border px-3 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                                    isUsed
+                                      ? 'border-emerald-200 bg-white text-emerald-600 hover:border-emerald-300 hover:bg-emerald-50'
+                                      : 'border-slate-200 bg-white text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600'
+                                  )}
+                                >
+                                  {paintingLoading === 'prompt' && paintingSelectedIdea?.id === idea.id ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+                                  {isUsed ? '再次生成' : '生成完整提示词'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handlePaintingAutoGenerateVideo(idea)}
+                                  disabled={paintingLoading !== 'idle' || isSeedanceLoading}
+                                  className="inline-flex h-8 items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-3 text-[11px] font-bold text-rose-600 transition-colors hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {paintingLoading === 'prompt' && paintingSelectedIdea?.id === idea.id ? <Loader2 className="size-3 animate-spin" /> : <Film className="size-3" />}
+                                  自动生成视频
+                                </button>
+                              </div>
                             </div>
                           </div>
                           );
