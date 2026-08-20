@@ -1432,7 +1432,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance' | 'video-edit-video' | 'video-edit-image'>('video');
   const [historyPreviewItem, setHistoryPreviewItem] = useState<HistoryPreviewItem | null>(null);
   const [historyVideoDurations, setHistoryVideoDurations] = useState<Record<number, number>>({});
-  const [isUploadHistoryLoading, setIsUploadHistoryLoading] = useState(false);
+  const [isUploadHistoryLoading, setIsUploadHistoryLoading] = useState(true);
   const uploadHistoryLoadedRef = useRef(false);
   const uploadHistoryLoadPromiseRef = useRef<Promise<void> | null>(null);
   const ownedHistoryPreviewUrlRef = useRef<string | null>(null);
@@ -1592,6 +1592,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     uploadHistoryLoadPromiseRef.current = loadingPromise;
     return loadingPromise;
   }
+
+  useEffect(() => {
+    void ensureUploadHistoriesLoaded();
+  }, []);
 
   useEffect(() => {
     try {
@@ -3867,7 +3871,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     >
                       <History className="size-3 text-slate-400" />
                       <span>历史图片</span>
-                      <span className="rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">{imageHistory.length}</span>
+                      <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-bold text-slate-500">
+                        {isUploadHistoryLoading ? <Loader2 className="size-2.5 animate-spin" aria-label="正在读取历史图片" /> : imageHistory.length}
+                      </span>
                     </button>
                     {paintingProfile && (
                       <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-600">产品档案已生成</span>
