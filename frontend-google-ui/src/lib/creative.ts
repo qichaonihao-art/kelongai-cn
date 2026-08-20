@@ -615,6 +615,28 @@ export interface PaintingMaterialPlan {
   extraRequirements: string;
 }
 
+async function waitForPaintingTask<T>(taskId: string, fallbackError: string): Promise<T> {
+  const startedAt = Date.now();
+  const timeoutMs = 10 * 60 * 1000;
+  while (Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const response = await fetch(`/api/painting/tasks/${encodeURIComponent(taskId)}`, {
+      credentials: 'include',
+    });
+    const json = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(String(json?.error || `查询挂画任务失败（HTTP ${response.status}）`));
+    }
+    if (json?.status === 'failed') {
+      throw new Error(String(json?.error || fallbackError));
+    }
+    if (json?.status === 'done') {
+      return (json?.result || {}) as T;
+    }
+  }
+  throw new Error(`${fallbackError}：后台处理超过 10 分钟，请稍后重试。`);
+}
+
 export async function analyzePainting(file: File): Promise<PaintingProfile> {
   const formData = new FormData();
   formData.append('file', file, file.name);
@@ -634,8 +656,11 @@ export async function analyzePainting(file: File): Promise<PaintingProfile> {
     throw new Error(message);
   }
 
-  return json?.profile && typeof json.profile === 'object'
-    ? (json.profile as PaintingProfile)
+  const taskId = String(json?.taskId || '');
+  if (!taskId) throw new Error('挂画分析任务创建失败：服务端未返回任务编号。');
+  const result = await waitForPaintingTask<{ profile?: PaintingProfile }>(taskId, '挂画分析失败');
+  return result.profile && typeof result.profile === 'object'
+    ? result.profile
     : {};
 }
 
@@ -673,10 +698,13 @@ export async function generatePaintingIdeas(
     throw new Error(message);
   }
 
+  const taskId = String(json?.taskId || '');
+  if (!taskId) throw new Error('创意方案任务创建失败：服务端未返回任务编号。');
+  const result = await waitForPaintingTask<PaintingIdeasResult>(taskId, '创意方案生成失败');
   return {
-    ideas: Array.isArray(json?.ideas) ? (json.ideas as PaintingIdeaSummary[]) : [],
-    batch: Number.isFinite(Number(json?.batch)) ? Number(json.batch) : batch,
-    totalBatches: Number.isFinite(Number(json?.totalBatches)) ? Number(json.totalBatches) : 1,
+    ideas: Array.isArray(result?.ideas) ? result.ideas : [],
+    batch: Number.isFinite(Number(result?.batch)) ? Number(result.batch) : batch,
+    totalBatches: Number.isFinite(Number(result?.totalBatches)) ? Number(result.totalBatches) : 1,
   };
 }
 

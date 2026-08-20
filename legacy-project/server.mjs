@@ -12264,32 +12264,67 @@ async function callDoubaoArkText({ apiKey, model, content, timeoutMs }) {
   return answer;
 }
 
-async function handlePaintingAnalyze(req, res) {
-  const requestId = randomBytes(6).toString('hex');
-  try {
-    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
-    if (!apiKey) {
-      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
-      return;
-    }
+// 挂画分析和创意方案都可能超过线上代理的单次请求超时，因此统一使用后台任务。
+const PAINTING_TASKS = new Map();
+const PAINTING_TASK_TTL_MS = 30 * 60 * 1000;
+const PAINTING_TASK_MAX = 100;
 
-    const body = isMultipartFormRequest(req)
-      ? await readMultipartFormBody(req)
-      : await readRequestBody(req);
+function prunePaintingTasks() {
+  const now = Date.now();
+  for (const [id, task] of PAINTING_TASKS) {
+    if (task.doneAt && now - task.doneAt > PAINTING_TASK_TTL_MS) PAINTING_TASKS.delete(id);
+  }
+  while (PAINTING_TASKS.size > PAINTING_TASK_MAX) {
+    const oldestKey = PAINTING_TASKS.keys().next().value;
+    PAINTING_TASKS.delete(oldestKey);
+  }
+}
 
-    let imageUrl = '';
-    if (body.file instanceof File && body.file.size > 0) {
-      const compressedFile = await compressMediaForArk(body.file, 'image');
-      const normalized = await normalizeUploadedMediaInput(compressedFile, 'image');
-      imageUrl = normalized.imageUrl;
-    } else if (readValue(body.image)) {
-      imageUrl = normalizeBase64ImageInput(body.image, body.imageMimeType).imageUrl;
-    } else {
-      sendJson(res, 400, { error: '请先上传挂画图片。' });
-      return;
-    }
+function createPaintingTask(kind) {
+  prunePaintingTasks();
+  const task = {
+    id: `painting-${kind}-${randomBytes(8).toString('hex')}`,
+    kind,
+    status: 'running',
+    result: null,
+    error: '',
+    debug: null,
+    createdAt: Date.now(),
+    doneAt: 0,
+  };
+  PAINTING_TASKS.set(task.id, task);
+  return task;
+}
 
-    const prompt = `你是专业的挂画/卷轴产品分析专家。请仔细分析下面这张挂画/装饰画图片，输出一个「产品固定档案」JSON 对象。
+function handlePaintingTaskStatus(req, res, taskId) {
+  const task = PAINTING_TASKS.get(readValue(taskId));
+  if (!task || (task.doneAt && Date.now() - task.doneAt > PAINTING_TASK_TTL_MS)) {
+    sendJson(res, 404, { error: '挂画任务不存在或已过期' });
+    return;
+  }
+  sendJson(res, 200, {
+    ok: true,
+    taskId: task.id,
+    kind: task.kind,
+    status: task.status,
+    ...(task.status === 'done' ? { result: task.result } : {}),
+    ...(task.status === 'failed' ? { error: task.error, debug: task.debug } : {}),
+  });
+}
+
+async function analyzePaintingCore(body, apiKey, requestId) {
+  let imageUrl = '';
+  if (body.file instanceof File && body.file.size > 0) {
+    const compressedFile = await compressMediaForArk(body.file, 'image');
+    const normalized = await normalizeUploadedMediaInput(compressedFile, 'image');
+    imageUrl = normalized.imageUrl;
+  } else if (readValue(body.image)) {
+    imageUrl = normalizeBase64ImageInput(body.image, body.imageMimeType).imageUrl;
+  } else {
+    throw new Error('请先上传挂画图片。');
+  }
+
+  const prompt = `你是专业的挂画/卷轴产品分析专家。请仔细分析下面这张挂画/装饰画图片，输出一个「产品固定档案」JSON 对象。
 
 要求输出以下字段（能用中文就用中文描述）：
 - name：产品名称
@@ -12305,26 +12340,54 @@ async function handlePaintingAnalyze(req, res) {
 
 严格只输出一个合法 JSON 对象，不要输出任何解释文字，不要用 markdown 代码块包裹。`;
 
-    console.log('[doubao painting] analyze request start', { requestId, hasFile: body.file instanceof File, fileSize: body.file?.size || 0 });
+  console.log('[doubao painting] analyze request start', { requestId, hasFile: body.file instanceof File, fileSize: body.file?.size || 0 });
 
-    const answer = await callDoubaoArkText({
-      apiKey,
-      model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-      content: [
-        { type: 'input_image', image_url: imageUrl },
-        { type: 'input_text', text: prompt }
-      ]
-    });
+  const answer = await callDoubaoArkText({
+    apiKey,
+    model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+    content: [
+      { type: 'input_image', image_url: imageUrl },
+      { type: 'input_text', text: prompt }
+    ]
+  });
 
-    const profile = parseStructuredJson(answer);
-    console.log('[doubao painting] analyze done', { requestId, profileKeys: profile && typeof profile === 'object' ? Object.keys(profile) : [] });
-    sendJson(res, 200, { ok: true, profile });
+  const profile = parseStructuredJson(answer);
+  console.log('[doubao painting] analyze done', { requestId, profileKeys: profile && typeof profile === 'object' ? Object.keys(profile) : [] });
+  return { profile };
+}
+
+async function runPaintingAnalyzeTask(task, body, apiKey) {
+  try {
+    task.result = await analyzePaintingCore(body, apiKey, task.id);
+    task.status = 'done';
   } catch (error) {
-    console.error('[doubao painting] analyze failed', { requestId, message: error?.message || '' });
-    sendJson(res, 500, {
-      error: error?.message || '挂画分析失败',
-      debug: { stage: 'analyze', rawText: error?.rawText }
-    });
+    task.status = 'failed';
+    task.error = error?.message || '挂画分析失败';
+    task.debug = { stage: 'analyze', rawText: error?.rawText };
+    console.error('[doubao painting] analyze failed', { requestId: task.id, message: error?.message || '' });
+  }
+  task.doneAt = Date.now();
+}
+
+async function handlePaintingAnalyze(req, res) {
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+    const body = isMultipartFormRequest(req)
+      ? await readMultipartFormBody(req)
+      : await readRequestBody(req);
+    if (!(body.file instanceof File && body.file.size > 0) && !readValue(body.image)) {
+      sendJson(res, 400, { error: '请先上传挂画图片。' });
+      return;
+    }
+    const task = createPaintingTask('analyze');
+    runPaintingAnalyzeTask(task, body, apiKey);
+    sendJson(res, 202, { ok: true, taskId: task.id, status: task.status });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '挂画分析任务创建失败' });
   }
 }
 
@@ -12493,24 +12556,14 @@ function inspectPaintingPromptQuality(promptText, duration) {
   return issues;
 }
 
-async function handlePaintingIdeas(req, res) {
-  const requestId = randomBytes(6).toString('hex');
-  try {
-    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
-    if (!apiKey) {
-      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
-      return;
-    }
+async function generatePaintingIdeasCore(body, apiKey, requestId) {
+  const profile = body.profile;
+  const plan = body.plan && typeof body.plan === 'object' ? body.plan : {};
+  if (!profile || typeof profile !== 'object') {
+    throw new Error('缺少产品档案 profile');
+  }
 
-    const body = await readRequestBody(req);
-    const profile = body.profile;
-    const plan = body.plan && typeof body.plan === 'object' ? body.plan : {};
-    if (!profile || typeof profile !== 'object') {
-      sendJson(res, 400, { error: '缺少产品档案 profile' });
-      return;
-    }
-
-    // 每批固定展示 10 条；四批合计正好覆盖 40 个不同方向。
+  // 每批固定展示 10 条；四批合计正好覆盖 40 个不同方向。
     const count = 10;
     const durationMin = Number(plan.durationMin) || 5;
     const durationMax = Number(plan.durationMax) || 10;
@@ -12612,13 +12665,39 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
     }
 
     console.log('[doubao painting] ideas done', { requestId, count: ideas.length, batch: batchIndex });
-    sendJson(res, 200, { ok: true, ideas, batch: batchIndex, totalBatches });
+    return { ideas, batch: batchIndex, totalBatches };
+}
+
+async function runPaintingIdeasTask(task, body, apiKey) {
+  try {
+    task.result = await generatePaintingIdeasCore(body, apiKey, task.id);
+    task.status = 'done';
   } catch (error) {
-    console.error('[doubao painting] ideas failed', { requestId, message: error?.message || '' });
-    sendJson(res, 500, {
-      error: error?.message || '创意方案生成失败',
-      debug: { stage: 'ideas', rawText: error?.rawText }
-    });
+    task.status = 'failed';
+    task.error = error?.message || '创意方案生成失败';
+    task.debug = { stage: 'ideas', rawText: error?.rawText };
+    console.error('[doubao painting] ideas failed', { requestId: task.id, message: error?.message || '' });
+  }
+  task.doneAt = Date.now();
+}
+
+async function handlePaintingIdeas(req, res) {
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+    const body = await readRequestBody(req);
+    if (!body.profile || typeof body.profile !== 'object') {
+      sendJson(res, 400, { error: '缺少产品档案 profile' });
+      return;
+    }
+    const task = createPaintingTask('ideas');
+    runPaintingIdeasTask(task, body, apiKey);
+    sendJson(res, 202, { ok: true, taskId: task.id, status: task.status });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '创意方案任务创建失败' });
   }
 }
 
@@ -15659,6 +15738,12 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/painting/idea-prompt') {
     await handlePaintingIdeaPrompt(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/api/painting/tasks/')) {
+    const taskId = decodeURIComponent(url.pathname.replace(/^\/api\/painting\/tasks\//, ''));
+    handlePaintingTaskStatus(req, res, taskId);
     return;
   }
 

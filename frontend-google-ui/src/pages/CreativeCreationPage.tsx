@@ -1466,6 +1466,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const videoEditImageInputRef = useRef<HTMLInputElement>(null);
   const seedanceSettingsRef = useRef<HTMLDivElement>(null);
   const seedancePanelRef = useRef<HTMLDivElement>(null);
+  const seedanceTaskStatusRef = useRef<HTMLDivElement>(null);
   const paintingPlanRef = useRef<HTMLDivElement>(null);
   const paintingIdeasRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -2474,6 +2475,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     prompt?: string;
     duration?: number;
     references?: SeedanceReferenceFile[];
+    focusTaskStatus?: boolean;
   }) {
     const isVideoEdit = seedanceTaskMode === 'video-edit-painting';
     const prompt = isVideoEdit
@@ -2516,6 +2518,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setIsSeedanceLoading(true);
     setSeedanceError("");
     setSeedanceTask(null);
+    if (overrides?.focusTaskStatus) {
+      setTimeout(() => scrollToRef(seedanceTaskStatusRef), 50);
+    }
 
     try {
       const task = await createSeedanceTask({
@@ -2533,6 +2538,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         ...task,
         createdAt: task.createdAt || Math.floor(Date.now() / 1000),
       });
+      if (overrides?.focusTaskStatus) {
+        setTimeout(() => scrollToRef(seedanceTaskStatusRef), 50);
+      }
       setSeedanceHistory((previous) =>
         mergeSeedanceHistoryItem(
           previous,
@@ -3025,7 +3033,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
   async function handlePaintingGeneratePrompt(
     idea: PaintingIdeaSummary,
-    options?: { focusSeedancePanel?: boolean }
+    options?: { skipSeedanceScroll?: boolean }
   ) {
     if (!paintingProfile) return;
     setPaintingError('');
@@ -3057,7 +3065,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setSeedanceReferences(nextReferences);
       setSeedancePromptHighlight(true);
       setTimeout(() => setSeedancePromptHighlight(false), 2000);
-      scrollToRef(options?.focusSeedancePanel ? seedancePanelRef : seedancePromptRef);
+      if (!options?.skipSeedanceScroll) scrollToRef(seedancePromptRef);
 
       const thumbnail = await imageFileToThumbnailDataUrl(paintingImage?.file as File).catch(() => '');
       const historyItem: PaintingHistoryItem = {
@@ -3088,7 +3096,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
   async function handlePaintingAutoGenerateVideo(idea: PaintingIdeaSummary) {
     if (paintingLoading !== 'idle' || isSeedanceLoading) return;
-    const result = await handlePaintingGeneratePrompt(idea, { focusSeedancePanel: true });
+    const result = await handlePaintingGeneratePrompt(idea, { skipSeedanceScroll: true });
     if (!result) return;
     // 全自动流程必须带挂画参考图：无图直接终止，避免生成无画面的视频。
     const hasImage = result.references.some((ref) => ref.kind === 'image');
@@ -3100,6 +3108,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       prompt: result.prompt,
       duration: result.duration,
       references: result.references,
+      focusTaskStatus: true,
     });
   }
 
@@ -5444,7 +5453,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               </div>
 
               {/* 生成任务预览区域 */}
-              <div className="mt-3">
+              <div ref={seedanceTaskStatusRef} className="mt-3">
                 {isSeedanceLoading ? (
                   <div className="flex min-h-[180px] items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white p-3 text-xs font-bold text-violet-600">
                     <Loader2 className="size-4 animate-spin" />
