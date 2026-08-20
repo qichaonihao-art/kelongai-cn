@@ -2424,17 +2424,24 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
-  async function handleCreateSeedanceVideo() {
+  async function handleCreateSeedanceVideo(overrides?: {
+    prompt?: string;
+    duration?: number;
+    references?: SeedanceReferenceFile[];
+  }) {
     const isVideoEdit = seedanceTaskMode === 'video-edit-painting';
     const prompt = isVideoEdit
       ? buildVideoEditPaintingPrompt(videoEditTarget, videoEditAdjustments)
-      : seedancePrompt.trim();
+      : (overrides?.prompt ?? seedancePrompt.trim());
     if (!prompt || isSeedanceLoading) return;
 
+    const references = overrides?.references ?? seedanceReferences;
+    const duration = overrides?.duration ?? seedanceDuration;
+
     if (isVideoEdit) {
-      const videoReferences = seedanceReferences.filter((item) => item.kind === 'video');
-      const imageReferences = seedanceReferences.filter((item) => item.kind === 'image');
-      if (videoReferences.length !== 1 || imageReferences.length !== 1 || seedanceReferences.length !== 2) {
+      const videoReferences = references.filter((item) => item.kind === 'video');
+      const imageReferences = references.filter((item) => item.kind === 'image');
+      if (videoReferences.length !== 1 || imageReferences.length !== 1 || references.length !== 2) {
         setSeedanceError('请分别上传 1 个原视频和 1 张目标挂画图片后再提交。');
         return;
       }
@@ -2449,7 +2456,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setSeedancePrompt(prompt);
     }
 
-    if (!isVideoEdit && seedanceReferences.length === 0) {
+    if (!isVideoEdit && references.length === 0) {
       const confirmed = window.confirm('当前未添加任何参考图片或视频，确定只使用文本提示词生成视频吗？');
       if (!confirmed) return;
     }
@@ -2471,10 +2478,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         prompt,
         resolution: seedanceResolution,
         ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
-        duration: isVideoEdit ? -1 : seedanceDuration,
+        duration: isVideoEdit ? -1 : duration,
         generateAudio: seedanceGenerateAudio,
         watermark: seedanceWatermark,
-        references: seedanceReferences,
+        references,
       });
       setSeedanceTask({
         ...task,
@@ -2494,7 +2501,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               prompt,
               resolution: seedanceResolution,
               ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
-              duration: isVideoEdit ? -1 : seedanceDuration,
+              duration: isVideoEdit ? -1 : duration,
               generateAudio: seedanceGenerateAudio,
               watermark: seedanceWatermark,
             }
@@ -2502,7 +2509,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         )
       );
       recordSeedanceCost(
-        isVideoEdit ? Math.ceil(videoEditSourceDuration || 0) : seedanceDuration,
+        isVideoEdit ? Math.ceil(videoEditSourceDuration || 0) : duration,
         isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel
       );
     } catch (error) {
