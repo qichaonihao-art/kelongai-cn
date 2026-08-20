@@ -213,7 +213,7 @@ function filterRetainedHistoryItems<T extends { kind: UploadHistoryItem['kind'];
     .sort((a, b) => b.timestamp - a.timestamp);
 }
 
-export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'audio'): Promise<void> {
+export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'audio'): Promise<number> {
   const mediaMetadata = kind === 'video'
     ? await createVideoMetadata(file)
     : kind === 'image'
@@ -255,6 +255,7 @@ export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'a
   }
 
   const timestamp = now;
+  let savedId = 0;
   const addRequest = store.add({
     kind,
     name: file.name,
@@ -264,6 +265,7 @@ export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'a
     timestamp,
   });
   addRequest.onsuccess = () => {
+    savedId = addRequest.result as number;
     metaStore.add({
       id: addRequest.result as number,
       kind,
@@ -281,6 +283,7 @@ export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'a
   });
 
   db.close();
+  return savedId;
 }
 
 export async function loadUploadHistory(kind?: 'image' | 'video' | 'audio'): Promise<UploadHistoryItem[]> {

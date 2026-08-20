@@ -129,6 +129,8 @@ interface PaintingHistoryItem {
   ideas: PaintingIdeaSummary[];
   fullPrompt: string;
   thumbnail?: string;
+  uploadHistoryId?: number;
+  imageFileName?: string;
   ratio: string;
   duration: number;
   stylePreset?: string;
@@ -997,6 +999,21 @@ function imageFileToThumbnailDataUrl(file: File, maxDimension = 320): Promise<st
   });
 }
 
+function thumbnailDataUrlToFile(dataUrl: string, fileName: string): File | null {
+  try {
+    const match = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
+    if (!match) return null;
+    const bytes = window.atob(match[2]);
+    const buffer = new Uint8Array(bytes.length);
+    for (let index = 0; index < bytes.length; index += 1) {
+      buffer[index] = bytes.charCodeAt(index);
+    }
+    return new File([buffer], fileName, { type: match[1] || 'image/jpeg' });
+  } catch {
+    return null;
+  }
+}
+
 function loadPaintingHistory() {
   if (typeof window === 'undefined') return [];
 
@@ -1388,6 +1405,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [atMenuSelectedIndex, setAtMenuSelectedIndex] = useState(0);
   const [reverseMode, setReverseMode] = useState<ReverseMode>('direct');
   const [paintingImage, setPaintingImage] = useState<SelectedCreativeMedia | null>(null);
+  const [paintingUploadHistoryId, setPaintingUploadHistoryId] = useState<number | null>(null);
   const [paintingProfile, setPaintingProfile] = useState<PaintingProfile | null>(null);
   const [paintingPlan, setPaintingPlan] = useState<PaintingMaterialPlan>({
     count: 10,
@@ -2885,6 +2903,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       URL.revokeObjectURL(paintingImage.previewUrl);
     }
     setPaintingImage(null);
+    setPaintingUploadHistoryId(null);
     if (paintingFileInputRef.current) {
       paintingFileInputRef.current.value = '';
     }
@@ -2912,7 +2931,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingFullPrompt('');
       setUsedIdeaIds({});
       setPaintingVariationRound(0);
-      await saveUploadHistory(file, 'image');
+      const savedHistoryId = await saveUploadHistory(file, 'image');
+      setPaintingUploadHistoryId(savedHistoryId || null);
       await refreshUploadHistories();
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '挂画图片读取失败，请换一张再试。');
@@ -3080,6 +3100,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         ideas: paintingIdeas,
         fullPrompt: prompt,
         thumbnail: thumbnail || undefined,
+        uploadHistoryId: paintingUploadHistoryId || undefined,
+        imageFileName: paintingImage?.fileName,
         ratio,
         duration: durationSeconds,
         stylePreset: paintingPlan.stylePreset,
@@ -3145,7 +3167,52 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setSeedanceReferences(computeNextSeedanceReferencesWithPainting());
   }
 
-  function handlePaintingLoadHistory(item: PaintingHistoryItem) {
+  async function handlePaintingLoadHistory(item: PaintingHistoryItem) {
+    let restoredHistoryItem = item.uploadHistoryId
+      ? await getUploadHistoryItem(item.uploadHistoryId).catch(() => null)
+      : null;
+
+    if (!restoredHistoryItem && item.imageFileName) {
+      const summaries = await loadUploadHistorySummaries('image').catch(() => []);
+      const matchingSummary = summaries.find((summary) => summary.name === item.imageFileName);
+      if (matchingSummary) {
+        restoredHistoryItem = await getUploadHistoryItem(matchingSummary.id).catch(() => null);
+      }
+    }
+
+    let restoredFile = restoredHistoryItem?.kind === 'image' ? blobToFile(restoredHistoryItem) : null;
+    let resolvedUploadHistoryId = restoredHistoryItem?.id || null;
+    if (!restoredFile && item.thumbnail) {
+      restoredFile = thumbnailDataUrlToFile(
+        item.thumbnail,
+        item.imageFileName || `${item.profile?.name || '挂画'}-历史缩略图.jpg`,
+      );
+      if (restoredFile) {
+        resolvedUploadHistoryId = await saveUploadHistory(restoredFile, 'image').catch(() => 0) || null;
+        if (resolvedUploadHistoryId) await refreshUploadHistories();
+      }
+    }
+
+    if (restoredFile) {
+      const previewUrl = createMediaPreviewUrl(restoredFile);
+      if (paintingImage) URL.revokeObjectURL(paintingImage.previewUrl);
+      setPaintingImage({ kind: 'image', file: restoredFile, previewUrl, fileName: restoredFile.name });
+      setPaintingUploadHistoryId(resolvedUploadHistoryId);
+      if (resolvedUploadHistoryId && item.uploadHistoryId !== resolvedUploadHistoryId) {
+        setPaintingHistory((previous) => {
+          const next = previous.map((historyItem) => historyItem.id === item.id
+            ? { ...historyItem, uploadHistoryId: resolvedUploadHistoryId || undefined, imageFileName: restoredFile?.name }
+            : historyItem);
+          persistPaintingHistory(next);
+          return next;
+        });
+      }
+    } else {
+      if (paintingImage) URL.revokeObjectURL(paintingImage.previewUrl);
+      setPaintingImage(null);
+      setPaintingUploadHistoryId(null);
+      setPaintingError('这条旧历史记录没有可恢复的图片，请从历史图片中重新选择一次原图。');
+    }
     setPaintingProfile(item.profile);
     setPaintingIdeas(item.ideas || []);
     setPaintingFullPrompt(item.fullPrompt || '');
@@ -3153,7 +3220,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setUsedIdeaIds({});
     if (item.ratio) setPaintingPlan((previous) => ({ ...previous, ratio: item.ratio }));
     if (item.stylePreset) setPaintingPlan((previous) => ({ ...previous, stylePreset: item.stylePreset || 'modern-minimal' }));
-    setPaintingError('');
+    if (restoredFile) setPaintingError('');
   }
 
   function handlePaintingDeleteHistory(id: string) {
@@ -3358,6 +3425,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       URL.revokeObjectURL(paintingImage.previewUrl);
     }
     setPaintingImage({ kind: 'image', file, previewUrl, fileName: file.name });
+    setPaintingUploadHistoryId(item.id);
     setPaintingProfile(null);
     setPaintingIdeas([]);
     setPaintingSelectedIdea(null);
@@ -4159,7 +4227,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           >
                             <button
                               type="button"
-                              onClick={() => handlePaintingLoadHistory(item)}
+                              onClick={() => void handlePaintingLoadHistory(item)}
                               className="flex min-w-0 flex-1 items-center gap-3 text-left"
                             >
                               {item.thumbnail ? (
