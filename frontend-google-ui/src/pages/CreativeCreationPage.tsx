@@ -2938,10 +2938,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setSeedancePrompt(prompt.trim());
       setSeedanceRatio(ratio);
       setSeedanceDuration(durationSeconds);
-      appendPaintingToSeedanceReferences();
+      const nextReferences = computeNextSeedanceReferencesWithPainting();
+      setSeedanceReferences(nextReferences);
       setSeedancePromptHighlight(true);
       setTimeout(() => setSeedancePromptHighlight(false), 2000);
       scrollToRef(seedancePromptRef);
+
+      return { prompt: prompt.trim(), duration: durationSeconds, references: nextReferences };
 
       const thumbnail = await imageFileToThumbnailDataUrl(paintingImage?.file as File).catch(() => '');
       const historyItem: PaintingHistoryItem = {
