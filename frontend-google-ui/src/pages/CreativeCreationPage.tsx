@@ -5250,7 +5250,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 )}
                 <button
                   type="button"
-                  onClick={handleCreateSeedanceVideo}
+                  onClick={() => handleCreateSeedanceVideo()}
                   disabled={
                     !seedancePrompt.trim()
                     || isSeedanceLoading
