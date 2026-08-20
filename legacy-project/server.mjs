@@ -12522,7 +12522,7 @@ async function handlePaintingIdeas(req, res) {
     const styleProfile = resolvePaintingStyleProfile(plan.stylePreset);
     const variationRound = Math.max(0, Number.parseInt(String(body.variationRound || 0), 10) || 0);
     const avoidIdeas = Array.isArray(body.avoidIdeas)
-      ? body.avoidIdeas.map((item) => readValue(item)).filter(Boolean).slice(0, 60)
+      ? body.avoidIdeas.map((item) => readValue(item).slice(0, 120)).filter(Boolean).slice(0, 12)
       : [];
     const totalBatches = PAINTING_FRAMEWORKS.length;
     const batchRaw = Number(body.batch);
@@ -12574,7 +12574,7 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
 【镜头语言（多样且克制）】
 - 动态运镜（平稳、连贯、按正常叙事速度推进）：推近、拉远、横向摇移、纵向/斜向移动、轻微升降或极小幅度环绕；不得用过慢运镜拖延内容。
 - 静态/固定机位：用于画面特写（材质、笔触、木条/挂轴细节）、产品整体定妆展示、氛围留白镜头。
-- 克制红线：所有运镜必须舒缓、稳定、慢速；在展示空间纵深和家居陈设时，允许使用小幅度跟拍、推移、横摇 Reveal 等运镜，但禁止快速甩镜、剧烈晃动、手持抖动、快速变焦/急推、急转、旋转式环绕；避免连续大范围运镜，以稳为主。
+- 克制红线：所有运镜必须稳定、连贯并按正常叙事速度推进；展示空间纵深时允许小幅度跟拍、推移、横摇 Reveal，但禁止过慢拖延、快速甩镜、剧烈晃动、手持抖动、急推急转和旋转式环绕。
 - 注意：运镜是摄像机运动，物体的运动必须有施动者——没有人物操作时，挂画必须始终静止，只允许镜头做轻微推拉/摇移/缓移，严禁把镜头运动写成挂画自身的位移、上升或旋转。
 
 严格只输出一个 JSON 数组，元素格式为 {"id":"1","title":"方案标题","summary":"一句话核心创意描述"}。
@@ -12582,6 +12582,7 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
 
     console.log('[doubao painting] ideas request start', { requestId, count });
 
+    const modelStartedAt = Date.now();
     let answer = await callDoubaoArkText({
       apiKey,
       model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
@@ -12590,7 +12591,9 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
 
     let ideas = normalizePaintingIdeas(parseStructuredJson(answer));
     const structureFailures = countPaintingIdeaStructureFailures(ideas);
-    if (ideas.length !== count || countNearDuplicatePaintingIdeas(ideas) > 0 || structureFailures > 0) {
+    const needsCriticalRetry = ideas.length !== count || countNearDuplicatePaintingIdeas(ideas) > 0;
+    const hasRetryBudget = Date.now() - modelStartedAt < 25 * 1000;
+    if (needsCriticalRetry && hasRetryBudget) {
       const correctionPrompt = `${prompt}\n\n你上一次输出未通过质量检查：必须恰好输出 ${count} 条有效方案，标题和核心创意不得近似重复，并严格一一对应固定方向；每条标题或核心创意都要明确写出远景/全景，并至少点名 2 件具体家具或陈设。当前有 ${structureFailures} 条未满足空间结构要求。请重新输出完整 JSON 数组，不要解释。`;
       answer = await callDoubaoArkText({
         apiKey,
@@ -12598,6 +12601,10 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
         content: [{ type: 'input_text', text: correctionPrompt }]
       });
       ideas = normalizePaintingIdeas(parseStructuredJson(answer));
+    }
+
+    if (structureFailures > 0) {
+      console.warn('[doubao painting] ideas quality warning', { requestId, structureFailures });
     }
 
     if (ideas.length !== count) {
@@ -12684,6 +12691,7 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
 
     console.log('[doubao painting] idea-prompt request start', { requestId, title: ideaTitle });
 
+    const modelStartedAt = Date.now();
     let answer = await callDoubaoArkText({
       apiKey,
       model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
@@ -12705,7 +12713,8 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
     }
     let resolvedDuration = Math.min(30, Math.max(4, Math.round(durationSec)));
     const qualityIssues = inspectPaintingPromptQuality(promptText, resolvedDuration);
-    if (qualityIssues.length > 0) {
+    const hasRetryBudget = Date.now() - modelStartedAt < 25 * 1000;
+    if (qualityIssues.length > 0 && hasRetryBudget) {
       const correctionPrompt = `${prompt}\n\n【质量检查未通过，必须重写】\n${qualityIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\n请重新输出一份完整提示词，保留产品与创意方向，严格补齐连续时间轴、远景/全景和家居陈设。只输出重写后的提示词文本。`;
       answer = await callDoubaoArkText({
         apiKey,
@@ -12721,6 +12730,9 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
           resolvedDuration = Math.min(30, Math.max(4, Math.round(rewrittenDuration)));
         }
       }
+    }
+    if (qualityIssues.length > 0) {
+      console.warn('[doubao painting] idea-prompt quality warning', { requestId, qualityIssues, retried: hasRetryBudget });
     }
 
     console.log('[doubao painting] idea-prompt done', { requestId, promptLength: promptText.length, duration: resolvedDuration });

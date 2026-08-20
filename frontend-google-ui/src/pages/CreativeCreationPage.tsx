@@ -2941,7 +2941,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       [...paintingIdeas, ...historicalIdeas]
         .map((idea) => [idea.title, idea.summary].filter(Boolean).join('：').trim())
         .filter(Boolean)
-    )).slice(0, 60);
+    )).slice(0, 12);
   }
 
   async function runPaintingIdeas(batch: number, variationRound = paintingVariationRound) {
