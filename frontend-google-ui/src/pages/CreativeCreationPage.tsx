@@ -2977,6 +2977,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
+  async function handlePaintingAutoGenerateVideo(idea: PaintingIdeaSummary) {
+    if (paintingLoading !== 'idle' || isSeedanceLoading) return;
+    const result = await handlePaintingGeneratePrompt(idea);
+    if (!result) return;
+    await handleCreateSeedanceVideo({
+      prompt: result.prompt,
+      duration: result.duration,
+      references: result.references,
+    });
+  }
+
   function computeNextSeedanceReferencesWithPainting(): SeedanceReferenceFile[] {
     if (!paintingImage) return seedanceReferences;
     // 按文件名去重：右侧已有同名参考图时不再重复追加。
