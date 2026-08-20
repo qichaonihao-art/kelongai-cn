@@ -2967,16 +2967,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
-  function appendPaintingToSeedanceReferences() {
-    if (!paintingImage) return;
+  function computeNextSeedanceReferencesWithPainting(): SeedanceReferenceFile[] {
+    if (!paintingImage) return seedanceReferences;
     // 按文件名去重：右侧已有同名参考图时不再重复追加。
     if (seedanceReferences.some((ref) => ref.kind === 'image' && ref.fileName === paintingImage.fileName)) {
-      return;
+      return seedanceReferences;
     }
     const isSeedance25 = seedanceModel === 'doubao-seedance-2-5-260628';
     const maxImageCount = isSeedance25 ? 30 : 9;
     if (seedanceReferences.filter((ref) => ref.kind === 'image').length >= maxImageCount) {
-      return;
+      return seedanceReferences;
     }
     const nextReference: SeedanceReferenceFile = {
       id: createMessageId('seedance_ref'),
@@ -2985,7 +2985,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       previewUrl: createMediaPreviewUrl(paintingImage.file),
       fileName: paintingImage.fileName,
     };
-    setSeedanceReferences((previous) => [...previous, nextReference]);
+    return [...seedanceReferences, nextReference];
+  }
+
+  function appendPaintingToSeedanceReferences() {
+    setSeedanceReferences(computeNextSeedanceReferencesWithPainting());
   }
 
   function handlePaintingLoadHistory(item: PaintingHistoryItem) {
