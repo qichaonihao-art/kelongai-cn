@@ -1401,6 +1401,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     extraRequirements: '',
   });
   const [paintingIdeas, setPaintingIdeas] = useState<PaintingIdeaSummary[]>([]);
+  const [paintingIdeaBatchCache, setPaintingIdeaBatchCache] = useState<Record<string, PaintingIdeaSummary[]>>({});
   const [paintingSelectedIdea, setPaintingSelectedIdea] = useState<PaintingIdeaSummary | null>(null);
   const [usedIdeaIds, setUsedIdeaIds] = useState<Record<string, boolean>>({});
   const [paintingFrameworkBatch, setPaintingFrameworkBatch] = useState(0);
@@ -2894,6 +2895,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingImage({ kind: 'image', file, previewUrl, fileName: file.name });
       setPaintingProfile(null);
       setPaintingIdeas([]);
+      setPaintingIdeaBatchCache({});
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
       setUsedIdeaIds({});
@@ -2920,6 +2922,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       const profile = await analyzePainting(paintingImage.file);
       setPaintingProfile(profile);
       setPaintingIdeas([]);
+      setPaintingIdeaBatchCache({});
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
       setPaintingVariationRound(0);
@@ -2944,9 +2947,34 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     )).slice(0, 12);
   }
 
+  function getPaintingBatchCacheKey(batch: number, variationRound: number) {
+    return JSON.stringify({
+      batch,
+      variationRound,
+      profile: {
+        name: paintingProfile?.name || '',
+        style: paintingProfile?.style || '',
+        subject: paintingProfile?.subject || '',
+      },
+      plan: paintingPlan,
+    });
+  }
+
   async function runPaintingIdeas(batch: number, variationRound = paintingVariationRound) {
     if (!paintingProfile) {
       setPaintingError('请先完成产品分析。');
+      return;
+    }
+    const cacheKey = getPaintingBatchCacheKey(batch, variationRound);
+    const cachedIdeas = paintingIdeaBatchCache[cacheKey];
+    if (cachedIdeas?.length) {
+      setPaintingIdeas(cachedIdeas);
+      setPaintingFrameworkBatch(batch);
+      setPaintingSelectedIdea(null);
+      setPaintingFullPrompt('');
+      setUsedIdeaIds({});
+      setPaintingError('');
+      setTimeout(() => scrollToRef(paintingIdeasRef), 80);
       return;
     }
     setPaintingError('');
@@ -2957,6 +2985,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         avoidIdeas: getRecentPaintingIdeasToAvoid(),
       });
       setPaintingIdeas(result.ideas);
+      setPaintingIdeaBatchCache((previous) => ({ ...previous, [cacheKey]: result.ideas }));
       setPaintingFrameworkBatch(result.batch);
       if (result.totalBatches > 0) setPaintingTotalBatches(result.totalBatches);
       setPaintingSelectedIdea(null);
@@ -2987,7 +3016,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     await runPaintingIdeas(next, nextRound);
   }
 
-  async function handlePaintingGeneratePrompt(idea: PaintingIdeaSummary) {
+  async function handlePaintingPreviousIdeas() {
+    if (paintingFrameworkBatch <= 0) return;
+    const previous = paintingFrameworkBatch - 1;
+    setPaintingFrameworkBatch(previous);
+    await runPaintingIdeas(previous, paintingVariationRound);
+  }
+
+  async function handlePaintingGeneratePrompt(
+    idea: PaintingIdeaSummary,
+    options?: { focusSeedancePanel?: boolean }
+  ) {
     if (!paintingProfile) return;
     setPaintingError('');
     setPaintingSelectedIdea(idea);
@@ -3018,7 +3057,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setSeedanceReferences(nextReferences);
       setSeedancePromptHighlight(true);
       setTimeout(() => setSeedancePromptHighlight(false), 2000);
-      scrollToRef(seedancePromptRef);
+      scrollToRef(options?.focusSeedancePanel ? seedancePanelRef : seedancePromptRef);
 
       const thumbnail = await imageFileToThumbnailDataUrl(paintingImage?.file as File).catch(() => '');
       const historyItem: PaintingHistoryItem = {
@@ -3049,7 +3088,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
   async function handlePaintingAutoGenerateVideo(idea: PaintingIdeaSummary) {
     if (paintingLoading !== 'idle' || isSeedanceLoading) return;
-    const result = await handlePaintingGeneratePrompt(idea);
+    const result = await handlePaintingGeneratePrompt(idea, { focusSeedancePanel: true });
     if (!result) return;
     // 全自动流程必须带挂画参考图：无图直接终止，避免生成无画面的视频。
     const hasImage = result.references.some((ref) => ref.kind === 'image');
@@ -3980,15 +4019,28 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     <div ref={paintingIdeasRef} className="space-y-2">
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-xs font-black text-slate-800">创意方案（{paintingIdeas.length} 条）</div>
-                        <button
-                          type="button"
-                          onClick={handlePaintingRegenerateIdeas}
-                          disabled={paintingLoading !== 'idle'}
-                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-500 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {paintingLoading === 'ideas' ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
-                          下一批（第 {paintingFrameworkBatch + 1}/{paintingTotalBatches} 批 · 第 {paintingVariationRound + 1} 轮）
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500">
+                            第 {paintingFrameworkBatch + 1}/{paintingTotalBatches} 批 · 第 {paintingVariationRound + 1} 轮
+                          </span>
+                          <button
+                            type="button"
+                            onClick={handlePaintingPreviousIdeas}
+                            disabled={paintingLoading !== 'idle' || paintingFrameworkBatch <= 0}
+                            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-500 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            上一批
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handlePaintingRegenerateIdeas}
+                            disabled={paintingLoading !== 'idle'}
+                            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-500 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {paintingLoading === 'ideas' ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+                            下一批
+                          </button>
+                        </div>
                       </div>
                       <div className="grid gap-2">
                         {paintingIdeas.map((idea) => {
