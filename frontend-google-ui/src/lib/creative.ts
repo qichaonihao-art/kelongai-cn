@@ -607,6 +607,7 @@ export interface PaintingMaterialPlan {
   count: number;
   durationMin: number;
   durationMax: number;
+  stylePreset: string;
   character: string;
   audio: string;
   ratio: string;
@@ -647,13 +648,20 @@ export interface PaintingIdeasResult {
 export async function generatePaintingIdeas(
   profile: PaintingProfile,
   plan: PaintingMaterialPlan,
-  batch = 0
+  batch = 0,
+  options?: { variationRound?: number; avoidIdeas?: string[] }
 ): Promise<PaintingIdeasResult> {
   const response = await fetch('/api/painting/ideas', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ profile, plan, batch }),
+    body: JSON.stringify({
+      profile,
+      plan,
+      batch,
+      variationRound: options?.variationRound || 0,
+      avoidIdeas: options?.avoidIdeas || [],
+    }),
   });
 
   const json = await response.json().catch(() => null);
@@ -675,7 +683,16 @@ export async function generatePaintingIdeas(
 export async function generatePaintingIdeaPrompt(
   profile: PaintingProfile,
   idea: PaintingIdeaSummary,
-  context?: { durationMin?: number; durationMax?: number; ratio?: string; character?: string; audio?: string; extraRequirements?: string }
+  context?: {
+    durationMin?: number;
+    durationMax?: number;
+    ratio?: string;
+    stylePreset?: string;
+    character?: string;
+    audio?: string;
+    scene?: string;
+    extraRequirements?: string;
+  }
 ): Promise<{ prompt: string; duration: number }> {
   const response = await fetch('/api/painting/idea-prompt', {
     method: 'POST',

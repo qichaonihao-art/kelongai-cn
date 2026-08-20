@@ -131,6 +131,7 @@ interface PaintingHistoryItem {
   thumbnail?: string;
   ratio: string;
   duration: number;
+  stylePreset?: string;
 }
 
 interface UploadHistoryPreviewItem {
@@ -170,6 +171,17 @@ const PAINTING_HISTORY_STORAGE_KEY = 'kelongai.paintingHistory';
 const PAINTING_HISTORY_MAX_AGE_DAYS = 30;
 const PAINTING_HISTORY_MAX_AGE_MS = PAINTING_HISTORY_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 const MAX_PAINTING_HISTORY_ITEMS = 100;
+const PAINTING_STYLE_OPTIONS = [
+  { value: 'new-chinese', label: '新中式雅致', description: '实木、茶席与东方文化感' },
+  { value: 'modern-minimal', label: '现代简约', description: '简洁家具、自然生活感' },
+  { value: 'modern-luxury', label: '现代轻奢', description: '石材、金属与高级样板间' },
+  { value: 'cream-warm', label: '奶油温馨', description: '柔和布艺与家庭氛围' },
+  { value: 'natural-wood', label: '原木自然', description: '浅木、棉麻与绿植' },
+  { value: 'nordic-fresh', label: '北欧清新', description: '明快配色与轻盈空间' },
+  { value: 'vintage-home', label: '复古雅居', description: '深木、皮质与故事感' },
+  { value: 'gallery-display', label: '高端展陈', description: '展厅、酒店与艺术灯光' },
+  { value: 'everyday-life', label: '烟火生活', description: '真实住宅与自然日常' },
+] as const;
 const ADDITIONAL_CHANGE_HISTORY_KEY = 'kelongai.additionalChangeHistory';
 const ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS = 180;
 const ADDITIONAL_CHANGE_HISTORY_RETENTION_MS = ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
@@ -1381,6 +1393,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     count: 10,
     durationMin: 5,
     durationMax: 10,
+    stylePreset: 'modern-minimal',
     character: '',
     audio: '',
     ratio: '9:16',
@@ -1392,6 +1405,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [usedIdeaIds, setUsedIdeaIds] = useState<Record<string, boolean>>({});
   const [paintingFrameworkBatch, setPaintingFrameworkBatch] = useState(0);
   const [paintingTotalBatches, setPaintingTotalBatches] = useState(4);
+  const [paintingVariationRound, setPaintingVariationRound] = useState(0);
   const [paintingFullPrompt, setPaintingFullPrompt] = useState('');
   const [paintingLoading, setPaintingLoading] = useState<'idle' | 'analyze' | 'ideas' | 'prompt'>('idle');
   const [paintingHistory, setPaintingHistory] = useState<PaintingHistoryItem[]>([]);
@@ -2883,6 +2897,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
       setUsedIdeaIds({});
+      setPaintingVariationRound(0);
       await saveUploadHistory(file, 'image');
       await refreshUploadHistories();
     } catch (error) {
@@ -2907,6 +2922,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingIdeas([]);
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
+      setPaintingVariationRound(0);
       setTimeout(() => scrollToRef(paintingPlanRef), 80);
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '挂画分析失败，请稍后重试。');
@@ -2915,7 +2931,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
-  async function runPaintingIdeas(batch: number) {
+  function getRecentPaintingIdeasToAvoid() {
+    const currentName = String(paintingProfile?.name || '').trim();
+    const historicalIdeas = paintingHistory
+      .filter((item) => !currentName || String(item.profile?.name || '').trim() === currentName)
+      .slice(0, 8)
+      .flatMap((item) => item.ideas || []);
+    return Array.from(new Set(
+      [...paintingIdeas, ...historicalIdeas]
+        .map((idea) => [idea.title, idea.summary].filter(Boolean).join('：').trim())
+        .filter(Boolean)
+    )).slice(0, 60);
+  }
+
+  async function runPaintingIdeas(batch: number, variationRound = paintingVariationRound) {
     if (!paintingProfile) {
       setPaintingError('请先完成产品分析。');
       return;
@@ -2923,7 +2952,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingError('');
     setPaintingLoading('ideas');
     try {
-      const result = await generatePaintingIdeas(paintingProfile, paintingPlan, batch);
+      const result = await generatePaintingIdeas(paintingProfile, paintingPlan, batch, {
+        variationRound,
+        avoidIdeas: getRecentPaintingIdeasToAvoid(),
+      });
       setPaintingIdeas(result.ideas);
       setPaintingFrameworkBatch(result.batch);
       if (result.totalBatches > 0) setPaintingTotalBatches(result.totalBatches);
@@ -2940,15 +2972,19 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
   // 生成创意方案：从第一批框架开始。
   async function handlePaintingGenerateIdeas() {
+    const nextRound = paintingIdeas.length > 0 ? paintingVariationRound + 1 : paintingVariationRound;
+    setPaintingVariationRound(nextRound);
     setPaintingFrameworkBatch(0);
-    await runPaintingIdeas(0);
+    await runPaintingIdeas(0, nextRound);
   }
 
   // 重新生成一批：轮换到下一批框架（循环）。
   async function handlePaintingRegenerateIdeas() {
     const next = (paintingFrameworkBatch + 1) % Math.max(1, paintingTotalBatches);
+    const nextRound = next === 0 ? paintingVariationRound + 1 : paintingVariationRound;
+    if (nextRound !== paintingVariationRound) setPaintingVariationRound(nextRound);
     setPaintingFrameworkBatch(next);
-    await runPaintingIdeas(next);
+    await runPaintingIdeas(next, nextRound);
   }
 
   async function handlePaintingGeneratePrompt(idea: PaintingIdeaSummary) {
@@ -2962,8 +2998,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         durationMin: paintingPlan.durationMin,
         durationMax: paintingPlan.durationMax,
         ratio: paintingPlan.ratio,
+        stylePreset: paintingPlan.stylePreset,
         character: paintingPlan.character,
         audio: paintingPlan.audio,
+        scene: paintingPlan.scene,
         extraRequirements: paintingPlan.extraRequirements,
       });
       setPaintingFullPrompt(prompt);
@@ -2993,6 +3031,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         thumbnail: thumbnail || undefined,
         ratio,
         duration: durationSeconds,
+        stylePreset: paintingPlan.stylePreset,
       };
       setPaintingHistory((previous) => {
         const next = mergePaintingHistoryItem(previous, historyItem);
@@ -3061,6 +3100,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingSelectedIdea(null);
     setUsedIdeaIds({});
     if (item.ratio) setPaintingPlan((previous) => ({ ...previous, ratio: item.ratio }));
+    if (item.stylePreset) setPaintingPlan((previous) => ({ ...previous, stylePreset: item.stylePreset || 'modern-minimal' }));
     setPaintingError('');
   }
 
@@ -3820,10 +3860,27 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     <div ref={paintingPlanRef} className="space-y-2 rounded-2xl border border-slate-300 bg-slate-50 p-3">
                       <div className="text-xs font-black text-slate-800">素材计划</div>
                       <div className="grid gap-2 sm:grid-cols-2">
+                        <label className="text-[11px] font-semibold text-slate-500 sm:col-span-2">
+                          本轮整体风格
+                          <select
+                            value={paintingPlan.stylePreset}
+                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, stylePreset: event.target.value }))}
+                            className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
+                          >
+                            {PAINTING_STYLE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label} · {option.description}
+                              </option>
+                            ))}
+                          </select>
+                          <span className="mt-1 block text-[10px] font-medium leading-4 text-slate-400">
+                            选定后，场景、人物服装、色彩、光线、镜头、声音和文案语气会整套保持一致。
+                          </span>
+                        </label>
                         <div className="text-[11px] font-semibold text-slate-500">
                           方案数量
                           <div className="mt-1 flex h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600">
-                            每批固定 10 条（8 框架 + 2 自由发挥）
+                            一轮 40 个不同方向 · 当前每批展示 10 条
                           </div>
                         </div>
                         <label className="text-[11px] font-semibold text-slate-500">
@@ -3845,7 +3902,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             min={4}
                             max={15}
                             value={paintingPlan.durationMin}
-                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, durationMin: Math.min(15, Math.max(4, Number(event.target.value) || 5)) }))}
+                            onChange={(event) => setPaintingPlan((previous) => {
+                              const durationMin = Math.min(15, Math.max(4, Number(event.target.value) || 5));
+                              return { ...previous, durationMin, durationMax: Math.max(previous.durationMax, durationMin) };
+                            })}
                             className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
                           />
                         </label>
@@ -3856,7 +3916,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             min={4}
                             max={15}
                             value={paintingPlan.durationMax}
-                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, durationMax: Math.min(15, Math.max(4, Number(event.target.value) || 10)) }))}
+                            onChange={(event) => setPaintingPlan((previous) => {
+                              const durationMax = Math.min(15, Math.max(4, Number(event.target.value) || 10));
+                              return { ...previous, durationMax, durationMin: Math.min(previous.durationMin, durationMax) };
+                            })}
                             className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
                           />
                         </label>
@@ -3924,7 +3987,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-500 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           {paintingLoading === 'ideas' ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
-                          重新生成一批（第 {paintingFrameworkBatch + 1}/{paintingTotalBatches} 批）
+                          下一批（第 {paintingFrameworkBatch + 1}/{paintingTotalBatches} 批 · 第 {paintingVariationRound + 1} 轮）
                         </button>
                       </div>
                       <div className="grid gap-2">

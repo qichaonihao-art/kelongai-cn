@@ -12328,55 +12328,170 @@ async function handlePaintingAnalyze(req, res) {
   }
 }
 
-// 挂画创意素材——文案框架池（4 批 × 8 条 = 32 条骨架）。
-// 每条只给「人物 + 场景 + 动作 + 镜头 + 动静」的骨架，具体挂画内容由豆包结合产品档案填充。
-// 这样「重新生成一批」能在框架层面强制错开，避免每批趋同。
+const PAINTING_STYLE_PROFILES = {
+  'new-chinese': {
+    label: '新中式雅致',
+    direction: '实木家具、简洁东方线条、书房或茶席元素；人物可穿改良中式、盘扣或克制棉麻服饰，文化感雅致但不过度堆砌古典符号。',
+    wardrobe: ['黛蓝', '酒红', '竹绿', '藕荷', '水红', '鹅黄', '墨绿', '灰紫', '宝蓝', '陶土红', '藏青', '橄榄绿', '浅紫', '黑色', '月白', '雾蓝', '焦糖', '莓果红', '松石绿', '暖棕'],
+  },
+  'modern-minimal': {
+    label: '现代简约',
+    direction: '简洁布艺家具、几何灯具、克制装饰和通透自然光；人物穿现代针织、衬衫、休闲西装或简洁连衣裙，禁止自动换成旗袍。',
+    wardrobe: ['雾蓝', '宝蓝', '墨绿', '酒红', '鹅黄', '陶土橙', '灰紫', '黑色', '浅粉', '湖蓝', '橄榄绿', '焦糖', '水红', '藏青', '竹绿', '莓果红', '暖棕', '月白', '黛蓝', '浅紫'],
+  },
+  'modern-luxury': {
+    label: '现代轻奢',
+    direction: '石材、金属、皮质与艺术灯具组成高级样板间或酒店式空间；人物穿剪裁利落的西装、衬衫或质感连衣裙，精致但不浮夸。',
+    wardrobe: ['酒红', '墨绿', '宝蓝', '黑色', '焦糖', '灰紫', '莓果红', '藏青', '水红', '孔雀蓝', '暖棕', '藕荷', '橄榄绿', '银灰', '陶土红', '黛蓝', '浅紫', '深咖', '竹绿', '月白'],
+  },
+  'cream-warm': {
+    label: '奶油温馨',
+    direction: '奶油色墙面、圆润布艺家具、柔软织物和家庭陈设；人物穿柔和针织、休闲衬衫或生活化连衣裙，明亮温暖但避免全画面发黄。',
+    wardrobe: ['浅粉', '雾蓝', '鹅黄', '竹绿', '水红', '浅紫', '陶土橙', '湖蓝', '莓果红', '橄榄绿', '宝蓝', '藕荷', '焦糖', '墨绿', '酒红', '月白', '黛蓝', '暖棕', '灰紫', '松石绿'],
+  },
+  'natural-wood': {
+    label: '原木自然',
+    direction: '浅木家具、棉麻织物、自然绿植与柔和日光；人物穿现代棉麻、针织或宽松休闲装，松弛、有呼吸感并保留真实材质。',
+    wardrobe: ['橄榄绿', '陶土橙', '雾蓝', '暖棕', '竹绿', '酒红', '鹅黄', '墨绿', '焦糖', '水红', '湖蓝', '藕荷', '藏青', '浅紫', '宝蓝', '莓果红', '月白', '黛蓝', '灰紫', '浅粉'],
+  },
+  'nordic-fresh': {
+    label: '北欧清新',
+    direction: '浅木、白墙、轻盈家具和明快点缀色；人物穿现代休闲夹克、针织、衬衫或简洁裙装，空间清爽但仍适合中年家庭。',
+    wardrobe: ['湖蓝', '鹅黄', '陶土橙', '竹绿', '宝蓝', '浅粉', '莓果红', '雾蓝', '墨绿', '水红', '浅紫', '橄榄绿', '酒红', '焦糖', '松石绿', '藏青', '月白', '黛蓝', '灰紫', '暖棕'],
+  },
+  'vintage-home': {
+    label: '复古雅居',
+    direction: '深木、皮质、复古灯具与有年代感的陈设；人物穿复古衬衫、西装、针织或有克制纹样的裙装，形成沉稳故事感。',
+    wardrobe: ['酒红', '墨绿', '焦糖', '深咖', '宝蓝', '灰紫', '藏青', '陶土红', '橄榄绿', '黑色', '莓果红', '黛蓝', '暖棕', '藕荷', '孔雀蓝', '水红', '竹绿', '浅紫', '月白', '雾蓝'],
+  },
+  'gallery-display': {
+    label: '高端展陈',
+    direction: '艺术展厅、精品酒店或高端样板间，使用克制射灯、留白和高级材质；人物穿纯色套装、衬衫或利落裙装，突出专业展陈感。',
+    wardrobe: ['黑色', '宝蓝', '酒红', '墨绿', '银灰', '藏青', '莓果红', '焦糖', '孔雀蓝', '灰紫', '陶土红', '黛蓝', '暖棕', '水红', '橄榄绿', '月白', '浅紫', '竹绿', '雾蓝', '深咖'],
+  },
+  'everyday-life': {
+    label: '烟火生活',
+    direction: '真实普通住宅、自然日常用品与生活动作；人物穿针织衫、家居休闲装、普通衬衫或日常裙装，避免样板间和摆拍感。',
+    wardrobe: ['雾蓝', '酒红', '竹绿', '宝蓝', '鹅黄', '浅粉', '墨绿', '陶土橙', '水红', '藏青', '浅紫', '橄榄绿', '焦糖', '莓果红', '湖蓝', '黛蓝', '暖棕', '灰紫', '月白', '松石绿'],
+  },
+};
+
+function resolvePaintingStyleProfile(value) {
+  return PAINTING_STYLE_PROFILES[readValue(value)] || PAINTING_STYLE_PROFILES['modern-minimal'];
+}
+
+// 4 批只负责分页；底层是一轮 40 个互不重复的创意方向。
+// 组成：7 个样片原型 + 7 个合理衍生 + 10 个成品上墙空间方向 + 16 个其他方向。
 const PAINTING_FRAMEWORKS = [
-  // 第 1 批：1 条扫拍 + 空间穿行 + 人与画互动/家庭生活
+  // 第 1 批：样片原型 1-7 + 衍生 1-3
   [
-    '纯产品扫拍：挂画挂在客厅的纯白色墙面，镜头从左到右缓慢横摇扫过房间，最后定格在墙上的挂画并轻微推近',
-    '空间穿行：年轻女性从沙发起身，双手捧起挂画，绕过实木茶几、经过绿植与落地灯走到玄关白墙前，先单手比划挂的高度，再双手扶正挂画对准挂点，后退一步端详，最后上前微调画框；镜头从身后跟拍，再轻微横摇到墙面',
-    '单人（年轻女性）在雅致客厅，双手捧着挂画正面朝镜头微笑展示，背景可见中式沙发、茶几与花瓶，镜头缓慢推近',
-    '两人（中年夫妇）在书房，丈夫把挂画挂上墙，妻子在一旁递工具并抬头端详；背景有书架、文房摆件和绿植，固定机位中景',
-    '一家三口在客厅，父亲指着画上的文字给孩子轻声讲解，母亲微笑旁听；镜头从左到右缓慢横摇，扫过三人、布艺沙发、地毯与挂画',
-    '单人（中老年男性）在茶室，坐在挂画旁饮茶，转头欣赏画作；背景有博古架、茶具与绿植，镜头从画缓慢拉远到全景',
-    '两人（祖孙）在客厅，爷爷指着画给孙辈讲画里的故事，孙辈仰头看画；背景可见实木沙发、茶几与落地灯，镜头缓慢推近到画',
-    '纯产品特写：固定机位特写挂画上的书法大字与笔触细节，缓缓推近',
+    '样片原型01·卷起展示到安装：人物双手展示真实卷起状态，沿挂画自身轴线控制画布滚动释放至完整展开，确认上下木条后切换到墙边悬挂、扶正；开场中景、展开近景、安装侧面中景、完成后空间全景',
+    '样片原型02·正面展示转身上墙：人物正面完整展示挂画，保持画面朝外转身走向墙面，对准挂点悬挂、双手扶正并后退检查；镜头从正面中景跟随到侧面，再拉远交代空间',
+    '样片原型03·成品墙走近欣赏：挂画开场已经完整稳固上墙并始终静止，人物从家具旁走近，只触碰画布边缘或上下木条，观察细节后退回空间；镜头从全景跟拍到边缘近景再回到中景',
+    '样片原型04·茶室安装完成：人物在茶室对准挂点挂好画、扶正下压杆，绕过茶桌后退端详并落座；镜头从茶具前景横移到安装中景，最后拉远展示茶席与挂画',
+    '样片原型05·亲子协作家庭观看：成人负责对准挂点，孩子只扶稳挂画底部；挂好后两人检查端正，再与家人共同观看，其他人不参与大幅动作；镜头从协作中景转到家庭全景',
+    '样片原型06·文化生活蒙太奇：用清晰硬切依次展示成品挂画、人物书写、茶席落座和画面笔触，每段都有独立动作，最后回到完整挂画定妆；不得用慢放或重复镜头凑时长',
+    '样片原型07·轻奢讲解展示：现代轻奢空间中，人物面向镜头完整展示挂画，依次指明画面、材质和木条细节，随后侧身让出产品；全景交代空间、近景讲解、最后完整定妆',
+    '合理衍生01·侧面结构展开：侧面近景拍双手分别控制上木条与下压杆，真实滚动释放画布；转为正面全景确认完整外观，再切到墙边完成悬挂，重点展示结构而不是重复正面摆拍',
+    '合理衍生02·墙前比高定位：人物先在墙前举起挂画比较高度，放低后调整站位与挂绳，再次抬起对准挂点、悬挂、扶正、后退检查；镜头以空间全景开场并跟随动作推进',
+    '合理衍生03·成品墙生活阅读：挂画全程固定上墙，人物从前景经过并在沙发或桌边坐下阅读，翻页、放杯、自然抬头看画；镜头从生活全景缓慢转向挂画并推近定格',
   ],
-  // 第 2 批：1 条扫拍 + 全景 Reveal + 发现式叙事/空间融入
+  // 第 2 批：衍生 4-7 + 成品上墙空间 1-6
   [
-    '纯产品扫拍：挂画挂在玄关的纯白色墙面，镜头从右到左缓慢横摇，扫到挂画后定格并轻微推近',
-    '全景 Reveal：客厅全景展示实木沙发、茶几、书架、地毯与绿植，人物手持挂画从画面一侧走入，边走边将画举到胸前，在墙前停下脚步，抬手比划挂的位置，镜头跟随人物推近并最后定格到挂画',
-    '空镜开场：先拍空房间，门被推开，单人（中年男性）走入并抬头发现墙上挂画；镜头跟随人物扫过玄关柜、花瓶与走廊，再切到画',
-    '挂画在不同房间分别出现（客厅、书房、茶室），每处配不同人物或空镜，镜头硬切转场，人物保持一致；每个房间可见沙发、书架、茶具等陈设',
-    '单人（年轻女性）在书房读书，抬头看画，镜头从人物缓慢摇到墙上的画，再推近；背景有书桌、台灯与书架',
-    '两人（朋友）在茶室，一人倒茶、一人指着画介绍，镜头轻微环绕移动；背景可见茶桌、茶具与绿植',
-    '纯产品：先特写挂画笔触与木条细节（固定机位），再缓慢拉远揭示整幅画',
-    '家庭（三代）在客厅围坐，长辈指着画讲家族故事，镜头从画摇到众人；背景有沙发、茶几与装饰柜',
+    '合理衍生04·成品茶室日常：挂画开场已经固定上墙，人物整理茶具、注水、落座并自然看向墙面；镜头从画拉远到茶席全景，再沿桌面前景回到挂画',
+    '合理衍生05·长辈讲画：挂画已经上墙，长辈站在画旁向孩子讲解文字或画面寓意，孩子抬头聆听并作出自然回应；其他家人只在远处旁听，镜头从家庭全景推到指向细节',
+    '合理衍生06·书桌连续走向挂画：镜头从毛笔、书本和桌面开始，人物完成一笔、放下毛笔、起身绕过书桌走向成品挂画，驻足观察；全程连续跟拍，不用多场景硬切',
+    '合理衍生07·轻奢空间导览：挂画已置于轻奢空间，人物从侧面依次指出木条、材质与画面细节，后退并走到一侧让出完整空间；镜头由近及远完成产品与装修的整体展示',
+    '成品空间01·客厅沙发墙：挂画全程固定在沙发背景墙，人物从茶几前景经过并坐下；镜头沿茶几横向滑动形成视差，依次展示沙发、人物、落地灯与挂画，最后推近产品',
+    '成品空间02·电视侧墙：挂画稳固位于电视侧墙，人物进入客厅整理遥控器和绿植后离开画面；镜头从电视柜低机位缓慢侧移，最终把电视区与挂画完整纳入构图',
+    '成品空间03·玄关端景：挂画作为玄关第一视觉焦点，人物开门进入、放下钥匙、经过玄关柜后短暂停留；镜头从门框后跟随进入，再越过花瓶前景推向挂画',
+    '成品空间04·书房背景：挂画固定在书桌背景墙，人物翻书、做笔记、放下笔并自然抬头；镜头从桌面文具近景拉远到书房全景，最后转向挂画细节',
+    '成品空间05·茶室主墙：挂画固定在茶席主墙，人物温杯、注茶、落座，动作按正常速度完成；镜头从茶杯前景轻微升起，展示茶桌、座椅、绿植和墙上挂画',
+    '成品空间06·卧室侧墙：挂画固定在床侧或床尾墙面，人物拉开窗帘、整理床头书和坐垫；自然光进入后镜头沿床边横移，最后落在挂画与卧室整体搭配',
   ],
-  // 第 3 批：1 条扫拍 + 协作挂画 + 展示/动作过程
+  // 第 3 批：成品上墙空间 7-10 + 其他方向 1-6
   [
-    '纯产品扫拍：挂画挂在卧室的纯白色墙面，镜头从左到右缓慢横摇，最后定格在挂画上并轻微推近',
-    '协作挂画：丈夫踩上矮梯用铅笔在墙面标记挂点，妻子递上挂画并扶稳底部，丈夫接过挂画对齐挂点挂好，妻子递水平仪检查是否端正，两人一起后退欣赏；镜头从餐厅横摇到客厅，再轻微推近到挂画',
-    '单人（年轻男性）在展厅，拿着挂画对镜头旋转展示正反面，镜头跟随；背景可见展墙、射灯与简约家具',
-    '卷轴展开过程：一人以手部为主缓缓展开卷轴挂画，从卷起到平铺，镜头俯拍；背景有茶桌、文房摆件与绿植',
-    '两人（夫妻）在客厅，丈夫挂画、妻子在远处指点位置，镜头左右横摇；背景可见沙发、茶几与落地灯',
-    '声画分离：镜头始终聚焦挂画细节，人物在画面外旁白介绍，固定机位加轻微推近',
-    '纯产品开箱：从包装盒取出挂画、揭开保护膜第一次亮相，镜头跟随手部；背景有茶几、剪刀与包装纸',
-    '两人（父女）在书房，女儿递画、父亲挂，挂好后两人并肩欣赏；背景有书架、文房摆件和绿植，固定机位',
+    '成品空间07·餐厅侧墙：挂画固定在餐厅侧墙，人物摆放餐具、调整花瓶并退开一步；镜头从餐桌前景横移，展示餐椅、吊灯、花瓶与挂画的色彩呼应',
+    '成品空间08·走廊尽头：挂画固定在走廊尽头墙面，人物从近处沿走廊前行、经过挂画后进入侧门；镜头保持纵深远景并平稳推近，最终只留下完整挂画',
+    '成品空间09·办公室会客区：挂画固定在会客区背景墙，两人进入、放下文件、落座交谈；镜头从桌面前景横摇到人物与挂画，人物不需要刻意指画',
+    '成品空间10·酒店展陈：挂画固定在精品酒店或艺术展陈墙，人物从远处经过或短暂停留；镜头利用沙发、雕塑或灯具前景形成视差，最后完成留白充分的产品定妆',
+    '其他方向01·软装配色呼应：挂画已经上墙，人物依次调整靠枕、花瓶与小型绿植，使其中两种颜色呼应画面主色，后退观察；镜头从软装近景拉到整体空间',
+    '其他方向02·花瓶前景焦点转换：以花瓶或绿植虚焦开场，人物从背景进入并完成一个自然生活动作，焦点由前景切到墙上挂画，再轻微横移展示空间纵深',
+    '其他方向03·低机位升起揭示：镜头从茶几、地毯或床边低机位开始，人物按正常速度走过，镜头小幅升起后揭示家具上方的完整挂画，最后保持稳定全景',
+    '其他方向04·对称定妆与人物穿行：挂画位于对称构图中心，人物从画面一侧进入、完成放书或放杯动作后从另一侧离开；固定机位保持产品稳定，结尾轻微推近',
+    '其他方向05·画面笔触到空间：从书法、印章或绘画笔触近景开始，镜头平稳拉远依次带出木条、完整挂画、墙面和家具，人物只在远景完成轻微生活动作',
+    '其他方向06·木条工艺到整体：侧光近景展示上下木条、挂绳或实际可见连接结构，人物手指只沿木条边缘示意，随后让开，镜头拉远展示挂画在空间中的真实比例',
   ],
-  // 第 4 批：1 条扫拍 + 多房间比画 + 仪式感/送礼/细节工艺
+  // 第 4 批：其他方向 7-16
   [
-    '纯产品扫拍：挂画挂在展厅的纯白色墙面，镜头从右到左缓慢横摇，扫到挂画后定格并轻微推近',
-    '多房间比画：人物拿着卷轴挂画从书房走到卧室走廊，经过门框、博古架与绿植，在不同墙面比划位置；镜头跟随人物移动',
-    '仪式感：一人净手、焚香，随后郑重地把挂画挂上墙；背景有案几、香炉与茶具，镜头缓慢推近',
-    '送礼场景：一人双手提着卷轴状态或展开的挂画送给另一人，对方接过并欣赏；背景可见沙发、茶几与花瓶，固定机位',
-    '纯产品：特写木条、挂轴、挂绳与福字挂钩的工艺细节，镜头从左到右缓慢横摇',
-    '单人（年轻女性）在餐厅，把挂画挂好后后退几步拍照分享，镜头跟随；背景有餐桌、餐椅与装饰柜',
-    '纯产品：俯拍挂画平铺在桌面，一只手轻轻抚过画面纹理，镜头缓慢推近；背景可见茶桌、茶具与文房摆件',
-    '家庭（三口）在玄关，一起抬着挂画比划挂的位置、有说有笑，镜头左右横摇；背景可见玄关柜、花瓶与绿植',
+    '其他方向07·开窗引入自然光：挂画已经固定上墙，人物走到窗边拉开窗帘并整理一件桌面物品；光线自然变亮但不做夸张延时，镜头从窗边横移到挂画',
+    '其他方向08·落地灯照明切换：傍晚室内保持正常亮度，人物打开落地灯、坐下翻书并抬头；墙面光影产生合理轻微变化，镜头从人物中景转向挂画，禁止大面积暖黄',
+    '其他方向09·双人自然交谈：挂画作为稳定背景，两人在沙发或会客椅落座、递杯、交谈并短暂看向墙面；镜头采用全景和中景切换，不安排两人同时大幅动作',
+    '其他方向10·绿植养护生活：挂画固定上墙，人物给绿植少量浇水、擦拭叶片、移动到合适位置后退开；镜头通过绿植前景揭示挂画，产品始终清晰稳定',
+    '其他方向11·花艺整理完成：人物修整花枝、插入花瓶、转动花瓶角度并让开，花艺颜色与挂画局部呼应；镜头从手部近景拉远到挂画与边柜整体',
+    '其他方向12·手机取景拍摄：挂画已经上墙，人物举起手机调整站位和取景，拍摄后放下手机查看一眼并离开；镜头从人物侧后方展示真实空间，禁止生成屏幕特写或错误文字',
+    '其他方向13·门框遮挡揭示：以半遮挡的门框或屏风为前景，人物推门进入、放下随身物品并走向室内；镜头小幅侧移使挂画逐步完整出现，结尾保持空间全景',
+    '其他方向14·家具线条引导构图：利用沙发靠背、长桌或书架形成通向挂画的视觉线，人物沿这条动线走入、整理一件物品后落座；镜头只做稳定纵向推移',
+    '其他方向15·无人自然氛围：挂画全程固定且无人物，窗帘与植物叶片只有轻微自然摆动，镜头从空间远景平稳推到产品中景；通过真实光影、家具层次和材质变化承载内容，禁止长时间完全静止',
+    '其他方向16·季节软装定妆：挂画已经上墙，空间用当季花材、织物和果盘形成克制季节感，人物完成摆放、退开、关闭柜门三个动作；镜头横移揭示搭配并以挂画收束',
   ],
 ];
+
+function normalizePaintingIdeas(parsed) {
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((item) => item && typeof item === 'object')
+    .map((item, index) => ({
+      id: String(item.id || `idea-${index + 1}`),
+      title: readValue(item.title) || `方案 ${index + 1}`,
+      summary: readValue(item.summary) || readValue(item.desc) || readValue(item.text) || ''
+    }))
+    .filter((item) => item.summary);
+}
+
+function countNearDuplicatePaintingIdeas(ideas) {
+  const signatures = ideas.map((item) => (
+    `${item.title}${item.summary}`
+      .replace(/[\s，。；：、,.!！?？“”"'（）()\-—]/g, '')
+      .slice(0, 24)
+  ));
+  return signatures.length - new Set(signatures).size;
+}
+
+function countPaintingIdeaStructureFailures(ideas) {
+  const furnishingPattern = /沙发|茶几|书架|绿植|地毯|落地灯|茶具|博古架|花瓶|文房摆件|餐桌|餐椅|玄关柜|书桌|边柜|床头柜|艺术灯具|电视柜|屏风|雕塑/g;
+  return ideas.filter((item) => {
+    const text = `${item.title}${item.summary}`;
+    const furnishings = text.match(new RegExp(furnishingPattern.source, 'g')) || [];
+    return !/(远景|全景)/.test(text) || new Set(furnishings).size < 2;
+  }).length;
+}
+
+function requiredPaintingTimelineStages(duration) {
+  if (duration <= 4) return 3;
+  if (duration <= 6) return 4;
+  if (duration <= 8) return 5;
+  if (duration <= 10) return 6;
+  if (duration <= 12) return 7;
+  return 8;
+}
+
+function inspectPaintingPromptQuality(promptText, duration) {
+  const issues = [];
+  const timelineRanges = String(promptText || '').match(/\d+(?:\.\d+)?\s*(?:-|–|—|~|～|至|到)\s*\d+(?:\.\d+)?\s*秒/g) || [];
+  const requiredStages = requiredPaintingTimelineStages(duration);
+  if (timelineRanges.length < requiredStages) {
+    issues.push(`时间轴只有 ${timelineRanges.length} 个明确阶段，目标时长需要至少 ${requiredStages} 个`);
+  }
+  if (!/(远景|全景)/.test(promptText)) {
+    issues.push('缺少远景或全景阶段');
+  }
+  const furnishingMatches = String(promptText || '').match(/沙发|茶几|书架|绿植|地毯|落地灯|茶具|博古架|花瓶|文房摆件|餐桌|餐椅|玄关柜|书桌|边柜|床头柜|艺术灯具/g) || [];
+  if (new Set(furnishingMatches).size < 2) {
+    issues.push('没有明确写出至少 2 件家居陈设');
+  }
+  return issues;
+}
 
 async function handlePaintingIdeas(req, res) {
   const requestId = randomBytes(6).toString('hex');
@@ -12395,7 +12510,7 @@ async function handlePaintingIdeas(req, res) {
       return;
     }
 
-    // 每批固定 10 条：8 条框架骨架 + 2 条自由发挥。
+    // 每批固定展示 10 条；四批合计正好覆盖 40 个不同方向。
     const count = 10;
     const durationMin = Number(plan.durationMin) || 5;
     const durationMax = Number(plan.durationMax) || 10;
@@ -12404,11 +12519,19 @@ async function handlePaintingIdeas(req, res) {
     const ratio = readValue(plan.ratio) || '9:16';
     const scene = readValue(plan.scene);
     const extraRequirements = readValue(plan.extraRequirements);
+    const styleProfile = resolvePaintingStyleProfile(plan.stylePreset);
+    const variationRound = Math.max(0, Number.parseInt(String(body.variationRound || 0), 10) || 0);
+    const avoidIdeas = Array.isArray(body.avoidIdeas)
+      ? body.avoidIdeas.map((item) => readValue(item)).filter(Boolean).slice(0, 60)
+      : [];
     const totalBatches = PAINTING_FRAMEWORKS.length;
     const batchRaw = Number(body.batch);
     const batchIndex = Number.isFinite(batchRaw) ? ((batchRaw % totalBatches) + totalBatches) % totalBatches : 0;
     const frameworks = PAINTING_FRAMEWORKS[batchIndex];
-    const freeCount = Math.max(0, count - frameworks.length);
+    const globalOffset = batchIndex * count;
+    const wardrobeAssignments = frameworks.map((_, index) => (
+      styleProfile.wardrobe[(globalOffset + index + variationRound * 3) % styleProfile.wardrobe.length]
+    ));
 
     const prompt = `你是短视频创意策划专家，为一块挂画/装饰画产品构思带货短视频创意。
 
@@ -12416,30 +12539,40 @@ async function handlePaintingIdeas(req, res) {
 ${JSON.stringify(profile, null, 2)}
 
 【素材计划】
-- 方案数量：${count} 条（本批固定 ${frameworks.length} 条框架 + ${freeCount} 条自由发挥）
+- 方案数量：${count} 条（本批全部对应固定方向；四批合计 40 个方向且互不重复）
 - 单条时长：${durationMin}-${durationMax} 秒
 - 画面比例：${ratio}
-- 目标受众：以 40 岁以上的中老年人群为主（40 多岁到 60 岁以上均有，审美偏稳重、雅致、有文化底蕴，如中式、书法、山水、传统题材；这是大方向引导，不必每条硬套）
+- 目标受众：以 40 岁以上人群为主，强调成熟、舒适、可信与有品质感；年龄不等于中式审美，不得因为目标人群年龄而擅自把现代、轻奢、北欧等已选风格改回中式
+- 本轮整体风格：${styleProfile.label}
+- 风格执行档案：${styleProfile.direction}
 ${character ? `- 人物偏好：${character}` : ''}
 ${audio ? `- 声音/音乐偏好：${audio}` : ''}
 ${scene ? `- 场景偏好：${scene}` : ''}
 ${extraRequirements ? `- 其他特殊要求：${extraRequirements}` : ''}
 
-【本批框架清单（共 ${frameworks.length} 条，必须严格逐条使用、顺序一一对应）】
-${frameworks.map((framework, index) => `${index + 1}. ${framework}`).join('\n')}
+【本批固定方向（共 ${frameworks.length} 条，必须严格逐条使用、顺序一一对应）】
+${frameworks.map((framework, index) => `${index + 1}. ${framework}\n   若出现人物，本条服装主色必须为「${wardrobeAssignments[index]}」，可用其他协调色做小面积辅助。`).join('\n')}
+
+【本轮变化与历史避重】
+- 当前为第 ${variationRound + 1} 轮变化。同一固定方向的大框架不变，但具体人物身份、家具组合、开场细节、动作衔接和构图必须形成这一轮的新执行版本。
+- 以下是近期已使用内容，新方案不得复述或仅改几个形容词：
+${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).join('\n') : '暂无历史内容。'}
 
 【生成要求（重要）】
-1. 严格基于上面这 ${frameworks.length} 条框架，逐条生成对应的 ${frameworks.length} 条方案（第 i 条方案必须对应第 i 条框架，不得偏离、合并或改动框架设定），在此基础上再额外自由发挥 ${freeCount} 条不重复的新框架方案，共输出 ${count} 条。
-2. 自由发挥的 ${freeCount} 条必须探索「人物在真实家居空间中移动 + 环境展示」的新颖方向，不得与前面 ${frameworks.length} 条在场景、人物、镜头、动作上重复。
+1. 严格基于上面这 ${frameworks.length} 条固定方向，逐条生成对应的 ${frameworks.length} 条方案；第 i 条方案必须对应第 i 条方向，不得偏离、合并、换序或重复其他方向，共输出且只能输出 ${count} 条。
+2. 固定方向锁定的是创意机制，不是让你照抄句子。必须结合产品档案、本轮整体风格、指定服装主色和历史避重要求，生成新的可执行版本；单纯更换人物性别、衣服颜色或房间名称不算有效变化。
 3. 每条方案只输出「标题 + 一句话核心创意」，用于卡片展示，不要输出完整提示词。
 4. 每条方案的「标题」要能一眼看出它的镜头/创意类型与景别，如「全景跟拍」「空间横摇」「远景Reveal」「中景互动」「近景特写」等，不要全部雷同。
 5. 所有方案都必须遵守三条底线：不得改变挂画的样式、颜色和外观；画面动作与展示方式不得违背真实物理逻辑（不得出现穿模、悬浮等）；画面中任何物体的运动（挂画的上升、下降、平移、旋转、展开、翻面）都必须有明确的施动者（人的手、人的动作或合理的物理机制），严禁挂画或任何物体在没有手/人操作的情况下自行悬浮、漂浮、上升、移动、旋转。
 6. 每条方案的「一句话核心创意」里，要包含 2-3 个连续的动作节点，并写清本条的镜头语言，避免设计成单一动作拖满整段时长。
 7. 每条方案的「一句话核心创意」必须包含具体的空间环境描写，至少出现 2-3 件与挂画风格协调的家居陈设（如实木沙发、茶几、书架、绿植、地毯、落地灯、茶具、博古架、花瓶等），不能只有白墙和挂画。
 8. 每条方案必须包含至少 1 个全景或远景阶段，用于展示人物与空间的相对关系；允许同时存在中景和近景特写，但禁止全片只有近景/特写。
+9. 人物服装颜色严格按每条方向后给出的主色执行。同一批不得擅自全部改成米白、浅灰、卡其或其他近似浅色；服装款式、材质也应随人物身份和整体风格变化。
+10. 若方向写明挂画开场已经上墙，挂画必须全程固定静止，人物只能在空间中生活、观看或接触边缘/木条，不得把它重新取下、展开、移动或再次安装。
+11. 禁止出现送礼、方形礼盒、礼包盒、开箱和拆包装情节。本模块不生成包装场景。
 
 【镜头语言（多样且克制）】
-- 动态运镜（一律舒缓、平滑、慢速、幅度小）：缓慢推近、缓慢拉远、横向缓摇、纵向/斜向缓移、轻微升降或极小幅度环绕。
+- 动态运镜（平稳、连贯、按正常叙事速度推进）：推近、拉远、横向摇移、纵向/斜向移动、轻微升降或极小幅度环绕；不得用过慢运镜拖延内容。
 - 静态/固定机位：用于画面特写（材质、笔触、木条/挂轴细节）、产品整体定妆展示、氛围留白镜头。
 - 克制红线：所有运镜必须舒缓、稳定、慢速；在展示空间纵深和家居陈设时，允许使用小幅度跟拍、推移、横摇 Reveal 等运镜，但禁止快速甩镜、剧烈晃动、手持抖动、快速变焦/急推、急转、旋转式环绕；避免连续大范围运镜，以稳为主。
 - 注意：运镜是摄像机运动，物体的运动必须有施动者——没有人物操作时，挂画必须始终静止，只允许镜头做轻微推拉/摇移/缓移，严禁把镜头运动写成挂画自身的位移、上升或旋转。
@@ -12449,28 +12582,26 @@ ${frameworks.map((framework, index) => `${index + 1}. ${framework}`).join('\n')}
 
     console.log('[doubao painting] ideas request start', { requestId, count });
 
-    const answer = await callDoubaoArkText({
+    let answer = await callDoubaoArkText({
       apiKey,
       model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
       content: [{ type: 'input_text', text: prompt }]
     });
 
-    const parsed = parseStructuredJson(answer);
-    if (!Array.isArray(parsed)) {
-      throw Object.assign(new Error('模型返回的方案不是数组'), { rawText: answer });
+    let ideas = normalizePaintingIdeas(parseStructuredJson(answer));
+    const structureFailures = countPaintingIdeaStructureFailures(ideas);
+    if (ideas.length !== count || countNearDuplicatePaintingIdeas(ideas) > 0 || structureFailures > 0) {
+      const correctionPrompt = `${prompt}\n\n你上一次输出未通过质量检查：必须恰好输出 ${count} 条有效方案，标题和核心创意不得近似重复，并严格一一对应固定方向；每条标题或核心创意都要明确写出远景/全景，并至少点名 2 件具体家具或陈设。当前有 ${structureFailures} 条未满足空间结构要求。请重新输出完整 JSON 数组，不要解释。`;
+      answer = await callDoubaoArkText({
+        apiKey,
+        model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+        content: [{ type: 'input_text', text: correctionPrompt }]
+      });
+      ideas = normalizePaintingIdeas(parseStructuredJson(answer));
     }
 
-    const ideas = parsed
-      .filter((item) => item && typeof item === 'object')
-      .map((item, index) => ({
-        id: String(item.id || `idea-${index + 1}`),
-        title: readValue(item.title) || `方案 ${index + 1}`,
-        summary: readValue(item.summary) || readValue(item.desc) || readValue(item.text) || ''
-      }))
-      .filter((item) => item.summary);
-
-    if (!ideas.length) {
-      throw Object.assign(new Error('模型未生成有效方案'), { rawText: answer });
+    if (ideas.length !== count) {
+      throw Object.assign(new Error(`模型未生成完整的 ${count} 条方案`), { rawText: answer });
     }
 
     console.log('[doubao painting] ideas done', { requestId, count: ideas.length, batch: batchIndex });
@@ -12515,8 +12646,10 @@ async function handlePaintingIdeaPrompt(req, res) {
     const fallbackDuration =
       Number(idea.duration) || Number(body.duration) || (hasDurationRange ? Math.round((durationMin + durationMax) / 2) : 8);
     const ratio = readValue(idea.ratio) || readValue(body.ratio) || '9:16';
+    const styleProfile = resolvePaintingStyleProfile(idea.stylePreset || body.stylePreset);
     const character = readValue(idea.character) || readValue(body.character);
     const audio = readValue(idea.audio) || readValue(body.audio);
+    const scene = readValue(idea.scene) || readValue(body.scene);
     const extraRequirements = readValue(idea.extraRequirements) || readValue(body.extraRequirements);
 
     const prompt = `你是短视频提示词专家。请基于下面的「产品固定档案」和「创意方案」，写一段完整的 Seedance 视频生成提示词（中文，可直接提交给 Seedance）。
@@ -12529,43 +12662,66 @@ ${JSON.stringify(profile, null, 2)}
 核心创意：${ideaSummary}
 
 【目标受众（大方向引导，不锁死）】
-这款挂画主要面向 40 岁以上的中老年人群（40 多岁到 60 岁以上均有），审美偏稳重、雅致、有文化底蕴（如中式、书法、山水、传统题材）。整体节奏宜舒缓沉稳、场景氛围偏雅致有文化感，但这是大方向，不必每条都硬套，保持创意的多样性与探索性。
+这款挂画主要面向 40 岁以上人群，画面需要成熟、舒适、可信并有品质感，但年龄不等于中式审美。人物按现实正常速度活动，镜头平稳连贯；具体装修、服装、色彩和表达语气必须服从本轮选定风格。
+【本轮整体风格（全链路必须执行）】
+- 风格：${styleProfile.label}
+- 空间、色彩、服装、光线、镜头、声音与文案语气：${styleProfile.direction}
+- 不得因为产品是书法或国画就自动回到新中式；除非本轮风格明确为新中式，否则必须按上述风格重新设计配套环境。
+${scene ? `- 用户指定场景偏好：${scene}` : ''}
 ${extraRequirements ? `\n【其他特殊要求】\n${extraRequirements}` : ''}
 
 【要求】
 1. 无论视频采用何种形式（静态展示、挂墙、手持、展开、人物互动等），都绝对不得改变挂画的样式、颜色和外观，必须与产品固定档案完全一致。
 2. 画面中的一切动作、镜头、展开方式、光影、透视、材质表现都必须符合真实物理逻辑，不得出现穿模、悬浮、违反重力/光影/透视等不合理现象。如果出现卷轴式挂画或卷起后展开的画作，必须是卷轴沿自身轴线旋转、画布从卷筒中逐步释放的「滚动展开」，严禁滑动、平移、平铺或直接弹开。画面中任何物体的运动（挂画的上升、下降、平移、旋转、展开、翻面）都必须有明确的施动者（人的手、人的动作或合理的物理机制），严禁挂画或任何物体在没有手/人操作的情况下自行悬浮、漂浮、上升、移动、旋转——挂画要动，必须有人来拿、挂、展开或展示它，不能自己悬空位移。同一视频内如果出现人物（无论单人还是多人、无论跨多少个镜头或场景），所有人物必须长相、性别、年龄、发型、服装保持一致，严禁中途换人、换装或人物数量无故增减。
-3. 动作密度：整个视频必须包含连续、不同的动作阶段，阶段数量按目标时长动态要求——5-6 秒至少 4 个阶段，7-8 秒至少 5 个阶段，9-10 秒至少 6 个阶段；每个阶段必须是不重复的连续动作，禁止把同一动作拆成两段凑数。节奏清晰、有起承转合；禁止通过慢放、降速、停顿、重复动作或循环来凑够时长，禁止长时间静止画面，禁止空镜留白超过 1 秒，每个阶段的动作都要真实发生在对应时间段内。
+3. 内容密度：整个视频必须包含连续、不同的有效阶段，阶段数量按目标时长动态要求——4 秒至少 3 个阶段，5-6 秒至少 4 个阶段，7-8 秒至少 5 个阶段，9-10 秒至少 6 个阶段，11-12 秒至少 7 个阶段，13-15 秒至少 8 个阶段；每个阶段必须发生新的、可见的动作、镜头关系或空间信息变化，禁止把同一动作拆成两段凑数。人物肢体和行走必须按现实正常速度完成，只有摄像机可以平稳舒缓；禁止慢放、降速、停顿、重复动作、循环、人物发呆和超过 1 秒的空镜。
 4. 提示词必须分三部分：产品固定约束、创意内容、负面约束。
 5. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。如画面中的挂画带有木条、挂轴或压杆等边框结构，这些结构必须保持档案中的形状、颜色、材质、粗细、长度、截面和两端轮廓不变；如涉及卷起或展开，全程不得变形、不得把木条变成圆柱形卷轴或圆杆、不得变色，也不得在两端或旁边新增任何圆柱、轴头、端帽、圆球、把手等构件。挂画实际尺寸为宽 40 厘米、高 80 厘米（竖幅，宽高比约 1:2）；画面中挂画与人物、家具、墙面的相对比例必须符合这一真实尺寸——挂画高度应明显小于成人身高（约到成人腰部至肩部高度），宽度较窄，严禁把挂画渲染成比人还高、比人还宽或占据整面墙的巨幅画。
-6. 创意内容：结合创意方案，写清楚${character ? `人物设定（${character}）` : '人物设定'}、人物着装（着装要符合中式挂画的雅致基调：年轻女性可穿旗袍或中式改良服饰，中老年人物可穿中式对襟、盘扣、禅意棉麻；衣着颜色从中式雅致色系中挑选，如淡青、月白、藕荷、黛蓝、水红、竹绿、鹅黄、黑色、浅紫色、浅绿色、米白色、浅灰色等，避免每次都用同一种颜色，让颜色丰富、有变化）、场景、构图、动作节奏、光影氛围（墙面以雅致浅色为主，如纯白、浅灰、米白、淡青，可根据场景氛围微调；光线为正常的自然光或中性白光，避免大面积暖黄/黄昏氛围，整体保持雅致有文化感）、${audio ? `声音/音乐（${audio}）` : '声音'}等，并重点落实镜头语言——按方案里已规划的运镜为每个动作阶段配一种景别或机位变化，把整个视频按时间轴拆成连续的动作阶段（从 0 秒开始、按先后顺序无重叠地铺满到总时长结束），阶段数量按目标时长动态要求：5-6 秒至少 4 个阶段、7-8 秒至少 5 个阶段、9-10 秒至少 6 个阶段；每个阶段写明起止时间、对应的动作与镜头的景别/机位变化，每个阶段必须是不重复的连续动作，禁止把同一动作拆成两段凑数；整个视频必须包含至少 1 个远景或全景阶段，用于展示人物与空间的相对关系，场景中必须出现 2-3 件与挂画风格协调的家居陈设（如实木沙发、茶几、书架、绿植、地毯、落地灯、茶具、博古架、花瓶、文房摆件等），陈设布置要自然、有生活气息，避免空旷；例如 7-8 秒视频可拆为「0-1.5 秒远景跟拍人物从沙发起身取画 → 1.5-3.5 秒中景人物手捧挂画绕过茶几走向白墙 → 3.5-5 秒中近景人物单手比划高度再双手扶正挂画 → 5-6 秒近景挂画对齐挂点挂好 → 6-7.5 秒中景人物后退端详并上前微调画框」；所有运镜必须舒缓但连贯、不拖沓，在展示空间纵深和家居陈设时允许使用小幅度跟拍、推移、横摇 Reveal 等运镜，但禁止快速甩镜、剧烈晃动、手持抖动、快速变焦/急推、急转、旋转式环绕。
-7. 负面约束：明确列出不得改变的元素（挂画外观、画面内容、木条结构等）、必须避免的物理违背现象（穿模、悬浮、违反重力/光影/透视等）、禁止单一动作慢放/循环凑时长、禁止长时间静止画面、禁止镜头快速晃动/快速变焦/急推/剧烈运镜/手持抖动、严禁挂画在没有人物/手操作的情况下自行位移或改变姿态、禁止大面积暖黄/黄昏氛围；如涉及卷轴或木条，还要禁止滑动式展开、禁止木条变成圆柱或变色、禁止在木条两端或旁边新增圆柱/轴头/端帽等构件。
+6. 创意内容：结合创意方案，写清楚${character ? `人物设定（${character}）` : '人物设定'}、符合「${styleProfile.label}」的服装款式与方案指定主色、${scene ? `指定场景（${scene}）` : '场景'}、构图、动作节奏、光影氛围和${audio ? `声音/音乐（${audio}）` : '声音'}。服装不得擅自全部改成米白、浅灰或卡其，款式和材质必须符合人物身份与本轮整体风格。按创意方案为每个有效阶段配一种景别或机位变化，把视频从 0 秒开始按先后顺序无重叠地铺满到总时长结束；4 秒至少 3 段、5-6 秒至少 4 段、7-8 秒至少 5 段、9-10 秒至少 6 段、11-12 秒至少 7 段、13-15 秒至少 8 段，每段写明起止时间及新的动作、镜头关系或空间信息。整个视频必须包含至少 1 个远景或全景，场景中必须自然出现 2-3 件符合「${styleProfile.label}」的家具或陈设，不能只有人、墙和画。人物动作按现实正常速度完成；运镜可以平稳舒缓，但必须连贯推进内容，禁止快速甩镜、剧烈晃动、手持抖动、急推急转或旋转式环绕。若方案写明挂画开场已经上墙，则挂画全程保持固定静止，内容密度应来自人物生活动作、空间揭示、前后景变化和镜头推进，不得为了凑动作重新取画或安装。
+7. 负面约束：明确列出不得改变的元素（挂画外观、画面内容、木条结构等）、必须避免的物理违背现象（穿模、悬浮、违反重力/光影/透视等）、禁止单一动作慢放/循环凑时长、禁止长时间静止、禁止快速晃动/快速变焦/急推/手持抖动、严禁挂画在无人操作时自行位移；如涉及卷轴或木条，还要禁止滑动式展开、木条变成圆柱或变色、两端新增圆柱/轴头/端帽。禁止出现送礼、方形礼盒、礼包盒、开箱和拆包装情节。
 ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之间，请你从该范围内挑选一个最合适的整数秒数；画面比例 ${ratio}。并在提示词最后单独写一行「总时长：X秒」（X 为你选定的整数，例如「总时长：8秒」）。` : `8. 总时长约 ${fallbackDuration} 秒，画面比例 ${ratio}。并在提示词最后单独写一行「总时长：${fallbackDuration}秒」。`}
 
 严格只输出这段提示词文本本身，不要输出任何解释、标题、序号或 markdown 包裹。`;
 
     console.log('[doubao painting] idea-prompt request start', { requestId, title: ideaTitle });
 
-    const answer = await callDoubaoArkText({
+    let answer = await callDoubaoArkText({
       apiKey,
       model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
       content: [{ type: 'input_text', text: prompt }]
     });
 
-    const promptText = String(answer || '').trim();
+    let promptText = String(answer || '').trim();
     if (!promptText) {
       throw new Error('模型返回的提示词为空');
     }
 
     let durationSec = null;
-    const durationMatch = promptText.match(/总时长\s*[：:]\s*(\d{1,3})\s*秒?/);
+    let durationMatch = promptText.match(/总时长\s*[：:]\s*(\d{1,3})\s*秒?/);
     if (durationMatch) {
       durationSec = Number.parseInt(durationMatch[1], 10);
     }
     if (!Number.isFinite(durationSec) || durationSec <= 0) {
       durationSec = hasDurationRange ? Math.round((durationMin + durationMax) / 2) : fallbackDuration;
     }
-    const resolvedDuration = Math.min(30, Math.max(4, Math.round(durationSec)));
+    let resolvedDuration = Math.min(30, Math.max(4, Math.round(durationSec)));
+    const qualityIssues = inspectPaintingPromptQuality(promptText, resolvedDuration);
+    if (qualityIssues.length > 0) {
+      const correctionPrompt = `${prompt}\n\n【质量检查未通过，必须重写】\n${qualityIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\n请重新输出一份完整提示词，保留产品与创意方向，严格补齐连续时间轴、远景/全景和家居陈设。只输出重写后的提示词文本。`;
+      answer = await callDoubaoArkText({
+        apiKey,
+        model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+        content: [{ type: 'input_text', text: correctionPrompt }]
+      });
+      promptText = String(answer || '').trim();
+      if (!promptText) throw new Error('模型重写后的提示词为空');
+      durationMatch = promptText.match(/总时长\s*[：:]\s*(\d{1,3})\s*秒?/);
+      if (durationMatch) {
+        const rewrittenDuration = Number.parseInt(durationMatch[1], 10);
+        if (Number.isFinite(rewrittenDuration) && rewrittenDuration > 0) {
+          resolvedDuration = Math.min(30, Math.max(4, Math.round(rewrittenDuration)));
+        }
+      }
+    }
 
     console.log('[doubao painting] idea-prompt done', { requestId, promptLength: promptText.length, duration: resolvedDuration });
     sendJson(res, 200, { ok: true, prompt: promptText, duration: resolvedDuration });
