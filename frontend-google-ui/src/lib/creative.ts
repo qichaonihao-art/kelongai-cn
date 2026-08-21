@@ -632,24 +632,118 @@ export interface PaintingMaterialPlan {
   extraRequirements: string;
 }
 
-async function waitForPaintingTask<T>(taskId: string, fallbackError: string): Promise<T> {
+// —— 统一网络错误识别与中文转换（轮询重试与页面展示共用） ——
+
+export const PAINTING_RETRIABLE_HTTP_STATUSES: ReadonlySet<number> = new Set([408, 429, 502, 503, 504]);
+
+export class PaintingHttpError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'PaintingHttpError';
+    this.status = status;
+  }
+}
+
+export function getPaintingHttpStatus(error: unknown): number | null {
+  if (error instanceof PaintingHttpError) return error.status;
+  if (error && typeof error === 'object' && 'status' in error) {
+    const status = Number((error as { status?: unknown }).status);
+    return Number.isFinite(status) ? status : null;
+  }
+  return null;
+}
+
+export function isPaintingNetworkFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /failed to fetch|networkerror|fetch failed|load failed|econnreset|econnrefused|network|网络|连接|中断/i.test(message);
+}
+
+export function isPaintingRetriableHttpStatus(status: number): boolean {
+  return PAINTING_RETRIABLE_HTTP_STATUSES.has(status);
+}
+
+// 创建付费批次时，这些错误都代表“后端可能已经创建成功，但响应没有可靠到达前端”。
+// 调用方必须保留原 creationRequestId 并先查询，不能换新编号直接重提。
+export function isPaintingCreationOutcomeUnknown(error: unknown): boolean {
+  const status = getPaintingHttpStatus(error);
+  return isPaintingNetworkFailure(error) || (status != null && isPaintingRetriableHttpStatus(status));
+}
+
+export function paintingRetryBackoffMs(consecutiveFailures: number): number {
+  // 递增退避：1s, 2s, 4s, 8s（封顶 8s）。
+  return Math.min(8000, 1000 * Math.pow(2, Math.max(0, consecutiveFailures - 1)));
+}
+
+// 把底层网络错误转成用户能理解的中文提示；开发日志可保留原始错误，用户界面绝不展示 Failed to fetch。
+export function describePaintingNetworkError(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : String(error || '');
+  const status = getPaintingHttpStatus(error);
+  if (isPaintingNetworkFailure(error)) {
+    return '网络连接暂时中断，已完成的准备进度已保留。你可以点击继续，系统不会重复创建已完成的任务。';
+  }
+  if (status === 504 || /504|gateway timeout/i.test(message)) {
+    return '代理超时（504），已完成的准备进度已保留，请稍后重试。';
+  }
+  if (status === 401 || /401|登录|鉴权|unauthorized/i.test(message)) {
+    return '登录状态已失效，请重新登录后再试。';
+  }
+  return message || fallback;
+}
+
+const PAINTING_TASK_POLL_RETRY_LIMIT = 5;
+
+// 生成幂等请求编号：格式满足后端校验（8-128 位字母/数字/._-）。
+export function generatePaintingRequestId(prefix: string): string {
+  const random = Array.from({ length: 10 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
+  const ts = Date.now().toString(36);
+  const id = `${prefix}-${ts}-${random}`;
+  return id.length > 128 ? id.slice(0, 128) : id;
+}
+
+export async function waitForPaintingTask<T>(taskId: string, fallbackError: string): Promise<T> {
   const startedAt = Date.now();
   const timeoutMs = 10 * 60 * 1000;
+  let consecutiveFailures = 0;
   while (Date.now() - startedAt < timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    const response = await fetch(`/api/painting/tasks/${encodeURIComponent(taskId)}`, {
-      credentials: 'include',
-    });
+    let response: Response;
+    try {
+      response = await fetch(`/api/painting/tasks/${encodeURIComponent(taskId)}`, {
+        credentials: 'include',
+      });
+    } catch (error) {
+      // 浏览器断网 / 代理中断：单次轮询失败不能立即终止整个任务，退避重试。
+      consecutiveFailures += 1;
+      if (consecutiveFailures > PAINTING_TASK_POLL_RETRY_LIMIT) {
+        throw new Error(`${fallbackError}：网络连接暂时中断，已自动重试 ${PAINTING_TASK_POLL_RETRY_LIMIT} 次仍未成功，请检查网络后重试。`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, paintingRetryBackoffMs(consecutiveFailures)));
+      continue;
+    }
     const json = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw new Error(String(json?.error || `查询挂画任务失败（HTTP ${response.status}）`));
+    if (response.ok) {
+      // 成功一次后重置连续失败次数。
+      consecutiveFailures = 0;
+      if (json?.status === 'failed') {
+        throw new Error(String(json?.error || fallbackError));
+      }
+      if (json?.status === 'done') {
+        return (json?.result || {}) as T;
+      }
+      continue;
     }
-    if (json?.status === 'failed') {
-      throw new Error(String(json?.error || fallbackError));
+    if (isPaintingRetriableHttpStatus(response.status)) {
+      consecutiveFailures += 1;
+      if (consecutiveFailures > PAINTING_TASK_POLL_RETRY_LIMIT) {
+        throw new Error(`${fallbackError}：服务暂时不可用（HTTP ${response.status}），已自动重试 ${PAINTING_TASK_POLL_RETRY_LIMIT} 次仍未成功，请稍后重试。`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, paintingRetryBackoffMs(consecutiveFailures)));
+      continue;
     }
-    if (json?.status === 'done') {
-      return (json?.result || {}) as T;
-    }
+    // 400/401/403 等业务/鉴权错误不盲目重试。
+    throw new Error(String(json?.error || `${fallbackError}（HTTP ${response.status}）`));
   }
   throw new Error(`${fallbackError}：后台处理超过 10 分钟，请稍后重试。`);
 }
@@ -691,7 +785,7 @@ export async function generatePaintingIdeas(
   profile: PaintingProfile,
   plan: PaintingMaterialPlan,
   batch = 0,
-  options?: { variationRound?: number; avoidIdeas?: string[] }
+  options?: { variationRound?: number; avoidIdeas?: string[]; clientRequestId?: string }
 ): Promise<PaintingIdeasResult> {
   const response = await fetch('/api/painting/ideas', {
     method: 'POST',
@@ -703,11 +797,16 @@ export async function generatePaintingIdeas(
       batch,
       variationRound: options?.variationRound || 0,
       avoidIdeas: options?.avoidIdeas || [],
+      ...(options?.clientRequestId ? { clientRequestId: options.clientRequestId } : {}),
     }),
   });
 
   const json = await response.json().catch(() => null);
   if (!response.ok) {
+    // 幂等编号对应的后台任务已失效（服务重启/过期）：明确返回，绝不假装任务仍在执行。
+    if (response.status === 410 && json?.invalidated) {
+      throw new Error('任务已失效，需要重新生成当前批次。');
+    }
     let message = `创意方案生成失败（HTTP ${response.status}）`;
     if (json?.error) {
       message = String(json.error);
@@ -717,6 +816,17 @@ export async function generatePaintingIdeas(
 
   const taskId = String(json?.taskId || '');
   if (!taskId) throw new Error('创意方案任务创建失败：服务端未返回任务编号。');
+
+  // 幂等命中且原任务已完成：后端直接带回结果，无需再轮询。
+  if (json?.deduplicated === true && json?.result) {
+    const result = json.result as PaintingIdeasResult;
+    return {
+      ideas: Array.isArray(result?.ideas) ? result.ideas : [],
+      batch: Number.isFinite(Number(result?.batch)) ? Number(result.batch) : batch,
+      totalBatches: Number.isFinite(Number(result?.totalBatches)) ? Number(result.totalBatches) : 1,
+    };
+  }
+
   const result = await waitForPaintingTask<PaintingIdeasResult>(taskId, '创意方案生成失败');
   return {
     ideas: Array.isArray(result?.ideas) ? result.ideas : [],
@@ -932,9 +1042,10 @@ export interface CreatePaintingBatchRunOptions {
   targetFolderId?: number | null;
   targetFolderName?: string;
   onlyUnused?: boolean;
+  creationRequestId: string;
 }
 
-async function readJsonError(response: Response, fallback: string): Promise<Error> {
+async function readJsonError(response: Response, fallback: string): Promise<PaintingHttpError> {
   let message = fallback;
   try {
     const json = await response.json();
@@ -944,7 +1055,7 @@ async function readJsonError(response: Response, fallback: string): Promise<Erro
       message = typeof json.upstream === 'string' ? json.upstream : JSON.stringify(json.upstream);
     }
   } catch {}
-  return new Error(message);
+  return new PaintingHttpError(message, response.status);
 }
 
 export async function getPaintingBatchRunEstimate(options: {
@@ -969,6 +1080,8 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
   status: string;
   controlStatus: string;
   totalDirections: number;
+  taskCount: number;
+  deduplicated: boolean;
   targetFolderId: number | null;
   targetFolderName: string;
 }> {
@@ -985,6 +1098,7 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
   formData.append('generateAudio', String(options.generateAudio));
   formData.append('watermark', String(options.watermark));
   formData.append('stylePreset', options.stylePreset);
+  formData.append('creationRequestId', options.creationRequestId);
   if (options.uploadHistoryId) {
     formData.append('uploadHistoryId', String(options.uploadHistoryId));
   }
@@ -1017,6 +1131,8 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
     status: String(json?.status || ''),
     controlStatus: String(json?.controlStatus || ''),
     totalDirections: Number(json?.totalDirections) || 0,
+    taskCount: Number(json?.taskCount) || 0,
+    deduplicated: json?.deduplicated === true,
     targetFolderId: json?.targetFolderId ?? null,
     targetFolderName: String(json?.targetFolderName || ''),
   };
@@ -1035,6 +1151,28 @@ export async function getPaintingBatchRun(batchRunId: string): Promise<PaintingB
     run: (json?.run || {}) as PaintingBatchRun,
     tasks: (Array.isArray(json?.tasks) ? json.tasks : []) as PaintingBatchTask[],
     counts: (json?.counts || {}) as PaintingBatchRunCounts,
+  };
+}
+
+export async function getPaintingBatchRunByRequest(requestId: string): Promise<{ found: boolean; detail?: PaintingBatchRunDetail }> {
+  const response = await fetch(`/api/painting/batch-runs/by-request/${encodeURIComponent(requestId)}`, {
+    credentials: 'include',
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw await readJsonError(response, `按请求编号查询批次失败（HTTP ${response.status}）`);
+  }
+  if (!json?.found) {
+    return { found: false };
+  }
+  return {
+    found: true,
+    detail: {
+      ok: true,
+      run: (json?.run || {}) as PaintingBatchRun,
+      tasks: (Array.isArray(json?.tasks) ? json.tasks : []) as PaintingBatchTask[],
+      counts: (json?.counts || {}) as PaintingBatchRunCounts,
+    },
   };
 }
 

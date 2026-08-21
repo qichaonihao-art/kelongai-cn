@@ -31,12 +31,18 @@ const {
   dbGetPaintingBatchRun,
   dbUpdatePaintingBatchRun,
   dbGetActivePaintingBatchRuns,
+  dbGetPaintingBatchRunByCreationRequestId,
+  dbGetPaintingBatchTasks,
   dbMarkPaintingDirectionUsed,
   dbGetPaintingUsedDirections,
+  handlePaintingIdeas,
   handleRetryPaintingBatchTask,
   handleResubmitPaintingBatchTask,
   handleCreatePaintingBatchRun,
+  handleGetPaintingBatchRun,
+  handleGetPaintingBatchRunByRequest,
   handleGetPaintingBatchRunEstimate,
+  isValidPaintingClientRequestId,
   getSeedanceRatePerSecond,
   computePaintingBatchCostEstimate,
   PAINTING_BATCH_MODEL,
@@ -437,7 +443,7 @@ console.log('\n[17] 创建批次接口：接受 720P，拒绝 1080P/4K');
 {
   const ideas = Array.from({ length: 40 }, (_, i) => ({ id: `c${i}`, directionNumber: i + 1, durationMin: 8, durationMax: 8 }));
   const IMG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
-  const baseBody = { image: IMG, profile: { name: '测试挂画', style: '新中式', subject: '山水' }, plan: { durationMin: 8, durationMax: 8, ratio: '9:16', stylePreset: 'modern-minimal' }, ideas, model: 'doubao-seedance-2-0-mini-260615' };
+  const baseBody = { image: IMG, profile: { name: '测试挂画', style: '新中式', subject: '山水' }, plan: { durationMin: 8, durationMax: 8, ratio: '9:16', stylePreset: 'modern-minimal' }, ideas, model: 'doubao-seedance-2-0-mini-260615', creationRequestId: 'batch-resolution-0001' };
 
   const res1080 = mockRes();
   await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, resolution: '1080p' }), res1080);
@@ -480,6 +486,143 @@ console.log('\n[18] 历史非 720P 批次：有 taskId 可查询，无 taskId �
   assert(dbGetPaintingBatchTask(hasTask.id).seedanceTaskId === 'seed-non720p-exists', 'seedanceTaskId 保留未清空');
   const createAfter = fetchCalls.filter((c) => c.method === 'POST' && c.url.includes('/contents/generations/tasks')).length;
   assert(createAfter === createBefore, '未触发任何 Seedance 创建(提交)调用');
+}
+
+// ===== T19 创意任务幂等：相同 clientRequestId 返回同一 taskId，只创建一次后台任务 =====
+console.log('\n[19] 创意任务幂等：相同 clientRequestId 返回同一 taskId');
+{
+  assert(isValidPaintingClientRequestId('idea-20260822-0001abc') === true, '合法编号通过校验');
+  assert(isValidPaintingClientRequestId('bad id!') === false, '非法编号（空格）被拒绝');
+  assert(isValidPaintingClientRequestId('short') === false, '过短编号被拒绝');
+  assert(isValidPaintingClientRequestId('x'.repeat(200)) === false, '过长编号被拒绝');
+
+  const invalid = mockRes();
+  await handlePaintingIdeas(mockReq('/api/painting/ideas', { profile: { name: 'p' }, clientRequestId: 'bad id!' }), invalid);
+  assert(invalid._code === 400, '非法 clientRequestId 返回 400', `code=${invalid._code}`);
+
+  const rid = 'idea-test-00000001';
+  const res1 = mockRes();
+  await handlePaintingIdeas(mockReq('/api/painting/ideas', { profile: { name: '测试挂画' }, clientRequestId: rid }), res1);
+  const b1 = jsonBody(res1);
+  assert(res1._code === 202 && !!b1.taskId, '首次创建返回 taskId', JSON.stringify(b1));
+  assert(b1.deduplicated === false, '首次创建 deduplicated=false', JSON.stringify(b1));
+
+  const res2 = mockRes();
+  await handlePaintingIdeas(mockReq('/api/painting/ideas', { profile: { name: '测试挂画' }, clientRequestId: rid }), res2);
+  const b2 = jsonBody(res2);
+  assert(res2._code === 202, '相同编号再次请求返回 202', `code=${res2._code}`);
+  assert(b2.taskId === b1.taskId, '返回同一个 taskId（不新建任务）', `${b1.taskId} / ${b2.taskId}`);
+  assert(b2.deduplicated === true, '再次请求 deduplicated=true', JSON.stringify(b2));
+
+  const res3 = mockRes();
+  await handlePaintingIdeas(mockReq('/api/painting/ideas', { profile: { name: '测试挂画' }, clientRequestId: 'idea-test-00000002' }), res3);
+  const b3 = jsonBody(res3);
+  assert(b3.taskId !== b1.taskId, '不同编号返回不同 taskId', `${b1.taskId} / ${b3.taskId}`);
+}
+
+// ===== T20 正式付费批次数据库幂等：同一 creationRequestId 只创建一个批次 =====
+console.log('\n[20] 正式批次幂等：同一 creationRequestId 只创建一个批次');
+{
+  const ideas = Array.from({ length: 40 }, (_, i) => ({ id: `d${i}`, directionNumber: i + 1, durationMin: 8, durationMax: 8 }));
+  const IMG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const baseBody = { image: IMG, profile: { name: '测试挂画', style: '新中式', subject: '山水' }, plan: { durationMin: 8, durationMax: 8, ratio: '9:16', stylePreset: 'modern-minimal' }, ideas, model: 'doubao-seedance-2-0-mini-260615', resolution: '720p' };
+  const rid = 'batch-test-00000001';
+
+  const res1 = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, creationRequestId: rid }), res1);
+  const b1 = jsonBody(res1);
+  assert(res1._code === 202 && !!b1.batchRunId, '首次创建返回 202 + batchRunId', JSON.stringify(b1));
+  assert(b1.deduplicated === false, '首次创建 deduplicated=false');
+  assert(Number(b1.taskCount) === 40, '首次创建 taskCount=40', String(b1.taskCount));
+
+  const res2 = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, creationRequestId: rid }), res2);
+  const b2 = jsonBody(res2);
+  assert(res2._code === 200, '相同编号再次请求返回 200', `code=${res2._code}`);
+  assert(b2.batchRunId === b1.batchRunId, '返回同一个 batchRunId', `${b1.batchRunId} / ${b2.batchRunId}`);
+  assert(b2.deduplicated === true, '再次请求 deduplicated=true', JSON.stringify(b2));
+  assert(Number(b2.taskCount) === 40, '再次请求 taskCount=40（不重复插入任务）', String(b2.taskCount));
+
+  const byRequest = dbGetPaintingBatchRunByCreationRequestId(rid);
+  assert(!!byRequest && byRequest.batchRunId === b1.batchRunId, '数据库按编号可查到同一批次', byRequest?.batchRunId);
+  assert(dbGetPaintingBatchTasks(b1.batchRunId).length === 40, '方向任务只有一组 40 条', String(dbGetPaintingBatchTasks(b1.batchRunId).length));
+
+  // 唯一索引兜底：绕过 handler 直接插入同编号应触发 UNIQUE 冲突。
+  let uniqueThrew = false;
+  try {
+    dbInsertPaintingBatchRun({ batchRunId: 'run-dup-req', creationRequestId: rid, paintingName: 'dup', status: 'running', controlStatus: 'running' });
+  } catch {
+    uniqueThrew = true;
+  }
+  assert(uniqueThrew === true, '唯一索引阻止同编号二次插入（UNIQUE 冲突）');
+
+  // 不同编号创建不同批次。
+  const res3 = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, creationRequestId: 'batch-test-00000002' }), res3);
+  const b3 = jsonBody(res3);
+  assert(res3._code === 202 && b3.batchRunId !== b1.batchRunId, '不同编号创建不同批次', `${b1.batchRunId} / ${b3.batchRunId}`);
+  dbUpdatePaintingBatchRun(b3.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+  dbUpdatePaintingBatchRun(b1.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+}
+
+// ===== T21 by-request 查询：创建后能找到，未知编号 found=false =====
+console.log('\n[21] 按编号查询批次：找到 / 未找到');
+{
+  const resFound = mockRes();
+  await handleGetPaintingBatchRunByRequest(mockReq('/api/painting/batch-runs/by-request/batch-test-00000001'), resFound);
+  const bf = jsonBody(resFound);
+  assert(resFound._code === 200 && bf.found === true && !!bf.run?.batchRunId, '已创建编号 found=true', JSON.stringify({ code: resFound._code, found: bf.found }));
+
+  const resMiss = mockRes();
+  await handleGetPaintingBatchRunByRequest(mockReq('/api/painting/batch-runs/by-request/batch-test-99999999'), resMiss);
+  const bm = jsonBody(resMiss);
+  assert(resMiss._code === 200 && bm.found === false, '未知编号 found=false', JSON.stringify(bm));
+}
+
+// ===== T22 事务原子性：中途方向重复导致插入失败，回滚不留半个批次 =====
+console.log('\n[22] 事务原子性：插入失败不留半个批次或部分任务');
+{
+  // 40 条里故意让两个方向编号重复，触发 (batch_run_id, variation_round, direction_number) 唯一索引冲突。
+  const ideas = Array.from({ length: 40 }, (_, i) => ({ id: `e${i}`, directionNumber: (i % 40) + 1, durationMin: 8, durationMax: 8 }));
+  // 强制第 2 条与第 1 条方向编号相同。
+  ideas[1] = { ...ideas[1], directionNumber: 1 };
+  const IMG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const rid = 'batch-atomic-000001';
+  const res = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', {
+    image: IMG,
+    profile: { name: '测试挂画' },
+    plan: { durationMin: 8, durationMax: 8, ratio: '9:16', stylePreset: 'modern-minimal' },
+    ideas,
+    model: 'doubao-seedance-2-0-mini-260615',
+    resolution: '720p',
+    creationRequestId: rid,
+  }), res);
+  assert(res._code === 500, '方向冲突返回 500（不回滚成伪成功）', `code=${res._code}`);
+  assert(dbGetPaintingBatchRunByCreationRequestId(rid) === null, '事务回滚后无该编号批次记录');
+  const orphan = getCollectionDb().prepare('SELECT COUNT(*) AS c FROM painting_batch_tasks WHERE batch_run_id NOT IN (SELECT batch_run_id FROM painting_batch_runs)').get();
+  assert(Number(orphan?.c || 0) === 0, '无孤立方向任务', String(orphan?.c));
+}
+
+// ===== T23 正式付费批次必须携带幂等编号 =====
+console.log('\n[23] 正式批次缺少幂等编号时拒绝创建');
+{
+  const ideas = Array.from({ length: 40 }, (_, i) => ({ id: `f${i}`, directionNumber: i + 1, durationMin: 8, durationMax: 8 }));
+  const IMG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const before = Number(getCollectionDb().prepare('SELECT COUNT(*) AS c FROM painting_batch_runs').get()?.c || 0);
+  const res = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', {
+    image: IMG,
+    profile: { name: '测试挂画' },
+    plan: { durationMin: 8, durationMax: 8, ratio: '9:16', stylePreset: 'modern-minimal' },
+    ideas,
+    model: 'doubao-seedance-2-0-mini-260615',
+    resolution: '720p',
+  }), res);
+  const after = Number(getCollectionDb().prepare('SELECT COUNT(*) AS c FROM painting_batch_runs').get()?.c || 0);
+  assert(res._code === 400, '缺少 creationRequestId 返回 400', `code=${res._code}`);
+  assert(String(jsonBody(res).error).includes('避免网络重试造成重复扣费'), '返回明确的安全提示', jsonBody(res).error);
+  assert(after === before, '未创建任何批次记录', `${before} / ${after}`);
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);

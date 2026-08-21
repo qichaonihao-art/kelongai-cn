@@ -1146,6 +1146,7 @@ function getCollectionDb() {
       CREATE TABLE IF NOT EXISTS painting_batch_runs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         batch_run_id TEXT NOT NULL UNIQUE,
+        creation_request_id TEXT NOT NULL DEFAULT '',
         painting_name TEXT NOT NULL DEFAULT '',
         profile_json TEXT NOT NULL DEFAULT '{}',
         plan_json TEXT NOT NULL DEFAULT '{}',
@@ -1275,6 +1276,21 @@ function ensurePaintingBatchIdempotencyConstraints(db = collectionDb) {
       );
     `);
 
+    // 创建批次幂等编号：非空 creation_request_id 必须唯一，作为“响应丢失后安全恢复/去重”的数据库兜底。
+    // 测试库可能只建了 painting_batch_tasks（无 painting_batch_runs），此处需容忍缺失。
+    const hasPaintingBatchRuns = !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='painting_batch_runs'`).get();
+    if (hasPaintingBatchRuns) {
+      try {
+        db.exec(`ALTER TABLE painting_batch_runs ADD COLUMN creation_request_id TEXT NOT NULL DEFAULT ''`);
+      } catch {
+        // 列已存在，忽略。
+      }
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_painting_batch_runs_creation_request
+          ON painting_batch_runs(creation_request_id) WHERE creation_request_id <> '';
+      `);
+    }
+
     const archiveStmt = db.prepare(`
       INSERT INTO painting_batch_task_archived_conflicts
         (source_task_id, batch_run_id, variation_round, direction_number, seedance_task_id, status, error_message, conflict_kind)
@@ -1334,19 +1350,20 @@ function ensurePaintingBatchIdempotencyConstraints(db = collectionDb) {
         ON painting_batch_tasks(batch_run_id, variation_round, direction_number);
     `);
 
-    // 4) 验证两个唯一索引真实存在且生效。
-    const indexList = db.prepare(`PRAGMA index_list(painting_batch_tasks)`).all();
-    const verifyIndexColumns = (indexName, expectedColumns) => {
-      const found = indexList.find((idx) => idx.name === indexName);
+    // 4) 验证唯一索引真实存在且生效（creation_request_id 索引位于 painting_batch_runs 表）。
+    const verifyIndexColumns = (tableName, indexName, expectedColumns) => {
+      const list = db.prepare(`PRAGMA index_list(${tableName})`).all();
+      const found = list.find((idx) => idx.name === indexName);
       if (!found) return false;
       const info = db.prepare(`PRAGMA index_info(${indexName})`).all();
       const columns = info.map((col) => String(col.name));
       return expectedColumns.every((col) => columns.includes(col));
     };
-    const seedanceIndexOk = verifyIndexColumns('idx_painting_batch_tasks_seedance_unique', ['seedance_task_id']);
-    const directionIndexOk = verifyIndexColumns('idx_painting_batch_tasks_direction_unique', ['batch_run_id', 'variation_round', 'direction_number']);
-    if (!seedanceIndexOk || !directionIndexOk) {
-      throw new Error(`幂等唯一索引未生效 seedance=${seedanceIndexOk} direction=${directionIndexOk}`);
+    const seedanceIndexOk = verifyIndexColumns('painting_batch_tasks', 'idx_painting_batch_tasks_seedance_unique', ['seedance_task_id']);
+    const directionIndexOk = verifyIndexColumns('painting_batch_tasks', 'idx_painting_batch_tasks_direction_unique', ['batch_run_id', 'variation_round', 'direction_number']);
+    const creationRequestIndexOk = !hasPaintingBatchRuns || verifyIndexColumns('painting_batch_runs', 'idx_painting_batch_runs_creation_request', ['creation_request_id']);
+    if (!seedanceIndexOk || !directionIndexOk || !creationRequestIndexOk) {
+      throw new Error(`幂等唯一索引未生效 seedance=${seedanceIndexOk} direction=${directionIndexOk} creationRequest=${creationRequestIndexOk}`);
     }
 
     paintingBatchIdempotencyReady = true;
@@ -1760,6 +1777,7 @@ function normalizeBatchRun(row) {
   return {
     id: Number(row.id),
     batchRunId: row.batch_run_id,
+    creationRequestId: row.creation_request_id || '',
     paintingName: row.painting_name,
     profile: parseJsonString(row.profile_json, {}),
     plan: parseJsonString(row.plan_json, {}),
@@ -1815,12 +1833,13 @@ function dbInsertPaintingBatchRun(data) {
   const db = getCollectionDb();
   const result = db.prepare(`
     INSERT INTO painting_batch_runs
-      (batch_run_id, painting_name, profile_json, plan_json, image_path, image_hash, upload_history_id,
+      (batch_run_id, creation_request_id, painting_name, profile_json, plan_json, image_path, image_hash, upload_history_id,
        style_preset, model, resolution, ratio, generate_audio, watermark, variation_round, total_directions,
        target_folder_id, target_folder_name, status, control_status, options_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
   `).run(
     data.batchRunId,
+    String(data.creationRequestId || '').slice(0, 128),
     String(data.paintingName || '').slice(0, 200),
     JSON.stringify(data.profile || {}),
     JSON.stringify(data.plan || {}),
@@ -1862,6 +1881,12 @@ function dbUpdatePaintingBatchRun(batchRunId, updates) {
 
 function dbGetPaintingBatchRun(batchRunId) {
   return normalizeBatchRun(getCollectionDb().prepare('SELECT * FROM painting_batch_runs WHERE batch_run_id = ?').get(String(batchRunId)));
+}
+
+function dbGetPaintingBatchRunByCreationRequestId(creationRequestId) {
+  const id = String(creationRequestId || '');
+  if (!id) return null;
+  return normalizeBatchRun(getCollectionDb().prepare('SELECT * FROM painting_batch_runs WHERE creation_request_id = ?').get(id));
 }
 
 function dbGetActivePaintingBatchRuns() {
@@ -12850,6 +12875,24 @@ const PAINTING_TASKS = new Map();
 const PAINTING_TASK_TTL_MS = 30 * 60 * 1000;
 const PAINTING_TASK_MAX = 100;
 
+// 创意任务幂等：clientRequestId → painting taskId。响应丢失后，前端用同一编号重试可拿回原 taskId，
+// 不会重复创建后台豆包任务。映射存活时间与挂画任务 TTL 一致；服务重启后内存任务不存在时，
+// 明确返回“任务已失效”，绝不假装原任务仍在执行。
+const PAINTING_IDEA_CLIENT_REQUESTS = new Map();
+const PAINTING_IDEA_CLIENT_REQUEST_TTL_MS = PAINTING_TASK_TTL_MS;
+
+function isValidPaintingClientRequestId(value) {
+  const id = String(value || '');
+  return /^[A-Za-z0-9._-]{8,128}$/.test(id);
+}
+
+function prunePaintingIdeaClientRequests() {
+  const now = Date.now();
+  for (const [id, entry] of PAINTING_IDEA_CLIENT_REQUESTS) {
+    if (now - entry.createdAt > PAINTING_IDEA_CLIENT_REQUEST_TTL_MS) PAINTING_IDEA_CLIENT_REQUESTS.delete(id);
+  }
+}
+
 function prunePaintingTasks() {
   const now = Date.now();
   for (const [id, task] of PAINTING_TASKS) {
@@ -12960,6 +13003,33 @@ async function handleCreatePaintingBatchRun(req, res) {
     const body = isMultipartFormRequest(req)
       ? await readMultipartFormBody(req)
       : await readRequestBody(req);
+
+    // 正式付费批次幂等编号：响应丢失后前端用同一编号恢复，绝不重复创建 40 条付费任务。
+    const creationRequestId = readValue(body.creationRequestId);
+    if (!creationRequestId) {
+      sendJson(res, 400, { error: '创建批次缺少 creationRequestId，已拒绝执行以避免网络重试造成重复扣费' });
+      return;
+    }
+    if (!isValidPaintingClientRequestId(creationRequestId)) {
+      sendJson(res, 400, { error: 'creationRequestId 格式不合法，需为 8-128 位字母/数字/._-' });
+      return;
+    }
+    const existing = dbGetPaintingBatchRunByCreationRequestId(creationRequestId);
+    if (existing) {
+      const tasks = dbGetPaintingBatchTasks(existing.batchRunId);
+      sendJson(res, 200, {
+        ok: true,
+        deduplicated: true,
+        batchRunId: existing.batchRunId,
+        status: existing.status,
+        controlStatus: existing.controlStatus,
+        taskCount: tasks.length,
+        totalDirections: existing.totalDirections,
+        targetFolderId: existing.targetFolderId,
+        targetFolderName: existing.targetFolderName,
+      });
+      return;
+    }
 
     let imageFile = null;
     let imageHash = '';
@@ -13075,52 +13145,85 @@ async function handleCreatePaintingBatchRun(req, res) {
       ...(body.options && typeof body.options === 'object' ? body.options : {}),
       costEstimate,
     };
-    const run = dbInsertPaintingBatchRun({
-      batchRunId,
-      paintingName: profile.name || '未命名挂画',
-      profile,
-      plan,
-      imagePath,
-      imageHash,
-      uploadHistoryId,
-      stylePreset,
-      model,
-      resolution,
-      ratio,
-      generateAudio,
-      watermark,
-      variationRound,
-      totalDirections: selectedIdeas.length,
-      targetFolderId,
-      targetFolderName,
-      status: 'running',
-      controlStatus: 'running',
-      options: batchOptions,
-    });
 
-    for (let index = 0; index < selectedIdeas.length; index += 1) {
-      const idea = selectedIdeas[index];
-      // 保留前端传入的固定方向编号（1-40），避免“只生成未使用方向”时把方向编号重排。
-      const directionNumber = Number(idea.directionNumber) > 0 ? Number(idea.directionNumber) : index + 1;
-      dbInsertPaintingBatchTask({
+    // 批次记录与 40 个方向任务必须在同一事务内落库：事务成功后才 enqueue，禁止出现“批次已存在但任务只插了一半”。
+    const batchDb = getCollectionDb();
+    batchDb.exec('BEGIN IMMEDIATE');
+    let run;
+    try {
+      run = dbInsertPaintingBatchRun({
         batchRunId,
-        directionNumber,
-        batchIndex: Math.max(0, Math.floor((directionNumber - 1) / 10)),
+        creationRequestId,
+        paintingName: profile.name || '未命名挂画',
+        profile,
+        plan,
+        imagePath,
+        imageHash,
+        uploadHistoryId,
+        stylePreset,
+        model,
+        resolution,
+        ratio,
+        generateAudio,
+        watermark,
         variationRound,
-        ideaId: idea.id || `dir-${directionNumber}`,
-        ideaTitle: idea.title || '',
-        ideaSummary: idea.summary || idea.description || '',
-        status: 'queued',
+        totalDirections: selectedIdeas.length,
+        targetFolderId,
+        targetFolderName,
+        status: 'running',
+        controlStatus: 'running',
+        options: batchOptions,
       });
+
+      for (let index = 0; index < selectedIdeas.length; index += 1) {
+        const idea = selectedIdeas[index];
+        // 保留前端传入的固定方向编号（1-40），避免“只生成未使用方向”时把方向编号重排。
+        const directionNumber = Number(idea.directionNumber) > 0 ? Number(idea.directionNumber) : index + 1;
+        dbInsertPaintingBatchTask({
+          batchRunId,
+          directionNumber,
+          batchIndex: Math.max(0, Math.floor((directionNumber - 1) / 10)),
+          variationRound,
+          ideaId: idea.id || `dir-${directionNumber}`,
+          ideaTitle: idea.title || '',
+          ideaSummary: idea.summary || idea.description || '',
+          status: 'queued',
+        });
+      }
+      batchDb.exec('COMMIT');
+    } catch (insertError) {
+      try { batchDb.exec('ROLLBACK'); } catch {}
+      // 唯一索引冲突：并发同编号请求只能创建一个批次，读取已存在的原批次并返回，绝不返回 500。
+      if (creationRequestId && /UNIQUE constraint failed/i.test(String(insertError?.message || ''))) {
+        const existing = dbGetPaintingBatchRunByCreationRequestId(creationRequestId);
+        if (existing) {
+          const tasks = dbGetPaintingBatchTasks(existing.batchRunId);
+          sendJson(res, 200, {
+            ok: true,
+            deduplicated: true,
+            batchRunId: existing.batchRunId,
+            status: existing.status,
+            controlStatus: existing.controlStatus,
+            taskCount: tasks.length,
+            totalDirections: existing.totalDirections,
+            targetFolderId: existing.targetFolderId,
+            targetFolderName: existing.targetFolderName,
+          });
+          return;
+        }
+      }
+      throw insertError;
     }
 
     enqueueBatchRun(batchRunId);
 
     sendJson(res, 202, {
       ok: true,
+      deduplicated: false,
       batchRunId,
       status: run.status,
       controlStatus: run.controlStatus,
+      taskCount: selectedIdeas.length,
       totalDirections: selectedIdeas.length,
       targetFolderId,
       targetFolderName,
@@ -13157,6 +13260,41 @@ async function handleGetPaintingBatchRun(req, res) {
     });
   } catch (error) {
     sendJson(res, 500, { error: error?.message || '读取批量任务失败' });
+  }
+}
+
+// 按创建幂等编号查询批次：用于“正式创建批次 POST 响应丢失后”前端自动确认是否已经创建。
+async function handleGetPaintingBatchRunByRequest(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const requestId = decodeURIComponent(url.pathname.replace(/^\/api\/painting\/batch-runs\/by-request\//, ''));
+    if (!isValidPaintingClientRequestId(requestId)) {
+      sendJson(res, 400, { error: '请求编号格式不合法' });
+      return;
+    }
+    const run = dbGetPaintingBatchRunByCreationRequestId(requestId);
+    if (!run) {
+      sendJson(res, 200, { ok: true, found: false });
+      return;
+    }
+    const tasks = dbGetPaintingBatchTasks(run.batchRunId);
+    sendJson(res, 200, {
+      ok: true,
+      found: true,
+      run: { ...run, imagePath: undefined },
+      tasks: tasks.map((t) => ({ ...t, prompt: undefined })),
+      counts: {
+        total: tasks.length,
+        completed: tasks.filter((t) => t.status === 'completed').length,
+        failed: tasks.filter((t) => t.status === 'failed').length,
+        needsReview: tasks.filter((t) => t.status === 'needs_review').length,
+        stopped: tasks.filter((t) => t.status === 'stopped').length,
+        rendering: tasks.filter((t) => t.status === 'rendering' || t.status === 'seedance_submitted').length,
+        generatingPrompt: tasks.filter((t) => t.status === 'generating_prompt' || t.status === 'prompt_ready').length,
+      },
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '按请求编号查询批次失败' });
   }
 }
 
@@ -13922,9 +14060,39 @@ async function handlePaintingIdeas(req, res) {
       sendJson(res, 400, { error: '缺少产品档案 profile' });
       return;
     }
+    // 幂等请求编号：响应丢失后重试时复用，返回原 taskId，不重复创建豆包任务。
+    const clientRequestId = readValue(body.clientRequestId);
+    if (clientRequestId && !isValidPaintingClientRequestId(clientRequestId)) {
+      sendJson(res, 400, { error: 'clientRequestId 格式不合法，需为 8-128 位字母/数字/._-' });
+      return;
+    }
+    if (clientRequestId) {
+      prunePaintingIdeaClientRequests();
+      const existingEntry = PAINTING_IDEA_CLIENT_REQUESTS.get(clientRequestId);
+      if (existingEntry) {
+        const existing = PAINTING_TASKS.get(existingEntry.taskId);
+        if (!existing || (existing.doneAt && Date.now() - existing.doneAt > PAINTING_TASK_TTL_MS)) {
+          // 服务重启或任务已过期：内存任务不存在，明确返回失效，绝不假装原任务仍在执行。
+          PAINTING_IDEA_CLIENT_REQUESTS.delete(clientRequestId);
+          sendJson(res, 410, { error: '任务已失效，需要重新生成当前批次。', invalidated: true });
+          return;
+        }
+        sendJson(res, 202, {
+          ok: true,
+          taskId: existing.id,
+          status: existing.status,
+          deduplicated: true,
+          ...(existing.status === 'done' ? { result: existing.result } : {}),
+        });
+        return;
+      }
+    }
     const task = createPaintingTask('ideas');
+    if (clientRequestId) {
+      PAINTING_IDEA_CLIENT_REQUESTS.set(clientRequestId, { taskId: task.id, createdAt: Date.now() });
+    }
     runPaintingIdeasTask(task, body, apiKey);
-    sendJson(res, 202, { ok: true, taskId: task.id, status: task.status });
+    sendJson(res, 202, { ok: true, taskId: task.id, status: task.status, ...(clientRequestId ? { deduplicated: false } : {}) });
   } catch (error) {
     sendJson(res, 500, { error: error?.message || '创意方案任务创建失败' });
   }
@@ -17876,6 +18044,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname.startsWith('/api/painting/batch-runs/by-request/')) {
+    await handleGetPaintingBatchRunByRequest(req, res);
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname.startsWith('/api/painting/batch-runs/')) {
     await handleGetPaintingBatchRun(req, res);
     return;
@@ -18250,12 +18423,18 @@ export {
   dbGetPaintingBatchRun,
   dbUpdatePaintingBatchRun,
   dbGetActivePaintingBatchRuns,
+  dbGetPaintingBatchRunByCreationRequestId,
+  dbGetPaintingBatchTasks,
   dbMarkPaintingDirectionUsed,
   dbGetPaintingUsedDirections,
+  handlePaintingIdeas,
   handleRetryPaintingBatchTask,
   handleResubmitPaintingBatchTask,
   handleCreatePaintingBatchRun,
+  handleGetPaintingBatchRun,
+  handleGetPaintingBatchRunByRequest,
   handleGetPaintingBatchRunEstimate,
+  isValidPaintingClientRequestId,
   paintingPromptSimilarity,
   rewritePromptForDiversity,
   extractPaintingDiversitySummary,

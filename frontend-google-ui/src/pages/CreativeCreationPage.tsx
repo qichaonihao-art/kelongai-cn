@@ -45,12 +45,16 @@ import {
   generatePaintingIdeaPrompt,
   createPaintingBatchRun,
   getPaintingBatchRun,
+  getPaintingBatchRunByRequest,
   listPaintingBatchRuns,
   pausePaintingBatchRun,
   resumePaintingBatchRun,
   stopPaintingBatchRun,
   retryPaintingBatchTask,
   resubmitPaintingBatchTask,
+  describePaintingNetworkError,
+  generatePaintingRequestId,
+  isPaintingCreationOutcomeUnknown,
   getSeedanceRatePerSecond,
   SEEDANCE_BATCH_MODEL,
   SEEDANCE_BATCH_MODEL_LABEL,
@@ -1588,6 +1592,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const paintingBatchModuleRef = useRef<HTMLDivElement | null>(null);
   const paintingBatchScrollRequestedRef = useRef(false);
   const [paintingBatchClock, setPaintingBatchClock] = useState(Date.now());
+  // 断点继续：创意方案实时工作缓存（不依赖 React setState 异步生效）+ 每个“轮次+批次”稳定的幂等请求编号。
+  const paintingIdeaBatchCacheRef = useRef<Record<string, PaintingIdeaSummary[]>>({});
+  const paintingIdeaClientRequestIdsRef = useRef<Record<string, string>>({});
+  // 正式付费批次的创建幂等编号：同一次确认操作的所有重试复用，只有用户主动取消/改图/换轮/换方向才重新生成。
+  const batchCreationRequestIdRef = useRef<string | null>(null);
+  // 分阶段状态 + 断点继续错误。
+  const [paintingBatchPrepareStage, setPaintingBatchPrepareStage] = useState('');
+  const [paintingBatchPreparedBatches, setPaintingBatchPreparedBatches] = useState(0);
+  const [paintingBatchPrepareFailed, setPaintingBatchPrepareFailed] = useState(false);
+  const [paintingBatchPrepareError, setPaintingBatchPrepareError] = useState('');
+  const [paintingBatchConfirming, setPaintingBatchConfirming] = useState(false);
+  const [paintingBatchUnconfirmed, setPaintingBatchUnconfirmed] = useState(false);
   const [replaceImage, setReplaceImage] = useState<SelectedCreativeMedia | null>(null);
   const [replaceTarget, setReplaceTarget] = useState('');
   const [replaceWith, setReplaceWith] = useState('');
@@ -2083,6 +2099,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       }, 80);
     }
   }, [paintingBatchDetail]);
+
+  // 图片 / 方案 / 轮次 / 方向集合发生变化后，废弃旧创建幂等编号，避免把新批次错误恢复到旧批次。
+  useEffect(() => {
+    batchCreationRequestIdRef.current = null;
+  }, [paintingImage, paintingVariationRound, paintingBatchOnlyUnused, paintingPlan, paintingBatchIdeas]);
 
   useEffect(() => {
     const persistedMessages = serializeMessagesForStorage(messages);
@@ -3255,7 +3276,26 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         subject: paintingProfile?.subject || '',
       },
       plan: paintingPlan,
+      // 图片变化后不得复用旧缓存：用文件标识（名称+大小+修改时间）区分。
+      image: paintingImage
+        ? `${paintingImage.file.name}:${paintingImage.file.size}:${paintingImage.file.lastModified}`
+        : '',
     });
+  }
+
+  // 创意方案工作缓存：同时写入实时 ref（供断点继续同步读取）与 React state（供界面展示）。
+  function cachePaintingIdeaBatch(cacheKey: string, ideas: PaintingIdeaSummary[]) {
+    paintingIdeaBatchCacheRef.current = { ...paintingIdeaBatchCacheRef.current, [cacheKey]: ideas };
+    setPaintingIdeaBatchCache((previous) => ({ ...previous, [cacheKey]: ideas }));
+  }
+
+  // 每个“轮次+批次”的稳定幂等请求编号：同一次准备操作重试时复用，不会重复创建豆包后台任务。
+  function getPaintingIdeaClientRequestId(cacheKey: string): string {
+    const existing = paintingIdeaClientRequestIdsRef.current[cacheKey];
+    if (existing) return existing;
+    const id = generatePaintingRequestId('idea');
+    paintingIdeaClientRequestIdsRef.current = { ...paintingIdeaClientRequestIdsRef.current, [cacheKey]: id };
+    return id;
   }
 
   async function runPaintingIdeas(batch: number, variationRound = paintingVariationRound) {
@@ -3264,7 +3304,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
     const cacheKey = getPaintingBatchCacheKey(batch, variationRound);
-    const cachedIdeas = paintingIdeaBatchCache[cacheKey];
+    const cachedIdeas = paintingIdeaBatchCacheRef.current[cacheKey];
     if (cachedIdeas?.length) {
       setPaintingIdeas(cachedIdeas);
       setPaintingFrameworkBatch(batch);
@@ -3280,9 +3320,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       const result = await generatePaintingIdeas(paintingProfile, paintingPlan, batch, {
         variationRound,
         avoidIdeas: getRecentPaintingIdeasToAvoid(),
+        clientRequestId: getPaintingIdeaClientRequestId(cacheKey),
       });
       setPaintingIdeas(result.ideas);
-      setPaintingIdeaBatchCache((previous) => ({ ...previous, [cacheKey]: result.ideas }));
+      cachePaintingIdeaBatch(cacheKey, result.ideas);
       setPaintingFrameworkBatch(result.batch);
       if (result.totalBatches > 0) setPaintingTotalBatches(result.totalBatches);
       setPaintingSelectedIdea(null);
@@ -3450,18 +3491,39 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const collected: PaintingIdeaSummary[] = [];
     const avoidIdeas = getRecentPaintingIdeasToAvoid();
     for (let batch = 0; batch < paintingTotalBatches; batch += 1) {
+      setPaintingBatchPrepareStage(`正在准备第 ${batch + 1}/${paintingTotalBatches} 批`);
       const cacheKey = getPaintingBatchCacheKey(batch, variationRound);
-      let ideas = paintingIdeaBatchCache[cacheKey];
+      // 实时工作缓存：已成功的批次绝不重新调用豆包。
+      let ideas = paintingIdeaBatchCacheRef.current[cacheKey];
       if (!ideas?.length) {
-        const result = await generatePaintingIdeas(paintingProfile, paintingPlan, batch, {
-          variationRound,
-          avoidIdeas,
-        });
-        ideas = result.ideas;
-        setPaintingIdeaBatchCache((previous) => ({ ...previous, [cacheKey]: ideas }));
-        if (result.totalBatches > 0) setPaintingTotalBatches(result.totalBatches);
+        const clientRequestId = getPaintingIdeaClientRequestId(cacheKey);
+        try {
+          const result = await generatePaintingIdeas(paintingProfile, paintingPlan, batch, {
+            variationRound,
+            avoidIdeas,
+            clientRequestId,
+          });
+          ideas = result.ideas;
+          cachePaintingIdeaBatch(cacheKey, ideas);
+          if (result.totalBatches > 0) setPaintingTotalBatches(result.totalBatches);
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('任务已失效')) {
+            // 幂等编号对应后台任务已失效：丢弃旧编号与旧缓存，下次“继续准备”重新生成当前批次。
+            delete paintingIdeaClientRequestIdsRef.current[cacheKey];
+            delete paintingIdeaBatchCacheRef.current[cacheKey];
+          }
+          setPaintingBatchPreparedBatches(batch);
+          throw error;
+        }
       }
       collected.push(...ideas);
+      setPaintingBatchPreparedBatches(batch + 1);
+    }
+    // 校验方向编号完整且不重复：每条都有编号，且编号无重复。
+    const directionNumbers = collected.map((idea) => Number(idea.directionNumber));
+    const unique = new Set(directionNumbers);
+    if (directionNumbers.some((n) => !Number.isFinite(n) || n <= 0) || unique.size !== directionNumbers.length) {
+      throw new Error('创意方向编号不完整或存在重复，请重新准备创意方案。');
     }
     return collected;
   }
@@ -3514,7 +3576,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
     setPaintingError('');
+    setPaintingBatchPrepareFailed(false);
+    setPaintingBatchPrepareError('');
     setPaintingBatchPreparing(true);
+    setPaintingBatchPrepareStage('正在检查已有创意方向');
     try {
       const variationRound = paintingVariationRound;
       const ideas = await collectPaintingBatchIdeas(variationRound);
@@ -3524,6 +3589,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingBatchIdeas(ideas);
       setPaintingVariationRound(variationRound);
 
+      setPaintingBatchPrepareStage('正在读取素材库文件夹');
       const folders = await getVideoLibraryFolders().catch(() => [] as string[]);
       const availableFolders = folders.length ? folders : ['通用素材'];
       setPaintingBatchFolderList(availableFolders);
@@ -3540,6 +3606,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       } catch {
         // 图片哈希计算失败或尚未绑定文件夹时，保留默认文件夹。
       }
+      setPaintingBatchPrepareStage('正在读取已使用方向');
       if (imageHash) {
         try {
           const used = await getPaintingUsedDirections(imageHash, variationRound);
@@ -3552,17 +3619,102 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       }
       setPaintingBatchFolder(prefillFolder);
       setPaintingBatchFolderId(prefillFolderId);
+      setPaintingBatchPrepareStage('');
       setPaintingBatchConfirmOpen(true);
     } catch (error) {
-      setPaintingError(error instanceof Error ? error.message : '准备批量生成失败，请稍后重试。');
+      const friendly = describePaintingNetworkError(error, '准备批量生成失败，请稍后重试。');
+      setPaintingError(friendly);
+      setPaintingBatchPrepareError(friendly);
+      setPaintingBatchPrepareFailed(true);
     } finally {
       setPaintingBatchPreparing(false);
+      setPaintingBatchPrepareStage('');
     }
+  }
+
+  function buildPaintingBatchCreateOptions(ideas: PaintingIdeaSummary[], creationRequestId: string) {
+    return {
+      file: paintingImage!.file,
+      profile: paintingProfile!,
+      plan: paintingPlan,
+      ideas,
+      totalDirections: ideas.length,
+      model: SEEDANCE_BATCH_MODEL,
+      resolution: SEEDANCE_BATCH_RESOLUTION,
+      ratio: paintingPlan.ratio || seedanceRatio,
+      variationRound: paintingVariationRound,
+      generateAudio: seedanceGenerateAudio,
+      watermark: seedanceWatermark,
+      stylePreset: paintingPlan.stylePreset,
+      uploadHistoryId: paintingUploadHistoryId,
+      targetFolderId: paintingBatchFolderId,
+      targetFolderName: paintingBatchFolder,
+      onlyUnused: paintingBatchOnlyUnused,
+      creationRequestId,
+    };
+  }
+
+  function enterPaintingBatchProgress(batchRunId: string, recovered = false) {
+    // 已明确拿到批次编号，本次幂等请求已完成；下一次主动创建必须使用新编号。
+    batchCreationRequestIdRef.current = null;
+    setPaintingBatchConfirmOpen(false);
+    setPaintingBatchCreating(false);
+    setPaintingBatchConfirming(false);
+    setPaintingBatchUnconfirmed(false);
+    setPaintingBatchPrepareStage('');
+    setPaintingBatchDetail(null);
+    setPaintingBatchActiveRunId(batchRunId);
+    setPaintingBatchListError('');
+    if (recovered) {
+      setPaintingError('批次已创建，已恢复进度。');
+    }
+    paintingBatchScrollRequestedRef.current = true;
+    void pollPaintingBatch(batchRunId);
+  }
+
+  // 创建批次 POST 响应丢失后的自动确认：保留同一幂等编号，先用 by-request 查询，查不到再用同一编号重试创建。
+  async function confirmPaintingBatchCreation(ideas: PaintingIdeaSummary[], creationRequestId: string) {
+    setPaintingBatchConfirming(true);
+    setPaintingBatchPrepareStage('正在确认批次是否已经创建');
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+      }
+      try {
+        const found = await getPaintingBatchRunByRequest(creationRequestId);
+        if (found.found && found.detail) {
+          setPaintingBatchDetail(found.detail);
+          enterPaintingBatchProgress(found.detail.run.batchRunId, true);
+          return;
+        }
+      } catch {
+        // 查询失败继续下一轮。
+      }
+      // 暂未查到：用同一个幂等编号安全重试创建 POST（后端幂等，不会重复扣费）。
+      try {
+        const result = await createPaintingBatchRun(buildPaintingBatchCreateOptions(ideas, creationRequestId));
+        enterPaintingBatchProgress(result.batchRunId);
+        return;
+      } catch (error) {
+        if (!isPaintingCreationOutcomeUnknown(error)) {
+          // 明确的业务/鉴权错误不再盲试。
+          setPaintingError(describePaintingNetworkError(error, '创建批量任务失败，请稍后重试。'));
+          setPaintingBatchConfirming(false);
+          setPaintingBatchPrepareStage('');
+          return;
+        }
+      }
+    }
+    // 仍无法确认：绝不自动生成新编号再次创建 40 条。
+    setPaintingBatchConfirming(false);
+    setPaintingBatchPrepareStage('');
+    setPaintingBatchUnconfirmed(true);
+    setPaintingError('暂时无法确认批次是否创建成功。请先查看批量生成历史，系统不会自动创建第二个批次。');
   }
 
   async function handlePaintingConfirmBatch() {
     if (!paintingImage || !paintingProfile) return;
-    if (paintingBatchCreating) return;
+    if (paintingBatchCreating || paintingBatchConfirming) return;
     let ideas = paintingBatchIdeas;
     if (paintingBatchOnlyUnused) {
       ideas = ideas.filter((idea) => !isPaintingBatchIdeaUsed(idea, paintingVariationRound));
@@ -3573,36 +3725,24 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
     setPaintingBatchCreating(true);
+    setPaintingBatchUnconfirmed(false);
     setPaintingBatchListError('');
+    // 同一次确认操作的所有网络重试必须复用同一个编号；只有图片/方案/轮次/方向集合变化才重新生成。
+    if (!batchCreationRequestIdRef.current) {
+      batchCreationRequestIdRef.current = generatePaintingRequestId('batch');
+    }
+    const creationRequestId = batchCreationRequestIdRef.current;
     try {
-      const result = await createPaintingBatchRun({
-        file: paintingImage.file,
-        profile: paintingProfile,
-        plan: paintingPlan,
-        ideas,
-        totalDirections: ideas.length,
-        model: SEEDANCE_BATCH_MODEL,
-        resolution: SEEDANCE_BATCH_RESOLUTION,
-        ratio: paintingPlan.ratio || seedanceRatio,
-        variationRound: paintingVariationRound,
-        generateAudio: seedanceGenerateAudio,
-        watermark: seedanceWatermark,
-        stylePreset: paintingPlan.stylePreset,
-        uploadHistoryId: paintingUploadHistoryId,
-        targetFolderId: paintingBatchFolderId,
-        targetFolderName: paintingBatchFolder,
-        onlyUnused: paintingBatchOnlyUnused,
-      });
-      setPaintingBatchConfirmOpen(false);
-      setPaintingBatchDetail(null);
-      setPaintingBatchActiveRunId(result.batchRunId);
-      setPaintingBatchListError('');
-      paintingBatchScrollRequestedRef.current = true;
-      void pollPaintingBatch(result.batchRunId);
+      const result = await createPaintingBatchRun(buildPaintingBatchCreateOptions(ideas, creationRequestId));
+      enterPaintingBatchProgress(result.batchRunId);
     } catch (error) {
-      setPaintingError(error instanceof Error ? error.message : '创建批量任务失败，请稍后重试。');
-    } finally {
       setPaintingBatchCreating(false);
+      if (!isPaintingCreationOutcomeUnknown(error)) {
+        setPaintingError(describePaintingNetworkError(error, '创建批量任务失败，请稍后重试。'));
+        return;
+      }
+      // 网络错误：批次可能已创建但响应丢失，进入自动确认（绝不更换编号）。
+      await confirmPaintingBatchCreation(ideas, creationRequestId);
     }
   }
 
@@ -4679,15 +4819,32 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   )}
 
                   {paintingProfile && (
-                    <button
-                      type="button"
-                      onClick={() => void handlePaintingOpenBatchConfirm()}
-                      disabled={!paintingImage || paintingLoading !== 'idle' || paintingBatchPreparing}
-                      className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 to-orange-500 px-4 text-sm font-black text-white shadow-[0_8px_20px_rgba(244,63,94,0.28)] transition-transform hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {paintingBatchPreparing ? <Loader2 className="size-4 animate-spin" /> : <Film className="size-4" />}
-                      {paintingBatchPreparing ? '正在准备 40 个方向…' : '全自动生成40条视频'}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handlePaintingOpenBatchConfirm()}
+                        disabled={!paintingImage || paintingLoading !== 'idle' || paintingBatchPreparing}
+                        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 to-orange-500 px-4 text-sm font-black text-white shadow-[0_8px_20px_rgba(244,63,94,0.28)] transition-transform hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {paintingBatchPreparing ? <Loader2 className="size-4 animate-spin" /> : <Film className="size-4" />}
+                        {paintingBatchPreparing ? (paintingBatchPrepareStage || '正在准备 40 个方向…') : '全自动生成40条视频'}
+                      </button>
+                      {paintingBatchPrepareFailed && (
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">
+                          <div className="font-bold">{paintingBatchPrepareError || '准备批量生成失败。'}</div>
+                          <div className="mt-1">
+                            已成功准备 {paintingBatchPreparedBatches}/{paintingTotalBatches} 批 · 可安全重试，已完成批次不会重复生成。
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void handlePaintingOpenBatchConfirm()}
+                            className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-full bg-amber-600 px-3 text-[11px] font-bold text-white transition-colors hover:bg-amber-700"
+                          >
+                            继续准备
+                          </button>
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {paintingIdeas.length > 0 && (
@@ -6861,7 +7018,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               </div>
               <button
                 type="button"
-                disabled={paintingBatchCreating}
+                disabled={paintingBatchCreating || paintingBatchConfirming}
                 onClick={() => setPaintingBatchConfirmOpen(false)}
                 className="flex size-8 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed"
                 aria-label="关闭"
@@ -6928,7 +7085,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         setPaintingBatchFolderId(null);
                         saveLastVideoLibraryFolder(folder);
                       }}
-                      disabled={paintingBatchCreating}
+                      disabled={paintingBatchCreating || paintingBatchConfirming}
                       className={cn(
                         'flex min-h-14 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-xs font-bold transition-colors disabled:cursor-not-allowed',
                         paintingBatchFolder === folder
@@ -6986,24 +7143,64 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               })()}
             </div>
 
+            {paintingBatchConfirming && (
+              <div className="mt-4 flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-xs font-bold text-slate-600">
+                <Loader2 className="size-4 animate-spin text-rose-500" />
+                {paintingBatchPrepareStage || '正在确认批次是否已经创建'}
+              </div>
+            )}
+            {paintingBatchUnconfirmed && (
+              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">
+                暂时无法确认批次是否创建成功。请先查看批量生成历史，系统不会自动创建第二个批次。
+              </div>
+            )}
+
             <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                disabled={paintingBatchCreating}
-                onClick={() => setPaintingBatchConfirmOpen(false)}
-                className="h-10 rounded-full border border-slate-200 bg-white px-5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                disabled={paintingBatchCreating || paintingBatchIdeas.length === 0}
-                onClick={() => void handlePaintingConfirmBatch()}
-                className="inline-flex h-10 items-center gap-2 rounded-full bg-rose-600 px-5 text-xs font-bold text-white shadow-sm shadow-rose-200 hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-              >
-                {paintingBatchCreating ? <Loader2 className="size-4 animate-spin" /> : <Film className="size-4" />}
-                {paintingBatchCreating ? '正在创建任务…' : '确认生成'}
-              </button>
+              {paintingBatchUnconfirmed ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaintingBatchConfirmOpen(false);
+                      void loadPaintingBatchRuns();
+                      window.setTimeout(() => {
+                        paintingBatchModuleRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }, 80);
+                    }}
+                    className="h-10 rounded-full border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                  >
+                    查看批量历史
+                  </button>
+                  <button
+                    type="button"
+                    disabled={paintingBatchCreating || paintingBatchConfirming}
+                    onClick={() => void handlePaintingConfirmBatch()}
+                    className="inline-flex h-10 items-center gap-2 rounded-full bg-amber-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    重新确认
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={paintingBatchCreating || paintingBatchConfirming}
+                    onClick={() => setPaintingBatchConfirmOpen(false)}
+                    className="h-10 rounded-full border border-slate-200 bg-white px-5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    disabled={paintingBatchCreating || paintingBatchConfirming || paintingBatchIdeas.length === 0}
+                    onClick={() => void handlePaintingConfirmBatch()}
+                    className="inline-flex h-10 items-center gap-2 rounded-full bg-rose-600 px-5 text-xs font-bold text-white shadow-sm shadow-rose-200 hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                  >
+                    {paintingBatchCreating || paintingBatchConfirming ? <Loader2 className="size-4 animate-spin" /> : <Film className="size-4" />}
+                    {paintingBatchCreating ? '正在创建任务…' : paintingBatchConfirming ? '正在确认批次…' : '确认生成'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
