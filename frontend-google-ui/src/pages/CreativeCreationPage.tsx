@@ -22,6 +22,11 @@ import {
   Search,
   Clock,
   FolderOpen,
+  Pause,
+  Play,
+  Square,
+  RefreshCw,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import ModuleQuickNav, { type ModuleId } from "@/src/components/ModuleQuickNav";
@@ -38,6 +43,18 @@ import {
   analyzePainting,
   generatePaintingIdeas,
   generatePaintingIdeaPrompt,
+  createPaintingBatchRun,
+  getPaintingBatchRun,
+  listPaintingBatchRuns,
+  pausePaintingBatchRun,
+  resumePaintingBatchRun,
+  stopPaintingBatchRun,
+  retryPaintingBatchTask,
+  resubmitPaintingBatchTask,
+  getPaintingBatchRunEstimate,
+  getPaintingFolderBinding,
+  getPaintingUsedDirections,
+  sha256File,
   type CreativeReverseModel,
   type CreativeHistoryItem,
   type SeedanceReferenceFile,
@@ -46,6 +63,11 @@ import {
   type PaintingProfile,
   type PaintingIdeaSummary,
   type PaintingMaterialPlan,
+  type PaintingBatchRun,
+  type PaintingBatchRunDetail,
+  type PaintingBatchTask,
+  type PaintingBatchTaskStatus,
+  type PaintingBatchRunEstimate,
 } from "@/src/lib/creative";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -199,6 +221,40 @@ const VIDEO_LIBRARY_LAST_FOLDER_KEY = 'kelongai.videoLibraryLastFolder';
 
 function getPaintingIdeaUsageKey(batch: number, variationRound: number, ideaId: string) {
   return `round:${variationRound}:batch:${batch}:idea:${ideaId}`;
+}
+
+const PAINTING_BATCH_STATUS_LABELS: Record<string, string> = {
+  queued: '排队中',
+  generating_prompt: '生成提示词',
+  prompt_ready: '提示词就绪',
+  submitting_seedance: '提交生成',
+  seedance_submitted: '生成中',
+  rendering: '渲染中',
+  video_succeeded: '生成完成',
+  saving_to_library: '存入素材库',
+  completed: '已完成',
+  retry_waiting: '重试等待',
+  failed: '失败',
+  paused: '已暂停',
+  stopped: '已停止',
+  needs_review: '待复核',
+  running: '运行中',
+  stopping: '停止中',
+};
+
+const PAINTING_BATCH_TERMINAL_STATUSES = ['completed', 'failed', 'stopped', 'needs_review'];
+
+function getPaintingBatchStatusLabel(status?: string): string {
+  if (!status) return '未知';
+  return PAINTING_BATCH_STATUS_LABELS[status] || status;
+}
+
+function getPaintingBatchStatusTone(status?: string): string {
+  if (status === 'completed' || status === 'video_succeeded') return 'bg-emerald-50 text-emerald-600';
+  if (status === 'failed') return 'bg-red-50 text-red-600';
+  if (status === 'needs_review') return 'bg-amber-50 text-amber-600';
+  if (status === 'stopped' || status === 'paused') return 'bg-slate-100 text-slate-500';
+  return 'bg-blue-50 text-blue-600';
 }
 
 function loadLastVideoLibraryFolder(): string {
@@ -571,6 +627,14 @@ type SeedanceTaskMode = 'generate' | 'video-edit-painting';
 type SeedanceResolution = '480p' | '720p' | '1080p' | '4k';
 type ReverseMode = 'direct' | 'replace' | 'image' | 'painting';
 
+interface ReverseSeedanceSyncSnapshot {
+  mode: Exclude<ReverseMode, 'painting'>;
+  sourceVideo: SelectedCreativeMedia | null;
+  referenceImages: SelectedCreativeMedia[];
+  requestedDuration?: number;
+  durationPromise?: Promise<number | null>;
+}
+
 function getSeedanceModelLabel(model: SeedanceModelId) {
   if (model === 'doubao-seedance-2-5-260628') return 'Seedance 2.5 测试版';
   if (model === 'doubao-seedance-2-0-mini-260615') return 'Seedance 2.0 mini';
@@ -631,6 +695,14 @@ function readVideoDuration(file: File): Promise<number> {
     };
     video.src = previewUrl;
   });
+}
+
+function extractVideoDurationFromPrompt(prompt: string): number | null {
+  const matches = Array.from(String(prompt || '').matchAll(
+    /(?:总时长|视频时长|目标视频总时长)\s*(?:必须严格为|约为|为|是|[：:])?\s*(\d{1,3})\s*秒/gi,
+  ));
+  const value = Number(matches.at(-1)?.[1]);
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : null;
 }
 
 function createMessageId(prefix: string) {
@@ -1490,6 +1562,24 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingHistory, setPaintingHistory] = useState<PaintingHistoryItem[]>([]);
   const [paintingError, setPaintingError] = useState('');
   const paintingFileInputRef = useRef<HTMLInputElement>(null);
+
+  // 挂画全自动批量生成状态
+  const [paintingBatchConfirmOpen, setPaintingBatchConfirmOpen] = useState(false);
+  const [paintingBatchPreparing, setPaintingBatchPreparing] = useState(false);
+  const [paintingBatchIdeas, setPaintingBatchIdeas] = useState<PaintingIdeaSummary[]>([]);
+  const [paintingBatchOnlyUnused, setPaintingBatchOnlyUnused] = useState(true);
+  const [paintingBatchEstimate, setPaintingBatchEstimate] = useState<PaintingBatchRunEstimate | null>(null);
+  const [paintingBatchFolder, setPaintingBatchFolder] = useState(loadLastVideoLibraryFolder);
+  const [paintingBatchFolderId, setPaintingBatchFolderId] = useState<number | null>(null);
+  const [paintingBatchFolderList, setPaintingBatchFolderList] = useState<string[]>([]);
+  const [paintingUsedDirections, setPaintingUsedDirections] = useState<number[]>([]);
+  const [paintingBatchActiveRunId, setPaintingBatchActiveRunId] = useState<string | null>(null);
+  const [paintingBatchDetail, setPaintingBatchDetail] = useState<PaintingBatchRunDetail | null>(null);
+  const [paintingBatchRuns, setPaintingBatchRuns] = useState<PaintingBatchRun[]>([]);
+  const [paintingBatchListError, setPaintingBatchListError] = useState('');
+  const [paintingBatchActionLoading, setPaintingBatchActionLoading] = useState<'pause' | 'resume' | 'stop' | null>(null);
+  const [paintingBatchCreating, setPaintingBatchCreating] = useState(false);
+  const paintingBatchPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [replaceImage, setReplaceImage] = useState<SelectedCreativeMedia | null>(null);
   const [replaceTarget, setReplaceTarget] = useState('');
   const [replaceWith, setReplaceWith] = useState('');
@@ -1555,6 +1645,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const notebookRef = useRef<HTMLDivElement>(null);
   const additionalHistoryRef = useRef<HTMLDivElement>(null);
   const autoSyncToSeedanceRef = useRef(false);
+  const pendingReverseSeedanceSyncRef = useRef<ReverseSeedanceSyncSnapshot | null>(null);
   const normalSeedanceSettingsRef = useRef({
     model: 'doubao-seedance-2-0-260128' as SeedanceModelId,
     resolution: '720p' as SeedanceResolution,
@@ -2153,6 +2244,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   useEffect(() => {
     if (!isLoading && autoSyncToSeedanceRef.current && latestAssistantText) {
       autoSyncToSeedanceRef.current = false;
+      if (latestAssistantText.startsWith('生成失败：')) {
+        pendingReverseSeedanceSyncRef.current = null;
+        return;
+      }
       syncLatestPromptToSeedance();
       scrollToRef(seedancePromptRef);
     }
@@ -2255,6 +2350,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setSeedanceDuration(durationSeconds);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
+      pendingReverseSeedanceSyncRef.current = {
+        mode: 'image',
+        sourceVideo: null,
+        referenceImages: [selectedMedia, imageToVideoAddPainting ? imageToVideoPainting : null]
+          .filter((media): media is SelectedCreativeMedia => Boolean(media?.kind === 'image')),
+        requestedDuration: durationSeconds,
+      };
       autoSyncToSeedanceRef.current = true;
       scrollToRef(textareaRef);
       handleSend(prompt);
@@ -2266,6 +2368,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setRequestError('请填写人物改造要求，例如：把人物改成80岁左右的女性，服装要符合茶室环境。');
       return;
     }
+
+    const sourceVideo = selectedMedia?.kind === 'video' ? selectedMedia : null;
+    pendingReverseSeedanceSyncRef.current = {
+      mode: reverseMode === 'replace' ? 'replace' : 'direct',
+      sourceVideo,
+      referenceImages: reverseMode === 'replace' && replaceImage ? [replaceImage] : [],
+      durationPromise: sourceVideo
+        ? readVideoDuration(sourceVideo.file).catch(() => null)
+        : undefined,
+    };
 
     if (reverseMode === 'replace') {
       if (!replaceTarget.trim() || !replaceWith.trim()) {
@@ -2317,30 +2429,49 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   }
 
   function syncReverseMediaToSeedance() {
-    // 挂画创意素材走自己的自动填充流程，这里不处理。
-    if (reverseMode === 'painting') return;
+    const snapshot = pendingReverseSeedanceSyncRef.current;
+    pendingReverseSeedanceSyncRef.current = null;
+    const activeMode = snapshot?.mode || reverseMode;
 
-    // 自动加载参考图：元素替换 → 替换参考图；图片生视频 → 上传的图片。
-    if (reverseMode === 'replace') {
-      setSeedanceReferences(computeSeedanceReferencesWithImage(replaceImage));
-    } else if (reverseMode === 'image') {
-      setSeedanceReferences(computeSeedanceReferencesWithImage(selectedMedia));
+    // 挂画创意素材走自己的自动填充流程，这里不处理。
+    if (activeMode === 'painting') return;
+
+    // 使用提交分析前保存的素材快照，避免 AI 返回时上传区已被清空。
+    const referenceImages = snapshot?.referenceImages || (
+      activeMode === 'replace'
+        ? (replaceImage ? [replaceImage] : [])
+        : activeMode === 'image' && selectedMedia?.kind === 'image'
+          ? [selectedMedia]
+          : []
+    );
+    if (referenceImages.length > 0) {
+      setSeedanceReferences(computeSeedanceReferencesWithImages(referenceImages));
     }
 
-    // 自动设置时长：直接反推 / 元素替换以「视频」为源，取源视频真实时长向上取整（4.3→5）。
-    // 图片生视频的时长是手动填的整数，已在上一步设置，这里不重复处理。
-    if (reverseMode === 'direct' || reverseMode === 'replace') {
-      if (selectedMedia?.kind === 'video') {
-        void (async () => {
-          try {
-            const duration = await readVideoDuration(selectedMedia.file);
-            const maxDuration = seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15;
-            setSeedanceDuration(Math.min(maxDuration, Math.max(4, Math.ceil(duration))));
-          } catch {
-            // 读不到源视频时长时不阻断流程，保持当前时长不变。
-          }
-        })();
-      }
+    const maxDuration = seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15;
+    const promptDuration = extractVideoDurationFromPrompt(latestAssistantText);
+    const applyDuration = (duration: number | null | undefined) => {
+      if (!duration || !Number.isFinite(duration)) return false;
+      setSeedanceDuration(Math.min(maxDuration, Math.max(4, Math.ceil(duration))));
+      return true;
+    };
+
+    if (snapshot?.requestedDuration) {
+      applyDuration(snapshot.requestedDuration);
+      return;
+    }
+
+    // 直接反推 / 元素替换优先使用源视频真实时长；读取失败时再从完整提示词提取。
+    const durationPromise = snapshot?.durationPromise
+      || (selectedMedia?.kind === 'video' ? readVideoDuration(selectedMedia.file).catch(() => null) : null);
+    if (durationPromise) {
+      void durationPromise.then((duration) => {
+        if (!applyDuration(duration) && !applyDuration(promptDuration)) {
+          setRequestError('提示词和参考图片已自动同步，但没有识别到有效视频时长，请手动选择时长。');
+        }
+      });
+    } else if (!applyDuration(promptDuration) && (activeMode === 'direct' || activeMode === 'replace')) {
+      setRequestError('提示词和参考图片已自动同步，但没有识别到有效视频时长，请手动选择时长。');
     }
   }
 
@@ -2565,6 +2696,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     duration?: number;
     references?: SeedanceReferenceFile[];
     focusTaskStatus?: boolean;
+    imageHash?: string;
+    directionNumber?: number;
+    variationRound?: number;
   }) {
     const isVideoEdit = seedanceTaskMode === 'video-edit-painting';
     const prompt = isVideoEdit
@@ -2647,6 +2781,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         generateAudio: seedanceGenerateAudio,
         watermark: seedanceWatermark,
         references,
+        imageHash: overrides?.imageHash,
+        directionNumber: overrides?.directionNumber,
+        variationRound: overrides?.variationRound,
       });
       setSeedanceTask({
         ...task,
@@ -3165,8 +3302,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingLoading('prompt');
     try {
       const { prompt, duration } = await generatePaintingIdeaPrompt(paintingProfile, idea, {
-        durationMin: paintingPlan.durationMin,
-        durationMax: paintingPlan.durationMax,
+        durationMin: idea.durationMin || paintingPlan.durationMin,
+        durationMax: idea.durationMax || paintingPlan.durationMax,
         ratio: paintingPlan.ratio,
         stylePreset: paintingPlan.stylePreset,
         character: paintingPlan.character,
@@ -3251,33 +3388,301 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       window.alert('提示词没有包含图片，已终止自动生成视频，请先加载挂画参考图。');
       return;
     }
+    // 手动生成 / 换元素再生成也写入方向使用记录，供“仅生成未使用方向”服务端持久化识别。
+    let imageHash: string | undefined;
+    if (paintingImage?.file) {
+      try {
+        imageHash = await sha256File(paintingImage.file);
+      } catch {
+        imageHash = undefined;
+      }
+    }
     await handleCreateSeedanceVideo({
       prompt: result.prompt,
       duration: result.duration,
       references: result.references,
       focusTaskStatus: true,
+      imageHash,
+      directionNumber: idea.directionNumber ? Number(idea.directionNumber) : undefined,
+      variationRound: paintingVariationRound,
     });
   }
 
-  function computeSeedanceReferencesWithImage(image: SelectedCreativeMedia | null): SeedanceReferenceFile[] {
-    if (!image || image.kind !== 'image') return seedanceReferences;
-    // 按文件名去重：右侧已有同名参考图时不再重复追加。
-    if (seedanceReferences.some((ref) => ref.kind === 'image' && ref.fileName === image.fileName)) {
-      return seedanceReferences;
+  // ---- 挂画全自动批量生成 ----
+
+  function isPaintingBatchIdeaUsed(idea: PaintingIdeaSummary, variationRound: number): boolean {
+    const directionNumber = Number(idea.directionNumber) > 0 ? Number(idea.directionNumber) : 0;
+    return directionNumber > 0 && paintingUsedDirections.includes(directionNumber);
+  }
+
+  async function collectPaintingBatchIdeas(variationRound: number): Promise<PaintingIdeaSummary[]> {
+    if (!paintingProfile) return [];
+    const collected: PaintingIdeaSummary[] = [];
+    const avoidIdeas = getRecentPaintingIdeasToAvoid();
+    for (let batch = 0; batch < paintingTotalBatches; batch += 1) {
+      const cacheKey = getPaintingBatchCacheKey(batch, variationRound);
+      let ideas = paintingIdeaBatchCache[cacheKey];
+      if (!ideas?.length) {
+        const result = await generatePaintingIdeas(paintingProfile, paintingPlan, batch, {
+          variationRound,
+          avoidIdeas,
+        });
+        ideas = result.ideas;
+        setPaintingIdeaBatchCache((previous) => ({ ...previous, [cacheKey]: ideas }));
+        if (result.totalBatches > 0) setPaintingTotalBatches(result.totalBatches);
+      }
+      collected.push(...ideas);
     }
+    return collected;
+  }
+
+  function clearPaintingBatchPoll() {
+    if (paintingBatchPollTimerRef.current) {
+      clearTimeout(paintingBatchPollTimerRef.current);
+      paintingBatchPollTimerRef.current = null;
+    }
+  }
+
+  async function pollPaintingBatch(runId: string) {
+    clearPaintingBatchPoll();
+    try {
+      const detail = await getPaintingBatchRun(runId);
+      setPaintingBatchDetail(detail);
+      setPaintingBatchActiveRunId(runId);
+      setPaintingBatchListError('');
+      if (!PAINTING_BATCH_TERMINAL_STATUSES.includes(detail.run.status)) {
+        paintingBatchPollTimerRef.current = setTimeout(() => void pollPaintingBatch(runId), 3000);
+      }
+    } catch (error) {
+      setPaintingBatchListError(error instanceof Error ? error.message : '读取批量任务进度失败');
+      paintingBatchPollTimerRef.current = setTimeout(() => void pollPaintingBatch(runId), 5000);
+    }
+  }
+
+  async function loadPaintingBatchRuns() {
+    try {
+      const runs = await listPaintingBatchRuns();
+      setPaintingBatchRuns(runs);
+      setPaintingBatchListError('');
+      const active = runs.find((run) => ['running', 'paused', 'stopping'].includes(run.status));
+      if (active && !paintingBatchActiveRunId) {
+        setPaintingBatchActiveRunId(active.batchRunId);
+        void pollPaintingBatch(active.batchRunId);
+      }
+    } catch (error) {
+      setPaintingBatchListError(error instanceof Error ? error.message : '读取批量任务历史失败');
+    }
+  }
+
+  async function handlePaintingOpenBatchConfirm() {
+    if (!paintingProfile) {
+      setPaintingError('请先完成产品分析。');
+      return;
+    }
+    if (!paintingImage) {
+      setPaintingError('请先上传挂画图片。');
+      return;
+    }
+    setPaintingError('');
+    setPaintingBatchPreparing(true);
+    try {
+      const variationRound = paintingVariationRound;
+      const ideas = await collectPaintingBatchIdeas(variationRound);
+      if (ideas.length < 40) {
+        throw new Error(`创意方向数量不足，已获取 ${ideas.length} 条，需要 40 条。请先分批生成创意方案。`);
+      }
+      setPaintingBatchIdeas(ideas);
+      setPaintingVariationRound(variationRound);
+
+      const estimate = await getPaintingBatchRunEstimate({
+        model: seedanceModel,
+        totalDirections: ideas.length,
+      });
+      setPaintingBatchEstimate(estimate);
+
+      const folders = await getVideoLibraryFolders().catch(() => [] as string[]);
+      const availableFolders = folders.length ? folders : ['通用素材'];
+      setPaintingBatchFolderList(availableFolders);
+      let prefillFolder = loadLastVideoLibraryFolder();
+      let prefillFolderId: number | null = null;
+      let imageHash = '';
+      try {
+        imageHash = await sha256File(paintingImage.file);
+        const binding = await getPaintingFolderBinding(imageHash);
+        if (binding && availableFolders.includes(binding.folderName)) {
+          prefillFolder = binding.folderName;
+          prefillFolderId = binding.folderId;
+        }
+      } catch {
+        // 图片哈希计算失败或尚未绑定文件夹时，保留默认文件夹。
+      }
+      if (imageHash) {
+        try {
+          const used = await getPaintingUsedDirections(imageHash, variationRound);
+          setPaintingUsedDirections(Array.isArray(used) ? used : []);
+        } catch {
+          setPaintingUsedDirections([]);
+        }
+      } else {
+        setPaintingUsedDirections([]);
+      }
+      setPaintingBatchFolder(prefillFolder);
+      setPaintingBatchFolderId(prefillFolderId);
+      setPaintingBatchConfirmOpen(true);
+    } catch (error) {
+      setPaintingError(error instanceof Error ? error.message : '准备批量生成失败，请稍后重试。');
+    } finally {
+      setPaintingBatchPreparing(false);
+    }
+  }
+
+  async function handlePaintingConfirmBatch() {
+    if (!paintingImage || !paintingProfile) return;
+    if (paintingBatchCreating) return;
+    let ideas = paintingBatchIdeas;
+    if (paintingBatchOnlyUnused) {
+      ideas = ideas.filter((idea) => !isPaintingBatchIdeaUsed(idea, paintingVariationRound));
+    }
+    if (!ideas.length) {
+      setPaintingError('没有可生成的方向：当前轮次的方向都已使用过。可取消“仅生成未使用方向”或换一轮再试。');
+      setPaintingBatchConfirmOpen(false);
+      return;
+    }
+    setPaintingBatchCreating(true);
+    setPaintingBatchListError('');
+    try {
+      const result = await createPaintingBatchRun({
+        file: paintingImage.file,
+        profile: paintingProfile,
+        plan: paintingPlan,
+        ideas,
+        totalDirections: ideas.length,
+        model: seedanceModel,
+        resolution: seedanceResolution,
+        ratio: paintingPlan.ratio || seedanceRatio,
+        variationRound: paintingVariationRound,
+        generateAudio: seedanceGenerateAudio,
+        watermark: seedanceWatermark,
+        stylePreset: paintingPlan.stylePreset,
+        uploadHistoryId: paintingUploadHistoryId,
+        targetFolderId: paintingBatchFolderId,
+        targetFolderName: paintingBatchFolder,
+        onlyUnused: paintingBatchOnlyUnused,
+      });
+      setPaintingBatchConfirmOpen(false);
+      setPaintingBatchDetail(null);
+      setPaintingBatchActiveRunId(result.batchRunId);
+      setPaintingBatchListError('');
+      void pollPaintingBatch(result.batchRunId);
+    } catch (error) {
+      setPaintingError(error instanceof Error ? error.message : '创建批量任务失败，请稍后重试。');
+    } finally {
+      setPaintingBatchCreating(false);
+    }
+  }
+
+  async function handlePaintingBatchAction(action: 'pause' | 'resume' | 'stop') {
+    const runId = paintingBatchActiveRunId;
+    if (!runId) return;
+    if (action === 'stop') {
+      const confirmed = window.confirm('终止后不会取消已提交给 Seedance 的任务，已提交任务会继续生成并自动存入素材库；仅停止排队中与后续任务。确定要终止吗？');
+      if (!confirmed) return;
+    }
+    setPaintingBatchActionLoading(action);
+    setPaintingBatchListError('');
+    try {
+      if (action === 'pause') await pausePaintingBatchRun(runId);
+      else if (action === 'resume') await resumePaintingBatchRun(runId);
+      else await stopPaintingBatchRun(runId);
+      void pollPaintingBatch(runId);
+    } catch (error) {
+      setPaintingBatchListError(error instanceof Error ? error.message : '批量任务操作失败');
+    } finally {
+      setPaintingBatchActionLoading(null);
+    }
+  }
+
+  // 查询原任务：仅回查已有 Seedance 任务编号的结果或重新入库，绝不重新提交。
+  async function handlePaintingBatchQueryTask(taskId: number) {
+    const runId = paintingBatchActiveRunId;
+    setPaintingBatchListError('');
+    try {
+      await retryPaintingBatchTask(taskId);
+      if (runId) void pollPaintingBatch(runId);
+    } catch (error) {
+      setPaintingBatchListError(error instanceof Error ? error.message : '查询原任务失败');
+    }
+  }
+
+  // 重新提交：上游确认未生成后，允许新建 Seedance 任务（可能再次扣费），需二次确认。
+  async function handlePaintingBatchResubmitTask(taskId: number) {
+    const runId = paintingBatchActiveRunId;
+    setPaintingBatchListError('');
+    const ok = window.confirm(
+      '重新提交会再次调用 Seedance 并可能再次扣费。请先在 Seedance 后台确认该方向上游确实没有生成视频，再确认重新提交。'
+    );
+    if (!ok) return;
+    try {
+      await resubmitPaintingBatchTask(taskId, { confirm: true });
+      if (runId) void pollPaintingBatch(runId);
+    } catch (error) {
+      setPaintingBatchListError(error instanceof Error ? error.message : '重新提交任务失败');
+    }
+  }
+
+  useEffect(() => {
+    if (reverseMode !== 'painting') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const runs = await listPaintingBatchRuns();
+        if (cancelled) return;
+        setPaintingBatchRuns(runs);
+        setPaintingBatchListError('');
+        const active = runs.find((run) => ['running', 'paused', 'stopping'].includes(run.status));
+        if (active && !paintingBatchActiveRunId) {
+          setPaintingBatchActiveRunId(active.batchRunId);
+          void pollPaintingBatch(active.batchRunId);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setPaintingBatchListError(error instanceof Error ? error.message : '读取批量任务历史失败');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reverseMode]);
+
+  useEffect(() => () => clearPaintingBatchPoll(), []);
+
+  function computeSeedanceReferencesWithImages(images: SelectedCreativeMedia[]): SeedanceReferenceFile[] {
     const isSeedance25 = seedanceModel === 'doubao-seedance-2-5-260628';
     const maxImageCount = isSeedance25 ? 30 : 9;
-    if (seedanceReferences.filter((ref) => ref.kind === 'image').length >= maxImageCount) {
-      return seedanceReferences;
+    let nextReferences = [...seedanceReferences];
+    for (const image of images) {
+      if (image.kind !== 'image') continue;
+      // 按文件名去重：右侧已有同名参考图时不再重复追加。
+      if (nextReferences.some((ref) => ref.kind === 'image' && ref.fileName === image.fileName)) continue;
+      if (nextReferences.filter((ref) => ref.kind === 'image').length >= maxImageCount) break;
+      nextReferences = [
+        ...nextReferences,
+        {
+          id: createMessageId('seedance_ref'),
+          kind: 'image',
+          file: image.file,
+          previewUrl: createMediaPreviewUrl(image.file),
+          fileName: image.fileName,
+        },
+      ];
     }
-    const nextReference: SeedanceReferenceFile = {
-      id: createMessageId('seedance_ref'),
-      kind: 'image',
-      file: image.file,
-      previewUrl: createMediaPreviewUrl(image.file),
-      fileName: image.fileName,
-    };
-    return [...seedanceReferences, nextReference];
+    return nextReferences;
+  }
+
+  function computeSeedanceReferencesWithImage(image: SelectedCreativeMedia | null): SeedanceReferenceFile[] {
+    return computeSeedanceReferencesWithImages(image ? [image] : []);
   }
 
   function computeNextSeedanceReferencesWithPainting(): SeedanceReferenceFile[] {
@@ -4248,6 +4653,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     </div>
                   )}
 
+                  {paintingProfile && (
+                    <button
+                      type="button"
+                      onClick={() => void handlePaintingOpenBatchConfirm()}
+                      disabled={!paintingImage || paintingLoading !== 'idle' || paintingBatchPreparing}
+                      className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 to-orange-500 px-4 text-sm font-black text-white shadow-[0_8px_20px_rgba(244,63,94,0.28)] transition-transform hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {paintingBatchPreparing ? <Loader2 className="size-4 animate-spin" /> : <Film className="size-4" />}
+                      {paintingBatchPreparing ? '正在准备 40 个方向…' : '全自动生成40条视频'}
+                    </button>
+                  )}
+
                   {paintingIdeas.length > 0 && (
                     <div ref={paintingIdeasRef} className="space-y-2">
                       <div className="flex items-center justify-between gap-3">
@@ -4418,6 +4835,177 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                               <Trash2 className="size-3.5" />
                             </button>
                           </div>;
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {paintingBatchListError && !paintingBatchDetail && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-medium leading-5 text-red-500">{paintingBatchListError}</div>
+                  )}
+
+                  {paintingBatchDetail && (
+                    <div className="rounded-2xl border border-slate-300 bg-white p-3">
+                      <div className="mb-3 flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 text-sm font-black text-slate-800">
+                            <Film className="size-4 shrink-0 text-rose-500" />
+                            全自动批量生成
+                            <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', getPaintingBatchStatusTone(paintingBatchDetail.run.status))}>
+                              {getPaintingBatchStatusLabel(paintingBatchDetail.run.status)}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {paintingBatchDetail.run.paintingName} · {paintingBatchDetail.run.resolution} · {paintingBatchDetail.run.ratio}
+                          </div>
+                          <div className="mt-0.5 text-[10px] text-slate-400">
+                            目标文件夹：{paintingBatchDetail.run.targetFolderName || '通用素材'} · 共 {paintingBatchDetail.counts.total} 条
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {!PAINTING_BATCH_TERMINAL_STATUSES.includes(paintingBatchDetail.run.status) && (
+                            <>
+                              {paintingBatchDetail.run.controlStatus === 'paused' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void handlePaintingBatchAction('resume')}
+                                  disabled={paintingBatchActionLoading !== null}
+                                  className="inline-flex h-8 items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-bold text-emerald-600 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {paintingBatchActionLoading === 'resume' ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
+                                  继续
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => void handlePaintingBatchAction('pause')}
+                                  disabled={paintingBatchActionLoading !== null}
+                                  className="inline-flex h-8 items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-3 text-[11px] font-bold text-amber-600 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {paintingBatchActionLoading === 'pause' ? <Loader2 className="size-3 animate-spin" /> : <Pause className="size-3" />}
+                                  暂停
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => void handlePaintingBatchAction('stop')}
+                                disabled={paintingBatchActionLoading !== null}
+                                className="inline-flex h-8 items-center gap-1 rounded-full border border-red-200 bg-red-50 px-3 text-[11px] font-bold text-red-600 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {paintingBatchActionLoading === 'stop' ? <Loader2 className="size-3 animate-spin" /> : <Square className="size-3" />}
+                                终止
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {[
+                          ['已完成', paintingBatchDetail.counts.completed, 'text-emerald-600'],
+                          ['生成中', paintingBatchDetail.counts.rendering, 'text-blue-600'],
+                          ['待复核', paintingBatchDetail.counts.needsReview, 'text-amber-600'],
+                          ['失败', paintingBatchDetail.counts.failed, 'text-red-600'],
+                        ].map(([label, value, tone]) => (
+                          <div key={label} className="rounded-xl bg-slate-50 px-3 py-2">
+                            <div className="text-[10px] font-bold text-slate-400">{label}</div>
+                            <div className={cn('text-lg font-black', tone)}>{value}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-3 max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                        {paintingBatchDetail.tasks.map((task) => (
+                          <div
+                            key={task.id}
+                            className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                                <span className="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-[9px] font-black text-slate-500">
+                                  方向{String(task.directionNumber).padStart(2, '0')}
+                                </span>
+                                <span className="truncate">{task.ideaTitle || '未命名方向'}</span>
+                              </div>
+                              {task.errorMessage && (
+                                <div className="mt-0.5 truncate text-[10px] text-red-400">{task.errorMessage}</div>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', getPaintingBatchStatusTone(task.status))}>
+                                {getPaintingBatchStatusLabel(task.status)}
+                              </span>
+                              {['failed', 'needs_review', 'stopped'].includes(task.status) && (
+                                task.seedanceTaskId ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handlePaintingBatchQueryTask(task.id)}
+                                    className="inline-flex h-6 items-center gap-1 rounded-full border border-slate-200 bg-white px-2 text-[10px] font-bold text-slate-500 hover:border-blue-200 hover:text-blue-600"
+                                  >
+                                    <RotateCcw className="size-2.5" />
+                                    查询原任务
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handlePaintingBatchResubmitTask(task.id)}
+                                    className="inline-flex h-6 items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 text-[10px] font-bold text-amber-600 hover:border-amber-300 hover:bg-amber-100"
+                                  >
+                                    <RotateCcw className="size-2.5" />
+                                    重新提交
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {paintingBatchRuns.length > 0 && (
+                    <div className="rounded-2xl border border-slate-300 bg-slate-50 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-xs font-black text-slate-800">
+                          <History className="size-3.5 text-slate-400" />
+                          批量生成历史
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void loadPaintingBatchRuns()}
+                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-500 hover:border-rose-200 hover:text-rose-600"
+                        >
+                          <RefreshCw className="size-3" />
+                          刷新
+                        </button>
+                      </div>
+                      <div className="space-y-1.5">
+                        {paintingBatchRuns.map((run) => {
+                          const isActive = run.batchRunId === paintingBatchActiveRunId;
+                          return (
+                            <button
+                              key={run.batchRunId}
+                              type="button"
+                              onClick={() => {
+                                setPaintingBatchActiveRunId(run.batchRunId);
+                                void pollPaintingBatch(run.batchRunId);
+                              }}
+                              className={cn(
+                                'flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-colors',
+                                isActive ? 'border-rose-200 bg-white ring-1 ring-rose-100' : 'border-slate-200 bg-white hover:border-rose-200'
+                              )}
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate text-xs font-bold text-slate-700">{run.paintingName}</div>
+                                <div className="truncate text-[10px] text-slate-400">
+                                  {formatHistoryTime(run.createdAt * 1000)} · {run.totalDirections} 条 · {run.targetFolderName || '通用素材'}
+                                </div>
+                              </div>
+                              <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold', getPaintingBatchStatusTone(run.status))}>
+                                {getPaintingBatchStatusLabel(run.status)}
+                              </span>
+                            </button>
+                          );
                         })}
                       </div>
                     </div>
@@ -6212,6 +6800,151 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 挂画全自动批量生成确认弹窗 */}
+      {paintingBatchConfirmOpen && (
+        <div
+          className="fixed inset-0 z-[75] flex items-center justify-center bg-slate-900/55 p-4 backdrop-blur-sm"
+          onClick={() => {
+            if (!paintingBatchCreating) setPaintingBatchConfirmOpen(false);
+          }}
+        >
+          <div
+            className="max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-white/60 bg-white p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-base font-black text-slate-900">全自动批量生成</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  服务端在后台持续生成并自动存入视频素材库；刷新或关闭页面不会中断，稍后回来仍可查看进度。
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={paintingBatchCreating}
+                onClick={() => setPaintingBatchConfirmOpen(false)}
+                className="flex size-8 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed"
+                aria-label="关闭"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex items-center gap-3">
+              {paintingImage && (
+                <img
+                  src={paintingImage.previewUrl}
+                  alt={paintingImage.fileName}
+                  className="size-20 shrink-0 rounded-xl bg-slate-100 object-cover"
+                />
+              )}
+              <div className="min-w-0">
+                <div className="truncate text-sm font-black text-slate-800">{paintingProfile?.name || '未命名挂画'}</div>
+                <div className="mt-0.5 truncate text-xs text-slate-500">{paintingProfile?.style || '未知风格'}</div>
+                <div className="mt-0.5 truncate text-[10px] text-slate-400">
+                  {paintingProfile?.subject || '未描述主体'}
+                </div>
+              </div>
+            </div>
+
+            <dl className="mt-4 grid grid-cols-2 gap-2 text-xs">
+              {[
+                ['生成模型', seedanceModel === 'doubao-seedance-2-5-260628' ? 'Seedance 2.5' : seedanceModel === 'doubao-seedance-2-0-mini-260615' ? 'Seedance 2.0 Mini' : 'Seedance 2.0'],
+                ['清晰度', seedanceResolution],
+                ['画面比例', paintingPlan.ratio || seedanceRatio],
+                ['单条时长', `${paintingPlan.durationMin}-${paintingPlan.durationMax} 秒`],
+                ['本轮风格', paintingPlan.stylePreset],
+                ['背景音乐', seedanceGenerateAudio ? '开启' : '关闭'],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl bg-slate-50 px-3 py-2">
+                  <div className="text-[10px] font-bold text-slate-400">{label}</div>
+                  <div className="mt-0.5 truncate font-bold text-slate-700">{value}</div>
+                </div>
+              ))}
+            </dl>
+
+            <label className="mt-4 flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+              <input
+                type="checkbox"
+                checked={paintingBatchOnlyUnused}
+                onChange={(event) => setPaintingBatchOnlyUnused(event.target.checked)}
+                className="size-4 accent-rose-600"
+              />
+              <span className="text-xs font-bold text-slate-700">仅生成未使用方向</span>
+              <span className="text-[10px] text-slate-400">（默认，跳过当前轮次已生成过的方向）</span>
+            </label>
+
+            <div className="mt-4">
+              <div className="mb-2 text-xs font-black text-slate-700">保存到文件夹</div>
+              {paintingBatchFolderList.length > 0 ? (
+                <div className="grid max-h-40 grid-cols-2 gap-2 overflow-y-auto pr-1">
+                  {paintingBatchFolderList.map((folder) => (
+                    <button
+                      key={folder}
+                      type="button"
+                      onClick={() => {
+                        setPaintingBatchFolder(folder);
+                        setPaintingBatchFolderId(null);
+                        saveLastVideoLibraryFolder(folder);
+                      }}
+                      disabled={paintingBatchCreating}
+                      className={cn(
+                        'flex min-h-14 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-xs font-bold transition-colors disabled:cursor-not-allowed',
+                        paintingBatchFolder === folder
+                          ? 'border-rose-400 bg-rose-50 text-rose-700 ring-2 ring-rose-100'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-rose-200 hover:bg-rose-50/50'
+                      )}
+                    >
+                      <FolderOpen className="size-4 shrink-0" />
+                      <span className="break-all">{folder}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">
+                  素材库还没有文件夹，将自动保存到「通用素材」。
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-xs leading-5 text-rose-700">
+              {(() => {
+                const effectiveCount = paintingBatchOnlyUnused
+                  ? paintingBatchIdeas.filter((idea) => !isPaintingBatchIdeaUsed(idea, paintingVariationRound)).length
+                  : paintingBatchIdeas.length;
+                const costPerVideo = paintingBatchEstimate?.costPerVideo ?? 0.5;
+                return (
+                  <>
+                    将生成 <b>{effectiveCount}</b> 条视频 · 预计费用 <b>¥{(effectiveCount * costPerVideo).toFixed(2)}</b> · 方向 29 固定为 4-6 秒一镜到底。
+                    {effectiveCount === 0 && <span className="mt-1 block font-bold text-red-600">当前轮次方向已全部使用，无法生成。</span>}
+                  </>
+                );
+              })()}
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={paintingBatchCreating}
+                onClick={() => setPaintingBatchConfirmOpen(false)}
+                className="h-10 rounded-full border border-slate-200 bg-white px-5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={paintingBatchCreating || paintingBatchIdeas.length === 0}
+                onClick={() => void handlePaintingConfirmBatch()}
+                className="inline-flex h-10 items-center gap-2 rounded-full bg-rose-600 px-5 text-xs font-bold text-white shadow-sm shadow-rose-200 hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+              >
+                {paintingBatchCreating ? <Loader2 className="size-4 animate-spin" /> : <Film className="size-4" />}
+                {paintingBatchCreating ? '正在创建任务…' : '确认生成'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 上传历史记录弹窗 */}
       {showHistoryModal && (

@@ -519,6 +519,9 @@ export async function createSeedanceTask(options: {
   generateAudio: boolean;
   watermark: boolean;
   references?: SeedanceReferenceFile[];
+  imageHash?: string;
+  directionNumber?: number;
+  variationRound?: number;
 }): Promise<SeedanceTaskResult> {
   let headers: Record<string, string> | undefined = {
     'Content-Type': 'application/json',
@@ -535,6 +538,9 @@ export async function createSeedanceTask(options: {
     formData.append('duration', String(options.duration));
     formData.append('generateAudio', String(options.generateAudio));
     formData.append('watermark', String(options.watermark));
+    if (options.imageHash) formData.append('imageHash', options.imageHash);
+    if (options.directionNumber) formData.append('directionNumber', String(options.directionNumber));
+    if (options.variationRound) formData.append('variationRound', String(options.variationRound));
     for (const reference of options.references) {
       formData.append('files', reference.file, reference.fileName);
     }
@@ -550,6 +556,9 @@ export async function createSeedanceTask(options: {
       duration: options.duration,
       generateAudio: options.generateAudio,
       watermark: options.watermark,
+      imageHash: options.imageHash || undefined,
+      directionNumber: options.directionNumber || undefined,
+      variationRound: options.variationRound || undefined,
     });
   }
 
@@ -606,6 +615,9 @@ export interface PaintingIdeaSummary {
   id: string;
   title: string;
   summary: string;
+  directionNumber?: number;
+  durationMin?: number;
+  durationMax?: number;
 }
 
 export interface PaintingMaterialPlan {
@@ -783,5 +795,351 @@ export async function querySeedanceTask(taskId: string): Promise<SeedanceTaskRes
     updatedAt: typeof json?.updatedAt === 'number' ? json.updatedAt : undefined,
     executionExpiresAfter: typeof json?.executionExpiresAfter === 'number' ? json.executionExpiresAfter : undefined,
     response: json?.response || json,
+  };
+}
+
+export type PaintingBatchTaskStatus =
+  | 'queued'
+  | 'generating_prompt'
+  | 'prompt_ready'
+  | 'submitting_seedance'
+  | 'seedance_submitted'
+  | 'rendering'
+  | 'video_succeeded'
+  | 'saving_to_library'
+  | 'completed'
+  | 'retry_waiting'
+  | 'failed'
+  | 'paused'
+  | 'stopped'
+  | 'needs_review';
+
+export interface PaintingBatchTask {
+  id: number;
+  batchRunId: string;
+  directionNumber: number;
+  batchIndex: number;
+  variationRound: number;
+  ideaId: string;
+  ideaTitle: string;
+  ideaSummary: string;
+  duration: number;
+  seedanceTaskId: string;
+  videoUrl: string;
+  libraryItemId: number | null;
+  libraryItem: Record<string, unknown> | null;
+  status: PaintingBatchTaskStatus;
+  retryCount: number;
+  saveRetryCount: number;
+  errorMessage: string;
+  diversityLedger: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PaintingBatchRun {
+  id: number;
+  batchRunId: string;
+  paintingName: string;
+  profile: PaintingProfile;
+  plan: PaintingMaterialPlan;
+  imageHash: string;
+  uploadHistoryId: number | null;
+  stylePreset: string;
+  model: string;
+  resolution: string;
+  ratio: string;
+  generateAudio: boolean;
+  watermark: boolean;
+  variationRound: number;
+  totalDirections: number;
+  targetFolderId: number | null;
+  targetFolderName: string;
+  status: PaintingBatchTaskStatus | 'running' | 'completed' | 'failed' | 'paused' | 'stopped' | 'needs_review';
+  controlStatus: 'running' | 'paused' | 'stopping' | 'stopped';
+  options: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PaintingBatchRunCounts {
+  total: number;
+  completed: number;
+  failed: number;
+  needsReview: number;
+  stopped: number;
+  rendering: number;
+  generatingPrompt: number;
+}
+
+export interface PaintingBatchRunDetail {
+  ok: boolean;
+  run: PaintingBatchRun;
+  tasks: PaintingBatchTask[];
+  counts: PaintingBatchRunCounts;
+}
+
+export interface PaintingFolderBinding {
+  id: number;
+  paintingName: string;
+  uploadHistoryId: number | null;
+  imageHash: string;
+  folderId: number;
+  folderName: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PaintingBatchRunEstimate {
+  totalDirections: number;
+  costPerVideo: number;
+  estimatedCost: number;
+  duration: string;
+}
+
+export interface CreatePaintingBatchRunOptions {
+  file: File;
+  profile: PaintingProfile;
+  plan: PaintingMaterialPlan;
+  ideas: PaintingIdeaSummary[];
+  totalDirections: number;
+  model: string;
+  resolution: string;
+  ratio: string;
+  variationRound: number;
+  generateAudio: boolean;
+  watermark: boolean;
+  stylePreset: string;
+  uploadHistoryId?: number | null;
+  targetFolderId?: number | null;
+  targetFolderName?: string;
+  onlyUnused?: boolean;
+}
+
+async function readJsonError(response: Response, fallback: string): Promise<Error> {
+  let message = fallback;
+  try {
+    const json = await response.json();
+    if (json?.error) {
+      message = String(json.error);
+    } else if (json?.upstream) {
+      message = typeof json.upstream === 'string' ? json.upstream : JSON.stringify(json.upstream);
+    }
+  } catch {}
+  return new Error(message);
+}
+
+export async function getPaintingBatchRunEstimate(options: {
+  model?: string;
+  totalDirections?: number;
+}): Promise<PaintingBatchRunEstimate> {
+  const params = new URLSearchParams();
+  if (options.model) params.set('model', options.model);
+  if (options.totalDirections) params.set('totalDirections', String(options.totalDirections));
+  const response = await fetch(`/api/painting/batch-runs/estimate?${params.toString()}`, {
+    credentials: 'include',
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw await readJsonError(response, `批量任务估算失败（HTTP ${response.status}）`);
+  }
+  return (json?.estimate || {}) as PaintingBatchRunEstimate;
+}
+
+export async function createPaintingBatchRun(options: CreatePaintingBatchRunOptions): Promise<{
+  batchRunId: string;
+  status: string;
+  controlStatus: string;
+  totalDirections: number;
+  targetFolderId: number | null;
+  targetFolderName: string;
+}> {
+  const formData = new FormData();
+  formData.append('file', options.file, options.file.name);
+  formData.append('profile', JSON.stringify(options.profile));
+  formData.append('plan', JSON.stringify(options.plan));
+  formData.append('ideas', JSON.stringify(options.ideas));
+  formData.append('totalDirections', String(options.totalDirections));
+  formData.append('model', options.model);
+  formData.append('resolution', options.resolution);
+  formData.append('ratio', options.ratio);
+  formData.append('variationRound', String(options.variationRound));
+  formData.append('generateAudio', String(options.generateAudio));
+  formData.append('watermark', String(options.watermark));
+  formData.append('stylePreset', options.stylePreset);
+  if (options.uploadHistoryId) {
+    formData.append('uploadHistoryId', String(options.uploadHistoryId));
+  }
+  if (options.targetFolderId) {
+    formData.append('targetFolderId', String(options.targetFolderId));
+  }
+  if (options.targetFolderName) {
+    formData.append('targetFolderName', options.targetFolderName);
+  }
+  formData.append('onlyUnused', String(options.onlyUnused === true));
+
+  const response = await fetch('/api/painting/batch-runs', {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  });
+
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw await readJsonError(response, `创建批量任务失败（HTTP ${response.status}）`);
+  }
+
+  const batchRunId = String(json?.batchRunId || '');
+  if (!batchRunId) {
+    throw new Error('创建批量任务失败：服务端未返回任务编号。');
+  }
+
+  return {
+    batchRunId,
+    status: String(json?.status || ''),
+    controlStatus: String(json?.controlStatus || ''),
+    totalDirections: Number(json?.totalDirections) || 0,
+    targetFolderId: json?.targetFolderId ?? null,
+    targetFolderName: String(json?.targetFolderName || ''),
+  };
+}
+
+export async function getPaintingBatchRun(batchRunId: string): Promise<PaintingBatchRunDetail> {
+  const response = await fetch(`/api/painting/batch-runs/${encodeURIComponent(batchRunId)}`, {
+    credentials: 'include',
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw await readJsonError(response, `读取批量任务失败（HTTP ${response.status}）`);
+  }
+  return {
+    ok: true,
+    run: (json?.run || {}) as PaintingBatchRun,
+    tasks: (Array.isArray(json?.tasks) ? json.tasks : []) as PaintingBatchTask[],
+    counts: (json?.counts || {}) as PaintingBatchRunCounts,
+  };
+}
+
+export async function listPaintingBatchRuns(): Promise<PaintingBatchRun[]> {
+  const response = await fetch('/api/painting/batch-runs', {
+    credentials: 'include',
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw await readJsonError(response, `读取批量任务列表失败（HTTP ${response.status}）`);
+  }
+  return (Array.isArray(json?.runs) ? json.runs : []) as PaintingBatchRun[];
+}
+
+async function postPaintingBatchRunAction(batchRunId: string, action: 'pause' | 'resume' | 'stop'): Promise<void> {
+  const response = await fetch(`/api/painting/batch-runs/${encodeURIComponent(batchRunId)}/${action}`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw await readJsonError(response, `批量任务操作失败（HTTP ${response.status}）`);
+  }
+}
+
+export function pausePaintingBatchRun(batchRunId: string): Promise<void> {
+  return postPaintingBatchRunAction(batchRunId, 'pause');
+}
+
+export function resumePaintingBatchRun(batchRunId: string): Promise<void> {
+  return postPaintingBatchRunAction(batchRunId, 'resume');
+}
+
+export function stopPaintingBatchRun(batchRunId: string): Promise<void> {
+  return postPaintingBatchRunAction(batchRunId, 'stop');
+}
+
+export async function retryPaintingBatchTask(taskId: number): Promise<{ taskId: number; status: string }> {
+  const response = await fetch(`/api/painting/batch-tasks/${taskId}/retry`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw await readJsonError(response, `查询原任务失败（HTTP ${response.status}）`);
+  }
+  return {
+    taskId: Number(json?.taskId) || taskId,
+    status: String(json?.status || ''),
+  };
+}
+
+export async function resubmitPaintingBatchTask(taskId: number, options?: { confirm?: boolean }): Promise<{ taskId: number; status: string }> {
+  const response = await fetch(`/api/painting/batch-tasks/${taskId}/resubmit`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: options?.confirm === true }),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw await readJsonError(response, `重新提交任务失败（HTTP ${response.status}）`);
+  }
+  return {
+    taskId: Number(json?.taskId) || taskId,
+    status: String(json?.status || ''),
+  };
+}
+
+export async function getPaintingUsedDirections(imageHash: string, variationRound: number): Promise<number[]> {
+  const params = new URLSearchParams();
+  params.set('imageHash', imageHash);
+  params.set('variationRound', String(variationRound));
+  const response = await fetch(`/api/painting/used-directions?${params.toString()}`, {
+    credentials: 'include',
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw await readJsonError(response, `读取已使用方向失败（HTTP ${response.status}）`);
+  }
+  return (Array.isArray(json?.usedDirections) ? json.usedDirections : []).map(Number);
+}
+
+export async function sha256File(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export async function getPaintingFolderBinding(imageHash: string): Promise<PaintingFolderBinding | null> {
+  const response = await fetch(`/api/painting/folder-binding/${encodeURIComponent(imageHash)}`, {
+    credentials: 'include',
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw await readJsonError(response, `读取挂画文件夹绑定失败（HTTP ${response.status}）`);
+  }
+  return (json?.binding || null) as PaintingFolderBinding | null;
+}
+
+export async function setPaintingFolderBinding(options: {
+  paintingName?: string;
+  uploadHistoryId?: number | null;
+  imageHash: string;
+  folderId?: number | null;
+  folderName?: string;
+}): Promise<{ folderId: number; folderName: string }> {
+  const response = await fetch('/api/painting/folder-binding', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(options),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw await readJsonError(response, `保存挂画文件夹绑定失败（HTTP ${response.status}）`);
+  }
+  return {
+    folderId: Number(json?.folderId) || 0,
+    folderName: String(json?.folderName || ''),
   };
 }

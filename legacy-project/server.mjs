@@ -78,6 +78,16 @@ const VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS = 15 * 1000;
 const COLLECTION_DB_PATH = path.join(RUNTIME_STATE_DIR, 'collection.db');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
 const STARTUP_UPLOAD_TEMP_FILE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const PAINTING_BATCH_RUN_DIR = path.join(RUNTIME_STATE_DIR, 'painting-batch-runs');
+const PAINTING_BATCH_PROMPT_CONCURRENCY = 2;
+const PAINTING_BATCH_DISPATCH_CONCURRENCY = 8;
+const PAINTING_BATCH_SEEDANCE_SUBMIT_INTERVAL_MS = 800;
+const PAINTING_BATCH_MAX_RENDERING_TASKS = Number(process.env.PAINTING_BATCH_MAX_RENDERING_TASKS || 3);
+const PAINTING_BATCH_PROMPT_RETRY_MAX = 2;
+const PAINTING_BATCH_SEEDANCE_RETRY_MAX = 2;
+const PAINTING_BATCH_SAVE_RETRY_MAX = 3;
+const PAINTING_BATCH_PROMPT_SIMILARITY_THRESHOLD = 0.78;
+const PAINTING_BATCH_TASK_TIMEOUT_MS = 15 * 60 * 1000;
 const ACTIVE_FRONTEND_DIR = SHOULD_USE_REACT_FRONTEND ? REACT_FRONTEND_DIR : LEGACY_FRONTEND_DIR;
 const FALLBACK_FRONTEND_DIR = SHOULD_USE_REACT_FRONTEND ? LEGACY_FRONTEND_DIR : REACT_FRONTEND_DIR;
 const HAS_ACTIVE_FRONTEND_DIR = existsSync(ACTIVE_FRONTEND_DIR);
@@ -199,6 +209,9 @@ let volcSpeakerRemoteStatusCache = {
 };
 let collectionDb = null;
 let teamTimelineQueue = Promise.resolve();
+const paintingBatchRunQueue = [];
+let paintingBatchRunProcessorActive = false;
+const paintingBatchRunActivePromises = new Map();
 
 function readBooleanEnv(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -1115,6 +1128,90 @@ function getCollectionDb() {
         created_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
+      CREATE TABLE IF NOT EXISTS painting_folder_bindings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        painting_name TEXT NOT NULL DEFAULT '',
+        upload_history_id INTEGER,
+        image_hash TEXT NOT NULL DEFAULT '',
+        folder_id INTEGER NOT NULL,
+        folder_name TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        UNIQUE(image_hash, folder_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_painting_folder_bindings_hash ON painting_folder_bindings(image_hash);
+      CREATE INDEX IF NOT EXISTS idx_painting_folder_bindings_name ON painting_folder_bindings(painting_name);
+
+      CREATE TABLE IF NOT EXISTS painting_batch_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_run_id TEXT NOT NULL UNIQUE,
+        painting_name TEXT NOT NULL DEFAULT '',
+        profile_json TEXT NOT NULL DEFAULT '{}',
+        plan_json TEXT NOT NULL DEFAULT '{}',
+        image_path TEXT NOT NULL DEFAULT '',
+        image_hash TEXT NOT NULL DEFAULT '',
+        upload_history_id INTEGER,
+        style_preset TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        resolution TEXT NOT NULL DEFAULT '',
+        ratio TEXT NOT NULL DEFAULT '',
+        generate_audio INTEGER NOT NULL DEFAULT 0,
+        watermark INTEGER NOT NULL DEFAULT 0,
+        variation_round INTEGER NOT NULL DEFAULT 0,
+        total_directions INTEGER NOT NULL DEFAULT 40,
+        target_folder_id INTEGER,
+        target_folder_name TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'running',
+        control_status TEXT NOT NULL DEFAULT 'running',
+        options_json TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_painting_batch_runs_status ON painting_batch_runs(status);
+      CREATE INDEX IF NOT EXISTS idx_painting_batch_runs_control ON painting_batch_runs(control_status);
+
+      CREATE TABLE IF NOT EXISTS painting_batch_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_run_id TEXT NOT NULL,
+        direction_number INTEGER NOT NULL,
+        batch_index INTEGER NOT NULL,
+        variation_round INTEGER NOT NULL DEFAULT 0,
+        idea_id TEXT NOT NULL DEFAULT '',
+        idea_title TEXT NOT NULL DEFAULT '',
+        idea_summary TEXT NOT NULL DEFAULT '',
+        prompt TEXT NOT NULL DEFAULT '',
+        duration INTEGER NOT NULL DEFAULT 0,
+        seedance_task_id TEXT NOT NULL DEFAULT '',
+        video_url TEXT NOT NULL DEFAULT '',
+        library_item_id INTEGER,
+        library_item_json TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'queued',
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        save_retry_count INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT NOT NULL DEFAULT '',
+        diversity_ledger_json TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_painting_batch_tasks_run ON painting_batch_tasks(batch_run_id);
+      CREATE INDEX IF NOT EXISTS idx_painting_batch_tasks_status ON painting_batch_tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_painting_batch_tasks_task_id ON painting_batch_tasks(seedance_task_id);
+
+      CREATE TABLE IF NOT EXISTS painting_direction_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        image_hash TEXT NOT NULL,
+        variation_round INTEGER NOT NULL DEFAULT 0,
+        direction_number INTEGER NOT NULL,
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        last_used_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_painting_direction_usage_key ON painting_direction_usage(image_hash, variation_round, direction_number);
+
       CREATE INDEX IF NOT EXISTS idx_store_overview_nodes_type ON store_overview_nodes(type);
       CREATE INDEX IF NOT EXISTS idx_store_overview_edges_source ON store_overview_edges(source_id);
       CREATE INDEX IF NOT EXISTS idx_store_overview_edges_target ON store_overview_edges(target_id);
@@ -1126,8 +1223,138 @@ function getCollectionDb() {
     } catch {
       // Column already exists, ignore
     }
+
+    // Migration: ensure video_library_folders has a stable id column for binding.
+    const folderColumns = collectionDb.prepare(`PRAGMA table_info(video_library_folders)`).all();
+    const hasFolderId = folderColumns.some((col) => col.name === 'id');
+    if (!hasFolderId) {
+      try {
+        collectionDb.exec(`
+          ALTER TABLE video_library_folders RENAME TO video_library_folders_old;
+          CREATE TABLE video_library_folders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            folder_name TEXT NOT NULL UNIQUE,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch())
+          );
+          INSERT INTO video_library_folders (folder_name, created_at)
+            SELECT folder_name, created_at FROM video_library_folders_old;
+          DROP TABLE video_library_folders_old;
+        `);
+      } catch (migrationError) {
+        console.error('[db] video_library_folders id migration failed', migrationError?.message || '');
+      }
+    }
+
+    ensurePaintingBatchIdempotencyConstraints();
   }
   return collectionDb;
+}
+
+// 为“不重复提交 / 不重复扣费”建立真正的数据库幂等约束。
+// Seedance 接口不支持客户端幂等键，因此不做伪幂等；这里依靠唯一索引兜底。
+// 迁移前先把存量重复记录归档（保留原 seedance_task_id / 方向键供追溯）后删除，
+// 避免“只改状态不清空”或“清空 taskId 留下可重试任务”造成重复扣费。
+// 索引建立后必须用 PRAGMA 验证真实生效；验证失败则禁用批量创建，绝不在无幂等保护下继续扣费。
+let paintingBatchIdempotencyReady = false;
+
+function ensurePaintingBatchIdempotencyConstraints(db = collectionDb) {
+  paintingBatchIdempotencyReady = false;
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS painting_batch_task_archived_conflicts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_task_id INTEGER NOT NULL,
+        batch_run_id TEXT NOT NULL,
+        variation_round INTEGER NOT NULL DEFAULT 0,
+        direction_number INTEGER NOT NULL,
+        seedance_task_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT '',
+        error_message TEXT NOT NULL DEFAULT '',
+        conflict_kind TEXT NOT NULL,
+        archived_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+    `);
+
+    const archiveStmt = db.prepare(`
+      INSERT INTO painting_batch_task_archived_conflicts
+        (source_task_id, batch_run_id, variation_round, direction_number, seedance_task_id, status, error_message, conflict_kind)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const deleteStmt = db.prepare('DELETE FROM painting_batch_tasks WHERE id = ?');
+
+    // 1) seedance_task_id：非空值必须唯一。存量重复保留最早一条，其余归档（保留原 taskId）后删除。
+    const dupSeedance = db.prepare(`
+      SELECT seedance_task_id FROM painting_batch_tasks
+      WHERE seedance_task_id <> ''
+      GROUP BY seedance_task_id HAVING COUNT(*) > 1
+    `).all();
+    for (const row of dupSeedance) {
+      const taskId = String(row.seedance_task_id);
+      const dups = db.prepare(`
+        SELECT * FROM painting_batch_tasks WHERE seedance_task_id = ? ORDER BY id ASC
+      `).all(taskId);
+      for (const dup of dups.slice(1)) {
+        archiveStmt.run(
+          Number(dup.id), String(dup.batch_run_id), Number(dup.variation_round || 0),
+          Number(dup.direction_number || 0), String(dup.seedance_task_id), String(dup.status || ''),
+          `${String(dup.error_message || '')} 归档原因：seedance_task_id 重复`.trim(),
+          'duplicate_seedance_task_id'
+        );
+        deleteStmt.run(Number(dup.id));
+      }
+    }
+
+    // 2) (batch_run_id, variation_round, direction_number) 必须唯一。存量重复保留最早一条，其余归档后删除。
+    const dupDirection = db.prepare(`
+      SELECT batch_run_id, variation_round, direction_number FROM painting_batch_tasks
+      GROUP BY batch_run_id, variation_round, direction_number HAVING COUNT(*) > 1
+    `).all();
+    for (const row of dupDirection) {
+      const dups = db.prepare(`
+        SELECT * FROM painting_batch_tasks
+        WHERE batch_run_id = ? AND variation_round = ? AND direction_number = ?
+        ORDER BY id ASC
+      `).all(String(row.batch_run_id), Number(row.variation_round), Number(row.direction_number));
+      for (const dup of dups.slice(1)) {
+        archiveStmt.run(
+          Number(dup.id), String(dup.batch_run_id), Number(dup.variation_round || 0),
+          Number(dup.direction_number || 0), String(dup.seedance_task_id || ''), String(dup.status || ''),
+          `${String(dup.error_message || '')} 归档原因：方向键重复`.trim(),
+          'duplicate_direction'
+        );
+        deleteStmt.run(Number(dup.id));
+      }
+    }
+
+    // 3) 建立部分唯一索引与复合唯一索引。
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_painting_batch_tasks_seedance_unique
+        ON painting_batch_tasks(seedance_task_id) WHERE seedance_task_id <> '';
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_painting_batch_tasks_direction_unique
+        ON painting_batch_tasks(batch_run_id, variation_round, direction_number);
+    `);
+
+    // 4) 验证两个唯一索引真实存在且生效。
+    const indexList = db.prepare(`PRAGMA index_list(painting_batch_tasks)`).all();
+    const verifyIndexColumns = (indexName, expectedColumns) => {
+      const found = indexList.find((idx) => idx.name === indexName);
+      if (!found) return false;
+      const info = db.prepare(`PRAGMA index_info(${indexName})`).all();
+      const columns = info.map((col) => String(col.name));
+      return expectedColumns.every((col) => columns.includes(col));
+    };
+    const seedanceIndexOk = verifyIndexColumns('idx_painting_batch_tasks_seedance_unique', ['seedance_task_id']);
+    const directionIndexOk = verifyIndexColumns('idx_painting_batch_tasks_direction_unique', ['batch_run_id', 'variation_round', 'direction_number']);
+    if (!seedanceIndexOk || !directionIndexOk) {
+      throw new Error(`幂等唯一索引未生效 seedance=${seedanceIndexOk} direction=${directionIndexOk}`);
+    }
+
+    paintingBatchIdempotencyReady = true;
+    console.log('[db] painting batch idempotency constraints verified OK');
+  } catch (error) {
+    paintingBatchIdempotencyReady = false;
+    console.error('[db] painting batch idempotency migration FAILED — 已禁用批量生成', error?.message || '');
+  }
 }
 
 function dbInsertKeyword(keyword, platforms) {
@@ -1460,6 +1687,341 @@ function dbDeleteVideoLibraryItem(id) {
   if (!row) return null;
   db.prepare('DELETE FROM video_library_items WHERE id = ?').run(Number(id));
   return row;
+}
+
+function dbGetVideoLibraryFolderId(folderName) {
+  const normalized = sanitizeVideoLibraryFolder(folderName);
+  const row = getCollectionDb().prepare('SELECT id FROM video_library_folders WHERE folder_name = ?').get(normalized);
+  return row ? Number(row.id) : null;
+}
+
+function dbGetVideoLibraryFolderNameById(id) {
+  const row = getCollectionDb().prepare('SELECT folder_name FROM video_library_folders WHERE id = ?').get(Number(id));
+  return row ? String(row.folder_name) : '';
+}
+
+function dbEnsureVideoLibraryFolder(folderName) {
+  const normalized = sanitizeVideoLibraryFolder(folderName);
+  getCollectionDb().prepare('INSERT OR IGNORE INTO video_library_folders (folder_name) VALUES (?)').run(normalized);
+  const id = dbGetVideoLibraryFolderId(normalized);
+  return { id, folderName: normalized };
+}
+
+function dbUpsertPaintingFolderBinding({ paintingName, uploadHistoryId, imageHash, folderId, folderName }) {
+  const db = getCollectionDb();
+  const existing = db.prepare('SELECT id FROM painting_folder_bindings WHERE image_hash = ?').get(String(imageHash || ''));
+  if (existing) {
+    db.prepare(`
+      UPDATE painting_folder_bindings
+      SET painting_name = ?, upload_history_id = ?, folder_id = ?, folder_name = ?, updated_at = unixepoch()
+      WHERE id = ?
+    `).run(
+      String(paintingName || '').slice(0, 200),
+      Number(uploadHistoryId) || null,
+      Number(folderId) || null,
+      sanitizeVideoLibraryFolder(folderName),
+      Number(existing.id)
+    );
+    return Number(existing.id);
+  }
+  const result = db.prepare(`
+    INSERT INTO painting_folder_bindings (painting_name, upload_history_id, image_hash, folder_id, folder_name, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch())
+  `).run(
+    String(paintingName || '').slice(0, 200),
+    Number(uploadHistoryId) || null,
+    String(imageHash || '').slice(0, 128),
+    Number(folderId) || null,
+    sanitizeVideoLibraryFolder(folderName)
+  );
+  return Number(result.lastInsertRowid);
+}
+
+function dbGetPaintingFolderBinding(imageHash) {
+  const row = getCollectionDb().prepare(`
+    SELECT * FROM painting_folder_bindings WHERE image_hash = ? ORDER BY updated_at DESC LIMIT 1
+  `).get(String(imageHash || ''));
+  if (!row) return null;
+  const currentName = dbGetVideoLibraryFolderNameById(Number(row.folder_id));
+  return {
+    id: Number(row.id),
+    paintingName: row.painting_name,
+    uploadHistoryId: row.upload_history_id,
+    imageHash: row.image_hash,
+    folderId: Number(row.folder_id),
+    folderName: currentName || row.folder_name,
+    createdAt: Number(row.created_at || 0),
+    updatedAt: Number(row.updated_at || 0),
+  };
+}
+
+function normalizeBatchRun(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    batchRunId: row.batch_run_id,
+    paintingName: row.painting_name,
+    profile: parseJsonString(row.profile_json, {}),
+    plan: parseJsonString(row.plan_json, {}),
+    imagePath: row.image_path,
+    imageHash: row.image_hash,
+    uploadHistoryId: row.upload_history_id,
+    stylePreset: row.style_preset,
+    model: row.model,
+    resolution: row.resolution,
+    ratio: row.ratio,
+    generateAudio: Boolean(row.generate_audio),
+    watermark: Boolean(row.watermark),
+    variationRound: Number(row.variation_round || 0),
+    totalDirections: Number(row.total_directions || 40),
+    targetFolderId: row.target_folder_id,
+    targetFolderName: row.target_folder_name,
+    status: row.status,
+    controlStatus: row.control_status,
+    options: parseJsonString(row.options_json, {}),
+    createdAt: Number(row.created_at || 0),
+    updatedAt: Number(row.updated_at || 0),
+  };
+}
+
+function normalizeBatchTask(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    batchRunId: row.batch_run_id,
+    directionNumber: Number(row.direction_number || 0),
+    batchIndex: Number(row.batch_index || 0),
+    variationRound: Number(row.variation_round || 0),
+    ideaId: row.idea_id,
+    ideaTitle: row.idea_title,
+    ideaSummary: row.idea_summary,
+    prompt: row.prompt,
+    duration: Number(row.duration || 0),
+    seedanceTaskId: row.seedance_task_id,
+    videoUrl: row.video_url,
+    libraryItemId: row.library_item_id,
+    libraryItem: parseJsonString(row.library_item_json, null),
+    status: row.status,
+    retryCount: Number(row.retry_count || 0),
+    saveRetryCount: Number(row.save_retry_count || 0),
+    errorMessage: row.error_message,
+    diversityLedger: parseJsonString(row.diversity_ledger_json, {}),
+    createdAt: Number(row.created_at || 0),
+    updatedAt: Number(row.updated_at || 0),
+  };
+}
+
+function dbInsertPaintingBatchRun(data) {
+  const db = getCollectionDb();
+  const result = db.prepare(`
+    INSERT INTO painting_batch_runs
+      (batch_run_id, painting_name, profile_json, plan_json, image_path, image_hash, upload_history_id,
+       style_preset, model, resolution, ratio, generate_audio, watermark, variation_round, total_directions,
+       target_folder_id, target_folder_name, status, control_status, options_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+  `).run(
+    data.batchRunId,
+    String(data.paintingName || '').slice(0, 200),
+    JSON.stringify(data.profile || {}),
+    JSON.stringify(data.plan || {}),
+    String(data.imagePath || ''),
+    String(data.imageHash || '').slice(0, 128),
+    Number(data.uploadHistoryId) || null,
+    String(data.stylePreset || ''),
+    String(data.model || ''),
+    String(data.resolution || ''),
+    String(data.ratio || ''),
+    data.generateAudio ? 1 : 0,
+    data.watermark ? 1 : 0,
+    Number(data.variationRound) || 0,
+    Number(data.totalDirections) || 40,
+    Number(data.targetFolderId) || null,
+    String(data.targetFolderName || ''),
+    String(data.status || 'running'),
+    String(data.controlStatus || 'running'),
+    JSON.stringify(data.options || {})
+  );
+  return normalizeBatchRun(db.prepare('SELECT * FROM painting_batch_runs WHERE id = ?').get(Number(result.lastInsertRowid)));
+}
+
+function dbUpdatePaintingBatchRun(batchRunId, updates) {
+  const db = getCollectionDb();
+  const fields = [];
+  const values = [];
+  if (updates.status !== undefined) { fields.push('status = ?'); values.push(String(updates.status)); }
+  if (updates.controlStatus !== undefined) { fields.push('control_status = ?'); values.push(String(updates.controlStatus)); }
+  if (updates.targetFolderId !== undefined) { fields.push('target_folder_id = ?'); values.push(Number(updates.targetFolderId) || null); }
+  if (updates.targetFolderName !== undefined) { fields.push('target_folder_name = ?'); values.push(String(updates.targetFolderName)); }
+  if (updates.options !== undefined) { fields.push('options_json = ?'); values.push(JSON.stringify(updates.options)); }
+  if (updates.updatedAt !== undefined) { fields.push('updated_at = ?'); values.push(Number(updates.updatedAt)); }
+  if (fields.length === 0) return null;
+  values.push(String(batchRunId));
+  db.prepare(`UPDATE painting_batch_runs SET ${fields.join(', ')} WHERE batch_run_id = ?`).run(...values);
+  return normalizeBatchRun(db.prepare('SELECT * FROM painting_batch_runs WHERE batch_run_id = ?').get(String(batchRunId)));
+}
+
+function dbGetPaintingBatchRun(batchRunId) {
+  return normalizeBatchRun(getCollectionDb().prepare('SELECT * FROM painting_batch_runs WHERE batch_run_id = ?').get(String(batchRunId)));
+}
+
+function dbGetActivePaintingBatchRuns() {
+  const rows = getCollectionDb().prepare(`
+    SELECT * FROM painting_batch_runs
+    WHERE status IN ('running', 'paused', 'stopping')
+    ORDER BY created_at ASC
+  `).all();
+  return rows.map(normalizeBatchRun).filter(Boolean);
+}
+
+function dbGetRecentPaintingBatchRuns(limit = 20) {
+  const rows = getCollectionDb().prepare(`
+    SELECT * FROM painting_batch_runs ORDER BY created_at DESC LIMIT ?
+  `).all(Number(limit));
+  return rows.map(normalizeBatchRun).filter(Boolean);
+}
+
+function dbInsertPaintingBatchTask(data) {
+  const db = getCollectionDb();
+  const result = db.prepare(`
+    INSERT INTO painting_batch_tasks
+      (batch_run_id, direction_number, batch_index, variation_round, idea_id, idea_title, idea_summary,
+       prompt, duration, seedance_task_id, video_url, library_item_id, library_item_json, status,
+       retry_count, save_retry_count, error_message, diversity_ledger_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+  `).run(
+    data.batchRunId,
+    Number(data.directionNumber) || 0,
+    Number(data.batchIndex) || 0,
+    Number(data.variationRound) || 0,
+    String(data.ideaId || ''),
+    String(data.ideaTitle || ''),
+    String(data.ideaSummary || ''),
+    String(data.prompt || ''),
+    Number(data.duration) || 0,
+    String(data.seedanceTaskId || ''),
+    String(data.videoUrl || ''),
+    data.libraryItemId || null,
+    JSON.stringify(data.libraryItem || {}),
+    String(data.status || 'queued'),
+    Number(data.retryCount) || 0,
+    Number(data.saveRetryCount) || 0,
+    String(data.errorMessage || ''),
+    JSON.stringify(data.diversityLedger || {})
+  );
+  return normalizeBatchTask(db.prepare('SELECT * FROM painting_batch_tasks WHERE id = ?').get(Number(result.lastInsertRowid)));
+}
+
+function dbUpdatePaintingBatchTask(id, updates) {
+  const db = getCollectionDb();
+  const fields = [];
+  const values = [];
+  if (updates.prompt !== undefined) { fields.push('prompt = ?'); values.push(String(updates.prompt)); }
+  if (updates.duration !== undefined) { fields.push('duration = ?'); values.push(Number(updates.duration)); }
+  if (updates.seedanceTaskId !== undefined) { fields.push('seedance_task_id = ?'); values.push(String(updates.seedanceTaskId)); }
+  if (updates.videoUrl !== undefined) { fields.push('video_url = ?'); values.push(String(updates.videoUrl)); }
+  if (updates.libraryItemId !== undefined) { fields.push('library_item_id = ?'); values.push(updates.libraryItemId || null); }
+  if (updates.libraryItem !== undefined) { fields.push('library_item_json = ?'); values.push(JSON.stringify(updates.libraryItem || {})); }
+  if (updates.status !== undefined) { fields.push('status = ?'); values.push(String(updates.status)); }
+  if (updates.retryCount !== undefined) { fields.push('retry_count = ?'); values.push(Number(updates.retryCount)); }
+  if (updates.saveRetryCount !== undefined) { fields.push('save_retry_count = ?'); values.push(Number(updates.saveRetryCount)); }
+  if (updates.errorMessage !== undefined) { fields.push('error_message = ?'); values.push(String(updates.errorMessage)); }
+  if (updates.diversityLedger !== undefined) { fields.push('diversity_ledger_json = ?'); values.push(JSON.stringify(updates.diversityLedger || {})); }
+  if (fields.length === 0) return null;
+  values.push(Number(id));
+  db.prepare(`UPDATE painting_batch_tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  return normalizeBatchTask(db.prepare('SELECT * FROM painting_batch_tasks WHERE id = ?').get(Number(id)));
+}
+
+function dbGetPaintingBatchTasks(batchRunId) {
+  const rows = getCollectionDb().prepare(`
+    SELECT * FROM painting_batch_tasks WHERE batch_run_id = ? ORDER BY direction_number ASC, variation_round ASC, id ASC
+  `).all(String(batchRunId));
+  return rows.map(normalizeBatchTask).filter(Boolean);
+}
+
+function dbGetPaintingBatchTask(id) {
+  return normalizeBatchTask(getCollectionDb().prepare('SELECT * FROM painting_batch_tasks WHERE id = ?').get(Number(id)));
+}
+
+function dbGetPaintingBatchTaskBySeedanceTaskId(seedanceTaskId) {
+  // 禁止用空字符串做冲突检查（空 taskId 无幂等意义，且会命中所有未提交任务）。
+  const taskId = String(seedanceTaskId || '');
+  if (!taskId) return null;
+  return normalizeBatchTask(getCollectionDb().prepare('SELECT * FROM painting_batch_tasks WHERE seedance_task_id = ?').get(taskId));
+}
+
+function dbMarkPaintingDirectionUsed(imageHash, variationRound, directionNumber) {
+  const hash = String(imageHash || '');
+  const direction = Number(directionNumber) || 0;
+  if (!hash || !direction) return;
+  getCollectionDb().prepare(`
+    INSERT INTO painting_direction_usage (image_hash, variation_round, direction_number, usage_count, last_used_at, created_at, updated_at)
+    VALUES (?, ?, ?, 1, unixepoch(), unixepoch(), unixepoch())
+    ON CONFLICT(image_hash, variation_round, direction_number)
+    DO UPDATE SET usage_count = usage_count + 1, last_used_at = unixepoch(), updated_at = unixepoch()
+  `).run(hash, Number(variationRound) || 0, direction);
+}
+
+function dbGetPaintingUsedDirections(imageHash, variationRound) {
+  const hash = String(imageHash || '');
+  if (!hash) return [];
+  const rows = getCollectionDb().prepare(`
+    SELECT direction_number FROM painting_direction_usage
+    WHERE image_hash = ? AND variation_round = ? AND usage_count > 0
+    ORDER BY direction_number ASC
+  `).all(hash, Number(variationRound) || 0);
+  return rows.map((row) => Number(row.direction_number));
+}
+
+function dbGetPaintingBatchTasksByStatus(batchRunId, statuses) {
+  const list = Array.isArray(statuses) ? statuses : [statuses];
+  if (!list.length) return [];
+  const placeholders = list.map(() => '?').join(',');
+  const rows = getCollectionDb().prepare(`
+    SELECT * FROM painting_batch_tasks WHERE batch_run_id = ? AND status IN (${placeholders}) ORDER BY id ASC
+  `).all(String(batchRunId), ...list);
+  return rows.map(normalizeBatchTask).filter(Boolean);
+}
+
+async function ensurePaintingBatchRunDir() {
+  await mkdir(PAINTING_BATCH_RUN_DIR, { recursive: true });
+}
+
+async function ensurePaintingBatchRunImage(imageHash, file) {
+  await ensurePaintingBatchRunDir();
+  const ext = path.extname(sanitizeFileName(file.name || 'painting.jpg')).toLowerCase() || '.jpg';
+  const storedName = `${String(imageHash).slice(0, 32)}${ext}`;
+  const filePath = path.join(PAINTING_BATCH_RUN_DIR, storedName);
+  const buffer = Buffer.from(await file.arrayBuffer());
+  await writeFile(filePath, buffer);
+  return { filePath, size: buffer.length };
+}
+
+async function ensurePaintingBatchRunImageFromUploadHistory(uploadHistoryId) {
+  try {
+    const item = await getUploadHistoryItem(Number(uploadHistoryId));
+    if (!item || !item.blob) return null;
+    const file = blobToFile(item);
+    const hash = createHash('sha256').update(Buffer.from(await file.arrayBuffer())).digest('hex');
+    const result = await ensurePaintingBatchRunImage(hash, file);
+    return { ...result, imageHash: hash };
+  } catch {
+    return null;
+  }
+}
+
+async function ensurePaintingBatchRunImageFromBatchRun(batchRun) {
+  if (batchRun.imagePath && existsSync(batchRun.imagePath)) {
+    return batchRun.imagePath;
+  }
+  if (batchRun.uploadHistoryId) {
+    const restored = await ensurePaintingBatchRunImageFromUploadHistory(batchRun.uploadHistoryId);
+    if (restored) {
+      dbUpdatePaintingBatchRun(batchRun.batchRunId, { imagePath: restored.filePath, imageHash: restored.imageHash });
+      return restored.filePath;
+    }
+  }
+  return null;
 }
 
 async function ensureVideoLibraryDir() {
@@ -9270,7 +9832,22 @@ async function readMultipartFormBody(req) {
     mediaKind: readValue(formData.get('media_kind')),
     file: file instanceof File ? file : null,
     files,
-    filesKinds
+    filesKinds,
+    // 挂画全自动批量任务创建时通过 multipart 传入的字段（字符串原样透传，由 handler 自行解析）。
+    profile: readValue(formData.get('profile')),
+    plan: readValue(formData.get('plan')),
+    ideas: readValue(formData.get('ideas')),
+    totalDirections: readValue(formData.get('totalDirections')),
+    resolution: readValue(formData.get('resolution')),
+    ratio: readValue(formData.get('ratio')),
+    variationRound: readValue(formData.get('variationRound')),
+    generateAudio: readValue(formData.get('generateAudio')),
+    watermark: readValue(formData.get('watermark')),
+    stylePreset: readValue(formData.get('stylePreset')),
+    uploadHistoryId: readValue(formData.get('uploadHistoryId')),
+    targetFolderId: readValue(formData.get('targetFolderId')),
+    targetFolderName: readValue(formData.get('targetFolderName')),
+    onlyUnused: readValue(formData.get('onlyUnused')),
   };
 }
 
@@ -9298,7 +9875,11 @@ async function readSeedanceTaskFormBody(req) {
     duration: Number.parseInt(String(formData.get('duration') || 5), 10),
     generateAudio: readValue(formData.get('generateAudio')).toLowerCase() !== 'false',
     watermark: readValue(formData.get('watermark')).toLowerCase() === 'true',
-    files: formData.getAll('files').filter((item) => item instanceof File && item.size > 0)
+    files: formData.getAll('files').filter((item) => item instanceof File && item.size > 0),
+    // 挂画方向使用标记（手动/换一轮提交时由前端透传，用于“仅生成未使用方向”持久化）。
+    imageHash: readValue(formData.get('imageHash')),
+    directionNumber: readValue(formData.get('directionNumber')),
+    variationRound: readValue(formData.get('variationRound'))
   };
 }
 
@@ -12312,6 +12893,470 @@ function handlePaintingTaskStatus(req, res, taskId) {
   });
 }
 
+async function handleCreatePaintingBatchRun(req, res) {
+  try {
+    if (!paintingBatchIdempotencyReady) {
+      sendJson(res, 503, { error: '批量生成的幂等保护未就绪（唯一索引迁移/校验失败），已临时禁用创建以避免重复扣费。请联系管理员检查服务端日志。' });
+      return;
+    }
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    const seedanceApiKey = readValue(SERVER_CONFIG.seedanceApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
+    }
+    if (!seedanceApiKey) {
+      sendJson(res, 500, { error: '服务端未配置 SEEDANCE_API_KEY' });
+      return;
+    }
+
+    const body = isMultipartFormRequest(req)
+      ? await readMultipartFormBody(req)
+      : await readRequestBody(req);
+
+    let imageFile = null;
+    let imageHash = '';
+    let imagePath = '';
+
+    if (body.file instanceof File && body.file.size > 0) {
+      imageFile = body.file;
+    } else if (readValue(body.image)) {
+      const normalized = normalizeBase64ImageInput(body.image, body.imageMimeType);
+      const buffer = Buffer.from(normalized.imageUrl.replace(/^data:image\/[^;]+;base64,/, ''), 'base64');
+      imageFile = new File([buffer], 'painting.jpg', { type: normalized.mimeType || 'image/jpeg' });
+    }
+
+    if (!imageFile) {
+      sendJson(res, 400, { error: '请先上传挂画图片' });
+      return;
+    }
+
+    const fileBuffer = Buffer.from(await imageFile.arrayBuffer());
+    imageHash = createHash('sha256').update(fileBuffer).digest('hex');
+    const stored = await ensurePaintingBatchRunImage(imageHash, imageFile);
+    imagePath = stored.filePath;
+
+    const profile = body.profile && typeof body.profile === 'object'
+      ? body.profile
+      : (typeof body.profile === 'string' ? JSON.parse(body.profile) : null);
+    const plan = body.plan && typeof body.plan === 'object'
+      ? body.plan
+      : (typeof body.plan === 'string' ? JSON.parse(body.plan) : null);
+    const ideas = Array.isArray(body.ideas)
+      ? body.ideas
+      : (typeof body.ideas === 'string' ? JSON.parse(body.ideas) : []);
+
+    if (!profile || typeof profile !== 'object') {
+      sendJson(res, 400, { error: '缺少产品档案 profile' });
+      return;
+    }
+    if (!plan || typeof plan !== 'object') {
+      sendJson(res, 400, { error: '缺少拍摄方案 plan' });
+      return;
+    }
+
+    const totalDirections = Math.min(120, Math.max(1, Number(body.totalDirections) || 40));
+    if (ideas.length < totalDirections) {
+      sendJson(res, 400, { error: `创意方向数量不足，已提供 ${ideas.length} 条，需要 ${totalDirections} 条` });
+      return;
+    }
+
+    const model = readValue(body.model) || 'doubao-seedance-2-0-260128';
+    const resolution = readValue(body.resolution) || '720p';
+    const ratio = readValue(body.ratio) || '9:16';
+    const variationRound = Math.max(0, Math.min(2, Number(body.variationRound) || 0));
+    const onlyUnused = body.onlyUnused === 'true' || body.onlyUnused === true;
+    const generateAudio = body.generateAudio !== 'false' && body.generateAudio !== false;
+    const watermark = body.watermark === 'true' || body.watermark === true;
+    const stylePreset = readValue(body.stylePreset) || plan.stylePreset || 'modern-minimal';
+    const uploadHistoryId = Number(body.uploadHistoryId) || null;
+
+    let targetFolderId = Number(body.targetFolderId) || null;
+    let targetFolderName = readValue(body.targetFolderName) || '通用素材';
+    if (targetFolderId) {
+      const resolvedName = dbGetVideoLibraryFolderNameById(targetFolderId);
+      if (resolvedName && sanitizeVideoLibraryFolder(resolvedName) === sanitizeVideoLibraryFolder(targetFolderName)) {
+        targetFolderName = resolvedName;
+      } else {
+        // 用户切换了文件夹但前端仍携带旧 id：以用户实际选择的名称重新解析，避免存到旧文件夹。
+        targetFolderId = null;
+      }
+    }
+    if (!targetFolderId) {
+      const ensured = dbEnsureVideoLibraryFolder(targetFolderName);
+      targetFolderId = ensured.id;
+      targetFolderName = ensured.folderName;
+    }
+
+    dbUpsertPaintingFolderBinding({
+      paintingName: profile.name || '未命名挂画',
+      uploadHistoryId,
+      imageHash,
+      folderId: targetFolderId,
+      folderName: targetFolderName,
+    });
+
+    let selectedIdeas = ideas.slice(0, totalDirections);
+    // 服务端重新校验“仅生成未使用方向”：以服务端持久化的方向使用记录为准，避免前端统计不准确导致重复生成。
+    if (onlyUnused) {
+      const usedDirections = new Set(dbGetPaintingUsedDirections(imageHash, variationRound));
+      selectedIdeas = selectedIdeas.filter((idea) => {
+        const directionNumber = Number(idea.directionNumber) > 0 ? Number(idea.directionNumber) : 0;
+        return directionNumber > 0 && !usedDirections.has(directionNumber);
+      });
+    }
+    if (selectedIdeas.length === 0) {
+      sendJson(res, 400, { error: '没有可生成的方向：当前轮次的方向都已使用过。可取消“仅生成未使用方向”或换一轮再试。' });
+      return;
+    }
+
+    const batchRunId = `pb-${randomBytes(8).toString('hex')}`;
+    const run = dbInsertPaintingBatchRun({
+      batchRunId,
+      paintingName: profile.name || '未命名挂画',
+      profile,
+      plan,
+      imagePath,
+      imageHash,
+      uploadHistoryId,
+      stylePreset,
+      model,
+      resolution,
+      ratio,
+      generateAudio,
+      watermark,
+      variationRound,
+      totalDirections: selectedIdeas.length,
+      targetFolderId,
+      targetFolderName,
+      status: 'running',
+      controlStatus: 'running',
+      options: body.options || {},
+    });
+
+    for (let index = 0; index < selectedIdeas.length; index += 1) {
+      const idea = selectedIdeas[index];
+      // 保留前端传入的固定方向编号（1-40），避免“只生成未使用方向”时把方向编号重排。
+      const directionNumber = Number(idea.directionNumber) > 0 ? Number(idea.directionNumber) : index + 1;
+      dbInsertPaintingBatchTask({
+        batchRunId,
+        directionNumber,
+        batchIndex: Math.max(0, Math.floor((directionNumber - 1) / 10)),
+        variationRound,
+        ideaId: idea.id || `dir-${directionNumber}`,
+        ideaTitle: idea.title || '',
+        ideaSummary: idea.summary || idea.description || '',
+        status: 'queued',
+      });
+    }
+
+    enqueueBatchRun(batchRunId);
+
+    sendJson(res, 202, {
+      ok: true,
+      batchRunId,
+      status: run.status,
+      controlStatus: run.controlStatus,
+      totalDirections: selectedIdeas.length,
+      targetFolderId,
+      targetFolderName,
+    });
+  } catch (error) {
+    console.error('[painting batch] create failed', { message: error?.message || '' });
+    sendJson(res, 500, { error: error?.message || '创建批量任务失败' });
+  }
+}
+
+async function handleGetPaintingBatchRun(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const batchRunId = decodeURIComponent(url.pathname.replace(/^\/api\/painting\/batch-runs\//, ''));
+    const run = dbGetPaintingBatchRun(batchRunId);
+    if (!run) {
+      sendJson(res, 404, { error: '批量任务不存在' });
+      return;
+    }
+    const tasks = dbGetPaintingBatchTasks(batchRunId);
+    sendJson(res, 200, {
+      ok: true,
+      run: { ...run, imagePath: undefined },
+      tasks: tasks.map((t) => ({ ...t, prompt: undefined })),
+      counts: {
+        total: tasks.length,
+        completed: tasks.filter((t) => t.status === 'completed').length,
+        failed: tasks.filter((t) => t.status === 'failed').length,
+        needsReview: tasks.filter((t) => t.status === 'needs_review').length,
+        stopped: tasks.filter((t) => t.status === 'stopped').length,
+        rendering: tasks.filter((t) => t.status === 'rendering' || t.status === 'seedance_submitted').length,
+        generatingPrompt: tasks.filter((t) => t.status === 'generating_prompt' || t.status === 'prompt_ready').length,
+      },
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '读取批量任务失败' });
+  }
+}
+
+async function handleListPaintingBatchRuns(req, res) {
+  try {
+    const runs = dbGetRecentPaintingBatchRuns(50);
+    sendJson(res, 200, {
+      ok: true,
+      runs: runs.map((run) => ({ ...run, imagePath: undefined })),
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '读取批量任务列表失败' });
+  }
+}
+
+async function handlePausePaintingBatchRun(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const batchRunId = decodeURIComponent(url.pathname.replace(/^\/api\/painting\/batch-runs\//, '').replace(/\/pause$/, ''));
+    const run = dbGetPaintingBatchRun(batchRunId);
+    if (!run) {
+      sendJson(res, 404, { error: '批量任务不存在' });
+      return;
+    }
+    if (['completed', 'failed', 'stopped', 'needs_review'].includes(run.status)) {
+      sendJson(res, 400, { error: '当前状态不可暂停' });
+      return;
+    }
+    dbUpdatePaintingBatchRun(batchRunId, { status: 'paused', controlStatus: 'paused' });
+    sendJson(res, 200, { ok: true, batchRunId, controlStatus: 'paused' });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '暂停批量任务失败' });
+  }
+}
+
+async function handleResumePaintingBatchRun(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const batchRunId = decodeURIComponent(url.pathname.replace(/^\/api\/painting\/batch-runs\//, '').replace(/\/resume$/, ''));
+    const run = dbGetPaintingBatchRun(batchRunId);
+    if (!run) {
+      sendJson(res, 404, { error: '批量任务不存在' });
+      return;
+    }
+    if (run.controlStatus !== 'paused' && run.controlStatus !== 'stopping') {
+      sendJson(res, 400, { error: '当前状态不可恢复' });
+      return;
+    }
+    if (['completed', 'failed', 'stopped', 'needs_review'].includes(run.status)) {
+      sendJson(res, 400, { error: '当前状态不可恢复' });
+      return;
+    }
+    dbUpdatePaintingBatchRun(batchRunId, { status: 'running', controlStatus: 'running' });
+    // 恢复调度：把暂停期间保持 paused 的未提交任务放回队列。
+    for (const t of dbGetPaintingBatchTasks(batchRunId)) {
+      if (t.status === 'paused' && !t.seedanceTaskId) {
+        dbUpdatePaintingBatchTask(t.id, { status: 'queued', errorMessage: '' });
+      }
+    }
+    enqueueBatchRun(batchRunId);
+    sendJson(res, 200, { ok: true, batchRunId, controlStatus: 'running' });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '恢复批量任务失败' });
+  }
+}
+
+async function handleStopPaintingBatchRun(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const batchRunId = decodeURIComponent(url.pathname.replace(/^\/api\/painting\/batch-runs\//, '').replace(/\/stop$/, ''));
+    const run = dbGetPaintingBatchRun(batchRunId);
+    if (!run) {
+      sendJson(res, 404, { error: '批量任务不存在' });
+      return;
+    }
+    if (['completed', 'failed', 'stopped', 'needs_review'].includes(run.status)) {
+      sendJson(res, 400, { error: '当前状态已结束' });
+      return;
+    }
+    // 先进入“停止中”：未提交任务立即停止，已提交任务继续收尾，收尾完成后才转为 stopped。
+    dbUpdatePaintingBatchRun(batchRunId, { status: 'stopping', controlStatus: 'stopping' });
+    enqueueBatchRun(batchRunId);
+    sendJson(res, 200, { ok: true, batchRunId, controlStatus: 'stopping', draining: true });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '停止批量任务失败' });
+  }
+}
+
+function restorePaintingBatchRunForRetry(batchRunId) {
+  const run = dbGetPaintingBatchRun(batchRunId);
+  if (run && (run.controlStatus !== 'running' || ['completed', 'failed', 'stopped', 'needs_review'].includes(run.status))) {
+    dbUpdatePaintingBatchRun(batchRunId, { status: 'running', controlStatus: 'running' });
+  }
+  enqueueBatchRun(batchRunId);
+}
+
+// “重试”语义：只回查原任务 / 重新入库，绝不新建 Seedance 任务。
+async function handleRetryPaintingBatchTask(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const taskId = Number(decodeURIComponent(url.pathname.replace(/^\/api\/painting\/batch-tasks\//, '').replace(/\/retry$/, '')));
+    const task = dbGetPaintingBatchTask(taskId);
+    if (!task) {
+      sendJson(res, 404, { error: '任务不存在' });
+      return;
+    }
+    if (!['failed', 'needs_review', 'stopped'].includes(task.status)) {
+      sendJson(res, 400, { error: '当前状态不可重试' });
+      return;
+    }
+    if (!task.seedanceTaskId) {
+      sendJson(res, 400, {
+        error: '该任务没有 Seedance 任务编号，无法查询原任务。请先到 Seedance 后台核实上游是否已生成；如确认未生成，请使用“重新提交”。',
+        requiresResubmit: true,
+      });
+      return;
+    }
+    dbUpdatePaintingBatchTask(task.id, {
+      status: 'seedance_submitted',
+      retryCount: 0,
+      saveRetryCount: 0,
+      errorMessage: '',
+    });
+    // 先返回确定结果，再异步恢复队列；避免响应状态被后续轮询/收尾流水线覆盖。
+    sendJson(res, 200, { ok: true, taskId: task.id, status: 'seedance_submitted' });
+    restorePaintingBatchRunForRetry(task.batchRunId);
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '重试任务失败' });
+  }
+}
+
+// “重新提交”语义：确认上游确实没有生成后，允许新建 Seedance 任务（可能再次扣费）。
+// 仅允许没有 seedanceTaskId 的任务，且必须二次确认。
+async function handleResubmitPaintingBatchTask(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const taskId = Number(decodeURIComponent(url.pathname.replace(/^\/api\/painting\/batch-tasks\//, '').replace(/\/resubmit$/, '')));
+    const body = await readRequestBody(req).catch(() => ({}));
+    const confirmed = body.confirm === true || body.confirm === 'true';
+    const task = dbGetPaintingBatchTask(taskId);
+    if (!task) {
+      sendJson(res, 404, { error: '任务不存在' });
+      return;
+    }
+    if (!['failed', 'needs_review', 'stopped'].includes(task.status)) {
+      sendJson(res, 400, { error: '当前状态不可重新提交' });
+      return;
+    }
+    if (task.seedanceTaskId) {
+      sendJson(res, 400, {
+        error: '该任务已存在 Seedance 任务编号，请使用“查询原任务”而不是重新提交，避免重复扣费。',
+      });
+      return;
+    }
+    if (!confirmed) {
+      sendJson(res, 400, {
+        error: '重新提交会再次调用 Seedance 并可能再次扣费。请先在 Seedance 后台确认该方向上游确实没有生成视频，再确认重新提交。',
+        needsConfirm: true,
+      });
+      return;
+    }
+    const nextStatus = task.prompt ? 'prompt_ready' : 'queued';
+    dbUpdatePaintingBatchTask(task.id, {
+      status: nextStatus,
+      retryCount: 0,
+      saveRetryCount: 0,
+      errorMessage: '',
+    });
+    // 先返回确定结果，再异步恢复队列；避免响应状态被后续提示词/提交流水线覆盖。
+    sendJson(res, 200, { ok: true, taskId: task.id, status: nextStatus });
+    restorePaintingBatchRunForRetry(task.batchRunId);
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '重新提交任务失败' });
+  }
+}
+
+async function handleSetPaintingFolderBinding(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const { paintingName, uploadHistoryId, imageHash, folderId, folderName } = body;
+    if (!imageHash) {
+      sendJson(res, 400, { error: '缺少图片哈希 imageHash' });
+      return;
+    }
+    let resolvedFolderId = Number(folderId) || null;
+    let resolvedFolderName = readValue(folderName) || '通用素材';
+    if (resolvedFolderId) {
+      const nameById = dbGetVideoLibraryFolderNameById(resolvedFolderId);
+      if (nameById) {
+        resolvedFolderName = nameById;
+      } else {
+        resolvedFolderId = null;
+      }
+    }
+    if (!resolvedFolderId) {
+      const ensured = dbEnsureVideoLibraryFolder(resolvedFolderName);
+      resolvedFolderId = ensured.id;
+      resolvedFolderName = ensured.folderName;
+    }
+    dbUpsertPaintingFolderBinding({
+      paintingName: String(paintingName || '').slice(0, 200),
+      uploadHistoryId: Number(uploadHistoryId) || null,
+      imageHash: String(imageHash),
+      folderId: resolvedFolderId,
+      folderName: resolvedFolderName,
+    });
+    sendJson(res, 200, { ok: true, folderId: resolvedFolderId, folderName: resolvedFolderName });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '保存挂画文件夹绑定失败' });
+  }
+}
+
+async function handleGetPaintingFolderBinding(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const imageHash = decodeURIComponent(url.pathname.replace(/^\/api\/painting\/folder-binding\//, ''));
+    const binding = dbGetPaintingFolderBinding(imageHash);
+    if (!binding) {
+      sendJson(res, 404, { ok: true, binding: null });
+      return;
+    }
+    sendJson(res, 200, { ok: true, binding });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '读取挂画文件夹绑定失败' });
+  }
+}
+
+async function handleGetPaintingUsedDirections(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const imageHash = String(url.searchParams.get('imageHash') || '');
+    const variationRound = Math.max(0, Math.min(2, Number(url.searchParams.get('variationRound')) || 0));
+    if (!imageHash) {
+      sendJson(res, 400, { error: '缺少图片哈希 imageHash' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, usedDirections: dbGetPaintingUsedDirections(imageHash, variationRound) });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '读取已使用方向失败' });
+  }
+}
+
+async function handleGetPaintingBatchRunEstimate(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const params = url.searchParams;
+    const model = readValue(params.get('model')) || 'doubao-seedance-2-0-260128';
+    const totalDirections = Math.min(120, Math.max(1, Number(params.get('totalDirections')) || 40));
+    const isSeedance25 = model === 'doubao-seedance-2-5-260628';
+    const costPerVideo = isSeedance25 ? 0.8 : 0.5;
+    sendJson(res, 200, {
+      ok: true,
+      estimate: {
+        totalDirections,
+        costPerVideo,
+        estimatedCost: Number((totalDirections * costPerVideo).toFixed(2)),
+        duration: isSeedance25 ? '15-30 秒' : '4-15 秒',
+      },
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '估算失败' });
+  }
+}
+
 async function analyzePaintingCore(body, apiKey, requestId) {
   let imageUrl = '';
   if (body.file instanceof File && body.file.size > 0) {
@@ -12444,22 +13489,30 @@ function resolvePaintingStyleProfile(value) {
 }
 
 const PAINTING_REAL_SIZE_RULE = '本产品是小型竖幅挂画，成品实际尺寸固定为宽 40 厘米、高 80 厘米，宽高比约 1:2。构图设计必须从一开始就按这一真实尺寸执行，不得先按巨幅画设计再缩小。人物与挂画处于相近景深时，挂画可见高度约为成年人物可见身高的 45%-50%，宽度约为成年人物身高的 24%；挂在双人或三人沙发上方时，挂画宽度通常只约为沙发宽度的五分之一。挂画必须明显小于成人，不得比人高、比人宽，不得做成落地画、通高画、床头大幅画或占据大半/整面墙的巨幅背景画。远景或全景必须同时交代完整人物、完整挂画及邻近家具，用真实参照证明尺寸正确；不得利用近大远小、超近距离特写或人物站在远处制造挂画异常巨大的视觉效果。';
+const PAINTING_CONTENT_DETAIL_SIZE_RULE = '本产品真实成品尺寸仍固定为宽40厘米、高80厘米、宽高比1:2，挂画外观与二维画面比例不得改变。本方向允许镜头为查看原画内容而近距离合理裁切挂画边缘，不要求人物、家具或空间全景，也不得因为特写把产品重新设计成巨幅画、整墙画或三维场景；镜头移动过程中画布平面、文字、笔触、印章和图案之间的相对位置与比例必须始终不变。';
 const PAINTING_SIZE_LOCK_MARKER = '【挂画真实尺寸强制锁定】';
 const PAINTING_OBJECT_PERMANENCE_MARKER = '【挂画全程存在与空间连续性强制锁定】';
 const PAINTING_REALISM_MARKER = '【真人实拍质感最高优先级】';
+const PAINTING_DYNAMIC_ENDING_MARKER = '【动态收尾强制规则】';
+const PAINTING_CONTENT_DETAIL_DIRECTION = 29;
 const PAINTING_OBJECT_PERMANENCE_RULE = '若创意设定挂画已经上墙，挂画必须从第 0 秒起就真实、完整、稳固地存在于同一墙面坐标，并在全片保持相同尺寸、透视、挂点、墙面接触阴影和遮挡关系。开场可以暂时看不到挂画，但其所在墙面位置必须完全处于取景框之外，或被门框、屏风、人物、家具、绿植等真实不透明前景遮挡；后续只能依靠镜头移动或遮挡物自然移开而被拍到。只要前面镜头已经拍到挂画所在的完整墙面，该挂画就必须已经可见。严禁挂画淡入、浮现、透明变实、凭空生成、突然出现、逐渐长出、尺寸由小变大或中途贴到墙上；“揭示、进入画面、逐渐完整看到”只能表示摄影机改变取景后拍到一个从第 0 秒起就客观存在的挂画，绝不表示挂画本身出现。';
 const PAINTING_LIVE_ACTION_REALISM_RULE = '整体必须呈现普通真实住宅中的真人实地拍摄质感，而不是三维渲染、AI样板间或过度精修的商业广告。空间允许轻微生活痕迹和自然不对称，沙发织物、窗帘、衣服与皮肤保留真实纹理、褶皱和细微瑕疵；自然光应有合理方向、层次、柔和阴影和轻微明暗差异，禁止全屋无阴影的均匀棚拍光、塑料材质、蜡像皮肤和过度磨皮。镜头保持稳定清楚，但运动应有真人摄影的自然起步、轻微惯性、减速和小幅构图修正，禁止数学式绝对匀速滑轨、虚拟摄像机漂移和明显手持抖动。人物按现实正常速度完成动作，动作之间允许自然衔接，每 1-2 秒持续产生新的有效动作或构图信息即可，禁止慢放、发呆、重复和为赶时间而机械连做过多动作。';
+const PAINTING_DYNAMIC_ENDING_RULE = '结尾不得为了“产品定妆”机械追加一个正对墙面挂画、固定机位、无人无动作的独立静态镜头。前面的主镜头已经完整展示产品时，直接在该镜头的连续动作或运镜中自然结束，不再补切正面挂画。若创意确实需要以挂画收束，最后阶段仍须保留至少一种清晰可见的连续变化：镜头轻微横移/推近/拉远、前景视差、人物尚未完成的自然动作、窗帘或植物的合理微动、或有方向的自然光影变化；镜头可以自然减速，但不得完全定住超过约 0.5 秒，不得让最后 1-2 秒看起来像一张静态图片。挂画自身若已上墙仍必须保持固定，动态只能来自摄影机、人物、前景或真实环境。';
 
-function ensurePaintingSizeLock(promptText) {
+function ensurePaintingSizeLock(promptText, options = {}) {
   let normalized = String(promptText || '').trim();
   if (!normalized.includes(PAINTING_SIZE_LOCK_MARKER)) {
-    normalized += `\n\n${PAINTING_SIZE_LOCK_MARKER}\n${PAINTING_REAL_SIZE_RULE}\n负面限制：超大挂画、巨幅壁画、整墙画、落地画、画比人高、画比人宽、挂画宽度接近沙发一半或以上、透视夸大、广角畸变导致产品显得巨大。`;
+    const sizeRule = options.contentDetailScan ? PAINTING_CONTENT_DETAIL_SIZE_RULE : PAINTING_REAL_SIZE_RULE;
+    normalized += `\n\n${PAINTING_SIZE_LOCK_MARKER}\n${sizeRule}\n负面限制：超大挂画、巨幅壁画、整墙画、落地画、画比人高、画比人宽、挂画宽度接近沙发一半或以上、透视夸大、广角畸变导致产品显得巨大。`;
   }
   if (!normalized.includes(PAINTING_OBJECT_PERMANENCE_MARKER)) {
     normalized += `\n\n${PAINTING_OBJECT_PERMANENCE_MARKER}\n${PAINTING_OBJECT_PERMANENCE_RULE}`;
   }
   if (!normalized.includes(PAINTING_REALISM_MARKER)) {
     normalized += `\n\n${PAINTING_REALISM_MARKER}\n${PAINTING_LIVE_ACTION_REALISM_RULE}`;
+  }
+  if (!normalized.includes(PAINTING_DYNAMIC_ENDING_MARKER)) {
+    normalized += `\n\n${PAINTING_DYNAMIC_ENDING_MARKER}\n${PAINTING_DYNAMIC_ENDING_RULE}`;
   }
   return normalized;
 }
@@ -12474,11 +13527,11 @@ const PAINTING_FRAMEWORKS = [
     '样片原型03·成品墙走近欣赏：挂画开场已经完整稳固上墙并始终静止，人物从家具旁走近，只触碰画布边缘或上下木条，观察细节后退回空间；镜头从全景跟拍到边缘近景再回到中景',
     '样片原型04·茶室安装完成：人物在茶室对准挂点挂好画、扶正下压杆，绕过茶桌后退端详并落座；镜头从茶具前景横移到安装中景，最后拉远展示茶席与挂画',
     '样片原型05·亲子协作家庭观看：成人负责对准挂点，孩子只扶稳挂画底部；挂好后两人检查端正，再与家人共同观看，其他人不参与大幅动作；镜头从协作中景转到家庭全景',
-    '样片原型06·文化生活蒙太奇：用清晰硬切依次展示成品挂画、人物书写、茶席落座和画面笔触，每段都有独立动作，最后回到完整挂画定妆；不得用慢放或重复镜头凑时长',
-    '样片原型07·轻奢讲解展示：现代轻奢空间中，人物面向镜头完整展示挂画，依次指明画面、材质和木条细节，随后侧身让出产品；全景交代空间、近景讲解、最后完整定妆',
+    '样片原型06·文化生活蒙太奇：用清晰硬切依次展示成品挂画、人物书写、茶席落座和画面笔触，每段都有独立动作；最后在人物完成落座、镜头仍沿茶席轻微横移时自然带到完整挂画，不追加静态定妆镜头，不得用慢放或重复镜头凑时长',
+    '样片原型07·轻奢讲解展示：现代轻奢空间中，人物面向镜头完整展示挂画，依次指明画面、材质和木条细节，随后侧身让出产品；全景交代空间、近景讲解，结尾保持人物侧身动作与镜头轻微拉远，不切静态产品定妆',
     '合理衍生01·侧面结构展开：侧面近景拍双手分别控制上木条与下压杆，真实滚动释放画布；转为正面全景确认完整外观，再切到墙边完成悬挂，重点展示结构而不是重复正面摆拍',
     '合理衍生02·墙前比高定位：人物先在墙前举起挂画比较高度，放低后调整站位与挂绳，再次抬起对准挂点、悬挂、扶正、后退检查；镜头以空间全景开场并跟随动作推进',
-    '合理衍生03·成品墙生活阅读：挂画全程固定上墙，人物从前景经过并在沙发或桌边坐下阅读，翻页、放杯、自然抬头看画；镜头从生活全景缓慢转向挂画并推近定格',
+    '合理衍生03·成品墙生活阅读：挂画全程固定上墙，人物从前景经过并在沙发或桌边坐下阅读，翻页、放杯、自然抬头看画；镜头从生活全景转向挂画并在持续轻微推近中结束，不定格、不追加静态尾镜头',
   ],
   // 第 2 批：衍生 4-7 + 成品上墙空间 1-6
   [
@@ -12487,23 +13540,23 @@ const PAINTING_FRAMEWORKS = [
     '合理衍生06·书桌连续走向挂画：镜头从毛笔、书本和桌面开始，人物完成一笔、放下毛笔、起身绕过书桌走向成品挂画，驻足观察；全程连续跟拍，不用多场景硬切',
     '合理衍生07·轻奢空间导览：挂画已置于轻奢空间，人物从侧面依次指出木条、材质与画面细节，后退并走到一侧让出完整空间；镜头由近及远完成产品与装修的整体展示',
     '成品空间01·客厅沙发墙：挂画全程固定在沙发背景墙，人物从茶几前景经过并坐下；镜头沿茶几横向滑动形成视差，依次展示沙发、人物、落地灯与挂画，最后推近产品',
-    '成品空间02·电视侧墙：挂画稳固位于电视侧墙，人物进入客厅整理遥控器和绿植后离开画面；镜头从电视柜低机位缓慢侧移，最终把电视区与挂画完整纳入构图',
+    '成品空间02·电视侧墙：挂画稳固位于电视侧墙，人物进入客厅整理遥控器和绿植后离开画面；镜头从电视柜低机位持续侧移，在电视区与挂画完整纳入构图后仍保持轻微视差直至结束',
     '成品空间03·玄关端景：挂画作为玄关第一视觉焦点，人物开门进入、放下钥匙、经过玄关柜后短暂停留；镜头从门框后跟随进入，再越过花瓶前景推向挂画',
-    '成品空间04·书房背景：挂画固定在书桌背景墙，人物翻书、做笔记、放下笔并自然抬头；镜头从桌面文具近景拉远到书房全景，最后转向挂画细节',
+    '成品空间04·书房背景：挂画固定在书桌背景墙，人物翻书、做笔记、放下笔并自然抬头；镜头从桌面文具近景拉远到书房全景，再在持续转向挂画细节的运动中结束，不停成静态特写',
     '成品空间05·茶室主墙：挂画固定在茶席主墙，人物温杯、注茶、落座，动作按正常速度完成；镜头从茶杯前景轻微升起，展示茶桌、座椅、绿植和墙上挂画',
-    '成品空间06·卧室侧墙：挂画固定在床侧或床尾墙面，人物拉开窗帘、整理床头书和坐垫；自然光进入后镜头沿床边横移，最后落在挂画与卧室整体搭配',
+    '成品空间06·卧室侧墙：挂画固定在床侧或床尾墙面，人物拉开窗帘、整理床头书和坐垫；自然光进入后镜头沿床边持续横移，在挂画与卧室整体搭配进入构图时自然结束，不停成正面静态画面',
   ],
   // 第 3 批：成品上墙空间 7-10 + 其他方向 1-6
   [
     '成品空间07·餐厅侧墙：挂画固定在餐厅侧墙，人物摆放餐具、调整花瓶并退开一步；镜头从餐桌前景横移，展示餐椅、吊灯、花瓶与挂画的色彩呼应',
-    '成品空间08·走廊尽头：挂画固定在走廊尽头墙面，人物从近处沿走廊前行、经过挂画后进入侧门；镜头保持纵深远景并平稳推近，最终只留下完整挂画',
+    '成品空间08·走廊尽头：挂画固定在走廊尽头墙面，人物从近处沿走廊前行、经过挂画后进入侧门；镜头保持纵深远景并持续平稳推近，在门框仍形成前景视差、人物尚在侧门边缘时自然结束，不单独留下静止挂画',
     '成品空间09·办公室会客区：挂画固定在会客区背景墙，两人进入、放下文件、落座交谈；镜头从桌面前景横摇到人物与挂画，人物不需要刻意指画',
-    '成品空间10·酒店展陈：挂画固定在精品酒店或艺术展陈墙，人物从远处经过或短暂停留；镜头利用沙发、雕塑或灯具前景形成视差，最后完成留白充分的产品定妆',
+    '成品空间10·酒店展陈：挂画固定在精品酒店或艺术展陈墙，人物从远处经过或短暂停留；镜头持续利用沙发、雕塑或灯具前景形成视差，在人物自然经过与产品同框时结束，不追加正面静态产品定妆',
     '其他方向01·软装配色呼应：挂画已经上墙，人物依次调整靠枕、花瓶与小型绿植，使其中两种颜色呼应画面主色，后退观察；镜头从软装近景拉到整体空间',
-    '其他方向02·从左向右横扫定格：挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与近期历史不同的合理场景。开场镜头位于空间左侧，挂画所在位置必须完全处于取景框右侧之外，不得先拍到空白悬挂墙面；随后用一个连续镜头按正常叙事速度从左向右平稳横扫，依次经过2-3件真实家具陈设和一个可选的自然人物动作，最后挂画从画面右侧被真实取景揭示，镜头自然减速并在挂画整体中景定格约1秒。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
-    '其他方向03·从右向左横扫定格：挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与上一条及近期历史不同的合理场景。开场镜头位于空间右侧，挂画所在位置必须完全处于取景框左侧之外，不得先拍到空白悬挂墙面；随后用一个连续镜头按正常叙事速度从右向左平稳横扫，依次经过2-3件真实家具陈设和一个可选的自然人物动作，最后挂画从画面左侧被真实取景揭示，镜头自然减速并在挂画整体中景定格约1秒。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
-    '其他方向04·对称定妆与人物穿行：挂画位于对称构图中心，人物从画面一侧进入、完成放书或放杯动作后从另一侧离开；固定机位保持产品稳定，结尾轻微推近',
-    '其他方向05·画面笔触到空间：从书法、印章或绘画笔触近景开始，镜头平稳拉远依次带出木条、完整挂画、墙面和家具，人物只在远景完成轻微生活动作',
+    '其他方向02·从左向右横扫收束：挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与近期历史不同的合理场景。开场镜头位于空间左侧，挂画所在位置必须完全处于取景框右侧之外，不得先拍到空白悬挂墙面；随后用一个连续镜头按正常叙事速度从左向右平稳横扫，依次经过2-3件真实家具陈设和一个可选的自然人物动作，最后挂画从画面右侧被真实取景揭示，镜头自然减速但保持轻微横移惯性直至结束，不定格、不停成静态图片。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
+    '其他方向03·从右向左横扫收束：挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与上一条及近期历史不同的合理场景。开场镜头位于空间右侧，挂画所在位置必须完全处于取景框左侧之外，不得先拍到空白悬挂墙面；随后用一个连续镜头按正常叙事速度从右向左平稳横扫，依次经过2-3件真实家具陈设和一个可选的自然人物动作，最后挂画从画面左侧被真实取景揭示，镜头自然减速但保持轻微横移惯性直至结束，不定格、不停成静态图片。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
+    '其他方向04·对称构图与人物穿行：挂画位于对称构图中心，人物从画面一侧进入、完成放书或放杯动作后从另一侧离开；主体构图保持稳定，结尾在人物尚未完全离开时轻微推近，不追加无人静态定妆',
+    '其他方向05·画面内容移动特写：总时长固定为4-6秒，以挂画原画内容为唯一主体进行一镜到底近距离拍摄；根据画面构图选择从上到下、从下到上、从左到右、从右到左或沿书法笔势/山水路径平稳移动，依次展示书法飞白、印章、山水、花鸟或纹理等真实可见内容。镜头按正常速度持续移动并在仍有轻微惯性时结束，不定格，不拉远补拍墙面，不强行加入人物、家具或空间全景；严禁改字、补画、让二维画面景物动起来或把平面内容变成三维场景',
     '其他方向06·木条工艺到整体：侧光近景展示上下木条、挂绳或实际可见连接结构，人物手指只沿木条边缘示意，随后让开，镜头拉远展示挂画在空间中的真实比例',
   ],
   // 第 4 批：其他方向 7-16
@@ -12514,15 +13567,15 @@ const PAINTING_FRAMEWORKS = [
     '其他方向10·绿植养护生活：挂画固定上墙，人物给绿植少量浇水、擦拭叶片、移动到合适位置后退开；镜头通过绿植前景揭示挂画，产品始终清晰稳定',
     '其他方向11·花艺整理完成：人物修整花枝、插入花瓶、转动花瓶角度并让开，花艺颜色与挂画局部呼应；镜头从手部近景拉远到挂画与边柜整体',
     '其他方向12·手机取景拍摄：挂画已经上墙，人物举起手机调整站位和取景，拍摄后放下手机查看一眼并离开；镜头从人物侧后方展示真实空间，禁止生成屏幕特写或错误文字',
-    '其他方向13·门框遮挡揭示：以半遮挡的门框或屏风为前景，人物推门进入、放下随身物品并走向室内；镜头小幅侧移使挂画逐步完整出现，结尾保持空间全景',
+    '其他方向13·门框遮挡揭示：以半遮挡的门框或屏风为前景，人物推门进入、放下随身物品并走向室内；镜头小幅侧移使挂画逐步完整出现，并在门框前景仍有轻微视差、人物继续走动的空间全景中结束',
     '其他方向14·家具线条引导构图：利用沙发靠背、长桌或书架形成通向挂画的视觉线，人物沿这条动线走入、整理一件物品后落座；镜头只做稳定纵向推移',
     '其他方向15·无人自然氛围：挂画全程固定且无人物，窗帘与植物叶片只有轻微自然摆动，镜头从空间远景平稳推到产品中景；通过真实光影、家具层次和材质变化承载内容，禁止长时间完全静止',
-    '其他方向16·季节软装定妆：挂画已经上墙，空间用当季花材、织物和果盘形成克制季节感，人物完成摆放、退开、关闭柜门三个动作；镜头横移揭示搭配并以挂画收束',
+    '其他方向16·季节软装搭配：挂画已经上墙，空间用当季花材、织物和果盘形成克制季节感，人物完成摆放、退开、关闭柜门三个动作；镜头持续横移揭示搭配，在人物关闭柜门、前景仍有视差时自然结束，不追加挂画静态定妆',
   ],
 ];
 
 // 内容阶段数不等于切镜数。按 40 个方向预先分配镜头结构，避免模型为了“丰富”而机械频繁切镜。
-const PAINTING_SINGLE_TAKE_DIRECTIONS = new Set([2, 3, 4, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 22, 26, 27]);
+const PAINTING_SINGLE_TAKE_DIRECTIONS = new Set([2, 3, 4, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 22, 26, 27, PAINTING_CONTENT_DETAIL_DIRECTION]);
 const PAINTING_HYBRID_DIRECTIONS = new Set([1, 5, 8, 16, 21, 23, 24, 25, 30, 31]);
 
 function getPaintingShotStructure(directionNumber) {
@@ -12530,14 +13583,14 @@ function getPaintingShotStructure(directionNumber) {
     return '一镜到底：全程连续拍摄、禁止硬切；用人物连续动作与一次稳定但带有自然起停、轻微惯性和构图修正的真人摄影路径串联内容阶段，禁止数学式绝对匀速的虚拟滑轨感。镜头连续不等于动作缓慢，人物必须按现实正常速度行动，每 1-2 秒持续出现新的有效动作、空间信息或构图变化，动作之间允许符合惯性的自然衔接。';
   }
   if (PAINTING_HYBRID_DIRECTIONS.has(directionNumber)) {
-    return '主镜头＋收尾特写：主体部分用一个连续主镜头完成，仅允许在结尾切 1 次挂画整体或材质特写，全片最多 2 个镜头；主镜头内仍要持续推进动作和空间关系。';
+    return '主镜头＋动态收束：主体部分用一个连续主镜头完成，前面已经完整展示挂画时结尾不得再补切正面挂画；只有关键材质此前完全无法交代时才允许切 1 次动态细节镜头，全片最多 2 个镜头。最后阶段必须延续镜头、人物或前景运动，不得固定机位静止定格。';
   }
   return '克制多镜头：只在时间、空间或视觉尺度无法自然连续时切镜，通常 2-4 个镜头；禁止每个动作阶段都切一次，连续发生的动作应保留在同一镜头内。';
 }
 
 function getPaintingShotStructureLabel(directionNumber) {
   if (PAINTING_SINGLE_TAKE_DIRECTIONS.has(directionNumber)) return '一镜到底';
-  if (PAINTING_HYBRID_DIRECTIONS.has(directionNumber)) return '主镜头＋收尾特写';
+  if (PAINTING_HYBRID_DIRECTIONS.has(directionNumber)) return '主镜头＋动态收束';
   return '克制多镜头';
 }
 
@@ -12562,9 +13615,10 @@ function countNearDuplicatePaintingIdeas(ideas) {
   return signatures.length - new Set(signatures).size;
 }
 
-function countPaintingIdeaStructureFailures(ideas) {
+function countPaintingIdeaStructureFailures(ideas, globalOffset = 0) {
   const furnishingPattern = /沙发|茶几|书架|绿植|地毯|落地灯|茶具|博古架|花瓶|文房摆件|餐桌|餐椅|玄关柜|书桌|边柜|床头柜|艺术灯具|电视柜|屏风|雕塑/g;
-  return ideas.filter((item) => {
+  return ideas.filter((item, index) => {
+    if (globalOffset + index + 1 === PAINTING_CONTENT_DETAIL_DIRECTION) return false;
     const text = `${item.title}${item.summary}`;
     const furnishings = text.match(new RegExp(furnishingPattern.source, 'g')) || [];
     return !/(远景|全景)/.test(text) || new Set(furnishings).size < 2;
@@ -12582,23 +13636,34 @@ function requiredPaintingTimelineStages(duration) {
 
 function inspectPaintingPromptQuality(promptText, duration, ideaSummary = '') {
   const issues = [];
+  const isContentDetailScan = /画面内容移动特写|原画内容.{0,8}(?:移动|巡游|扫描)特写|沿.{0,12}(?:笔势|山水路径)/.test(ideaSummary);
   const timelineRanges = String(promptText || '').match(/\d+(?:\.\d+)?\s*(?:-|–|—|~|～|至|到)\s*\d+(?:\.\d+)?\s*秒/g) || [];
   const requiredStages = requiredPaintingTimelineStages(duration);
   if (timelineRanges.length < requiredStages) {
     issues.push(`时间轴只有 ${timelineRanges.length} 个明确阶段，目标时长需要至少 ${requiredStages} 个`);
   }
-  if (!/(远景|全景)/.test(promptText)) {
+  if (!isContentDetailScan && !/(远景|全景)/.test(promptText)) {
     issues.push('缺少远景或全景阶段');
   }
   const furnishingMatches = String(promptText || '').match(/沙发|茶几|书架|绿植|地毯|落地灯|茶具|博古架|花瓶|文房摆件|餐桌|餐椅|玄关柜|书桌|边柜|床头柜|艺术灯具/g) || [];
-  if (new Set(furnishingMatches).size < 2) {
+  if (!isContentDetailScan && new Set(furnishingMatches).size < 2) {
     issues.push('没有明确写出至少 2 件家居陈设');
   }
   if (/一镜到底/.test(ideaSummary) && !/(一镜到底|连续镜头.*不切镜|不切镜.*连续镜头)/s.test(promptText)) {
     issues.push('创意方案要求一镜到底，但完整提示词没有明确连续镜头、不切镜');
   }
-  if (/主镜头.*收尾特写/.test(ideaSummary) && !/(最多\s*2\s*个镜头|仅.*切\s*1\s*次|主镜头.*收尾特写)/s.test(promptText)) {
-    issues.push('创意方案要求主镜头加收尾特写，但完整提示词没有限制为最多两个镜头');
+  if (/主镜头.*动态收束/.test(ideaSummary) && !/(最多\s*2\s*个镜头|主镜头.*动态收束|结尾不得.*补切)/s.test(promptText)) {
+    issues.push('创意方案要求主镜头动态收束，但完整提示词没有限制镜头数量或禁止静态补切');
+  }
+  const creativeSection = String(promptText || '').match(/创意内容\s*[：:]?([\s\S]*?)(?:负面约束\s*[：:]?|$)/)?.[1] || String(promptText || '');
+  const timedEndingSegments = creativeSection
+    .split(/\n+/)
+    .filter((line) => /\d+(?:\.\d+)?\s*(?:-|–|—|~|～|至|到)\s*\d+(?:\.\d+)?\s*秒/.test(line));
+  const finalTimedSegment = timedEndingSegments.at(-1) || creativeSection.slice(-500);
+  const hasStaticEnding = /(定格|固定机位|静止不动|停在挂画|停留在挂画|只留下.{0,8}(?:挂画|挂轴)|产品定妆|完整挂画定妆)/.test(finalTimedSegment);
+  const hasVisibleEndingMotion = /(横移|侧移|推近|拉远|跟拍|摇移|视差|人物.{0,12}(?:走|退|坐|放|关|翻|抬|转)|窗帘.{0,8}(?:摆动|微动)|植物.{0,8}(?:摆动|微动)|光影.{0,8}(?:移动|变化))/.test(finalTimedSegment);
+  if (hasStaticEnding && !hasVisibleEndingMotion) {
+    issues.push('最后阶段是正面挂画静态定格；删除这个独立尾镜头，或改为镜头/人物/前景持续运动中的自然结束');
   }
   const fixedOnWall = /(已经|开场.*(?:已经|固定)|全程)上墙|全程固定|固定在.{0,12}墙/.test(`${ideaSummary}\n${promptText}`);
   const materializesOnWall = String(promptText || '')
@@ -12610,7 +13675,7 @@ function inspectPaintingPromptQuality(promptText, duration, ideaSummary = '') {
   }
   const hasExactPaintingSize = /40\s*(?:厘米|cm).*80\s*(?:厘米|cm)|宽\s*40.*高\s*80/is.test(promptText);
   const hasScaleReference = /(45\s*%.*50\s*%|人物.*(?:一半|50\s*%)|沙发.*五分之一|五分之一.*沙发)/s.test(promptText);
-  if (!hasExactPaintingSize || !hasScaleReference) {
+  if (!hasExactPaintingSize || (!isContentDetailScan && !hasScaleReference)) {
     issues.push('缺少挂画宽40厘米、高80厘米以及人物或沙发的可视比例参照');
   }
   return issues;
@@ -12684,12 +13749,14 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
 9. 人物服装颜色严格按每条方向后给出的主色执行。同一批不得擅自全部改成米白、浅灰、卡其或其他近似浅色；服装款式、材质也应随人物身份和整体风格变化。
 10. 若方向写明挂画开场已经上墙，必须执行以下空间连续性规则：${PAINTING_OBJECT_PERMANENCE_RULE} 人物只能在空间中生活、观看或接触边缘/木条，不得把它重新取下、展开、移动或再次安装。方案中禁止使用“挂画开始出现、逐渐显现、淡入、浮现、凭空出现”等表达；如需 Reveal，必须明确是墙面挂画位置此前完全在取景框外，或被真实不透明前景遮挡。
 11. 禁止出现送礼、方形礼盒、礼包盒、开箱和拆包装情节。本模块不生成包装场景。
-12. 严格区分“内容阶段”和“镜头数量”：不得为了满足阶段数而机械切镜。一镜到底方向禁止硬切；主镜头＋收尾特写方向最多 2 个镜头；多镜头方向只在时间、空间或视觉尺度不连续时切换。
+12. 严格区分“内容阶段”和“镜头数量”：不得为了满足阶段数而机械切镜。一镜到底方向禁止硬切；主镜头＋动态收束方向最多 2 个镜头且不得为了结尾补切静态挂画；多镜头方向只在时间、空间或视觉尺度不连续时切换。
 13. 真人实拍优先：${PAINTING_LIVE_ACTION_REALISM_RULE}
+14. 动态收尾：${PAINTING_DYNAMIC_ENDING_RULE}
+15. 唯一例外：固定方向“其他方向05·画面内容移动特写”的总时长必须为 4-6 秒，且不执行第 7、8 条的家具陈设、远景/全景要求；它必须把绝大部分时长用于原画内容的一镜到底移动特写，不得为了满足空间规则拉远补拍房间。其他 39 个方向仍严格执行第 7、8 条。
 
 【镜头语言（多样且克制）】
 - 动态运镜（稳定、连贯、按正常叙事速度推进）：推近、拉远、横向摇移、纵向/斜向移动、轻微升降或极小幅度环绕；保留真人摄影合理的起步、惯性、减速和小幅构图修正，不得写成机械绝对匀速，也不得用过慢运镜拖延内容。
-- 静态/固定机位：用于画面特写（材质、笔触、木条/挂轴细节）、产品整体定妆展示、氛围留白镜头。
+- 静态/固定机位：只可用于中段极短的构图过渡或确有必要的细节观察，不能作为最后 1-2 秒的正面挂画定妆；结尾必须按动态收尾规则执行。
 - 克制红线：所有运镜必须稳定、连贯并按正常叙事速度推进；展示空间纵深时允许小幅度跟拍、推移、横摇 Reveal，但禁止过慢拖延、快速甩镜、剧烈晃动、手持抖动、急推急转和旋转式环绕。
 - 注意：运镜是摄像机运动，物体的运动必须有施动者——没有人物操作时，挂画必须始终静止，只允许镜头做轻微推拉/摇移/缓移，严禁把镜头运动写成挂画自身的位移、上升或旋转。
 
@@ -12706,11 +13773,11 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
     });
 
     let ideas = normalizePaintingIdeas(parseStructuredJson(answer));
-    const structureFailures = countPaintingIdeaStructureFailures(ideas);
+    const structureFailures = countPaintingIdeaStructureFailures(ideas, globalOffset);
     const needsCriticalRetry = ideas.length !== count || countNearDuplicatePaintingIdeas(ideas) > 0;
     const hasRetryBudget = Date.now() - modelStartedAt < 25 * 1000;
     if (needsCriticalRetry && hasRetryBudget) {
-      const correctionPrompt = `${prompt}\n\n你上一次输出未通过质量检查：必须恰好输出 ${count} 条有效方案，标题和核心创意不得近似重复，并严格一一对应固定方向；每条标题或核心创意都要明确写出远景/全景，并至少点名 2 件具体家具或陈设。当前有 ${structureFailures} 条未满足空间结构要求。请重新输出完整 JSON 数组，不要解释。`;
+      const correctionPrompt = `${prompt}\n\n你上一次输出未通过质量检查：必须恰好输出 ${count} 条有效方案，标题和核心创意不得近似重复，并严格一一对应固定方向；除“其他方向05·画面内容移动特写”外，每条标题或核心创意都要明确写出远景/全景，并至少点名 2 件具体家具或陈设；内容移动特写不得添加这些空间要求。当前有 ${structureFailures} 条未满足空间结构要求。请重新输出完整 JSON 数组，不要解释。`;
       answer = await callDoubaoArkText({
         apiKey,
         model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
@@ -12728,9 +13795,13 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
     }
 
     ideas = ideas.map((item, index) => {
-      const shotLabel = getPaintingShotStructureLabel(globalOffset + index + 1);
+      const directionNumber = globalOffset + index + 1;
+      const shotLabel = getPaintingShotStructureLabel(directionNumber);
       return {
         ...item,
+        directionNumber,
+        durationMin: directionNumber === PAINTING_CONTENT_DETAIL_DIRECTION ? 4 : durationMin,
+        durationMax: directionNumber === PAINTING_CONTENT_DETAIL_DIRECTION ? 6 : durationMax,
         summary: item.summary.includes(shotLabel) ? item.summary : `【${shotLabel}】${item.summary}`,
       };
     });
@@ -12772,55 +13843,47 @@ async function handlePaintingIdeas(req, res) {
   }
 }
 
-async function handlePaintingIdeaPrompt(req, res) {
-  const requestId = randomBytes(6).toString('hex');
-  try {
-    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
-    if (!apiKey) {
-      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
-      return;
-    }
+async function generatePaintingIdeaPromptCore(requestId, apiKey, profile, idea, context = {}) {
+  const ideaTitle = readValue(idea?.title);
+  const ideaSummary = readValue(idea?.summary);
+  if (!ideaTitle && !ideaSummary) {
+    throw new Error('缺少创意方案内容 idea');
+  }
 
-    const body = await readRequestBody(req);
-    const profile = body.profile;
-    const idea = body.idea && typeof body.idea === 'object' ? body.idea : {};
-    if (!profile || typeof profile !== 'object') {
-      sendJson(res, 400, { error: '缺少产品档案 profile' });
-      return;
-    }
-
-    const ideaTitle = readValue(idea.title);
-    const ideaSummary = readValue(idea.summary);
-    if (!ideaTitle && !ideaSummary) {
-      sendJson(res, 400, { error: '缺少创意方案内容 idea' });
-      return;
-    }
-
-    const durationMin = Number(body.durationMin);
-    const durationMax = Number(body.durationMax);
-    const hasDurationRange =
-      Number.isFinite(durationMin) && Number.isFinite(durationMax) && durationMax >= durationMin && durationMax > 0;
-    const fallbackDuration =
-      Number(idea.duration) || Number(body.duration) || (hasDurationRange ? Math.round((durationMin + durationMax) / 2) : 8);
-    const ratio = readValue(idea.ratio) || readValue(body.ratio) || '9:16';
-    const styleProfile = resolvePaintingStyleProfile(idea.stylePreset || body.stylePreset);
-    const character = readValue(idea.character) || readValue(body.character);
-    const audio = readValue(idea.audio) || readValue(body.audio);
-    const scene = readValue(idea.scene) || readValue(body.scene);
-    const extraRequirements = readValue(idea.extraRequirements) || readValue(body.extraRequirements);
-    const elementVariationIndex = Math.max(0, Math.floor(Number(body.elementVariationIndex) || 0));
-    const previousPrompt = readValue(body.previousPrompt).slice(0, 4000);
-    const elementVariationRequirements = elementVariationIndex > 0
-      ? `\n【同框架换元素重生成（第 ${elementVariationIndex} 个变化版本）】
-这是用户主动选择的“换元素再生成”，必须保留原标题与核心创意中的大框架：产品所处状态、主要动作逻辑、镜头结构（一镜到底/主镜头＋特写/克制多镜头）、运镜方向、起幅与收尾目的均不得改变。只在不破坏物理逻辑和创意成立条件的前提下，更换执行元素。
+  const isContentDetailScan = Number(idea?.directionNumber) === PAINTING_CONTENT_DETAIL_DIRECTION
+    || /画面内容移动特写|原画内容.{0,8}(?:移动|巡游|扫描)特写/.test(`${ideaTitle}\n${ideaSummary}`);
+  const durationMin = isContentDetailScan ? 4 : (Number(idea?.durationMin) || Number(context.durationMin));
+  const durationMax = isContentDetailScan ? 6 : (Number(idea?.durationMax) || Number(context.durationMax));
+  const hasDurationRange =
+    Number.isFinite(durationMin) && Number.isFinite(durationMax) && durationMax >= durationMin && durationMax > 0;
+  const fallbackDuration =
+    Number(idea?.duration) || Number(context.duration) || (hasDurationRange ? Math.round((durationMin + durationMax) / 2) : 8);
+  const ratio = readValue(idea?.ratio) || readValue(context.ratio) || '9:16';
+  const styleProfile = resolvePaintingStyleProfile(idea?.stylePreset || context.stylePreset);
+  const character = readValue(idea?.character) || readValue(context.character);
+  const audio = readValue(idea?.audio) || readValue(context.audio);
+  const scene = readValue(idea?.scene) || readValue(context.scene);
+  const extraRequirements = readValue(idea?.extraRequirements) || readValue(context.extraRequirements);
+  const elementVariationIndex = Math.max(0, Math.floor(Number(context.elementVariationIndex) || 0));
+  const previousPrompt = readValue(context.previousPrompt).slice(0, 4000);
+  const avoidElements = Array.isArray(context.avoidElements)
+    ? context.avoidElements.filter(Boolean).slice(0, 12)
+    : [];
+  const creativeSubjectRequirements = isContentDetailScan
+    ? '参考图中真实可见的文字、书法笔势、印章、山水、花鸟、装饰纹样与画布纹理，以及镜头选择该移动路径的构图依据；本方向不得强行加入人物、服装或家具'
+    : `${character ? `人物设定（${character}）` : '人物设定'}、符合「${styleProfile.label}」的服装款式与方案指定主色、${scene ? `指定场景（${scene}）` : '场景'}、构图、动作节奏、光影氛围和${audio ? `声音/音乐（${audio}）` : '声音'}`;
+  const elementVariationRequirements = elementVariationIndex > 0 || avoidElements.length > 0
+    ? `\n【同框架换元素重生成${elementVariationIndex > 0 ? `（第 ${elementVariationIndex} 个变化版本）` : ''}】
+${elementVariationIndex > 0 ? '这是用户主动选择的“换元素再生成”，必须保留原标题与核心创意中的大框架：产品所处状态、主要动作逻辑、镜头结构（一镜到底/主镜头＋动态收束/克制多镜头）、运镜方向、起幅与收尾目的均不得改变。只在不破坏物理逻辑和创意成立条件的前提下，更换执行元素。' : '本方向必须与同批量中已经生成的方向形成明显差异，禁止只换房间名称或衣服颜色。'}
 - 必须明显更换为另一套合适场景或空间布置，并再更换以下类别中的至少 2 类：人物性别/年龄/身份、服装款式与主色、家具与生活陈设组合、自然光时段或开场生活动作；若原框架本来无人，不得为了换元素强行增加人物。
 - 新场景必须适合真实悬挂和展示这幅画；若核心创意锁定客厅、书房、茶室等场景类别，则换成同类别中布局、家具和色彩明确不同的另一套真实空间，不能为了求变改成不合逻辑的地点。
 - 人物、服装、场景和陈设在本条视频内部仍须从头到尾保持一致。“换人物/换装”是相对于上一个生成版本而言，不得在同一条视频中途换人或换装。
 - 本段要求的优先级高于上方的可选人物、服装和场景偏好，但不得覆盖产品外观、真实尺寸、整体风格、固定镜头框架和负面约束。
-${previousPrompt ? `- 必须避开上一版本已经使用的具体人物、服装配色、家具组合与空间布置。上一版本仅供查重参考：\n${previousPrompt}` : '- 即使没有上一版本文本，也必须主动选择与常见米白服装、模板化样板间不同的明确元素组合。'}\n`
-      : '';
+${previousPrompt ? `- 必须避开上一版本已经使用的具体人物、服装配色、家具组合与空间布置。上一版本仅供查重参考：\n${previousPrompt}` : '- 即使没有上一版本文本，也必须主动选择与常见米白服装、模板化样板间不同的明确元素组合。'}
+${avoidElements.length > 0 ? `\n- 还必须避开本批量以下已经使用的元素组合：\n${avoidElements.map((item, index) => `${index + 1}. ${item}`).join('\n')}` : ''}\n`
+    : '';
 
-    const prompt = `你是短视频提示词专家。请基于下面的「产品固定档案」和「创意方案」，写一段完整的 Seedance 视频生成提示词（中文，可直接提交给 Seedance）。
+  const fullPrompt = `你是短视频提示词专家。请基于下面的「产品固定档案」和「创意方案」，写一段完整的 Seedance 视频生成提示词（中文，可直接提交给 Seedance）。
 
 【产品固定档案（产品外观必须严格复刻，不得改动）】
 ${JSON.stringify(profile, null, 2)}
@@ -12844,69 +13907,945 @@ ${elementVariationRequirements}
 2. 画面中的一切动作、镜头、展开方式、光影、透视、材质表现都必须符合真实物理逻辑，不得出现穿模、悬浮、违反重力/光影/透视等不合理现象。如果出现卷轴式挂画或卷起后展开的画作，必须是卷轴沿自身轴线旋转、画布从卷筒中逐步释放的「滚动展开」，严禁滑动、平移、平铺或直接弹开。画面中任何物体的运动（挂画的上升、下降、平移、旋转、展开、翻面）都必须有明确的施动者（人的手、人的动作或合理的物理机制），严禁挂画或任何物体在没有手/人操作的情况下自行悬浮、漂浮、上升、移动、旋转——挂画要动，必须有人来拿、挂、展开或展示它，不能自己悬空位移。同一视频内如果出现人物（无论单人还是多人、无论跨多少个镜头或场景），所有人物必须长相、性别、年龄、发型、服装保持一致，严禁中途换人、换装或人物数量无故增减。若创意设定挂画已经上墙，必须严格执行：${PAINTING_OBJECT_PERMANENCE_RULE}
 3. 内容密度：整个视频必须包含连续、不同的有效阶段，阶段数量按目标时长动态要求——4 秒至少 3 个阶段，5-6 秒至少 3 个阶段，7-8 秒至少 4 个阶段，9-10 秒至少 5 个阶段，11-12 秒至少 6 个阶段，13-15 秒至少 7 个阶段；每个阶段必须发生新的、可见的人物动作、空间信息或构图关系变化，禁止把同一动作拆段凑数。内容阶段不等于镜头数量，一镜到底可以在同一个连续镜头中完成全部阶段。人物肢体、行走、坐下、翻书、喝茶和观看都必须按现实正常速度完成，动作之间允许符合人体惯性和真实摄影的自然衔接；每 1-2 秒持续出现新动作或新构图信息即可，禁止慢放、降速、重复、循环、人物发呆和长时间凝视，也禁止为了赶时间而机械连续完成过多动作。
 4. 提示词必须分三部分：产品固定约束、创意内容、负面约束。
-5. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。如画面中的挂画带有木条、挂轴或压杆等边框结构，这些结构必须保持档案中的形状、颜色、材质、粗细、长度、截面和两端轮廓不变；如涉及卷起或展开，全程不得变形、不得把木条变成圆柱形卷轴或圆杆、不得变色，也不得在两端或旁边新增任何圆柱、轴头、端帽、圆球、把手等构件。${PAINTING_REAL_SIZE_RULE}
-6. 创意内容：结合创意方案，写清楚${character ? `人物设定（${character}）` : '人物设定'}、符合「${styleProfile.label}」的服装款式与方案指定主色、${scene ? `指定场景（${scene}）` : '场景'}、构图、动作节奏、光影氛围和${audio ? `声音/音乐（${audio}）` : '声音'}。服装不得擅自全部改成米白、浅灰或卡其。必须严格继承创意方案标注的“一镜到底 / 主镜头＋收尾特写 / 克制多镜头”结构：一镜到底要在所有时间段明确写“连续镜头、不切镜”，用一条简单稳定且具有自然起停、惯性和小幅构图修正的真人摄影路径串联动作，禁止机械绝对匀速滑轨；主镜头＋收尾特写全片最多 2 个镜头；多镜头只在无法自然连续时切换。把视频从 0 秒开始按先后顺序无重叠地铺满到结束，每段写明起止时间及新的动作或空间信息，但不得因为进入新阶段就自动切镜；4 秒至少 3 段、5-6 秒至少 3 段、7-8 秒至少 4 段、9-10 秒至少 5 段、11-12 秒至少 6 段、13-15 秒至少 7 段。整个视频至少有 1 个远景或全景，场景中自然出现 2-3 件符合「${styleProfile.label}」的家具或陈设，不能只有人、墙和画。所有动作按现实正常速度连续完成，镜头稳定但不能缓慢拖延。若方案写明挂画开场已经上墙，则挂画从第 0 秒起就在固定墙面坐标客观存在；内容密度来自人物生活动作、空间揭示、前后景和连续构图变化，不得为了凑动作重新取画或安装，更不得让挂画淡入、浮现或凭空生成。全片实拍质感必须执行：${PAINTING_LIVE_ACTION_REALISM_RULE}
+5. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。如画面中的挂画带有木条、挂轴或压杆等边框结构，这些结构必须保持档案中的形状、颜色、材质、粗细、长度、截面和两端轮廓不变；如涉及卷起或展开，全程不得变形、不得把木条变成圆柱形卷轴或圆杆、不得变色，也不得在两端或旁边新增任何圆柱、轴头、端帽、圆球、把手等构件。${isContentDetailScan ? PAINTING_CONTENT_DETAIL_SIZE_RULE : PAINTING_REAL_SIZE_RULE}
+6. 创意内容：结合创意方案，写清楚${creativeSubjectRequirements}。非内容移动特写方向的服装不得擅自全部改成米白、浅灰或卡其。必须严格继承创意方案标注的“一镜到底 / 主镜头＋动态收束 / 克制多镜头”结构：一镜到底要在所有时间段明确写“连续镜头、不切镜”，用一条简单稳定且具有自然起停、惯性和小幅构图修正的真人摄影路径串联动作，禁止机械绝对匀速滑轨；主镜头＋动态收束全片最多 2 个镜头，前面已展示挂画时不得为结尾再补切正面挂画；多镜头只在无法自然连续时切换。把视频从 0 秒开始按先后顺序无重叠地铺满到结束，每段写明起止时间及新的动作或空间信息，但不得因为进入新阶段就自动切镜；4 秒至少 3 段、5-6 秒至少 3 段、7-8 秒至少 4 段、9-10 秒至少 5 段、11-12 秒至少 6 段、13-15 秒至少 7 段。${isContentDetailScan ? '本方向是4-6秒原画内容移动特写：不要求远景/全景、人物或家具陈设，不得拉远补拍空间；镜头必须根据参考图真实构图选择一条连贯扫描路径，只拍参考图中确实存在的文字、笔触、印章、山水或花鸟细节，二维画面内容本身绝对静止，不能让山水、飞鸟、流水、植物或书法笔画产生动画。' : `整个视频至少有 1 个远景或全景，场景中自然出现 2-3 件符合「${styleProfile.label}」的家具或陈设，不能只有人、墙和画。`}所有动作按现实正常速度连续完成，镜头稳定但不能缓慢拖延。若方案写明挂画开场已经上墙，则挂画从第 0 秒起就在固定墙面坐标客观存在；内容密度来自人物生活动作、空间揭示、前后景和连续构图变化，不得为了凑动作重新取画或安装，更不得让挂画淡入、浮现或凭空生成。结尾必须执行：${PAINTING_DYNAMIC_ENDING_RULE} 全片实拍质感必须执行：${PAINTING_LIVE_ACTION_REALISM_RULE}
 7. 负面约束：明确列出不得改变的元素（挂画外观、画面内容、木条结构等）、必须避免的物理违背现象（穿模、悬浮、违反重力/光影/透视等）、禁止单一动作慢放/循环凑时长、禁止长时间静止、禁止快速晃动/快速变焦/急推/手持抖动、严禁挂画在无人操作时自行位移；已经上墙的挂画还必须禁止淡入、浮现、透明变实、凭空生成、突然出现、逐渐长出、由小变大和中途贴到墙上；尺寸方面必须明确禁止超大挂画、巨幅壁画、整墙画、落地画、画比人高、画比人宽、挂画宽度接近沙发一半或以上，以及透视或广角畸变造成的尺寸夸大；实拍质感方面禁止三维渲染感、AI样板间、蜡像皮肤、过度磨皮、塑料材质、全屋无阴影的均匀棚拍光、数学式绝对匀速滑轨和虚拟摄像机漂移；一镜到底方向禁止硬切、跳切、瞬间换景和人物位置突变，多镜头方向禁止无意义频繁切镜；如涉及卷轴或木条，还要禁止滑动式展开、木条变成圆柱或变色、两端新增圆柱/轴头/端帽。禁止出现送礼、方形礼盒、礼包盒、开箱和拆包装情节。
 ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之间，请你从该范围内挑选一个最合适的整数秒数；画面比例 ${ratio}。并在提示词最后单独写一行「总时长：X秒」（X 为你选定的整数，例如「总时长：8秒」）。` : `8. 总时长约 ${fallbackDuration} 秒，画面比例 ${ratio}。并在提示词最后单独写一行「总时长：${fallbackDuration}秒」。`}
 
 严格只输出这段提示词文本本身，不要输出任何解释、标题、序号或 markdown 包裹。`;
 
-    console.log('[doubao painting] idea-prompt request start', { requestId, title: ideaTitle });
+  console.log('[doubao painting] idea-prompt request start', { requestId, title: ideaTitle });
 
-    const modelStartedAt = Date.now();
-    let answer = await callDoubaoArkText({
+  const modelStartedAt = Date.now();
+  let answer = await callDoubaoArkText({
+    apiKey,
+    model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+    content: [{ type: 'input_text', text: fullPrompt }]
+  });
+
+  let promptText = String(answer || '').trim();
+  if (!promptText) {
+    throw new Error('模型返回的提示词为空');
+  }
+
+  let durationSec = null;
+  let durationMatch = promptText.match(/总时长\s*[：:]\s*(\d{1,3})\s*秒?/);
+  if (durationMatch) {
+    durationSec = Number.parseInt(durationMatch[1], 10);
+  }
+  if (!Number.isFinite(durationSec) || durationSec <= 0) {
+    durationSec = hasDurationRange ? Math.round((durationMin + durationMax) / 2) : fallbackDuration;
+  }
+  let resolvedDuration = Math.min(30, Math.max(4, Math.round(durationSec)));
+  const qualityIssues = inspectPaintingPromptQuality(promptText, resolvedDuration, ideaSummary);
+  const hasRetryBudget = Date.now() - modelStartedAt < 25 * 1000;
+  if (qualityIssues.length > 0 && hasRetryBudget) {
+    const correctionPrompt = `${fullPrompt}\n\n【质量检查未通过，必须重写】\n${qualityIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\n请重新输出一份完整提示词，保留产品与创意方向，严格补齐连续时间轴、远景/全景和家居陈设。只输出重写后的提示词文本。`;
+    answer = await callDoubaoArkText({
       apiKey,
       model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-      content: [{ type: 'input_text', text: prompt }]
+      content: [{ type: 'input_text', text: correctionPrompt }]
     });
-
-    let promptText = String(answer || '').trim();
-    if (!promptText) {
-      throw new Error('模型返回的提示词为空');
-    }
-
-    let durationSec = null;
-    let durationMatch = promptText.match(/总时长\s*[：:]\s*(\d{1,3})\s*秒?/);
+    promptText = String(answer || '').trim();
+    if (!promptText) throw new Error('模型重写后的提示词为空');
+    durationMatch = promptText.match(/总时长\s*[：:]\s*(\d{1,3})\s*秒?/);
     if (durationMatch) {
-      durationSec = Number.parseInt(durationMatch[1], 10);
-    }
-    if (!Number.isFinite(durationSec) || durationSec <= 0) {
-      durationSec = hasDurationRange ? Math.round((durationMin + durationMax) / 2) : fallbackDuration;
-    }
-    let resolvedDuration = Math.min(30, Math.max(4, Math.round(durationSec)));
-    const qualityIssues = inspectPaintingPromptQuality(promptText, resolvedDuration, ideaSummary);
-    const hasRetryBudget = Date.now() - modelStartedAt < 25 * 1000;
-    if (qualityIssues.length > 0 && hasRetryBudget) {
-      const correctionPrompt = `${prompt}\n\n【质量检查未通过，必须重写】\n${qualityIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\n请重新输出一份完整提示词，保留产品与创意方向，严格补齐连续时间轴、远景/全景和家居陈设。只输出重写后的提示词文本。`;
-      answer = await callDoubaoArkText({
-        apiKey,
-        model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-        content: [{ type: 'input_text', text: correctionPrompt }]
-      });
-      promptText = String(answer || '').trim();
-      if (!promptText) throw new Error('模型重写后的提示词为空');
-      durationMatch = promptText.match(/总时长\s*[：:]\s*(\d{1,3})\s*秒?/);
-      if (durationMatch) {
-        const rewrittenDuration = Number.parseInt(durationMatch[1], 10);
-        if (Number.isFinite(rewrittenDuration) && rewrittenDuration > 0) {
-          resolvedDuration = Math.min(30, Math.max(4, Math.round(rewrittenDuration)));
-        }
+      const rewrittenDuration = Number.parseInt(durationMatch[1], 10);
+      if (Number.isFinite(rewrittenDuration) && rewrittenDuration > 0) {
+        resolvedDuration = Math.min(30, Math.max(4, Math.round(rewrittenDuration)));
       }
     }
-    // 尺寸锁定由服务端确定性追加，不依赖提示词模型是否完整保留这项关键产品约束。
-    promptText = ensurePaintingSizeLock(promptText);
-    if (qualityIssues.length > 0) {
-      console.warn('[doubao painting] idea-prompt quality warning', { requestId, qualityIssues, retried: hasRetryBudget });
+  }
+  // 尺寸锁定由服务端确定性追加，不依赖提示词模型是否完整保留这项关键产品约束。
+  promptText = ensurePaintingSizeLock(promptText, { contentDetailScan: isContentDetailScan });
+  if (qualityIssues.length > 0) {
+    console.warn('[doubao painting] idea-prompt quality warning', { requestId, qualityIssues, retried: hasRetryBudget });
+  }
+
+  console.log('[doubao painting] idea-prompt done', { requestId, promptLength: promptText.length, duration: resolvedDuration });
+  return { prompt: promptText, duration: resolvedDuration };
+}
+
+async function handlePaintingIdeaPrompt(req, res) {
+  const requestId = randomBytes(6).toString('hex');
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    if (!apiKey) {
+      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+      return;
     }
 
-    console.log('[doubao painting] idea-prompt done', { requestId, promptLength: promptText.length, duration: resolvedDuration });
-    sendJson(res, 200, { ok: true, prompt: promptText, duration: resolvedDuration });
+    const body = await readRequestBody(req);
+    const profile = body.profile;
+    const idea = body.idea && typeof body.idea === 'object' ? body.idea : {};
+    if (!profile || typeof profile !== 'object') {
+      sendJson(res, 400, { error: '缺少产品档案 profile' });
+      return;
+    }
+
+    const { prompt, duration } = await generatePaintingIdeaPromptCore(requestId, apiKey, profile, idea, body);
+    sendJson(res, 200, { ok: true, prompt, duration });
   } catch (error) {
     console.error('[doubao painting] idea-prompt failed', { requestId, message: error?.message || '' });
     sendJson(res, 500, {
       error: error?.message || '完整提示词生成失败',
       debug: { stage: 'idea-prompt', rawText: error?.rawText }
     });
+  }
+}
+
+// ===== 挂画全自动批量任务 =====
+
+class PaintingBatchSemaphore {
+  constructor(maxConcurrency) {
+    this.maxConcurrency = Math.max(1, Number(maxConcurrency) || 1);
+    this.running = 0;
+    this.queue = [];
+  }
+
+  async acquire() {
+    if (this.running < this.maxConcurrency) {
+      this.running += 1;
+      return;
+    }
+    return new Promise((resolve) => this.queue.push(resolve));
+  }
+
+  release() {
+    if (this.queue.length > 0) {
+      const next = this.queue.shift();
+      next();
+    } else {
+      this.running = Math.max(0, this.running - 1);
+    }
+  }
+}
+
+const paintingBatchPromptSemaphore = new PaintingBatchSemaphore(PAINTING_BATCH_PROMPT_CONCURRENCY);
+const paintingBatchSeedanceSubmitSemaphore = new PaintingBatchSemaphore(1);
+const paintingBatchRenderSemaphore = new PaintingBatchSemaphore(PAINTING_BATCH_MAX_RENDERING_TASKS);
+
+function normalizePaintingPromptForCompare(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[\s，。；：、,.!！?？“”"'（）()\-—\d]/g, '');
+}
+
+function paintingPromptSimilarity(a, b) {
+  const na = normalizePaintingPromptForCompare(a);
+  const nb = normalizePaintingPromptForCompare(b);
+  if (!na || !nb) return 0;
+  const setA = new Set(na.split('').filter(Boolean));
+  const setB = new Set(nb.split('').filter(Boolean));
+  if (setA.size === 0 || setB.size === 0) return 0;
+  const intersection = new Set([...setA].filter((x) => setB.has(x)));
+  return intersection.size / Math.max(setA.size, setB.size);
+}
+
+function extractPaintingDiversitySummary(promptText) {
+  const text = String(promptText || '');
+  const sceneMatch = text.match(/场景[：:]?\s*([^\n]{3,80})/);
+  const furnitureMatches = text.match(/沙发|茶几|书架|绿植|地毯|落地灯|茶具|博古架|花瓶|文房摆件|餐桌|餐椅|玄关柜|书桌|边柜|床头柜|艺术灯具|电视柜|屏风|雕塑/g) || [];
+  const lightMatch = text.match(/光线[：:]?\s*([^\n]{3,60})/);
+  const characterMatch = text.match(/人物[：:]?\s*([^\n]{3,80})/);
+  const wardrobeMatch = text.match(/服装[：:]?\s*([^\n]{3,60})/);
+  const cameraMatch = text.match(/镜头[：:]?\s*([^\n]{3,80})/);
+  return {
+    scene: sceneMatch ? sceneMatch[1].trim() : '',
+    furniture: [...new Set(furnitureMatches)].slice(0, 6),
+    light: lightMatch ? lightMatch[1].trim() : '',
+    character: characterMatch ? characterMatch[1].trim() : '',
+    wardrobe: wardrobeMatch ? wardrobeMatch[1].trim() : '',
+    camera: cameraMatch ? cameraMatch[1].trim() : '',
+    snippet: text.replace(/\s+/g, ' ').slice(0, 240),
+  };
+}
+
+// Seedance 接口不支持客户端幂等键，这里不做伪幂等；
+// 防重复提交/扣费依赖数据库部分唯一索引 + 提交中断时置 needs_review 由人工复核。
+function isRetriableSeedanceError(error) {
+  const message = error?.message || '';
+  return /timeout|timed out|econn|socket|network|fetch|abort|terminated|connection|503|504|502|500|rate limit|too many/i.test(message);
+}
+
+function isFuzzySeedanceTimeout(error) {
+  return error?.name === 'TimeoutError' || error?.name === 'AbortError' || /timeout|timed out/i.test(error?.message || '');
+}
+
+async function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+async function buildPaintingImageFileForSeedance(imagePath) {
+  if (!imagePath || !existsSync(imagePath)) {
+    throw new Error('挂画原图不存在，无法提交 Seedance 任务');
+  }
+  const buffer = await readFile(imagePath);
+  const ext = path.extname(imagePath).toLowerCase() || '.jpg';
+  const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+  const fileName = `painting${ext}`;
+  return new File([buffer], fileName, { type: mimeType });
+}
+
+async function submitSeedanceTaskForBatchTask(task, batchRun) {
+  const requestId = randomBytes(6).toString('hex');
+  const apiKey = readValue(SERVER_CONFIG.seedanceApiKey);
+  if (!apiKey) {
+    throw new Error('服务端未配置 SEEDANCE_API_KEY');
+  }
+  if (!task.prompt) {
+    throw new Error('缺少视频生成提示词 prompt');
+  }
+
+  const imageFile = await buildPaintingImageFileForSeedance(batchRun.imagePath);
+  const compressedFile = await compressMediaForArk(imageFile, 'image');
+  const normalized = await normalizeUploadedMediaInput(compressedFile, 'image');
+  const content = [
+    { type: 'text', text: task.prompt },
+    { type: 'image_url', image_url: { url: normalized.imageUrl }, role: 'reference_image' },
+  ];
+
+  const model = batchRun.model || 'doubao-seedance-2-0-260128';
+  const isSeedance25 = model === 'doubao-seedance-2-5-260628';
+  const resolution = batchRun.resolution || '720p';
+  const ratio = batchRun.ratio || '9:16';
+  const duration = Math.min(isSeedance25 ? 30 : 15, Math.max(4, Math.round(task.duration || 8)));
+  const generateAudio = batchRun.generateAudio !== false;
+  const watermark = batchRun.watermark === true;
+
+  const upstreamUrl = 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
+  const requestPayload = {
+    model,
+    content,
+    generate_audio: generateAudio,
+    resolution,
+    ratio,
+    duration,
+    watermark,
+  };
+
+  console.log('[painting batch] seedance submit start', {
+    requestId,
+    batchRunId: batchRun.batchRunId,
+    taskId: task.id,
+    directionNumber: task.directionNumber,
+  });
+
+  const upstreamRes = await fetch(upstreamUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestPayload),
+    signal: AbortSignal.timeout(60 * 1000),
+  });
+
+  const responseText = await upstreamRes.text();
+  let json = null;
+  try {
+    json = responseText ? JSON.parse(responseText) : null;
+  } catch {}
+
+  if (!upstreamRes.ok) {
+    const rawError = json?.error?.message || json?.message || json?.code || '';
+    const error = new Error(translateUpstreamError(rawError, `Seedance 创建任务失败（状态码 ${upstreamRes.status}）`));
+    error.statusCode = upstreamRes.status;
+    throw error;
+  }
+
+  const seedanceTaskId = readValue(json?.id, json?.data?.id, json?.task_id, json?.taskId);
+  if (!seedanceTaskId) {
+    throw new Error('Seedance 创建任务失败：服务端未返回任务编号');
+  }
+
+  console.log('[painting batch] seedance submit done', {
+    requestId,
+    batchRunId: batchRun.batchRunId,
+    taskId: task.id,
+    seedanceTaskId,
+  });
+
+  return { seedanceTaskId, response: json };
+}
+
+async function pollSeedanceTaskForBatch(seedanceTaskId) {
+  const apiKey = readValue(SERVER_CONFIG.seedanceApiKey);
+  if (!apiKey) {
+    throw new Error('服务端未配置 SEEDANCE_API_KEY');
+  }
+  const upstreamUrl = `https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${encodeURIComponent(seedanceTaskId)}`;
+  const upstreamRes = await fetch(upstreamUrl, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(60 * 1000),
+  });
+  const responseText = await upstreamRes.text();
+  let json = null;
+  try {
+    json = responseText ? JSON.parse(responseText) : null;
+  } catch {}
+  if (!upstreamRes.ok) {
+    const rawError = json?.error?.message || json?.message || '';
+    throw new Error(translateUpstreamError(rawError, `Seedance 查询任务失败（状态码 ${upstreamRes.status}）`));
+  }
+  const status = extractSeedanceStatus(json);
+  const videoUrl = extractSeedanceVideoUrl(json);
+  return { status, videoUrl, response: json };
+}
+
+async function downloadAndSaveSeedanceVideoForBatch(seedanceTaskId, folderName, batchMeta) {
+  const apiKey = readValue(SERVER_CONFIG.seedanceApiKey);
+  if (!apiKey) {
+    throw new Error('服务端未配置 SEEDANCE_API_KEY');
+  }
+
+  const taskResponse = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${encodeURIComponent(seedanceTaskId)}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(60 * 1000),
+  });
+  const taskText = await taskResponse.text();
+  let taskPayload = null;
+  try {
+    taskPayload = taskText ? JSON.parse(taskText) : null;
+  } catch {}
+  if (!taskResponse.ok) {
+    const upstreamMessage = taskPayload?.error?.message || taskPayload?.message || '';
+    throw new Error(translateUpstreamError(upstreamMessage, '读取生成视频失败'));
+  }
+
+  const videoUrl = extractSeedanceVideoUrl(taskPayload);
+  if (!videoUrl) {
+    throw new Error('这条生成记录还没有可保存的视频');
+  }
+
+  const videoResponse = await fetch(videoUrl, {
+    headers: {
+      'User-Agent': DOUYIN_USER_AGENT,
+      Accept: 'video/mp4,video/*;q=0.9,application/octet-stream;q=0.8',
+    },
+    signal: AbortSignal.timeout(2 * 60 * 1000),
+  });
+  if (!videoResponse.ok) {
+    throw new Error(`生成视频下载失败（HTTP ${videoResponse.status}）`);
+  }
+  const contentType = readValue(videoResponse.headers.get('content-type')).toLowerCase();
+  if (contentType.includes('text/html') || contentType.includes('application/json')) {
+    await videoResponse.body?.cancel().catch(() => {});
+    throw new Error('生成视频链接已失效');
+  }
+
+  const buffer = await readVideoLibraryRemoteBuffer(videoResponse);
+  if (!buffer.length) {
+    throw new Error('生成视频文件为空');
+  }
+  if (buffer.length < 12 || buffer.subarray(4, 8).toString('ascii') !== 'ftyp') {
+    throw new Error('生成结果不是有效的 MP4 文件');
+  }
+  const sha256 = createHash('sha256').update(buffer).digest('hex');
+  const existing = dbFindVideoLibraryByHash(sha256);
+  if (existing) {
+    return { item: existing, duplicate: true, sourceBytes: buffer.length, savedBytes: existing.fileSize };
+  }
+
+  const taskCreatedAt = Number(taskPayload?.created_at || taskPayload?.data?.created_at || 0);
+  const shortTaskId = seedanceTaskId.slice(-6);
+  const datePart = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '');
+  const directionPart = `方向${String(batchMeta.directionNumber).padStart(2, '0')}`;
+  const titlePart = String(batchMeta.ideaTitle || '').replace(/[\\/:*?"<>|]/g, '').slice(0, 20);
+  const roundPart = `第${batchMeta.variationRound + 1}轮`;
+  const originalName = `${batchMeta.paintingName}_${directionPart}_${titlePart}_${roundPart}_${datePart}_${shortTaskId}.mp4`;
+  const storedName = `${sha256}.mp4`;
+  await ensureVideoLibraryDir();
+  const filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
+  await writeFile(filePath, buffer);
+  const savedFile = await stat(filePath);
+  if (savedFile.size !== buffer.length) {
+    throw new Error('保存后文件大小校验失败');
+  }
+
+  const noteParts = [
+    `来自全自动批量任务 ${batchMeta.batchRunId.slice(-8)}`,
+    `方向 ${batchMeta.directionNumber}`,
+    `轮次 ${batchMeta.variationRound + 1}`,
+    `Seedance ${seedanceTaskId}`,
+  ];
+  const note = noteParts.join(' · ');
+  const item = dbInsertVideoLibraryItem({
+    folderName,
+    originalName: sanitizeVideoLibraryFileName(originalName),
+    storedName,
+    mimeType: 'video/mp4',
+    fileSize: savedFile.size,
+    sha256,
+    note,
+  });
+  void ensureVideoLibraryPreview({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
+  void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch((thumbnailError) => {
+    console.warn('[painting batch] thumbnail_generation_failed', {
+      id: item.id,
+      taskId: seedanceTaskId,
+      message: thumbnailError?.message || '',
+    });
+  });
+  return { item, duplicate: false, sourceBytes: buffer.length, savedBytes: item.fileSize };
+}
+
+// 提示词多样性提交锁：并发生成后，串行地对“已提交提示词”做相似度复核，避免两个并发任务
+// 读取到相同的旧账本后各自生成、互不比较。相似度过高时至少重写其中一条。
+const paintingBatchDiversityCommitMutex = new PaintingBatchSemaphore(1);
+
+async function rewritePromptForDiversity(requestId, apiKey, profile, idea, context, referencePrompts, initialPrompt, initialDuration) {
+  let finalPrompt = initialPrompt;
+  let finalDuration = initialDuration;
+  let rewriteAttempt = 0;
+  const refs = referencePrompts.slice();
+  while (refs.length > 0 && rewriteAttempt < 2) {
+    const maxSimilarity = Math.max(...refs.map((p) => paintingPromptSimilarity(finalPrompt, p)));
+    if (maxSimilarity < PAINTING_BATCH_PROMPT_SIMILARITY_THRESHOLD) break;
+    rewriteAttempt += 1;
+    const rewrite = await generatePaintingIdeaPromptCore(`${requestId}-rewrite${rewriteAttempt}`, apiKey, profile, idea, {
+      ...context,
+      avoidElements: refs.slice(-12).map((p) => extractPaintingDiversitySummary(p).snippet).filter(Boolean),
+      extraRequirements: `${context.extraRequirements || ''}\n【必须重写】本条提示词与同批量其他方向相似度过高（${Math.round(maxSimilarity * 100)}%）。必须更换场景、人物、服装、家具陈设、光线时段、镜头运动路径中的至少 3 项，同时保留固定方向的大框架、产品真实尺寸和物理逻辑。禁止只改房间名称或衣服颜色。`.trim(),
+    });
+    finalPrompt = rewrite.prompt;
+    finalDuration = rewrite.duration;
+  }
+  return { prompt: finalPrompt, duration: finalDuration };
+}
+
+async function generatePromptForBatchTask(task, batchRun, previousPrompts) {
+  const requestId = randomBytes(6).toString('hex');
+  const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+  if (!apiKey) {
+    throw new Error('服务端未配置 ARK_API_KEY');
+  }
+
+  const idea = {
+    id: task.ideaId,
+    title: task.ideaTitle,
+    summary: task.ideaSummary,
+    directionNumber: task.directionNumber,
+    durationMin: task.duration || batchRun.plan?.durationMin,
+    durationMax: task.duration || batchRun.plan?.durationMax,
+    ratio: batchRun.ratio,
+    stylePreset: batchRun.stylePreset,
+  };
+
+  const context = {
+    ...batchRun.plan,
+    ratio: batchRun.ratio,
+    stylePreset: batchRun.stylePreset,
+    elementVariationIndex: batchRun.variationRound,
+    previousPrompt: '',
+    avoidElements: previousPrompts.slice(-8).map((p) => extractPaintingDiversitySummary(p).snippet).filter(Boolean),
+  };
+
+  let previousPromptsForDirection = [];
+  if (batchRun.variationRound > 0) {
+    const previousTasks = dbGetPaintingBatchTasks(batchRun.batchRunId)
+      .filter((t) => t.directionNumber === task.directionNumber && t.variationRound < batchRun.variationRound && t.prompt)
+      .sort((a, b) => a.variationRound - b.variationRound);
+    if (previousTasks.length > 0) {
+      context.previousPrompt = previousTasks[previousTasks.length - 1].prompt;
+      previousPromptsForDirection = previousTasks.map((t) => t.prompt);
+    }
+  }
+
+  let lastError = null;
+  for (let attempt = 0; attempt <= PAINTING_BATCH_PROMPT_RETRY_MAX; attempt += 1) {
+    try {
+      const { prompt, duration } = await generatePaintingIdeaPromptCore(requestId, apiKey, batchRun.profile, idea, context);
+
+      const allPrevious = [...previousPrompts, ...previousPromptsForDirection];
+      return rewritePromptForDiversity(requestId, apiKey, batchRun.profile, idea, context, allPrevious, prompt, duration);
+    } catch (error) {
+      lastError = error;
+      if (attempt < PAINTING_BATCH_PROMPT_RETRY_MAX) {
+        const delay = Math.min(8000, 1000 * Math.pow(2, attempt));
+        console.warn('[painting batch] prompt generation retry', { requestId, attempt, delay, message: error?.message });
+        await sleepMs(delay);
+      }
+    }
+  }
+  throw lastError || new Error('完整提示词生成失败');
+}
+
+// 在提示词生成完成后、写入数据库前，串行地对最新“已提交提示词”做相似度复核。
+// 因为生成阶段是并发的，两个任务可能都基于同一个旧快照生成、互不比较；
+// 这里加锁后重新读取已提交的提示词，若发现相似度过高则重写，保证并发生成仍会互相比较。
+async function commitBatchPromptWithDiversity(task, batchRun, initialPrompt, initialDuration) {
+  await paintingBatchDiversityCommitMutex.acquire();
+  try {
+    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
+    const idea = {
+      id: task.ideaId,
+      title: task.ideaTitle,
+      summary: task.ideaSummary,
+      directionNumber: task.directionNumber,
+      durationMin: task.duration || batchRun.plan?.durationMin,
+      durationMax: task.duration || batchRun.plan?.durationMax,
+      ratio: batchRun.ratio,
+      stylePreset: batchRun.stylePreset,
+    };
+    const context = {
+      ...batchRun.plan,
+      ratio: batchRun.ratio,
+      stylePreset: batchRun.stylePreset,
+      elementVariationIndex: batchRun.variationRound,
+      previousPrompt: '',
+      avoidElements: [],
+    };
+    // 重新读取已提交提示词（排除自身），捕获并发生成的竞态。
+    const committedPrompts = dbGetPaintingBatchTasks(task.batchRunId)
+      .filter((t) => t.id !== task.id && t.prompt && t.status !== 'failed' && t.status !== 'stopped')
+      .map((t) => t.prompt);
+    const { prompt, duration } = await rewritePromptForDiversity(
+      `diversity-${randomBytes(3).toString('hex')}`,
+      apiKey,
+      batchRun.profile,
+      idea,
+      context,
+      committedPrompts,
+      initialPrompt,
+      initialDuration
+    );
+    dbUpdatePaintingBatchTask(task.id, {
+      prompt,
+      duration,
+      status: 'prompt_ready',
+      retryCount: 0,
+      diversityLedger: extractPaintingDiversitySummary(prompt),
+    });
+  } finally {
+    paintingBatchDiversityCommitMutex.release();
+  }
+}
+
+async function processBatchTask(taskId) {
+  let task = dbGetPaintingBatchTask(taskId);
+  if (!task) return;
+  const batchRun = dbGetPaintingBatchRun(task.batchRunId);
+  if (!batchRun) return;
+
+  const terminalStatuses = new Set(['completed', 'failed', 'stopped', 'needs_review']);
+  if (terminalStatuses.has(task.status)) {
+    return;
+  }
+
+  // 暂停：未提交任务保持暂停（由调度器决定是否推进），已提交任务仍可继续收尾。
+  if (batchRun.controlStatus === 'paused') {
+    if (!task.seedanceTaskId) {
+      dbUpdatePaintingBatchTask(task.id, { status: 'paused' });
+      return;
+    }
+  }
+
+  // 终止/停止：未提交任务直接停止，已提交任务继续轮询与入库收尾。
+  if (batchRun.controlStatus === 'stopping' || batchRun.controlStatus === 'stopped') {
+    if (!task.seedanceTaskId) {
+      dbUpdatePaintingBatchTask(task.id, { status: 'stopped' });
+      return;
+    }
+  }
+
+  if (task.status === 'queued' || task.status === 'generating_prompt' || (task.status === 'retry_waiting' && !task.seedanceTaskId)) {
+    dbUpdatePaintingBatchTask(task.id, { status: 'generating_prompt', errorMessage: '' });
+    await paintingBatchPromptSemaphore.acquire();
+    try {
+      task = dbGetPaintingBatchTask(task.id);
+      if (!task || terminalStatuses.has(task.status)) return;
+      const currentRun = dbGetPaintingBatchRun(task.batchRunId);
+      if (!currentRun || currentRun.controlStatus === 'stopping' || currentRun.controlStatus === 'stopped' || currentRun.controlStatus === 'paused') {
+        dbUpdatePaintingBatchTask(task.id, { status: currentRun?.controlStatus === 'paused' ? 'paused' : 'stopped' });
+        return;
+      }
+      const previousTasks = dbGetPaintingBatchTasks(task.batchRunId)
+        .filter((t) => t.id !== task.id && t.prompt && t.status !== 'failed' && t.status !== 'stopped')
+        .sort((a, b) => a.id - b.id);
+      const previousPrompts = previousTasks.map((t) => t.prompt);
+      const generated = await generatePromptForBatchTask(task, currentRun, previousPrompts);
+      // 串行提交 + 对最新“已提交提示词”做相似度复核，修复并发生成互不比较的竞态。
+      await commitBatchPromptWithDiversity(task, currentRun, generated.prompt, generated.duration);
+    } catch (error) {
+      const nextRetryCount = (task.retryCount || 0) + 1;
+      if (nextRetryCount > PAINTING_BATCH_PROMPT_RETRY_MAX) {
+        dbUpdatePaintingBatchTask(task.id, {
+          status: 'failed',
+          retryCount: nextRetryCount,
+          errorMessage: `提示词生成失败：${error?.message || '未知错误'}`,
+        });
+      } else {
+        dbUpdatePaintingBatchTask(task.id, {
+          status: 'retry_waiting',
+          retryCount: nextRetryCount,
+          errorMessage: `提示词生成失败（第 ${nextRetryCount} 次重试）：${error?.message || '未知错误'}`,
+        });
+      }
+      return;
+    } finally {
+      paintingBatchPromptSemaphore.release();
+    }
+  }
+
+  task = dbGetPaintingBatchTask(task.id);
+  if (!task || terminalStatuses.has(task.status)) return;
+
+  if (task.status === 'prompt_ready' || (task.status === 'retry_waiting' && task.seedanceTaskId)) {
+    if (task.seedanceTaskId) {
+      dbUpdatePaintingBatchTask(task.id, { status: 'seedance_submitted' });
+    } else {
+      dbUpdatePaintingBatchTask(task.id, { status: 'submitting_seedance', errorMessage: '' });
+      await paintingBatchSeedanceSubmitSemaphore.acquire();
+      try {
+        task = dbGetPaintingBatchTask(task.id);
+        if (!task || terminalStatuses.has(task.status)) return;
+        const currentRun = dbGetPaintingBatchRun(task.batchRunId);
+        if (!currentRun || currentRun.controlStatus === 'stopping' || currentRun.controlStatus === 'stopped' || currentRun.controlStatus === 'paused') {
+          dbUpdatePaintingBatchTask(task.id, { status: currentRun?.controlStatus === 'paused' ? 'paused' : 'stopped' });
+          return;
+        }
+
+        const { seedanceTaskId } = await submitSeedanceTaskForBatchTask(task, currentRun);
+        dbUpdatePaintingBatchTask(task.id, {
+          seedanceTaskId,
+          status: 'seedance_submitted',
+          retryCount: 0,
+          errorMessage: '',
+        });
+        // 提交到 Seedance 即视为该方向已被使用（“仅生成未使用方向”的服务端持久化依据）。
+        dbMarkPaintingDirectionUsed(currentRun.imageHash, currentRun.variationRound, task.directionNumber);
+        await sleepMs(PAINTING_BATCH_SEEDANCE_SUBMIT_INTERVAL_MS);
+      } catch (error) {
+        const nextRetryCount = (task.retryCount || 0) + 1;
+        const isFuzzy = isFuzzySeedanceTimeout(error);
+        if (isFuzzy) {
+          dbUpdatePaintingBatchTask(task.id, {
+            status: 'needs_review',
+            retryCount: nextRetryCount,
+            errorMessage: `提交 Seedance 时超时，无法确认是否已扣费：${error?.message || '未知错误'}`,
+          });
+        } else if (nextRetryCount > PAINTING_BATCH_SEEDANCE_RETRY_MAX) {
+          dbUpdatePaintingBatchTask(task.id, {
+            status: 'failed',
+            retryCount: nextRetryCount,
+            errorMessage: `提交 Seedance 失败：${error?.message || '未知错误'}`,
+          });
+        } else {
+          dbUpdatePaintingBatchTask(task.id, {
+            status: 'retry_waiting',
+            retryCount: nextRetryCount,
+            errorMessage: `提交 Seedance 失败（第 ${nextRetryCount} 次重试）：${error?.message || '未知错误'}`,
+          });
+          await sleepMs(Math.min(16000, 2000 * Math.pow(2, nextRetryCount - 1)));
+        }
+        return;
+      } finally {
+        paintingBatchSeedanceSubmitSemaphore.release();
+      }
+    }
+  }
+
+  task = dbGetPaintingBatchTask(task.id);
+  if (!task || terminalStatuses.has(task.status)) return;
+
+  if (task.status === 'seedance_submitted' || task.status === 'rendering') {
+    dbUpdatePaintingBatchTask(task.id, { status: 'rendering', errorMessage: '' });
+    await paintingBatchRenderSemaphore.acquire();
+    try {
+      const startedAt = Date.now();
+      while (true) {
+        task = dbGetPaintingBatchTask(task.id);
+        const currentRun = dbGetPaintingBatchRun(task.batchRunId);
+        if (!currentRun) {
+          dbUpdatePaintingBatchTask(task.id, { status: 'failed', errorMessage: '批量任务不存在，无法继续轮询' });
+          return;
+        }
+        // 终止/暂停后：已提交任务仍继续轮询与入库，不因 controlStatus 变化而中断（收尾语义）。
+        if (!task.seedanceTaskId) {
+          dbUpdatePaintingBatchTask(task.id, { status: 'failed', errorMessage: '缺少 Seedance 任务编号' });
+          return;
+        }
+
+        try {
+          const poll = await pollSeedanceTaskForBatch(task.seedanceTaskId);
+          if (poll.videoUrl) {
+            dbUpdatePaintingBatchTask(task.id, {
+              status: 'video_succeeded',
+              videoUrl: poll.videoUrl,
+              errorMessage: '',
+            });
+            break;
+          }
+          const statusLower = String(poll.status || '').toLowerCase();
+          if (['succeed', 'success', 'completed', 'done'].includes(statusLower)) {
+            if (poll.videoUrl) {
+              dbUpdatePaintingBatchTask(task.id, {
+                status: 'video_succeeded',
+                videoUrl: poll.videoUrl,
+                errorMessage: '',
+              });
+              break;
+            }
+            await sleepMs(3000);
+            continue;
+          }
+          if (['failed', 'failure', 'error'].includes(statusLower)) {
+            const nextRetryCount = (task.retryCount || 0) + 1;
+            if (nextRetryCount > PAINTING_BATCH_SEEDANCE_RETRY_MAX) {
+              dbUpdatePaintingBatchTask(task.id, {
+                status: 'failed',
+                retryCount: nextRetryCount,
+                errorMessage: `Seedance 渲染失败：${statusLower}`,
+              });
+            } else {
+              dbUpdatePaintingBatchTask(task.id, {
+                status: 'retry_waiting',
+                retryCount: nextRetryCount,
+                seedanceTaskId: '',
+                errorMessage: `Seedance 渲染失败（第 ${nextRetryCount} 次重试）：${statusLower}`,
+              });
+            }
+            return;
+          }
+        } catch (pollError) {
+          console.warn('[painting batch] seedance poll error', {
+            batchRunId: task.batchRunId,
+            taskId: task.id,
+            seedanceTaskId: task.seedanceTaskId,
+            message: pollError?.message,
+          });
+        }
+
+        if (Date.now() - startedAt > PAINTING_BATCH_TASK_TIMEOUT_MS) {
+          dbUpdatePaintingBatchTask(task.id, {
+            status: 'failed',
+            errorMessage: 'Seedance 渲染等待超过 15 分钟',
+          });
+          return;
+        }
+        await sleepMs(4000);
+      }
+    } finally {
+      paintingBatchRenderSemaphore.release();
+    }
+  }
+
+  task = dbGetPaintingBatchTask(task.id);
+  if (!task || terminalStatuses.has(task.status)) return;
+
+  if (task.status === 'video_succeeded' || task.status === 'saving_to_library') {
+    dbUpdatePaintingBatchTask(task.id, { status: 'saving_to_library', errorMessage: '' });
+    try {
+      const currentRun = dbGetPaintingBatchRun(task.batchRunId);
+      if (!currentRun || !currentRun.targetFolderName) {
+        throw new Error('未绑定视频素材库文件夹');
+      }
+      const folderName = dbGetVideoLibraryFolderNameById(currentRun.targetFolderId) || currentRun.targetFolderName;
+      const saveResult = await downloadAndSaveSeedanceVideoForBatch(task.seedanceTaskId, folderName, {
+        batchRunId: currentRun.batchRunId,
+        paintingName: currentRun.paintingName,
+        directionNumber: task.directionNumber,
+        ideaTitle: task.ideaTitle,
+        variationRound: task.variationRound,
+      });
+      dbUpdatePaintingBatchTask(task.id, {
+        status: 'completed',
+        libraryItemId: saveResult.item?.id || null,
+        libraryItem: saveResult.item,
+        saveRetryCount: 0,
+        errorMessage: saveResult.duplicate ? '视频已存在，未重复保存' : '',
+      });
+    } catch (error) {
+      const nextSaveRetry = (task.saveRetryCount || 0) + 1;
+      if (nextSaveRetry > PAINTING_BATCH_SAVE_RETRY_MAX) {
+        dbUpdatePaintingBatchTask(task.id, {
+          status: 'failed',
+          saveRetryCount: nextSaveRetry,
+          errorMessage: `保存素材库失败：${error?.message || '未知错误'}`,
+        });
+      } else {
+        dbUpdatePaintingBatchTask(task.id, {
+          status: 'video_succeeded',
+          saveRetryCount: nextSaveRetry,
+          errorMessage: `保存素材库失败（第 ${nextSaveRetry} 次重试）：${error?.message || '未知错误'}`,
+        });
+        await sleepMs(Math.min(16000, 2000 * Math.pow(2, nextSaveRetry - 1)));
+      }
+    }
+  }
+}
+
+const PAINTING_BATCH_TASK_FINAL_STATUSES = new Set(['completed', 'failed', 'stopped', 'needs_review']);
+
+function isBatchTaskDraining(task) {
+  // 已提交到 Seedance 但尚未收尾（仍需轮询/入库）。
+  return Boolean(task.seedanceTaskId) && ['seedance_submitted', 'rendering', 'video_succeeded', 'saving_to_library'].includes(task.status);
+}
+
+function isBatchTaskPending(task) {
+  // 尚未提交到 Seedance，仍需推进（提示词/提交），含 paused 这种等待恢复的状态。
+  return !task.seedanceTaskId && !PAINTING_BATCH_TASK_FINAL_STATUSES.has(task.status);
+}
+
+// 受控批量流水线：并发派发任务，真正的并行度由提示词/提交/渲染三级信号量控制，
+// 不会一次性同时提交 40 条；每个任务生命周期内部仍是“提示词 -> 提交 -> 轮询 -> 入库”。
+async function runBatchTaskPool(taskIds) {
+  let index = 0;
+  const limit = Math.min(PAINTING_BATCH_DISPATCH_CONCURRENCY, taskIds.length);
+  const worker = async () => {
+    while (index < taskIds.length) {
+      const taskId = taskIds[index];
+      index += 1;
+      try {
+        await processBatchTask(taskId);
+      } catch (error) {
+        console.error('[painting batch] task processing error', { taskId, message: error?.message });
+        dbUpdatePaintingBatchTask(taskId, { status: 'failed', errorMessage: `处理任务异常：${error?.message || '未知错误'}` });
+      }
+    }
+  };
+  const workers = [];
+  for (let i = 0; i < limit; i += 1) workers.push(worker());
+  await Promise.all(workers);
+}
+
+function finalizeBatchRun(batchRunId) {
+  const run = dbGetPaintingBatchRun(batchRunId);
+  if (!run) return;
+  const tasks = dbGetPaintingBatchTasks(batchRunId);
+  const hasNeedsReview = tasks.some((t) => t.status === 'needs_review');
+  const hasFailed = tasks.some((t) => t.status === 'failed');
+  const wasTerminated = run.status === 'stopping' || run.status === 'stopped';
+  const nextStatus = wasTerminated ? 'stopped' : (hasNeedsReview ? 'needs_review' : hasFailed ? 'failed' : 'completed');
+  dbUpdatePaintingBatchRun(batchRunId, { status: nextStatus, controlStatus: 'stopped' });
+}
+
+async function processBatchRun(batchRunId) {
+  if (paintingBatchRunActivePromises.has(batchRunId)) {
+    return paintingBatchRunActivePromises.get(batchRunId);
+  }
+
+  const promise = (async () => {
+    let run = dbGetPaintingBatchRun(batchRunId);
+    if (!run) return;
+
+    while (run) {
+      run = dbGetPaintingBatchRun(batchRunId);
+      if (!run) return;
+      const control = run.controlStatus;
+
+      if (control === 'paused') {
+        // 暂停：未提交任务保持 paused，已提交任务继续收尾。
+        const tasks = dbGetPaintingBatchTasks(batchRunId);
+        const draining = tasks.filter(isBatchTaskDraining);
+        for (const t of tasks) {
+          if (isBatchTaskPending(t) && t.status !== 'paused') {
+            dbUpdatePaintingBatchTask(t.id, { status: 'paused' });
+          }
+        }
+        const hasPending = tasks.some((t) => isBatchTaskPending(t));
+        if (draining.length) {
+          await runBatchTaskPool(draining.map((t) => t.id));
+        } else if (!hasPending) {
+          finalizeBatchRun(batchRunId);
+          break;
+        } else {
+          await sleepMs(1500);
+        }
+        continue;
+      }
+
+      if (control === 'stopping' || control === 'stopped') {
+        // 终止：未提交任务直接停止，已提交任务继续轮询/入库，直到全部收尾完成。
+        const tasks = dbGetPaintingBatchTasks(batchRunId);
+        for (const t of tasks) {
+          if (isBatchTaskPending(t)) {
+            dbUpdatePaintingBatchTask(t.id, { status: 'stopped', errorMessage: t.errorMessage || '批量任务已终止' });
+          }
+        }
+        const draining = tasks.filter(isBatchTaskDraining);
+        if (draining.length) {
+          await runBatchTaskPool(draining.map((t) => t.id));
+          continue;
+        }
+        finalizeBatchRun(batchRunId);
+        break;
+      }
+
+      // running
+      const tasks = dbGetPaintingBatchTasks(batchRunId);
+      const active = tasks.filter((t) => !PAINTING_BATCH_TASK_FINAL_STATUSES.has(t.status));
+      if (active.length === 0) {
+        finalizeBatchRun(batchRunId);
+        break;
+      }
+      await runBatchTaskPool(active.map((t) => t.id));
+    }
+  })();
+
+  paintingBatchRunActivePromises.set(batchRunId, promise);
+  promise.finally(() => paintingBatchRunActivePromises.delete(batchRunId));
+  return promise;
+}
+
+function enqueueBatchRun(batchRunId) {
+  if (!paintingBatchRunQueue.includes(batchRunId)) {
+    paintingBatchRunQueue.push(batchRunId);
+  }
+  if (!paintingBatchRunProcessorActive) {
+    paintingBatchRunProcessorActive = true;
+    void runPaintingBatchRunProcessor();
+  }
+}
+
+async function runPaintingBatchRunProcessor() {
+  while (paintingBatchRunQueue.length > 0) {
+    const batchRunId = paintingBatchRunQueue.shift();
+    try {
+      await processBatchRun(batchRunId);
+    } catch (error) {
+      console.error('[painting batch] processor run failed', { batchRunId, message: error?.message });
+      dbUpdatePaintingBatchRun(batchRunId, { status: 'failed', controlStatus: 'stopped' });
+    }
+  }
+  paintingBatchRunProcessorActive = false;
+}
+
+async function resumePaintingBatchRunsOnStartup() {
+  try {
+    getCollectionDb();
+    const activeRuns = dbGetActivePaintingBatchRuns();
+    console.log('[painting batch] resume on startup', { count: activeRuns.length });
+    for (const run of activeRuns) {
+      // 暂停中的批次也要恢复：已提交任务继续轮询/入库，但不再提交新的排队任务，保持暂停状态。
+      const tasks = dbGetPaintingBatchTasks(run.batchRunId);
+      for (const task of tasks) {
+        if (task.status === 'submitting_seedance') {
+          // 提交中被打断，无法确认是否已扣费：置为待复核，绝不自动重复提交（避免重复扣费）。
+          dbUpdatePaintingBatchTask(task.id, {
+            status: 'needs_review',
+            errorMessage: '服务重启时提交状态无法确认，系统未自动重复提交，请人工复核是否已生成视频',
+          });
+        } else if (task.status === 'saving_to_library') {
+          dbUpdatePaintingBatchTask(task.id, {
+            status: 'video_succeeded',
+            errorMessage: `服务重启后恢复保存：${task.errorMessage || '继续处理'}`,
+          });
+        } else if (['queued', 'generating_prompt'].includes(task.status)) {
+          // 尚未提交到 Seedance，可安全重跑提示词。
+          dbUpdatePaintingBatchTask(task.id, {
+            status: 'retry_waiting',
+            errorMessage: `服务重启后恢复：${task.errorMessage || '继续处理'}`,
+          });
+        }
+        // prompt_ready / seedance_submitted / rendering / video_succeeded 保持原状态，由调度器继续推进。
+      }
+      enqueueBatchRun(run.batchRunId);
+    }
+  } catch (error) {
+    console.error('[painting batch] resume on startup failed', error?.message || '');
   }
 }
 
@@ -14284,6 +16223,14 @@ async function handleSeedanceCreateTask(req, res) {
       taskId,
       elapsedMs: Date.now() - startedAt
     });
+
+    // 手动 / 换一轮（remix）提交成功后，标记该方向已被使用（“仅生成未使用方向”的服务端持久化依据）。
+    const manualImageHash = String(body?.imageHash || '');
+    const manualDirection = Number(body?.directionNumber) || 0;
+    const manualVariationRound = Number(body?.variationRound) || 0;
+    if (manualImageHash && manualDirection && taskId) {
+      dbMarkPaintingDirectionUsed(manualImageHash, manualVariationRound, manualDirection);
+    }
 
     sendJson(res, 200, {
       ok: true,
@@ -15832,6 +17779,67 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // 挂画全自动批量任务路由
+  if (req.method === 'GET' && url.pathname === '/api/painting/batch-runs') {
+    await handleListPaintingBatchRuns(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/painting/batch-runs/estimate') {
+    await handleGetPaintingBatchRunEstimate(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/painting/batch-runs') {
+    await handleCreatePaintingBatchRun(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/api/painting/batch-runs/')) {
+    await handleGetPaintingBatchRun(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname.startsWith('/api/painting/batch-runs/') && url.pathname.endsWith('/pause')) {
+    await handlePausePaintingBatchRun(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname.startsWith('/api/painting/batch-runs/') && url.pathname.endsWith('/resume')) {
+    await handleResumePaintingBatchRun(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname.startsWith('/api/painting/batch-runs/') && url.pathname.endsWith('/stop')) {
+    await handleStopPaintingBatchRun(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname.startsWith('/api/painting/batch-tasks/') && url.pathname.endsWith('/retry')) {
+    await handleRetryPaintingBatchTask(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname.startsWith('/api/painting/batch-tasks/') && url.pathname.endsWith('/resubmit')) {
+    await handleResubmitPaintingBatchTask(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/painting/folder-binding') {
+    await handleSetPaintingFolderBinding(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/api/painting/folder-binding/')) {
+    await handleGetPaintingFolderBinding(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/painting/used-directions') {
+    await handleGetPaintingUsedDirections(req, res);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/copy/analyze') {
     await handleCopyAnalyze(req, res);
     return;
@@ -16127,16 +18135,45 @@ const server = createServer(async (req, res) => {
   await serveStatic(req, res, url.pathname);
 });
 
-server.listen(PORT, HOST, () => {
-  logFrontendSelection();
-  console.log(`Server running at http://${HOST}:${PORT}`);
-  cleanupExpiredUploadTempFilesOnStartup().catch((error) => {
-    console.error('[runtime uploads] cleanup_failed', {
-      requestId: 'startup_cleanup',
-      targetPath: UPLOAD_TEMP_DIR,
-      cleanupReason: 'startup_bootstrap',
-      message: error?.message || '',
-      code: error?.code || ''
+// 测试友好：KELONG_SKIP_LISTEN=1 时只初始化不监听端口，便于脚本 import 复用真实逻辑做无费测试。
+if (process.env.KELONG_SKIP_LISTEN !== '1') {
+  server.listen(PORT, HOST, () => {
+    logFrontendSelection();
+    console.log(`Server running at http://${HOST}:${PORT}`);
+    cleanupExpiredUploadTempFilesOnStartup().catch((error) => {
+      console.error('[runtime uploads] cleanup_failed', {
+        requestId: 'startup_cleanup',
+        targetPath: UPLOAD_TEMP_DIR,
+        cleanupReason: 'startup_bootstrap',
+        message: error?.message || '',
+        code: error?.code || ''
+      });
+    });
+    // 服务重启后恢复未完成的挂画全自动批量任务，保证队列可继续处理。
+    resumePaintingBatchRunsOnStartup().catch((error) => {
+      console.error('[painting batch] startup resume failed', {
+        message: error?.message || ''
+      });
     });
   });
-});
+}
+
+// 供无费测试脚本复用真实逻辑（不调用真实 Seedance / 豆包）。
+export {
+  getCollectionDb,
+  ensurePaintingBatchIdempotencyConstraints,
+  dbInsertPaintingBatchRun,
+  dbInsertPaintingBatchTask,
+  dbGetPaintingBatchTask,
+  dbUpdatePaintingBatchTask,
+  dbGetPaintingBatchRun,
+  dbGetActivePaintingBatchRuns,
+  dbMarkPaintingDirectionUsed,
+  dbGetPaintingUsedDirections,
+  handleRetryPaintingBatchTask,
+  handleResubmitPaintingBatchTask,
+  paintingPromptSimilarity,
+  rewritePromptForDiversity,
+  extractPaintingDiversitySummary,
+  PaintingBatchSemaphore,
+};
