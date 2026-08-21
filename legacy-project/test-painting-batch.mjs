@@ -29,11 +29,18 @@ const {
   dbInsertPaintingBatchTask,
   dbGetPaintingBatchTask,
   dbGetPaintingBatchRun,
+  dbUpdatePaintingBatchRun,
   dbGetActivePaintingBatchRuns,
   dbMarkPaintingDirectionUsed,
   dbGetPaintingUsedDirections,
   handleRetryPaintingBatchTask,
   handleResubmitPaintingBatchTask,
+  handleCreatePaintingBatchRun,
+  handleGetPaintingBatchRunEstimate,
+  getSeedanceRatePerSecond,
+  computePaintingBatchCostEstimate,
+  PAINTING_BATCH_MODEL,
+  PAINTING_BATCH_MODEL_REJECT_MESSAGE,
   paintingPromptSimilarity,
   rewritePromptForDiversity,
   PaintingBatchSemaphore,
@@ -212,7 +219,7 @@ console.log('\n[3] 有 taskId：重试只触发查询，不触发创建');
 // ===== T3b 重新提交的二次确认门槛 =====
 console.log('\n[3b] 重新提交：无 taskId 且未确认 -> 阻止；有 taskId -> 阻止');
 {
-  dbInsertPaintingBatchRun({ batchRunId: 'run-t3b', paintingName: 't3b', status: 'running', controlStatus: 'running', imageHash: 'hash-t3b' });
+  dbInsertPaintingBatchRun({ batchRunId: 'run-t3b', paintingName: 't3b', status: 'running', controlStatus: 'running', imageHash: 'hash-t3b', model: PAINTING_BATCH_MODEL });
   const noTask = dbInsertPaintingBatchTask({ batchRunId: 'run-t3b', directionNumber: 1, batchIndex: 0, variationRound: 0, status: 'needs_review', seedanceTaskId: '', prompt: '', duration: 8 });
   const hasTask = dbInsertPaintingBatchTask({ batchRunId: 'run-t3b', directionNumber: 2, batchIndex: 0, variationRound: 0, status: 'needs_review', seedanceTaskId: 'seed-t3b-exists', prompt: 'p', duration: 8 });
 
@@ -285,6 +292,194 @@ console.log('\n[6] 并发提示词相似度复核');
   sem.release();
   await second;
   assert(secondAcquired === true, '提交锁互斥：release 后放行');
+}
+
+// ===== T7 Seedance 按秒单价 =====
+console.log('\n[7] Seedance 按秒单价（元/秒）');
+{
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615') === 0.2, 'Mini = 0.2 元/秒');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-260128') === 1.0, '2.0 = 1.0 元/秒');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-5-260628') === 1.5, '2.5 = 1.5 元/秒');
+  assert(getSeedanceRatePerSecond('doubao-seedance-unknown') === null, '未知模型返回 null（无兜底单价）');
+}
+
+// ===== T8 40×8s = 320s / ¥64.00 =====
+console.log('\n[8] 费用估算：40 条 × 8s = 320s / ¥64.00');
+{
+  const ideas = Array.from({ length: 40 }, (_, i) => ({ id: `i${i}`, directionNumber: i + 1, durationMin: 8, durationMax: 8 }));
+  const est = computePaintingBatchCostEstimate(ideas, { durationMin: 8, durationMax: 8 }, 'doubao-seedance-2-0-mini-260615', '720p');
+  assert(est.ratePerSecond === 0.2, 'ratePerSecond = 0.2', JSON.stringify(est));
+  assert(est.totalMinSeconds === 320 && est.totalMaxSeconds === 320, '总时长 = 320s（min==max）', `${est.totalMinSeconds}/${est.totalMaxSeconds}`);
+  assert(est.estimatedCostMin === 64 && est.estimatedCostMax === 64, '费用 = ¥64.00（单一数值）', `${est.estimatedCostMin}/${est.estimatedCostMax}`);
+  assert(est.currency === 'CNY', 'currency = CNY');
+  assert(typeof est.pricingNote === 'string' && est.pricingNote.includes('实际以平台账单为准'), 'pricingNote 保留“实际以平台账单为准”');
+}
+
+// ===== T9 39×8s + 方向29(4-6s) = 316-318s / ¥63.20-¥63.60 =====
+console.log('\n[9] 费用估算：39 条 × 8s + 方向29(4-6s) = 316-318s / ¥63.20-¥63.60');
+{
+  const ideas = Array.from({ length: 39 }, (_, i) => ({ id: `i${i}`, directionNumber: i + 1, durationMin: 8, durationMax: 8 }));
+  ideas.push({ id: 'i29', directionNumber: 29, durationMin: 4, durationMax: 6 });
+  const est = computePaintingBatchCostEstimate(ideas, { durationMin: 8, durationMax: 8 }, 'doubao-seedance-2-0-mini-260615', '720p');
+  assert(est.totalMinSeconds === 316 && est.totalMaxSeconds === 318, '总时长 = 316-318s', `${est.totalMinSeconds}/${est.totalMaxSeconds}`);
+  assert(est.estimatedCostMin === 63.2 && est.estimatedCostMax === 63.6, '费用 = ¥63.20-¥63.60', `${est.estimatedCostMin}/${est.estimatedCostMax}`);
+}
+
+// ===== T10 min==max 单一数值（区间退化为单一值） =====
+console.log('\n[10] min==max 时总时长与费用均为单一数值');
+{
+  const ideas = Array.from({ length: 40 }, (_, i) => ({ id: `i${i}`, directionNumber: i + 1, durationMin: 8, durationMax: 8 }));
+  const est = computePaintingBatchCostEstimate(ideas, { durationMin: 8, durationMax: 8 }, 'doubao-seedance-2-0-mini-260615', '720p');
+  assert(est.totalMinSeconds === est.totalMaxSeconds, '总时长 min==max（单一数值）', `${est.totalMinSeconds}/${est.totalMaxSeconds}`);
+  assert(est.estimatedCostMin === est.estimatedCostMax, '费用 min==max（单一数值）');
+}
+
+// ===== T11 未知模型无兜底 =====
+console.log('\n[11] 未知模型：无 0.5 兜底 → 费用估算为 null（前端显示“暂无法估算”）');
+{
+  const ideas = Array.from({ length: 40 }, (_, i) => ({ id: `i${i}`, directionNumber: i + 1, durationMin: 8, durationMax: 8 }));
+  const est = computePaintingBatchCostEstimate(ideas, { durationMin: 8, durationMax: 8 }, 'doubao-seedance-unknown', '720p');
+  assert(est.ratePerSecond === null, 'ratePerSecond = null');
+  assert(est.estimatedCostMin === null && est.estimatedCostMax === null, '费用估算为 null（无 0.5 兜底）', JSON.stringify(est));
+}
+
+// ===== T12 批量估算接口：拒绝 2.0/2.5，接受 Mini =====
+console.log('\n[12] 批量估算接口：拒绝 2.0/2.5，接受 Mini');
+{
+  const resReject20 = mockRes();
+  await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-260128'), resReject20);
+  assert(resReject20._code === 400, '2.0 模型返回 400', `code=${resReject20._code}`);
+
+  const resReject25 = mockRes();
+  await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-5-260628'), resReject25);
+  assert(resReject25._code === 400, '2.5 模型返回 400', `code=${resReject25._code}`);
+
+  const resMini = mockRes();
+  await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-mini-260615'), resMini);
+  const bodyMini = jsonBody(resMini);
+  assert(resMini._code === 200 && bodyMini.estimate?.ratePerSecond === 0.2, 'Mini 返回 200 且 ratePerSecond=0.2', JSON.stringify(bodyMini));
+  assert(bodyMini.estimate?.model === PAINTING_BATCH_MODEL && bodyMini.estimate?.currency === 'CNY', '返回新结构（model/currency/ratePerSecond）', JSON.stringify(bodyMini));
+
+  const resDefault = mockRes();
+  await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate'), resDefault);
+  const bodyDefault = jsonBody(resDefault);
+  assert(resDefault._code === 200 && bodyDefault.estimate?.model === PAINTING_BATCH_MODEL, '未传模型时默认 Mini', JSON.stringify(bodyDefault));
+}
+
+// ===== T13 历史非 Mini 批次：无 taskId 禁止重新提交 =====
+console.log('\n[13] 历史非 Mini 批次：无 taskId 禁止重新提交');
+{
+  dbInsertPaintingBatchRun({ batchRunId: 'run-nonmini', paintingName: 'nonmini', status: 'running', controlStatus: 'running', imageHash: 'hash-nonmini', model: 'doubao-seedance-2-0-260128' });
+  const task = dbInsertPaintingBatchTask({ batchRunId: 'run-nonmini', directionNumber: 1, batchIndex: 0, variationRound: 0, status: 'needs_review', seedanceTaskId: '', prompt: '', duration: 8 });
+  const res = mockRes();
+  await handleResubmitPaintingBatchTask(mockReq(`/api/painting/batch-tasks/${task.id}/resubmit`, { confirm: true }), res);
+  const body = jsonBody(res);
+  assert(res._code === 400, '非 Mini 历史批次返回 400', `code=${res._code}`);
+  assert(String(body.error).includes('非 Mini 模型'), '错误信息提示非 Mini 模型', JSON.stringify(body));
+  assert(dbGetPaintingBatchTask(task.id).status === 'needs_review', '任务状态未改动（仍 needs_review）');
+}
+
+// ===== T14 历史非 Mini 批次：有 taskId 仍可查询/保存（不重新提交） =====
+console.log('\n[14] 历史非 Mini 批次：有 taskId 仍可查询/保存（不重新提交）');
+{
+  dbInsertPaintingBatchRun({ batchRunId: 'run-nonmini-q', paintingName: 'nmq', status: 'running', controlStatus: 'running', imageHash: 'hash-nmq', model: 'doubao-seedance-2-0-260128' });
+  const task = dbInsertPaintingBatchTask({ batchRunId: 'run-nonmini-q', directionNumber: 1, batchIndex: 0, variationRound: 0, status: 'needs_review', seedanceTaskId: 'seed-nmq-exists', prompt: 'p', duration: 8 });
+  const createBefore = fetchCalls.filter((c) => c.method === 'POST' && c.url.includes('/contents/generations/tasks')).length;
+  const res = mockRes();
+  await handleRetryPaintingBatchTask(mockReq(`/api/painting/batch-tasks/${task.id}/retry`), res);
+  assert(res._code === 200, '非 Mini 历史任务有 taskId 仍可查询', `code=${res._code}`);
+  assert(dbGetPaintingBatchTask(task.id).seedanceTaskId === 'seed-nmq-exists', 'seedanceTaskId 保留未清空');
+  const createAfter = fetchCalls.filter((c) => c.method === 'POST' && c.url.includes('/contents/generations/tasks')).length;
+  assert(createAfter === createBefore, '未触发任何 Seedance 创建(提交)调用');
+}
+
+// ===== T15 options_json 费用估算快照 =====
+console.log('\n[15] options_json 费用估算快照（创建时写入，可追溯）');
+{
+  const est = computePaintingBatchCostEstimate(
+    Array.from({ length: 40 }, (_, i) => ({ id: `i${i}`, directionNumber: i + 1, durationMin: 8, durationMax: 8 })),
+    { durationMin: 8, durationMax: 8 },
+    PAINTING_BATCH_MODEL,
+    '720p',
+  );
+  const run = dbInsertPaintingBatchRun({
+    batchRunId: 'run-snapshot',
+    paintingName: 'snapshot',
+    status: 'running',
+    controlStatus: 'running',
+    imageHash: 'hash-snapshot',
+    model: PAINTING_BATCH_MODEL,
+    resolution: '720p',
+    options: { costEstimate: est },
+  });
+  const fetched = dbGetPaintingBatchRun('run-snapshot');
+  const ce = fetched.options?.costEstimate;
+  assert(!!ce, 'options_json 中保存了 costEstimate 快照', JSON.stringify(fetched.options));
+  assert(ce.ratePerSecond === 0.2 && ce.totalMinSeconds === 320 && ce.totalMaxSeconds === 320, '快照含单价与总时长', JSON.stringify(ce));
+  assert(ce.estimatedCostMin === 64 && ce.estimatedCostMax === 64, '快照含费用估算', JSON.stringify(ce));
+  assert(fetched.model === PAINTING_BATCH_MODEL, '批次 model 固定为 Mini', fetched.model);
+}
+
+// ===== T16 按秒单价真正校验分辨率 =====
+console.log('\n[16] 按秒单价：真正校验分辨率');
+{
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '720p') === 0.2, 'Mini + 720p = 0.2');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '720P') === 0.2, 'Mini + 720P(大写) = 0.2');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '1080p') === null, 'Mini + 1080p = null');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '4k') === null, 'Mini + 4k = null');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615') === 0.2, 'Mini + 未传分辨率（默认720p）= 0.2');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-260128', '1080p') === null, '2.0 + 1080p = null');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-5-260628', '720p') === 1.5, '2.5 + 720p = 1.5（手动模式仍可用）');
+}
+
+// ===== T17 创建批次接口：接受 720P，拒绝 1080P/4K =====
+console.log('\n[17] 创建批次接口：接受 720P，拒绝 1080P/4K');
+{
+  const ideas = Array.from({ length: 40 }, (_, i) => ({ id: `c${i}`, directionNumber: i + 1, durationMin: 8, durationMax: 8 }));
+  const IMG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const baseBody = { image: IMG, profile: { name: '测试挂画', style: '新中式', subject: '山水' }, plan: { durationMin: 8, durationMax: 8, ratio: '9:16', stylePreset: 'modern-minimal' }, ideas, model: 'doubao-seedance-2-0-mini-260615' };
+
+  const res1080 = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, resolution: '1080p' }), res1080);
+  assert(res1080._code === 400, 'Mini + 1080p 返回 400', `code=${res1080._code}`);
+  assert(String(jsonBody(res1080).error).includes('仅支持720P'), '错误提示“仅支持720P”', jsonBody(res1080).error);
+
+  const res4k = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, resolution: '4k' }), res4k);
+  assert(res4k._code === 400, 'Mini + 4k 返回 400', `code=${res4k._code}`);
+
+  const res720 = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, resolution: '720p' }), res720);
+  const body720 = jsonBody(res720);
+  assert(res720._code === 202, 'Mini + 720p 返回 202', `code=${res720._code}`);
+  assert(!!body720.batchRunId, '返回 batchRunId', JSON.stringify(body720));
+  const run720 = dbGetPaintingBatchRun(body720.batchRunId);
+  assert(run720.model === PAINTING_BATCH_MODEL && String(run720.resolution).toLowerCase() === '720p', '批次 model=Mini 且 resolution=720p', JSON.stringify({ model: run720.model, resolution: run720.resolution }));
+  // 立即停止该批次，避免后台处理器在后续断言期间产生噪声。
+  dbUpdatePaintingBatchRun(body720.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+}
+
+// ===== T18 历史非 720P 批次：有 taskId 可查询，无 taskId 禁止重提 =====
+console.log('\n[18] 历史非 720P 批次：有 taskId 可查询，无 taskId 禁止重提');
+{
+  // 无 taskId：禁止重新提交
+  dbInsertPaintingBatchRun({ batchRunId: 'run-non720p', paintingName: 'non720p', status: 'running', controlStatus: 'running', imageHash: 'hash-non720p', model: PAINTING_BATCH_MODEL, resolution: '1080p' });
+  const noTask = dbInsertPaintingBatchTask({ batchRunId: 'run-non720p', directionNumber: 1, batchIndex: 0, variationRound: 0, status: 'needs_review', seedanceTaskId: '', prompt: '', duration: 8 });
+  const resNoTask = mockRes();
+  await handleResubmitPaintingBatchTask(mockReq(`/api/painting/batch-tasks/${noTask.id}/resubmit`, { confirm: true }), resNoTask);
+  assert(resNoTask._code === 400, '非 720P 历史批次无 taskId 返回 400', `code=${resNoTask._code}`);
+  assert(String(jsonBody(resNoTask).error).includes('非 720P'), '错误信息提示非 720P 分辨率', jsonBody(resNoTask).error);
+  assert(dbGetPaintingBatchTask(noTask.id).status === 'needs_review', '任务状态未改动（仍 needs_review）');
+
+  // 有 taskId：仍可查询/保存（不重新提交）
+  const hasTask = dbInsertPaintingBatchTask({ batchRunId: 'run-non720p', directionNumber: 2, batchIndex: 0, variationRound: 0, status: 'needs_review', seedanceTaskId: 'seed-non720p-exists', prompt: 'p', duration: 8 });
+  const createBefore = fetchCalls.filter((c) => c.method === 'POST' && c.url.includes('/contents/generations/tasks')).length;
+  const resHasTask = mockRes();
+  await handleRetryPaintingBatchTask(mockReq(`/api/painting/batch-tasks/${hasTask.id}/retry`), resHasTask);
+  assert(resHasTask._code === 200, '非 720P 历史任务有 taskId 仍可查询', `code=${resHasTask._code}`);
+  assert(dbGetPaintingBatchTask(hasTask.id).seedanceTaskId === 'seed-non720p-exists', 'seedanceTaskId 保留未清空');
+  const createAfter = fetchCalls.filter((c) => c.method === 'POST' && c.url.includes('/contents/generations/tasks')).length;
+  assert(createAfter === createBefore, '未触发任何 Seedance 创建(提交)调用');
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);

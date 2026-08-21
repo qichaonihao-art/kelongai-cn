@@ -12893,6 +12893,53 @@ function handlePaintingTaskStatus(req, res, taskId) {
   });
 }
 
+// ===== 挂画全自动批量：模型与费用 =====
+// 全自动批量模式固定使用 Seedance 2.0 Mini，禁止跟随手动面板模型，也禁止另外两种高价模型，避免误产生过高费用。
+const PAINTING_BATCH_MODEL = 'doubao-seedance-2-0-mini-260615';
+const PAINTING_BATCH_MODEL_LABEL = 'Seedance 2.0 Mini';
+const PAINTING_BATCH_MODEL_REJECT_MESSAGE = '全自动批量生成仅支持 Seedance 2.0 Mini 模型，以避免产生过高费用。';
+
+// 按秒单价（元/秒）。当前系统只配置了 720P 档位；其他分辨率价格尚未确认，一律返回 null，调用方需显示“暂无法估算”。
+function getSeedanceRatePerSecond(model, resolution = '720p') {
+  const m = String(model || '');
+  const res = String(resolution || '720p').toLowerCase();
+  if (res !== '720p') return null;
+  if (m === 'doubao-seedance-2-0-mini-260615') return 0.2;
+  if (m === 'doubao-seedance-2-0-260128') return 1.0;
+  if (m === 'doubao-seedance-2-5-260628') return 1.5;
+  return null;
+}
+
+function roundMoney(value) {
+  return Number((Number(value) || 0).toFixed(2));
+}
+
+// 计算创建当时的费用估算快照：所有待生成视频预计时长总和 × 每秒单价。
+// 方向 29 已在创意生成阶段固定为 durationMin=4 / durationMax=6，这里直接按其各自时长累加。
+function computePaintingBatchCostEstimate(selectedIdeas, plan, model, resolution) {
+  const ratePerSecond = getSeedanceRatePerSecond(model, resolution);
+  let totalMinSeconds = 0;
+  let totalMaxSeconds = 0;
+  for (const idea of selectedIdeas || []) {
+    const min = Number(idea?.durationMin) || Number(plan?.durationMin) || 0;
+    const max = Number(idea?.durationMax) || Number(plan?.durationMax) || 0;
+    totalMinSeconds += min > 0 ? min : 0;
+    totalMaxSeconds += max > 0 ? max : 0;
+  }
+  return {
+    model,
+    resolution: String(resolution || '720p'),
+    ratePerSecond,
+    totalMinSeconds,
+    totalMaxSeconds,
+    estimatedCostMin: ratePerSecond == null ? null : roundMoney(totalMinSeconds * ratePerSecond),
+    estimatedCostMax: ratePerSecond == null ? null : roundMoney(totalMaxSeconds * ratePerSecond),
+    currency: 'CNY',
+    pricingNote: '费用按提交给 Seedance 的 720P 设置时长估算，实际以平台账单为准。',
+    estimatedAt: Math.floor(Date.now() / 1000),
+  };
+}
+
 async function handleCreatePaintingBatchRun(req, res) {
   try {
     if (!paintingBatchIdempotencyReady) {
@@ -12961,8 +13008,19 @@ async function handleCreatePaintingBatchRun(req, res) {
       return;
     }
 
-    const model = readValue(body.model) || 'doubao-seedance-2-0-260128';
+    // 全自动批量模式固定 Mini 模型：收到任何非 Mini 模型直接拒绝，不跟随手动面板当前模型。
+    const requestedModel = readValue(body.model);
+    if (requestedModel && requestedModel !== PAINTING_BATCH_MODEL) {
+      sendJson(res, 400, { error: PAINTING_BATCH_MODEL_REJECT_MESSAGE });
+      return;
+    }
+    const model = PAINTING_BATCH_MODEL;
     const resolution = readValue(body.resolution) || '720p';
+    // 批量模式固定 720P：收到任何非 720P 分辨率直接拒绝，避免实际提交参数与费用口径不一致。
+    if (String(resolution).toLowerCase() !== '720p') {
+      sendJson(res, 400, { error: '全自动批量生成目前仅支持720P，其他分辨率价格尚未确认。' });
+      return;
+    }
     const ratio = readValue(body.ratio) || '9:16';
     const variationRound = Math.max(0, Math.min(2, Number(body.variationRound) || 0));
     const onlyUnused = body.onlyUnused === 'true' || body.onlyUnused === true;
@@ -13011,6 +13069,12 @@ async function handleCreatePaintingBatchRun(req, res) {
     }
 
     const batchRunId = `pb-${randomBytes(8).toString('hex')}`;
+    // 创建当时的费用估算快照，写入 options_json，供后续价格配置变化时仍能追溯当时的估算依据。
+    const costEstimate = computePaintingBatchCostEstimate(selectedIdeas, plan, model, resolution);
+    const batchOptions = {
+      ...(body.options && typeof body.options === 'object' ? body.options : {}),
+      costEstimate,
+    };
     const run = dbInsertPaintingBatchRun({
       batchRunId,
       paintingName: profile.name || '未命名挂画',
@@ -13031,7 +13095,7 @@ async function handleCreatePaintingBatchRun(req, res) {
       targetFolderName,
       status: 'running',
       controlStatus: 'running',
-      options: body.options || {},
+      options: batchOptions,
     });
 
     for (let index = 0; index < selectedIdeas.length; index += 1) {
@@ -13247,6 +13311,23 @@ async function handleResubmitPaintingBatchTask(req, res) {
       });
       return;
     }
+    // 历史非 Mini 批次（含空模型，提交时会回落为 2.0）禁止重新提交新任务，需用户创建新的 Mini 批次。
+    const batchRun = dbGetPaintingBatchRun(task.batchRunId);
+    const batchModel = String(batchRun?.model || '');
+    if (batchModel !== PAINTING_BATCH_MODEL) {
+      sendJson(res, 400, {
+        error: '该历史批次使用的是非 Mini 模型，为避免过高费用禁止重新提交。请基于当前图片创建新的 Seedance 2.0 Mini 批次重新生成。',
+      });
+      return;
+    }
+    // 历史非 720P 批次同样禁止重新提交，避免价格口径不一致。
+    const batchResolution = String(batchRun?.resolution || '').toLowerCase();
+    if (batchResolution && batchResolution !== '720p') {
+      sendJson(res, 400, {
+        error: '该历史批次使用的是非 720P 分辨率，为避免价格口径不一致禁止重新提交。请基于当前图片创建新的 Seedance 2.0 Mini 720P 批次重新生成。',
+      });
+      return;
+    }
     if (!confirmed) {
       sendJson(res, 400, {
         error: '重新提交会再次调用 Seedance 并可能再次扣费。请先在 Seedance 后台确认该方向上游确实没有生成视频，再确认重新提交。',
@@ -13339,17 +13420,23 @@ async function handleGetPaintingBatchRunEstimate(req, res) {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const params = url.searchParams;
-    const model = readValue(params.get('model')) || 'doubao-seedance-2-0-260128';
-    const totalDirections = Math.min(120, Math.max(1, Number(params.get('totalDirections')) || 40));
-    const isSeedance25 = model === 'doubao-seedance-2-5-260628';
-    const costPerVideo = isSeedance25 ? 0.8 : 0.5;
+    // 批量模式固定 Mini：收到其他模型直接拒绝，不返回误导性的“每条价格”。
+    const requestedModel = readValue(params.get('model'));
+    if (requestedModel && requestedModel !== PAINTING_BATCH_MODEL) {
+      sendJson(res, 400, { error: PAINTING_BATCH_MODEL_REJECT_MESSAGE });
+      return;
+    }
+    const model = PAINTING_BATCH_MODEL;
+    const resolution = readValue(params.get('resolution')) || '720p';
+    const ratePerSecond = getSeedanceRatePerSecond(model, resolution);
     sendJson(res, 200, {
       ok: true,
       estimate: {
-        totalDirections,
-        costPerVideo,
-        estimatedCost: Number((totalDirections * costPerVideo).toFixed(2)),
-        duration: isSeedance25 ? '15-30 秒' : '4-15 秒',
+        model,
+        resolution,
+        ratePerSecond,
+        currency: 'CNY',
+        pricingNote: '费用按提交给 Seedance 的 720P 设置时长估算，实际以平台账单为准。',
       },
     });
   } catch (error) {
@@ -18167,13 +18254,20 @@ export {
   dbGetPaintingBatchTask,
   dbUpdatePaintingBatchTask,
   dbGetPaintingBatchRun,
+  dbUpdatePaintingBatchRun,
   dbGetActivePaintingBatchRuns,
   dbMarkPaintingDirectionUsed,
   dbGetPaintingUsedDirections,
   handleRetryPaintingBatchTask,
   handleResubmitPaintingBatchTask,
+  handleCreatePaintingBatchRun,
+  handleGetPaintingBatchRunEstimate,
   paintingPromptSimilarity,
   rewritePromptForDiversity,
   extractPaintingDiversitySummary,
   PaintingBatchSemaphore,
+  PAINTING_BATCH_MODEL,
+  PAINTING_BATCH_MODEL_REJECT_MESSAGE,
+  getSeedanceRatePerSecond,
+  computePaintingBatchCostEstimate,
 };

@@ -891,10 +891,28 @@ export interface PaintingFolderBinding {
 }
 
 export interface PaintingBatchRunEstimate {
-  totalDirections: number;
-  costPerVideo: number;
-  estimatedCost: number;
-  duration: string;
+  model: string;
+  resolution: string;
+  ratePerSecond: number | null;
+  currency: string;
+  pricingNote: string;
+}
+
+// 全自动批量模式固定使用 Seedance 2.0 Mini，禁止跟随手动面板模型。
+export const SEEDANCE_BATCH_MODEL = 'doubao-seedance-2-0-mini-260615';
+export const SEEDANCE_BATCH_MODEL_LABEL = 'Seedance 2.0 Mini';
+export const SEEDANCE_BATCH_RESOLUTION = '720p';
+export const SEEDANCE_PRICING_NOTE = '费用按提交给 Seedance 的 720P 设置时长估算，实际以平台账单为准。';
+
+// 按秒单价（元/秒），与后端 getSeedanceRatePerSecond 保持一致，作为前端唯一的 Seedance 价格来源。
+// 当前系统只配置了 720P 档位口径；未知模型或非 720P 分辨率返回 null，调用方需显示“暂无法估算”，不得用固定单价兜底。
+export function getSeedanceRatePerSecond(model: string, resolution = '720p'): number | null {
+  const res = String(resolution || '720p').toLowerCase();
+  if (res !== '720p') return null;
+  if (model === 'doubao-seedance-2-0-mini-260615') return 0.2;
+  if (model === 'doubao-seedance-2-0-260128') return 1.0;
+  if (model === 'doubao-seedance-2-5-260628') return 1.5;
+  return null;
 }
 
 export interface CreatePaintingBatchRunOptions {
@@ -931,11 +949,11 @@ async function readJsonError(response: Response, fallback: string): Promise<Erro
 
 export async function getPaintingBatchRunEstimate(options: {
   model?: string;
-  totalDirections?: number;
+  resolution?: string;
 }): Promise<PaintingBatchRunEstimate> {
   const params = new URLSearchParams();
   if (options.model) params.set('model', options.model);
-  if (options.totalDirections) params.set('totalDirections', String(options.totalDirections));
+  if (options.resolution) params.set('resolution', options.resolution);
   const response = await fetch(`/api/painting/batch-runs/estimate?${params.toString()}`, {
     credentials: 'include',
   });

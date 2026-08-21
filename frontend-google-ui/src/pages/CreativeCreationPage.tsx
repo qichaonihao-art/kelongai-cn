@@ -51,7 +51,11 @@ import {
   stopPaintingBatchRun,
   retryPaintingBatchTask,
   resubmitPaintingBatchTask,
-  getPaintingBatchRunEstimate,
+  getSeedanceRatePerSecond,
+  SEEDANCE_BATCH_MODEL,
+  SEEDANCE_BATCH_MODEL_LABEL,
+  SEEDANCE_BATCH_RESOLUTION,
+  SEEDANCE_PRICING_NOTE,
   getPaintingFolderBinding,
   getPaintingUsedDirections,
   sha256File,
@@ -67,7 +71,6 @@ import {
   type PaintingBatchRunDetail,
   type PaintingBatchTask,
   type PaintingBatchTaskStatus,
-  type PaintingBatchRunEstimate,
 } from "@/src/lib/creative";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -477,13 +480,11 @@ function roundCost(value: number) {
   return Math.round((value || 0) * 100) / 100;
 }
 
-function recordSeedanceCost(durationSeconds: number, model: SeedanceModelId) {
-  // 单价按 720P 档位估算（元/秒），仅用于右上角本地消耗统计。
-  const ratePerSecond = model === 'doubao-seedance-2-5-260628'
-    ? 1.5
-    : model === 'doubao-seedance-2-0-mini-260615'
-      ? 0.2
-      : 1.0;
+function recordSeedanceCost(durationSeconds: number, model: SeedanceModelId, resolution = '720p') {
+  // 单价按 720P 档位估算（元/秒），复用统一的按秒价格来源，仅用于右上角本地消耗统计。
+  // 非 720P 分辨率价格尚未确认，getSeedanceRatePerSecond 返回 null 时跳过记录。
+  const ratePerSecond = getSeedanceRatePerSecond(model, resolution);
+  if (ratePerSecond == null) return;
   const cost = roundCost(Math.max(0, durationSeconds) * ratePerSecond);
   const today = getTodayKey();
   const month = getMonthKey();
@@ -1568,7 +1569,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchPreparing, setPaintingBatchPreparing] = useState(false);
   const [paintingBatchIdeas, setPaintingBatchIdeas] = useState<PaintingIdeaSummary[]>([]);
   const [paintingBatchOnlyUnused, setPaintingBatchOnlyUnused] = useState(true);
-  const [paintingBatchEstimate, setPaintingBatchEstimate] = useState<PaintingBatchRunEstimate | null>(null);
   const [paintingBatchFolder, setPaintingBatchFolder] = useState(loadLastVideoLibraryFolder);
   const [paintingBatchFolderId, setPaintingBatchFolderId] = useState<number | null>(null);
   const [paintingBatchFolderList, setPaintingBatchFolderList] = useState<string[]>([]);
@@ -2816,7 +2816,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       });
       recordSeedanceCost(
         isVideoEdit ? Math.ceil(videoEditSourceDuration || 0) : duration,
-        isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel
+        isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel,
+        seedanceResolution
       );
     } catch (error) {
       setSeedanceError(error instanceof Error ? error.message : 'Seedance 创建任务失败');
@@ -3494,12 +3495,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingBatchIdeas(ideas);
       setPaintingVariationRound(variationRound);
 
-      const estimate = await getPaintingBatchRunEstimate({
-        model: seedanceModel,
-        totalDirections: ideas.length,
-      });
-      setPaintingBatchEstimate(estimate);
-
       const folders = await getVideoLibraryFolders().catch(() => [] as string[]);
       const availableFolders = folders.length ? folders : ['通用素材'];
       setPaintingBatchFolderList(availableFolders);
@@ -3557,8 +3552,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         plan: paintingPlan,
         ideas,
         totalDirections: ideas.length,
-        model: seedanceModel,
-        resolution: seedanceResolution,
+        model: SEEDANCE_BATCH_MODEL,
+        resolution: SEEDANCE_BATCH_RESOLUTION,
         ratio: paintingPlan.ratio || seedanceRatio,
         variationRound: paintingVariationRound,
         generateAudio: seedanceGenerateAudio,
@@ -6850,8 +6845,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
             <dl className="mt-4 grid grid-cols-2 gap-2 text-xs">
               {[
-                ['生成模型', seedanceModel === 'doubao-seedance-2-5-260628' ? 'Seedance 2.5' : seedanceModel === 'doubao-seedance-2-0-mini-260615' ? 'Seedance 2.0 Mini' : 'Seedance 2.0'],
-                ['清晰度', seedanceResolution],
+                ['批量模型', `${SEEDANCE_BATCH_MODEL_LABEL}（固定）`],
+                ['清晰度', `${SEEDANCE_BATCH_RESOLUTION.toUpperCase()}（固定）`],
+                ['计费单价', `${getSeedanceRatePerSecond(SEEDANCE_BATCH_MODEL, SEEDANCE_BATCH_RESOLUTION) ?? '暂无法估算'}元/秒`],
                 ['画面比例', paintingPlan.ratio || seedanceRatio],
                 ['单条时长', `${paintingPlan.durationMin}-${paintingPlan.durationMax} 秒`],
                 ['本轮风格', paintingPlan.stylePreset],
@@ -6910,14 +6906,37 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
             <div className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-xs leading-5 text-rose-700">
               {(() => {
-                const effectiveCount = paintingBatchOnlyUnused
-                  ? paintingBatchIdeas.filter((idea) => !isPaintingBatchIdeaUsed(idea, paintingVariationRound)).length
-                  : paintingBatchIdeas.length;
-                const costPerVideo = paintingBatchEstimate?.costPerVideo ?? 0.5;
+                const effectiveIdeas = paintingBatchOnlyUnused
+                  ? paintingBatchIdeas.filter((idea) => !isPaintingBatchIdeaUsed(idea, paintingVariationRound))
+                  : paintingBatchIdeas;
+                const effectiveCount = effectiveIdeas.length;
+                let totalMinSeconds = 0;
+                let totalMaxSeconds = 0;
+                for (const idea of effectiveIdeas) {
+                  const min = Number(idea.durationMin) || Number(paintingPlan.durationMin) || 0;
+                  const max = Number(idea.durationMax) || Number(paintingPlan.durationMax) || 0;
+                  totalMinSeconds += min > 0 ? min : 0;
+                  totalMaxSeconds += max > 0 ? max : 0;
+                }
+                const ratePerSecond = getSeedanceRatePerSecond(SEEDANCE_BATCH_MODEL, SEEDANCE_BATCH_RESOLUTION);
+                const costMin = ratePerSecond == null ? null : Number((totalMinSeconds * ratePerSecond).toFixed(2));
+                const costMax = ratePerSecond == null ? null : Number((totalMaxSeconds * ratePerSecond).toFixed(2));
+                const sameRange = totalMinSeconds === totalMaxSeconds;
                 return (
                   <>
-                    将生成 <b>{effectiveCount}</b> 条视频 · 预计费用 <b>¥{(effectiveCount * costPerVideo).toFixed(2)}</b> · 方向 29 固定为 4-6 秒一镜到底。
+                    将生成 <b>{effectiveCount}</b> 条视频
+                    {ratePerSecond == null ? (
+                      <> · <b>暂无法估算费用</b></>
+                    ) : (
+                      <>
+                        {' '}· 预计总时长 {sameRange ? <b>{totalMaxSeconds} 秒</b> : <b>{totalMinSeconds}～{totalMaxSeconds} 秒</b>}
+                        {' '}· Mini <b>¥{ratePerSecond.toFixed(2)}/秒</b>
+                        {' '}· 预计费用 {sameRange ? <b>¥{costMax.toFixed(2)}</b> : <b>¥{costMin.toFixed(2)}～¥{costMax.toFixed(2)}</b>}
+                      </>
+                    )}
+                    {' '}· 方向 29 固定为 4～6 秒一镜到底。
                     {effectiveCount === 0 && <span className="mt-1 block font-bold text-red-600">当前轮次方向已全部使用，无法生成。</span>}
+                    <span className="mt-1 block text-rose-500">{SEEDANCE_PRICING_NOTE}</span>
                   </>
                 );
               })()}
