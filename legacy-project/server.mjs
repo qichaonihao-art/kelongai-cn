@@ -12808,6 +12808,17 @@ async function handlePaintingIdeaPrompt(req, res) {
     const audio = readValue(idea.audio) || readValue(body.audio);
     const scene = readValue(idea.scene) || readValue(body.scene);
     const extraRequirements = readValue(idea.extraRequirements) || readValue(body.extraRequirements);
+    const elementVariationIndex = Math.max(0, Math.floor(Number(body.elementVariationIndex) || 0));
+    const previousPrompt = readValue(body.previousPrompt).slice(0, 4000);
+    const elementVariationRequirements = elementVariationIndex > 0
+      ? `\n【同框架换元素重生成（第 ${elementVariationIndex} 个变化版本）】
+这是用户主动选择的“换元素再生成”，必须保留原标题与核心创意中的大框架：产品所处状态、主要动作逻辑、镜头结构（一镜到底/主镜头＋特写/克制多镜头）、运镜方向、起幅与收尾目的均不得改变。只在不破坏物理逻辑和创意成立条件的前提下，更换执行元素。
+- 必须明显更换为另一套合适场景或空间布置，并再更换以下类别中的至少 2 类：人物性别/年龄/身份、服装款式与主色、家具与生活陈设组合、自然光时段或开场生活动作；若原框架本来无人，不得为了换元素强行增加人物。
+- 新场景必须适合真实悬挂和展示这幅画；若核心创意锁定客厅、书房、茶室等场景类别，则换成同类别中布局、家具和色彩明确不同的另一套真实空间，不能为了求变改成不合逻辑的地点。
+- 人物、服装、场景和陈设在本条视频内部仍须从头到尾保持一致。“换人物/换装”是相对于上一个生成版本而言，不得在同一条视频中途换人或换装。
+- 本段要求的优先级高于上方的可选人物、服装和场景偏好，但不得覆盖产品外观、真实尺寸、整体风格、固定镜头框架和负面约束。
+${previousPrompt ? `- 必须避开上一版本已经使用的具体人物、服装配色、家具组合与空间布置。上一版本仅供查重参考：\n${previousPrompt}` : '- 即使没有上一版本文本，也必须主动选择与常见米白服装、模板化样板间不同的明确元素组合。'}\n`
+      : '';
 
     const prompt = `你是短视频提示词专家。请基于下面的「产品固定档案」和「创意方案」，写一段完整的 Seedance 视频生成提示词（中文，可直接提交给 Seedance）。
 
@@ -12826,6 +12837,7 @@ ${JSON.stringify(profile, null, 2)}
 - 不得因为产品是书法或国画就自动回到新中式；除非本轮风格明确为新中式，否则必须按上述风格重新设计配套环境。
 ${scene ? `- 用户指定场景偏好：${scene}` : ''}
 ${extraRequirements ? `\n【其他特殊要求】\n${extraRequirements}` : ''}
+${elementVariationRequirements}
 
 【要求】
 1. 无论视频采用何种形式（静态展示、挂墙、手持、展开、人物互动等），都绝对不得改变挂画的样式、颜色和外观，必须与产品固定档案完全一致。

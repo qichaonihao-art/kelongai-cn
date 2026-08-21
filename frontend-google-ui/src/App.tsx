@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useState } from 'react';
+import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react';
 import LoginPage from './pages/LoginPage';
 import HomePage from './pages/HomePage';
 import VoiceCloningPage from './pages/VoiceCloningPage';
@@ -22,6 +22,39 @@ import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
 import type { ModuleId } from './components/ModuleQuickNav';
 
 type Page = 'login' | 'home' | 'universal' | 'creative-video' | 'creative-copy' | ModuleId;
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[app] page render failed', error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="grid min-h-screen place-items-center bg-slate-200 p-6">
+          <div className="w-full max-w-md rounded-3xl border border-white/80 bg-white p-8 text-center shadow-xl">
+            <div className="text-lg font-black text-slate-900">页面暂时没有正常显示</div>
+            <div className="mt-2 text-sm leading-6 text-slate-500">任务数据仍会尽量保留。重新加载后可以继续查看历史记录。</div>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-6 inline-flex h-10 items-center justify-center rounded-full bg-slate-900 px-5 text-sm font-bold text-white transition-colors hover:bg-slate-700"
+            >
+              重新加载页面
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
@@ -84,6 +117,7 @@ export default function App() {
   }
 
   return (
+    <AppErrorBoundary>
     <div className="min-h-screen font-sans text-slate-900">
       {currentPage === 'login' && <LoginPage onLogin={handleLogin} />}
       {currentPage === 'home' && (
@@ -163,5 +197,6 @@ export default function App() {
         />
       )}
     </div>
+    </AppErrorBoundary>
   );
 }

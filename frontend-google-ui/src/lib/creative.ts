@@ -571,9 +571,14 @@ export async function createSeedanceTask(options: {
     throw new Error(message);
   }
 
+  const taskId = String(json?.taskId || json?.id || '');
+  if (!taskId) {
+    throw new Error('Seedance 创建任务失败：服务端未返回任务编号。');
+  }
+
   return {
     ok: true,
-    taskId: String(json?.taskId || json?.id || ''),
+    taskId,
     status: typeof json?.status === 'string' ? json.status : undefined,
     videoUrl: typeof json?.videoUrl === 'string' ? json.videoUrl : undefined,
     createdAt: typeof json?.createdAt === 'number' ? json.createdAt : undefined,
@@ -720,6 +725,8 @@ export async function generatePaintingIdeaPrompt(
     audio?: string;
     scene?: string;
     extraRequirements?: string;
+    elementVariationIndex?: number;
+    previousPrompt?: string;
   }
 ): Promise<{ prompt: string; duration: number }> {
   const response = await fetch('/api/painting/idea-prompt', {

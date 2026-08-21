@@ -134,6 +134,13 @@ interface PaintingHistoryItem {
   ratio: string;
   duration: number;
   stylePreset?: string;
+  plan?: PaintingMaterialPlan;
+  ideaBatchCache?: Record<string, PaintingIdeaSummary[]>;
+  ideaUsageCounts?: Record<string, number>;
+  ideaLastPrompts?: Record<string, string>;
+  frameworkBatch?: number;
+  totalBatches?: number;
+  variationRound?: number;
 }
 
 interface UploadHistoryPreviewItem {
@@ -162,7 +169,7 @@ type HistoryPreviewItem = UploadHistoryPreviewItem & {
 
 const MAX_VIDEO_SIZE_BYTES = 150 * 1024 * 1024;
 const MAX_SAVED_CREATIVE_SESSIONS = 8;
-const MAX_SEEDANCE_HISTORY_ITEMS = 300;
+const MAX_SEEDANCE_HISTORY_ITEMS = 120;
 const SEEDANCE_HISTORY_MAX_AGE_DAYS = 30;
 const SEEDANCE_HISTORY_MAX_AGE_MS = SEEDANCE_HISTORY_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 const SEEDANCE_POLL_INTERVAL_MS = 15000;
@@ -189,6 +196,10 @@ const ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS = 180;
 const ADDITIONAL_CHANGE_HISTORY_RETENTION_MS = ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 const NOTEBOOK_STORAGE_KEY = 'kelongai.notebook';
 const VIDEO_LIBRARY_LAST_FOLDER_KEY = 'kelongai.videoLibraryLastFolder';
+
+function getPaintingIdeaUsageKey(batch: number, variationRound: number, ideaId: string) {
+  return `round:${variationRound}:batch:${batch}:idea:${ideaId}`;
+}
 
 function loadLastVideoLibraryFolder(): string {
   if (typeof window === 'undefined') return '通用素材';
@@ -643,12 +654,12 @@ function getSeedanceRatioLabel(ratio: string) {
 
 function isSeedanceTerminalStatus(status?: string) {
   const normalized = String(status || '').toLowerCase();
-  return ['succeeded', 'success', 'completed', 'done', 'failed', 'error', 'cancelled', 'canceled', 'expired'].includes(normalized);
+  return ['succeeded', 'success', 'completed', 'done', 'failed', 'error', 'cancelled', 'canceled', 'expired', 'creating', 'creation_interrupted'].includes(normalized);
 }
 
 function isSeedanceFailureStatus(status?: string) {
   const normalized = String(status || '').toLowerCase();
-  return ['failed', 'error', 'cancelled', 'canceled', 'expired'].includes(normalized);
+  return ['failed', 'error', 'cancelled', 'canceled', 'expired', 'creation_interrupted'].includes(normalized);
 }
 
 function getSeedanceStatusLabel(status?: string, hasVideo?: boolean) {
@@ -660,6 +671,8 @@ function getSeedanceStatusLabel(status?: string, hasVideo?: boolean) {
   if (['failed', 'error'].includes(normalized)) return '生成失败';
   if (['cancelled', 'canceled'].includes(normalized)) return '已取消';
   if (normalized === 'expired') return '已过期';
+  if (normalized === 'creation_interrupted') return '任务创建中断';
+  if (normalized === 'creating') return '正在创建任务';
   return status || '等待查询';
 }
 
@@ -913,6 +926,70 @@ function mergeSeedanceHistoryItem(
     .slice(0, MAX_SEEDANCE_HISTORY_ITEMS);
 }
 
+function compactStoredPaintingHistoryForQuota() {
+  try {
+    const raw = window.localStorage.getItem(PAINTING_HISTORY_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return;
+    const seenAssets = new Set<string>();
+    const compacted = parsed
+      .filter((item) => item && typeof item === 'object')
+      .filter((item) => {
+        const assetKey = item.uploadHistoryId
+          ? `upload:${item.uploadHistoryId}`
+          : item.thumbnail
+            ? `legacy:${String(item.thumbnail).slice(0, 160)}`
+            : `record:${item.id}`;
+        if (seenAssets.has(assetKey)) return false;
+        seenAssets.add(assetKey);
+        return true;
+      })
+      .slice(0, MAX_PAINTING_HISTORY_ITEMS)
+      .map((item) => {
+        if (!item.uploadHistoryId || !item.thumbnail) return item;
+        const { thumbnail: _duplicateThumbnail, ...rest } = item;
+        return rest;
+      });
+    window.localStorage.setItem(PAINTING_HISTORY_STORAGE_KEY, JSON.stringify(compacted));
+  } catch {
+    // 只做容量释放；失败时交给 Seedance 历史自身继续裁剪。
+  }
+}
+
+function persistSeedanceHistorySafely(items: SeedanceHistoryItem[]): SeedanceHistoryItem[] {
+  let candidates = items.slice(0, MAX_SEEDANCE_HISTORY_ITEMS);
+  const tryWrite = () => {
+    try {
+      window.localStorage.setItem(SEEDANCE_HISTORY_STORAGE_KEY, JSON.stringify(candidates));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (tryWrite()) return candidates;
+  compactStoredPaintingHistoryForQuota();
+  if (tryWrite()) return candidates;
+
+  // 容量仍不足时始终保留最新记录，分批丢弃最旧记录，绝不把异常抛给页面。
+  while (candidates.length > 1) {
+    candidates = candidates.slice(0, Math.max(1, candidates.length - 10));
+    if (tryWrite()) return candidates;
+  }
+
+  // 最后只清理本模块自己的旧 Seedance 历史，并立即重写最新一条。
+  try {
+    window.localStorage.removeItem(SEEDANCE_HISTORY_STORAGE_KEY);
+    candidates = items.slice(0, 1);
+    if (tryWrite()) return candidates;
+  } catch {
+    // 浏览器完全禁用本地存储时，仅放弃持久化，不影响当前页面运行。
+  }
+
+  return [];
+}
+
 function loadSeedanceHistory() {
   if (typeof window === 'undefined') return [];
 
@@ -937,12 +1014,7 @@ function loadSeedanceHistory() {
         return now - savedTime < maxAgeMs;
       });
 
-    // 如果有被清理掉的记录，同步更新 localStorage
-    if (filtered.length < parsed.length) {
-      window.localStorage.setItem(SEEDANCE_HISTORY_STORAGE_KEY, JSON.stringify(filtered));
-    }
-
-    return filtered
+    const normalized = filtered
       .map((item) => ({
         ...item,
         // Records created before model switching were all Seedance 2.0.
@@ -952,51 +1024,16 @@ function loadSeedanceHistory() {
         taskMode: item.taskMode === 'video-edit-painting'
           ? 'video-edit-painting' as SeedanceTaskMode
           : 'generate' as SeedanceTaskMode,
+        status: item.status === 'creating' ? 'creation_interrupted' : item.status,
       }))
       .slice(0, MAX_SEEDANCE_HISTORY_ITEMS);
+    if (filtered.length < parsed.length || normalized.some((item) => item.status === 'creation_interrupted')) {
+      persistSeedanceHistorySafely(normalized);
+    }
+    return normalized;
   } catch {
-    window.localStorage.removeItem(SEEDANCE_HISTORY_STORAGE_KEY);
     return [];
   }
-}
-
-function imageFileToThumbnailDataUrl(file: File, maxDimension = 320): Promise<string> {
-  return new Promise((resolve) => {
-    if (typeof document === 'undefined' || typeof URL === 'undefined') {
-      resolve('');
-      return;
-    }
-    const objectUrl = URL.createObjectURL(file);
-    const image = new Image();
-    let settled = false;
-    const cleanup = () => {
-      URL.revokeObjectURL(objectUrl);
-      image.onload = null;
-      image.onerror = null;
-    };
-    const finish = (value = '') => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(value);
-    };
-    image.onload = () => {
-      try {
-        const sourceWidth = image.naturalWidth || maxDimension;
-        const sourceHeight = image.naturalHeight || maxDimension;
-        const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(sourceWidth * scale));
-        canvas.height = Math.max(1, Math.round(sourceHeight * scale));
-        canvas.getContext('2d')?.drawImage(image, 0, 0, canvas.width, canvas.height);
-        finish(canvas.toDataURL('image/jpeg', 0.7));
-      } catch {
-        finish();
-      }
-    };
-    image.onerror = () => finish();
-    image.src = objectUrl;
-  });
 }
 
 function thumbnailDataUrlToFile(dataUrl: string, fileName: string): File | null {
@@ -1042,11 +1079,27 @@ function loadPaintingHistory() {
       .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())
       .slice(0, MAX_PAINTING_HISTORY_ITEMS);
 
-    if (filtered.length < parsed.length) {
-      window.localStorage.setItem(PAINTING_HISTORY_STORAGE_KEY, JSON.stringify(filtered));
+    const seenAssets = new Set<string>();
+    const compacted = filtered
+      .filter((item) => {
+        const assetKey = item.uploadHistoryId
+          ? `upload:${item.uploadHistoryId}`
+          : item.thumbnail
+            ? `legacy:${item.thumbnail.slice(0, 160)}`
+            : `record:${item.id}`;
+        if (seenAssets.has(assetKey)) return false;
+        seenAssets.add(assetKey);
+        return true;
+      })
+      .map((item) => item.uploadHistoryId && item.thumbnail
+        ? { ...item, thumbnail: undefined }
+        : item);
+
+    if (compacted.length < parsed.length || compacted.some((item, index) => item !== filtered[index])) {
+      persistPaintingHistory(compacted);
     }
 
-    return filtered;
+    return compacted;
   } catch {
     window.localStorage.removeItem(PAINTING_HISTORY_STORAGE_KEY);
     return [];
@@ -1056,7 +1109,10 @@ function loadPaintingHistory() {
 function mergePaintingHistoryItem(previous: PaintingHistoryItem[], item: PaintingHistoryItem) {
   const next = [
     item,
-    ...previous.filter((historyItem) => historyItem.id !== item.id),
+    ...previous.filter((historyItem) => (
+      historyItem.id !== item.id
+      && (!item.uploadHistoryId || historyItem.uploadHistoryId !== item.uploadHistoryId)
+    )),
   ];
   return next
     .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())
@@ -1066,7 +1122,10 @@ function mergePaintingHistoryItem(previous: PaintingHistoryItem[], item: Paintin
 function persistPaintingHistory(items: PaintingHistoryItem[]) {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(PAINTING_HISTORY_STORAGE_KEY, JSON.stringify(items));
+    const compacted = items.map((item) => item.uploadHistoryId && item.thumbnail
+      ? { ...item, thumbnail: undefined }
+      : item);
+    window.localStorage.setItem(PAINTING_HISTORY_STORAGE_KEY, JSON.stringify(compacted));
   } catch {
     // 浏览器禁止本地存储时，仍允许本次流程正常进行。
   }
@@ -1421,7 +1480,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingIdeas, setPaintingIdeas] = useState<PaintingIdeaSummary[]>([]);
   const [paintingIdeaBatchCache, setPaintingIdeaBatchCache] = useState<Record<string, PaintingIdeaSummary[]>>({});
   const [paintingSelectedIdea, setPaintingSelectedIdea] = useState<PaintingIdeaSummary | null>(null);
-  const [usedIdeaIds, setUsedIdeaIds] = useState<Record<string, boolean>>({});
+  const [paintingIdeaUsageCounts, setPaintingIdeaUsageCounts] = useState<Record<string, number>>({});
+  const [paintingIdeaLastPrompts, setPaintingIdeaLastPrompts] = useState<Record<string, string>>({});
   const [paintingFrameworkBatch, setPaintingFrameworkBatch] = useState(0);
   const [paintingTotalBatches, setPaintingTotalBatches] = useState(4);
   const [paintingVariationRound, setPaintingVariationRound] = useState(0);
@@ -1551,8 +1611,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (typeof window === 'undefined') {
       return;
     }
-
-    window.localStorage.setItem(CREATIVE_SESSIONS_STORAGE_KEY, JSON.stringify(savedSessions));
+    try {
+      window.localStorage.setItem(CREATIVE_SESSIONS_STORAGE_KEY, JSON.stringify(savedSessions));
+    } catch {
+      // 对话历史空间不足不能影响视频任务页面继续运行。
+    }
   }, [savedSessions]);
 
   useEffect(() => {
@@ -1701,7 +1764,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
     if (!seedanceHistoryHydratedRef.current) return;
 
-    window.localStorage.setItem(SEEDANCE_HISTORY_STORAGE_KEY, JSON.stringify(seedanceHistory));
+    const persisted = persistSeedanceHistorySafely(seedanceHistory);
+    if (persisted.length !== seedanceHistory.length) {
+      setSeedanceHistory(persisted);
+      setSeedanceError('浏览器历史空间接近上限，系统已自动清理最旧的视频记录，当前任务不受影响。');
+    }
   }, [seedanceHistory]);
 
   useEffect(() => {
@@ -2537,6 +2604,31 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       if (!confirmed) return;
     }
 
+    const pendingTaskId = createMessageId('seedance_creating');
+    const pendingCreatedAt = Math.floor(Date.now() / 1000);
+    const pendingHistoryItem = createSeedanceHistoryItem(
+      {
+        ok: true,
+        taskId: pendingTaskId,
+        status: 'creating',
+        createdAt: pendingCreatedAt,
+        response: { id: pendingTaskId, status: 'creating' },
+      },
+      {
+        model: isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel,
+        taskMode: seedanceTaskMode,
+        prompt,
+        resolution: seedanceResolution,
+        ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
+        duration: isVideoEdit ? -1 : duration,
+        generateAudio: seedanceGenerateAudio,
+        watermark: seedanceWatermark,
+      }
+    );
+    const historyWithPendingTask = mergeSeedanceHistoryItem(seedanceHistory, pendingHistoryItem);
+    setSeedanceHistory(historyWithPendingTask);
+    persistSeedanceHistorySafely(historyWithPendingTask);
+
     setIsSeedanceLoading(true);
     setSeedanceError("");
     setSeedanceTask(null);
@@ -2563,9 +2655,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       if (overrides?.focusTaskStatus) {
         setTimeout(() => scrollToRef(seedanceTaskStatusRef), 50);
       }
-      setSeedanceHistory((previous) =>
-        mergeSeedanceHistoryItem(
-          previous,
+      setSeedanceHistory((previous) => {
+        const withoutPendingTask = previous.filter((item) => item.taskId !== pendingTaskId);
+        return mergeSeedanceHistoryItem(
+          withoutPendingTask,
           createSeedanceHistoryItem(
             {
               ...task,
@@ -2582,14 +2675,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               watermark: seedanceWatermark,
             }
           )
-        )
-      );
+        );
+      });
       recordSeedanceCost(
         isVideoEdit ? Math.ceil(videoEditSourceDuration || 0) : duration,
         isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel
       );
     } catch (error) {
       setSeedanceError(error instanceof Error ? error.message : 'Seedance 创建任务失败');
+      setSeedanceHistory((previous) => previous.map((item) => item.taskId === pendingTaskId
+        ? { ...item, status: 'creation_interrupted', savedAt: new Date().toISOString() }
+        : item));
     } finally {
       setIsSeedanceLoading(false);
     }
@@ -2929,7 +3025,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingIdeaBatchCache({});
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
-      setUsedIdeaIds({});
+      setPaintingIdeaUsageCounts({});
+      setPaintingIdeaLastPrompts({});
       setPaintingVariationRound(0);
       const savedHistoryId = await saveUploadHistory(file, 'image');
       setPaintingUploadHistoryId(savedHistoryId || null);
@@ -2957,6 +3054,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingIdeaBatchCache({});
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
+      setPaintingIdeaUsageCounts({});
+      setPaintingIdeaLastPrompts({});
       setPaintingVariationRound(0);
       setTimeout(() => scrollToRef(paintingPlanRef), 80);
     } catch (error) {
@@ -3004,7 +3103,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingFrameworkBatch(batch);
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
-      setUsedIdeaIds({});
       setPaintingError('');
       setTimeout(() => scrollToRef(paintingIdeasRef), 80);
       return;
@@ -3022,7 +3120,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       if (result.totalBatches > 0) setPaintingTotalBatches(result.totalBatches);
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
-      setUsedIdeaIds({});
       setTimeout(() => scrollToRef(paintingIdeasRef), 80);
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '创意方案生成失败，请稍后重试。');
@@ -3057,9 +3154,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
   async function handlePaintingGeneratePrompt(
     idea: PaintingIdeaSummary,
-    options?: { skipSeedanceScroll?: boolean }
+    options?: { skipSeedanceScroll?: boolean; remixElements?: boolean }
   ) {
     if (!paintingProfile) return;
+    const usageKey = getPaintingIdeaUsageKey(paintingFrameworkBatch, paintingVariationRound, idea.id);
+    const previousUsageCount = paintingIdeaUsageCounts[usageKey] || 0;
     setPaintingError('');
     setPaintingSelectedIdea(idea);
     setPaintingFullPrompt('');
@@ -3074,9 +3173,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         audio: paintingPlan.audio,
         scene: paintingPlan.scene,
         extraRequirements: paintingPlan.extraRequirements,
+        elementVariationIndex: options?.remixElements ? previousUsageCount + 1 : 0,
+        previousPrompt: options?.remixElements ? paintingIdeaLastPrompts[usageKey] || '' : '',
       });
       setPaintingFullPrompt(prompt);
-      setUsedIdeaIds((previous) => ({ ...previous, [idea.id]: true }));
+      const nextUsageCounts = {
+        ...paintingIdeaUsageCounts,
+        [usageKey]: previousUsageCount + 1,
+      };
+      const nextLastPrompts = {
+        ...paintingIdeaLastPrompts,
+        [usageKey]: prompt,
+      };
+      setPaintingIdeaUsageCounts(nextUsageCounts);
+      setPaintingIdeaLastPrompts(nextLastPrompts);
 
       // 生成后自动填入右侧 Seedance 面板：提示词、时长、比例、挂画参考图。
       const ratio = paintingPlan.ratio || '9:16';
@@ -3091,7 +3201,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setTimeout(() => setSeedancePromptHighlight(false), 2000);
       if (!options?.skipSeedanceScroll) scrollToRef(seedancePromptRef);
 
-      const thumbnail = await imageFileToThumbnailDataUrl(paintingImage?.file as File).catch(() => '');
       const historyItem: PaintingHistoryItem = {
         id: createMessageId('painting_history'),
         savedAt: new Date().toISOString(),
@@ -3099,12 +3208,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         profile: paintingProfile,
         ideas: paintingIdeas,
         fullPrompt: prompt,
-        thumbnail: thumbnail || undefined,
         uploadHistoryId: paintingUploadHistoryId || undefined,
         imageFileName: paintingImage?.fileName,
         ratio,
         duration: durationSeconds,
         stylePreset: paintingPlan.stylePreset,
+        plan: paintingPlan,
+        ideaBatchCache: paintingIdeaBatchCache,
+        ideaUsageCounts: nextUsageCounts,
+        ideaLastPrompts: nextLastPrompts,
+        frameworkBatch: paintingFrameworkBatch,
+        totalBatches: paintingTotalBatches,
+        variationRound: paintingVariationRound,
       };
       setPaintingHistory((previous) => {
         const next = mergePaintingHistoryItem(previous, historyItem);
@@ -3120,9 +3235,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
-  async function handlePaintingAutoGenerateVideo(idea: PaintingIdeaSummary) {
+  async function handlePaintingAutoGenerateVideo(
+    idea: PaintingIdeaSummary,
+    options?: { remixElements?: boolean }
+  ) {
     if (paintingLoading !== 'idle' || isSeedanceLoading) return;
-    const result = await handlePaintingGeneratePrompt(idea, { skipSeedanceScroll: true });
+    const result = await handlePaintingGeneratePrompt(idea, {
+      skipSeedanceScroll: true,
+      remixElements: options?.remixElements,
+    });
     if (!result) return;
     // 全自动流程必须带挂画参考图：无图直接终止，避免生成无画面的视频。
     const hasImage = result.references.some((ref) => ref.kind === 'image');
@@ -3213,13 +3334,38 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingUploadHistoryId(null);
       setPaintingError('这条旧历史记录没有可恢复的图片，请从历史图片中重新选择一次原图。');
     }
+    const restoredBatch = item.frameworkBatch || 0;
+    const restoredRound = item.variationRound || 0;
+    const restoredUsageCounts = { ...(item.ideaUsageCounts || {}) };
+    const restoredLastPrompts = { ...(item.ideaLastPrompts || {}) };
+    // 旧版历史没有保存使用状态时，至少从标题中恢复最后一次使用的方向。
+    if (Object.keys(restoredUsageCounts).length === 0 && item.fullPrompt) {
+      const lastUsedIdea = (item.ideas || []).find((idea) => item.title.endsWith(idea.title));
+      if (lastUsedIdea) {
+        const usageKey = getPaintingIdeaUsageKey(restoredBatch, restoredRound, lastUsedIdea.id);
+        restoredUsageCounts[usageKey] = 1;
+        restoredLastPrompts[usageKey] = item.fullPrompt;
+      }
+    }
     setPaintingProfile(item.profile);
     setPaintingIdeas(item.ideas || []);
     setPaintingFullPrompt(item.fullPrompt || '');
     setPaintingSelectedIdea(null);
-    setUsedIdeaIds({});
-    if (item.ratio) setPaintingPlan((previous) => ({ ...previous, ratio: item.ratio }));
-    if (item.stylePreset) setPaintingPlan((previous) => ({ ...previous, stylePreset: item.stylePreset || 'modern-minimal' }));
+    setPaintingIdeaBatchCache(item.ideaBatchCache || {});
+    setPaintingIdeaUsageCounts(restoredUsageCounts);
+    setPaintingIdeaLastPrompts(restoredLastPrompts);
+    setPaintingFrameworkBatch(restoredBatch);
+    setPaintingTotalBatches(item.totalBatches || 4);
+    setPaintingVariationRound(restoredRound);
+    if (item.plan) {
+      setPaintingPlan(item.plan);
+    } else {
+      setPaintingPlan((previous) => ({
+        ...previous,
+        ratio: item.ratio || previous.ratio,
+        stylePreset: item.stylePreset || previous.stylePreset,
+      }));
+    }
     if (restoredFile) setPaintingError('');
   }
 
@@ -3428,9 +3574,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingUploadHistoryId(item.id);
     setPaintingProfile(null);
     setPaintingIdeas([]);
+    setPaintingIdeaBatchCache({});
     setPaintingSelectedIdea(null);
     setPaintingFullPrompt('');
-    setUsedIdeaIds({});
+    setPaintingIdeaUsageCounts({});
+    setPaintingIdeaLastPrompts({});
+    setPaintingFrameworkBatch(0);
+    setPaintingVariationRound(0);
     setPaintingError('');
   }
 
@@ -4127,7 +4277,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       </div>
                       <div className="grid gap-2">
                         {paintingIdeas.map((idea) => {
-                          const isUsed = Boolean(usedIdeaIds[idea.id]);
+                          const usageKey = getPaintingIdeaUsageKey(paintingFrameworkBatch, paintingVariationRound, idea.id);
+                          const usageCount = paintingIdeaUsageCounts[usageKey] || 0;
+                          const isUsed = usageCount > 0;
                           return (
                           <div
                             key={idea.id}
@@ -4147,13 +4299,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                   {isUsed && (
                                     <span className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">
                                       <Check className="size-2.5" />
-                                      已使用
+                                      已使用 {usageCount} 次
                                     </span>
                                   )}
                                 </div>
                                 <div className="mt-1 text-xs leading-5 text-slate-500">{idea.summary}</div>
                               </div>
-                              <div className="flex shrink-0 items-center gap-1.5">
+                              <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                                 <button
                                   type="button"
                                   onClick={() => handlePaintingGeneratePrompt(idea)}
@@ -4166,7 +4318,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                   )}
                                 >
                                   {paintingLoading === 'prompt' && paintingSelectedIdea?.id === idea.id ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
-                                  {isUsed ? '再次生成' : '生成完整提示词'}
+                                  生成完整提示词
                                 </button>
                                 <button
                                   type="button"
@@ -4177,6 +4329,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                   {paintingLoading === 'prompt' && paintingSelectedIdea?.id === idea.id ? <Loader2 className="size-3 animate-spin" /> : <Film className="size-3" />}
                                   自动生成视频
                                 </button>
+                                {isUsed && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handlePaintingAutoGenerateVideo(idea, { remixElements: true })}
+                                    disabled={paintingLoading !== 'idle' || isSeedanceLoading}
+                                    className="inline-flex h-8 items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-3 text-[11px] font-bold text-violet-600 transition-colors hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                    title="保留这条创意的镜头与动作框架，改换场景、人物、服装和陈设后再生成一个视频"
+                                  >
+                                    {paintingLoading === 'prompt' && paintingSelectedIdea?.id === idea.id ? <Loader2 className="size-3 animate-spin" /> : <Replace className="size-3" />}
+                                    换元素再生成
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -4220,8 +4384,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         历史记录
                       </div>
                       <div className="space-y-2">
-                        {paintingHistory.map((item) => (
-                          <div
+                        {paintingHistory.map((item) => {
+                          const previewUrl = imageHistory.find((image) => image.id === item.uploadHistoryId)?.previewUrl || item.thumbnail || '';
+                          return <div
                             key={item.id}
                             className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 transition-colors hover:border-rose-200"
                           >
@@ -4230,8 +4395,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                               onClick={() => void handlePaintingLoadHistory(item)}
                               className="flex min-w-0 flex-1 items-center gap-3 text-left"
                             >
-                              {item.thumbnail ? (
-                                <img src={item.thumbnail} alt={item.title} className="size-10 shrink-0 rounded-lg bg-slate-100 object-cover" />
+                              {previewUrl ? (
+                                <img src={previewUrl} alt={item.title} className="size-10 shrink-0 rounded-lg bg-slate-100 object-cover" />
                               ) : (
                                 <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-300">
                                   <ImageIcon className="size-4" />
@@ -4252,8 +4417,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             >
                               <Trash2 className="size-3.5" />
                             </button>
-                          </div>
-                        ))}
+                          </div>;
+                        })}
                       </div>
                     </div>
                   )}
