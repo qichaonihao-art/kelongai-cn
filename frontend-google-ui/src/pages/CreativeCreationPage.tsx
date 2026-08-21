@@ -216,6 +216,11 @@ const PAINTING_STYLE_OPTIONS = [
   { value: 'gallery-display', label: '高端展陈', description: '展厅、酒店与艺术灯光' },
   { value: 'everyday-life', label: '烟火生活', description: '真实住宅与自然日常' },
 ] as const;
+
+function getPaintingStyleLabel(stylePreset?: string): string {
+  const option = PAINTING_STYLE_OPTIONS.find((item) => item.value === stylePreset);
+  return option ? option.label : (stylePreset || '未设置');
+}
 const ADDITIONAL_CHANGE_HISTORY_KEY = 'kelongai.additionalChangeHistory';
 const ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS = 180;
 const ADDITIONAL_CHANGE_HISTORY_RETENTION_MS = ADDITIONAL_CHANGE_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
@@ -1580,6 +1585,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchActionLoading, setPaintingBatchActionLoading] = useState<'pause' | 'resume' | 'stop' | null>(null);
   const [paintingBatchCreating, setPaintingBatchCreating] = useState(false);
   const paintingBatchPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const paintingBatchModuleRef = useRef<HTMLDivElement | null>(null);
+  const paintingBatchScrollRequestedRef = useRef(false);
+  const [paintingBatchClock, setPaintingBatchClock] = useState(Date.now());
   const [replaceImage, setReplaceImage] = useState<SelectedCreativeMedia | null>(null);
   const [replaceTarget, setReplaceTarget] = useState('');
   const [replaceWith, setReplaceWith] = useState('');
@@ -2054,6 +2062,27 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const timer = window.setInterval(() => setSeedanceClock(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [seedanceTask?.taskId, seedanceTask?.status, seedanceTask?.videoUrl]);
+
+  // 批量生成运行中每秒刷新计时，用于显示「已运行多久」。
+  useEffect(() => {
+    const status = paintingBatchDetail?.run.status;
+    if (!status || PAINTING_BATCH_TERMINAL_STATUSES.includes(status)) {
+      return;
+    }
+    setPaintingBatchClock(Date.now());
+    const timer = window.setInterval(() => setPaintingBatchClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [paintingBatchDetail?.run.status]);
+
+  // 点击「确认生成」创建批次后，自动下滑到全自动批量生成模块。
+  useEffect(() => {
+    if (paintingBatchScrollRequestedRef.current && paintingBatchDetail && paintingBatchModuleRef.current) {
+      paintingBatchScrollRequestedRef.current = false;
+      window.setTimeout(() => {
+        paintingBatchModuleRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+    }
+  }, [paintingBatchDetail]);
 
   useEffect(() => {
     const persistedMessages = serializeMessagesForStorage(messages);
@@ -3568,6 +3597,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingBatchDetail(null);
       setPaintingBatchActiveRunId(result.batchRunId);
       setPaintingBatchListError('');
+      paintingBatchScrollRequestedRef.current = true;
       void pollPaintingBatch(result.batchRunId);
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '创建批量任务失败，请稍后重试。');
@@ -4840,7 +4870,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   )}
 
                   {paintingBatchDetail && (
-                    <div className="rounded-2xl border border-slate-300 bg-white p-3">
+                    <div
+                      ref={paintingBatchModuleRef}
+                      className={cn(
+                        'rounded-2xl border p-3',
+                        !PAINTING_BATCH_TERMINAL_STATUSES.includes(paintingBatchDetail.run.status)
+                          ? 'batch-tech-card'
+                          : 'border-slate-300 bg-white'
+                      )}
+                    >
                       <div className="mb-3 flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2 text-sm font-black text-slate-800">
@@ -4850,6 +4888,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                               {getPaintingBatchStatusLabel(paintingBatchDetail.run.status)}
                             </span>
                           </div>
+                          {paintingBatchDetail.run.createdAt > 0 && (
+                            <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-600">
+                              <Clock className="size-3.5" />
+                              已运行 {formatElapsedDuration(Math.max(0, Math.floor(paintingBatchClock / 1000) - paintingBatchDetail.run.createdAt)) || '0秒'}
+                            </div>
+                          )}
                           <div className="mt-1 text-xs text-slate-500">
                             {paintingBatchDetail.run.paintingName} · {paintingBatchDetail.run.resolution} · {paintingBatchDetail.run.ratio}
                           </div>
@@ -6850,7 +6894,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 ['计费单价', `${getSeedanceRatePerSecond(SEEDANCE_BATCH_MODEL, SEEDANCE_BATCH_RESOLUTION) ?? '暂无法估算'}元/秒`],
                 ['画面比例', paintingPlan.ratio || seedanceRatio],
                 ['单条时长', `${paintingPlan.durationMin}-${paintingPlan.durationMax} 秒`],
-                ['本轮风格', paintingPlan.stylePreset],
+                ['本轮风格', getPaintingStyleLabel(paintingPlan.stylePreset)],
                 ['背景音乐', seedanceGenerateAudio ? '开启' : '关闭'],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl bg-slate-50 px-3 py-2">

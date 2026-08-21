@@ -175,6 +175,44 @@
   100% { background-position: -200% center; }
 }
 
+/* 全自动批量生成：运行中的科技感动态边框 + 扫描光带 */
+@keyframes batch-border-flow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+@keyframes batch-scan-sweep {
+  0% { top: -28%; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: 108%; opacity: 0; }
+}
+
+.batch-tech-card {
+  position: relative;
+  overflow: hidden;
+  border-color: transparent;
+  background-image:
+    linear-gradient(#ffffff, #ffffff),
+    linear-gradient(100deg, #f43f5e 0%, #6366f1 30%, #22d3ee 50%, #6366f1 70%, #f43f5e 100%);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  background-size: 100% 100%, 240% 100%;
+  animation: batch-border-flow 4.5s linear infinite;
+}
+
+.batch-tech-card::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -28%;
+  height: 24%;
+  background: linear-gradient(180deg, transparent, rgba(99, 102, 241, 0.16), rgba(34, 211, 238, 0.15), transparent);
+  animation: batch-scan-sweep 2.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
 @layer base {
   * {
     @apply border-border;

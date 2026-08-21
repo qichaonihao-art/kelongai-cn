@@ -14351,13 +14351,7 @@ async function downloadAndSaveSeedanceVideoForBatch(seedanceTaskId, folderName, 
     throw new Error('保存后文件大小校验失败');
   }
 
-  const noteParts = [
-    `来自全自动批量任务 ${batchMeta.batchRunId.slice(-8)}`,
-    `方向 ${batchMeta.directionNumber}`,
-    `轮次 ${batchMeta.variationRound + 1}`,
-    `Seedance ${seedanceTaskId}`,
-  ];
-  const note = noteParts.join(' · ');
+  const note = `来自全自动批量任务（方向 ${batchMeta.directionNumber}）`;
   const item = dbInsertVideoLibraryItem({
     folderName,
     originalName: sanitizeVideoLibraryFileName(originalName),
