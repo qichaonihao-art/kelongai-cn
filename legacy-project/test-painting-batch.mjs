@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { Readable } from 'node:stream';
 
 const stateDir = mkdtempSync(join(tmpdir(), 'kelong-painting-test-'));
 process.env.RUNTIME_STATE_DIR = stateDir;
@@ -42,7 +43,9 @@ const {
   handleGetPaintingBatchRun,
   handleGetPaintingBatchRunByRequest,
   handleGetPaintingBatchRunEstimate,
+  readMultipartFormBody,
   isValidPaintingClientRequestId,
+  parsePaintingIdeasWithJsonRetry,
   getSeedanceRatePerSecond,
   computePaintingBatchCostEstimate,
   PAINTING_BATCH_MODEL,
@@ -50,6 +53,9 @@ const {
   paintingPromptSimilarity,
   rewritePromptForDiversity,
   PaintingBatchSemaphore,
+  getPaintingFrameworkPosition,
+  formatPaintingSeedanceVideoLibraryName,
+  formatSeedanceVideoLibraryName,
 } = server;
 
 let passed = 0;
@@ -514,6 +520,21 @@ console.log('\n[19] 创意任务幂等：相同 clientRequestId 返回同一 tas
   assert(b2.taskId === b1.taskId, '返回同一个 taskId（不新建任务）', `${b1.taskId} / ${b2.taskId}`);
   assert(b2.deduplicated === true, '再次请求 deduplicated=true', JSON.stringify(b2));
 
+  // 测试桩会让豆包请求明确失败；失败后再次使用相同编号，应创建新的创意任务，而不是永久返回旧失败任务。
+  let recoveredBody = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    const retryRes = mockRes();
+    await handlePaintingIdeas(mockReq('/api/painting/ideas', { profile: { name: '测试挂画' }, clientRequestId: rid }), retryRes);
+    const retryBody = jsonBody(retryRes);
+    if (retryBody.taskId && retryBody.taskId !== b1.taskId) {
+      recoveredBody = retryBody;
+      break;
+    }
+  }
+  assert(!!recoveredBody, '原任务明确失败后，同一编号可安全创建新创意任务');
+  assert(recoveredBody?.deduplicated === false, '失败恢复任务标记为新建而非命中旧失败任务', JSON.stringify(recoveredBody));
+
   const res3 = mockRes();
   await handlePaintingIdeas(mockReq('/api/painting/ideas', { profile: { name: '测试挂画' }, clientRequestId: 'idea-test-00000002' }), res3);
   const b3 = jsonBody(res3);
@@ -623,6 +644,54 @@ console.log('\n[23] 正式批次缺少幂等编号时拒绝创建');
   assert(res._code === 400, '缺少 creationRequestId 返回 400', `code=${res._code}`);
   assert(String(jsonBody(res).error).includes('避免网络重试造成重复扣费'), '返回明确的安全提示', jsonBody(res).error);
   assert(after === before, '未创建任何批次记录', `${before} / ${after}`);
+}
+
+// ===== T24 multipart 必须完整透传正式批次幂等编号 =====
+console.log('\n[24] multipart 透传 creationRequestId');
+{
+  const formData = new FormData();
+  formData.append('file', new File([new Uint8Array([1])], 'painting.png', { type: 'image/png' }));
+  formData.append('profile', JSON.stringify({ name: '测试挂画' }));
+  formData.append('creationRequestId', 'batch-multipart-000001');
+  const encoded = new Request('http://localhost/upload', { method: 'POST', body: formData });
+  const req = Readable.fromWeb(encoded.body);
+  req.method = 'POST';
+  req.headers = Object.fromEntries(encoded.headers.entries());
+  const parsed = await readMultipartFormBody(req);
+  assert(parsed.creationRequestId === 'batch-multipart-000001', 'multipart 安全编号完整传到批次 handler', parsed.creationRequestId);
+  assert(parsed.file instanceof File && parsed.file.size === 1, 'multipart 图片仍正常解析');
+}
+
+// ===== T25 模型首次 JSON 非法时自动纠正一次 =====
+console.log('\n[25] 创意 JSON 解析失败自动纠正');
+{
+  let retryCalls = 0;
+  const recovered = await parsePaintingIdeasWithJsonRetry('[{"id":"1","title":"未闭合"', async () => {
+    retryCalls += 1;
+    return '[{"id":"1","title":"全景横摇","summary":"全景展示沙发、茶几与墙面挂画"}]';
+  });
+  assert(retryCalls === 1 && recovered.retried === true, '首次 JSON 非法时只纠正重试一次');
+  assert(recovered.ideas.length === 1 && recovered.ideas[0].title === '全景横摇', '纠正后的合法 JSON 被正常解析', JSON.stringify(recovered.ideas));
+
+  let validRetryCalls = 0;
+  const direct = await parsePaintingIdeasWithJsonRetry('[{"id":"1","title":"近景特写","summary":"镜头移动展示画面细节"}]', async () => {
+    validRetryCalls += 1;
+    return '[]';
+  });
+  assert(validRetryCalls === 0 && direct.retried === false, '首次 JSON 合法时不产生额外模型调用');
+}
+
+// ===== T26 仅挂画创意素材使用“日期 + 第几组第几个”命名 =====
+console.log('\n[26] 挂画创意素材入库命名');
+{
+  const createdAt = Date.UTC(2026, 7, 23, 6, 30) / 1000; // 上海时间 2026-08-23 14:30
+  assert(formatSeedanceVideoLibraryName(createdAt) === '8月23日 14-30.mp4', '其他创意模块继续保持原日期命名', formatSeedanceVideoLibraryName(createdAt));
+  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 1) === '8月23日 14-30 第1组第1个.mp4', '方向1对应第1组第1个');
+  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 10) === '8月23日 14-30 第1组第10个.mp4', '方向10对应第1组第10个');
+  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 11) === '8月23日 14-30 第2组第1个.mp4', '方向11对应第2组第1个');
+  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 40) === '8月23日 14-30 第4组第10个.mp4', '方向40对应第4组第10个');
+  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 0) === '8月23日 14-30.mp4', '没有挂画方向号时严格回退原命名');
+  assert(JSON.stringify(getPaintingFrameworkPosition(26)) === JSON.stringify({ groupNumber: 3, itemNumber: 6 }), '方向26可反查第3组第6个');
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);

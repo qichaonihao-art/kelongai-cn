@@ -143,11 +143,15 @@ interface SeedanceHistoryItem {
   elapsedSeconds?: number;
   isGood?: boolean;
   libraryFolder?: string;
+  directionNumber?: number;
+  variationRound?: number;
 }
 
 interface SeedanceLibrarySaveTarget {
   taskId: string;
   createdAt?: number;
+  directionNumber?: number;
+  variationRound?: number;
 }
 
 interface PaintingHistoryItem {
@@ -970,6 +974,8 @@ function createSeedanceHistoryItem(
     generateAudio: boolean;
     watermark: boolean;
     elapsedSeconds?: number;
+    directionNumber?: number;
+    variationRound?: number;
   }
 ): SeedanceHistoryItem {
   const createdAt = getSeedanceTaskTime(task);
@@ -991,6 +997,8 @@ function createSeedanceHistoryItem(
     generateAudio: options.generateAudio,
     watermark: options.watermark,
     elapsedSeconds: options.elapsedSeconds,
+    directionNumber: options.directionNumber,
+    variationRound: options.variationRound,
     isGood: false,
   };
 }
@@ -1231,6 +1239,8 @@ function seedanceHistoryItemToTask(item: SeedanceHistoryItem): SeedanceTaskResul
     videoUrl: item.videoUrl,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
+    directionNumber: item.directionNumber,
+    variationRound: item.variationRound,
     response: {
       id: item.taskId,
       status: item.status,
@@ -1572,6 +1582,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingHistory, setPaintingHistory] = useState<PaintingHistoryItem[]>([]);
   const [paintingError, setPaintingError] = useState('');
   const paintingFileInputRef = useRef<HTMLInputElement>(null);
+  const paintingSeedanceSourceRef = useRef<{ prompt: string; directionNumber: number; variationRound: number } | null>(null);
 
   // 挂画全自动批量生成状态
   const [paintingBatchConfirmOpen, setPaintingBatchConfirmOpen] = useState(false);
@@ -2756,6 +2767,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       : (overrides?.prompt ?? seedancePrompt.trim());
     if (!prompt || isSeedanceLoading) return;
 
+    // “生成完整提示词后再手动点击 C 区生成”也要保留挂画方向来源；提示词不一致时不误标其他模块。
+    const matchedPaintingSource = paintingSeedanceSourceRef.current?.prompt.trim() === prompt.trim()
+      ? paintingSeedanceSourceRef.current
+      : null;
+    const paintingDirectionNumber = overrides?.directionNumber ?? matchedPaintingSource?.directionNumber;
+    const paintingSourceVariationRound = overrides?.variationRound ?? matchedPaintingSource?.variationRound;
+
     const references = overrides?.references ?? seedanceReferences;
     const duration = overrides?.duration ?? seedanceDuration;
 
@@ -2807,6 +2825,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         duration: isVideoEdit ? -1 : duration,
         generateAudio: seedanceGenerateAudio,
         watermark: seedanceWatermark,
+        directionNumber: paintingDirectionNumber,
+        variationRound: paintingSourceVariationRound,
       }
     );
     const historyWithPendingTask = mergeSeedanceHistoryItem(seedanceHistory, pendingHistoryItem);
@@ -2832,8 +2852,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         watermark: seedanceWatermark,
         references,
         imageHash: overrides?.imageHash,
-        directionNumber: overrides?.directionNumber,
-        variationRound: overrides?.variationRound,
+        directionNumber: paintingDirectionNumber,
+        variationRound: paintingSourceVariationRound,
       });
       setSeedanceTask({
         ...task,
@@ -2860,6 +2880,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               duration: isVideoEdit ? -1 : duration,
               generateAudio: seedanceGenerateAudio,
               watermark: seedanceWatermark,
+              directionNumber: paintingDirectionNumber,
+              variationRound: paintingSourceVariationRound,
             }
           )
         );
@@ -2979,11 +3001,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         taskId: target.taskId,
         folderName: selectedVideoLibraryFolder,
         createdAt: target.createdAt,
+        paintingDirectionNumber: target.directionNumber,
+        paintingVariationRound: target.variationRound,
       });
       if (result.sourceBytes !== result.savedBytes) {
         throw new Error('保存后文件大小校验失败，请重试');
       }
-      if (result.item?.id) markVideoLibraryItemsRead([result.item.id]);
+      if (result.item?.id) markVideoLibraryItemsRead([result.item]);
       setSeedanceHistory((previous) => previous.map((item) => (
         item.taskId === target.taskId
           ? { ...item, libraryFolder: result.item.folderName }
@@ -3435,6 +3459,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         return next;
       });
 
+      const directionNumber = Number(idea.directionNumber) || 0;
+      paintingSeedanceSourceRef.current = directionNumber > 0
+        ? { prompt: prompt.trim(), directionNumber, variationRound: paintingVariationRound }
+        : null;
       return { prompt: prompt.trim(), duration: durationSeconds, references: nextReferences };
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '完整提示词生成失败，请稍后重试。');
@@ -6567,6 +6595,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             onClick={() => void openSeedanceLibrarySave({
                               taskId: seedanceTask.taskId,
                               createdAt: seedanceTask.createdAt,
+                              directionNumber: seedanceTask.directionNumber,
+                              variationRound: seedanceTask.variationRound,
                             })}
                             disabled={!seedanceTask.taskId || !!currentSeedanceLibraryFolder}
                             className="inline-flex h-8 items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 text-[11px] font-bold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-700"
@@ -6790,6 +6820,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                                 onClick={() => void openSeedanceLibrarySave({
                                                   taskId: item.taskId,
                                                   createdAt: item.createdAt,
+                                                  directionNumber: item.directionNumber,
+                                                  variationRound: item.variationRound,
                                                 })}
                                                 disabled={!!item.libraryFolder}
                                                 className="inline-flex h-9 items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-4 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-700"

@@ -21,8 +21,7 @@ export interface VideoLibrarySummaryItem {
 }
 
 interface VideoLibraryReadState {
-  baselineId: number;
-  readIds: number[];
+  readKeys: string[];
 }
 
 export interface VideoLibraryUnreadState {
@@ -32,7 +31,12 @@ export interface VideoLibraryUnreadState {
 }
 
 export const VIDEO_LIBRARY_READ_CHANGE_EVENT = 'kelongai:video-library-read-change';
-export const VIDEO_LIBRARY_READ_STATE_KEY = 'kelongai.videoLibraryReadState.v1';
+export const VIDEO_LIBRARY_READ_STATE_KEY = 'kelongai.videoLibraryReadState.v2';
+const LEGACY_VIDEO_LIBRARY_READ_STATE_KEY = 'kelongai.videoLibraryReadState.v1';
+
+function videoLibraryReadKey(item: Pick<VideoLibrarySummaryItem, 'id' | 'folderName'>) {
+  return `${encodeURIComponent(String(item.folderName || ''))}:${Number(item.id)}`;
+}
 
 function loadVideoLibraryReadState(): VideoLibraryReadState | null {
   if (typeof window === 'undefined') return null;
@@ -40,9 +44,8 @@ function loadVideoLibraryReadState(): VideoLibraryReadState | null {
     const parsed = JSON.parse(window.localStorage.getItem(VIDEO_LIBRARY_READ_STATE_KEY) || 'null');
     if (!parsed || typeof parsed !== 'object') return null;
     return {
-      baselineId: Number.isFinite(Number(parsed.baselineId)) ? Math.max(0, Number(parsed.baselineId)) : 0,
-      readIds: Array.isArray(parsed.readIds)
-        ? parsed.readIds.map(Number).filter((id: number) => Number.isInteger(id) && id > 0)
+      readKeys: Array.isArray(parsed.readKeys)
+        ? parsed.readKeys.map(String).filter(Boolean)
         : [],
     };
   } catch {
@@ -60,50 +63,54 @@ function saveVideoLibraryReadState(state: VideoLibraryReadState, notify = false)
   }
 }
 
+function initializeVideoLibraryReadState(items: VideoLibrarySummaryItem[]): VideoLibraryReadState {
+  if (typeof window === 'undefined') return { readKeys: [] };
+  try {
+    const legacy = JSON.parse(window.localStorage.getItem(LEGACY_VIDEO_LIBRARY_READ_STATE_KEY) || 'null');
+    if (legacy && typeof legacy === 'object') {
+      const baselineId = Number.isFinite(Number(legacy.baselineId)) ? Math.max(0, Number(legacy.baselineId)) : 0;
+      const legacyReadIds = new Set(Array.isArray(legacy.readIds) ? legacy.readIds.map(Number) : []);
+      const state = {
+        readKeys: items
+          .filter((item) => item.id <= baselineId || legacyReadIds.has(item.id))
+          .map(videoLibraryReadKey),
+      };
+      saveVideoLibraryReadState(state);
+      return state;
+    }
+  } catch {
+    // 旧记录损坏时按新电脑首次进入处理，避免把全部历史素材突然标为新。
+  }
+  // 新电脑 / 新浏览器第一次进入：当时已有素材作为历史基线，之后新增的才显示“新”。
+  const state = { readKeys: items.map(videoLibraryReadKey) };
+  saveVideoLibraryReadState(state);
+  return state;
+}
+
 export function calculateVideoLibraryUnread(items: VideoLibrarySummaryItem[]): VideoLibraryUnreadState {
   const validItems = items.filter((item) => Number.isInteger(item.id) && item.id > 0);
-  const maximumCurrentId = validItems.reduce((maximum, item) => Math.max(maximum, item.id), 0);
-  let state = loadVideoLibraryReadState();
-  if (!state) {
-    state = {
-      baselineId: maximumCurrentId,
-      readIds: [],
-    };
-    saveVideoLibraryReadState(state);
-  } else if (state.baselineId > maximumCurrentId) {
-    state = { baselineId: maximumCurrentId, readIds: [] };
-    saveVideoLibraryReadState(state);
-  }
-
-  const currentIds = new Set(validItems.map((item) => item.id));
-  const readIds = new Set(state.readIds.filter((id) => id > state.baselineId && currentIds.has(id)));
-  if (readIds.size !== state.readIds.length) {
-    saveVideoLibraryReadState({ baselineId: state.baselineId, readIds: Array.from(readIds) });
-  }
+  const state = loadVideoLibraryReadState() || initializeVideoLibraryReadState(validItems);
+  const currentKeys = new Set(validItems.map(videoLibraryReadKey));
+  const readKeys = new Set(state.readKeys.filter((key) => currentKeys.has(key)));
+  if (readKeys.size !== state.readKeys.length) saveVideoLibraryReadState({ readKeys: Array.from(readKeys) });
 
   const unreadIds = new Set<number>();
   const byFolder = new Map<string, number>();
   validItems.forEach((item) => {
-    if (item.id <= state.baselineId || readIds.has(item.id)) return;
+    if (readKeys.has(videoLibraryReadKey(item))) return;
     unreadIds.add(item.id);
     byFolder.set(item.folderName, (byFolder.get(item.folderName) || 0) + 1);
   });
   return { total: unreadIds.size, unreadIds, byFolder };
 }
 
-export function markVideoLibraryItemsRead(ids: number[]) {
-  const validIds = Array.from(new Set(ids.map(Number).filter((id) => Number.isInteger(id) && id > 0)));
-  if (!validIds.length || typeof window === 'undefined') return;
-  const state = loadVideoLibraryReadState();
-  if (!state) {
-    saveVideoLibraryReadState({ baselineId: Math.max(...validIds), readIds: [] }, true);
-    return;
-  }
-  const readIds = new Set(state.readIds);
-  validIds.forEach((id) => {
-    if (id > state.baselineId) readIds.add(id);
-  });
-  saveVideoLibraryReadState({ baselineId: state.baselineId, readIds: Array.from(readIds) }, true);
+export function markVideoLibraryItemsRead(items: Array<Pick<VideoLibrarySummaryItem, 'id' | 'folderName'>>) {
+  const validItems = items.filter((item) => Number.isInteger(Number(item?.id)) && Number(item.id) > 0 && String(item.folderName || ''));
+  if (!validItems.length || typeof window === 'undefined') return;
+  const state = loadVideoLibraryReadState() || { readKeys: [] };
+  const readKeys = new Set(state.readKeys);
+  validItems.forEach((item) => readKeys.add(videoLibraryReadKey(item)));
+  saveVideoLibraryReadState({ readKeys: Array.from(readKeys) }, true);
 }
 
 async function readJson(response: Response) {
@@ -176,6 +183,8 @@ export async function saveSeedanceVideoToLibrary(input: {
   taskId: string;
   folderName: string;
   createdAt?: number;
+  paintingDirectionNumber?: number;
+  paintingVariationRound?: number;
 }) {
   const response = await fetch('/api/video-library/import-seedance', {
     method: 'POST',

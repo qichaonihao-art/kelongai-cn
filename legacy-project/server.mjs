@@ -1613,6 +1613,22 @@ function formatSeedanceVideoLibraryName(createdAt) {
   return `${Number(readPart('month'))}月${Number(readPart('day'))}日 ${readPart('hour')}-${readPart('minute')}.mp4`;
 }
 
+function getPaintingFrameworkPosition(directionNumber) {
+  const direction = Number(directionNumber) || 0;
+  if (direction < 1 || direction > 40) return null;
+  return {
+    groupNumber: Math.floor((direction - 1) / 10) + 1,
+    itemNumber: ((direction - 1) % 10) + 1,
+  };
+}
+
+function formatPaintingSeedanceVideoLibraryName(createdAt, directionNumber) {
+  const position = getPaintingFrameworkPosition(directionNumber);
+  if (!position) return formatSeedanceVideoLibraryName(createdAt);
+  const baseName = formatSeedanceVideoLibraryName(createdAt).replace(/\.mp4$/i, '');
+  return `${baseName} 第${position.groupNumber}组第${position.itemNumber}个.mp4`;
+}
+
 function normalizeVideoLibraryItem(row) {
   if (!row) return null;
   return {
@@ -2267,6 +2283,8 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
     const taskId = readValue(body?.taskId);
     const folderName = sanitizeVideoLibraryFolder(body?.folderName);
     const requestedCreatedAt = Number(body?.createdAt || 0);
+    const paintingDirectionNumber = Number(body?.paintingDirectionNumber || 0);
+    const paintingVariationRound = Math.max(0, Number(body?.paintingVariationRound || 0));
     const apiKey = readValue(SERVER_CONFIG.seedanceApiKey);
     if (!taskId) {
       sendJson(res, 400, { error: '缺少视频生成任务 ID' });
@@ -2330,7 +2348,11 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
     }
 
     const taskCreatedAt = Number(taskPayload?.created_at || taskPayload?.data?.created_at || requestedCreatedAt || 0);
-    const originalName = formatSeedanceVideoLibraryName(taskCreatedAt);
+    // 只有挂画创意素材会携带 1-40 的固定方向号；其他创意模块继续沿用原日期命名。
+    const paintingPosition = getPaintingFrameworkPosition(paintingDirectionNumber);
+    const originalName = paintingPosition
+      ? formatPaintingSeedanceVideoLibraryName(taskCreatedAt, paintingDirectionNumber)
+      : formatSeedanceVideoLibraryName(taskCreatedAt);
     const storedName = `${sha256}.mp4`;
     await ensureVideoLibraryDir();
     filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
@@ -2346,7 +2368,9 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
       mimeType: 'video/mp4',
       fileSize: savedFile.size,
       sha256,
-      note: '来自创意创作',
+      note: paintingPosition
+        ? `来自挂画创意素材·手动保存（第${paintingPosition.groupNumber}组第${paintingPosition.itemNumber}个，方向${paintingDirectionNumber}，第${paintingVariationRound + 1}轮）`
+        : '来自创意创作',
     });
     void ensureVideoLibraryPreview({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
     void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch((thumbnailError) => {
@@ -9873,6 +9897,7 @@ async function readMultipartFormBody(req) {
     targetFolderId: readValue(formData.get('targetFolderId')),
     targetFolderName: readValue(formData.get('targetFolderName')),
     onlyUnused: readValue(formData.get('onlyUnused')),
+    creationRequestId: readValue(formData.get('creationRequestId')),
   };
 }
 
@@ -13831,6 +13856,16 @@ function normalizePaintingIdeas(parsed) {
     .filter((item) => item.summary);
 }
 
+async function parsePaintingIdeasWithJsonRetry(initialAnswer, retryAnswer) {
+  let answer = initialAnswer;
+  try {
+    return { answer, ideas: normalizePaintingIdeas(parseStructuredJson(answer)), retried: false };
+  } catch (firstError) {
+    answer = await retryAnswer(firstError, initialAnswer);
+    return { answer, ideas: normalizePaintingIdeas(parseStructuredJson(answer)), retried: true };
+  }
+}
+
 function countNearDuplicatePaintingIdeas(ideas) {
   const signatures = ideas.map((item) => (
     `${item.title}${item.summary}`
@@ -13997,7 +14032,24 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
       content: [{ type: 'input_text', text: prompt }]
     });
 
-    let ideas = normalizePaintingIdeas(parseStructuredJson(answer));
+    const parsedIdeas = await parsePaintingIdeasWithJsonRetry(answer, async (parseError) => {
+      // 豆包偶发会返回被截断、带解释文字或其他不合法 JSON。后台任务已明确拿到错误结果，
+      // 可安全要求模型重新输出一次，不涉及 Seedance 提交，也不会造成视频重复扣费。
+      console.warn('[doubao painting] ideas JSON parse retry', {
+        requestId,
+        message: parseError?.message || '',
+        parseError: parseError?.parseError || '',
+        rawLength: String(answer || '').length,
+      });
+      const jsonCorrectionPrompt = `${prompt}\n\n你上一次输出无法解析为合法 JSON。请重新生成完整结果：必须只输出一个包含 ${count} 个对象的合法 JSON 数组；所有键名和字符串必须使用英文双引号；不得使用 markdown 代码块；不得添加解释；不得出现尾随逗号；必须保证数组和对象括号完整闭合。`;
+      return callDoubaoArkText({
+        apiKey,
+        model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+        content: [{ type: 'input_text', text: jsonCorrectionPrompt }]
+      });
+    });
+    answer = parsedIdeas.answer;
+    let ideas = parsedIdeas.ideas;
     const structureFailures = countPaintingIdeaStructureFailures(ideas, globalOffset);
     const needsCriticalRetry = ideas.length !== count || countNearDuplicatePaintingIdeas(ideas) > 0;
     const hasRetryBudget = Date.now() - modelStartedAt < 25 * 1000;
@@ -14077,14 +14129,19 @@ async function handlePaintingIdeas(req, res) {
           sendJson(res, 410, { error: '任务已失效，需要重新生成当前批次。', invalidated: true });
           return;
         }
-        sendJson(res, 202, {
-          ok: true,
-          taskId: existing.id,
-          status: existing.status,
-          deduplicated: true,
-          ...(existing.status === 'done' ? { result: existing.result } : {}),
-        });
-        return;
+        if (existing.status !== 'failed') {
+          sendJson(res, 202, {
+            ok: true,
+            taskId: existing.id,
+            status: existing.status,
+            deduplicated: true,
+            ...(existing.status === 'done' ? { result: existing.result } : {}),
+          });
+          return;
+        }
+        // 原后台任务已经明确失败，可在用户点击“继续准备”后用同一请求编号创建新任务。
+        // 这里只重跑创意 JSON，不会提交 Seedance 视频任务。
+        PAINTING_IDEA_CLIENT_REQUESTS.delete(clientRequestId);
       }
     }
     const task = createPaintingTask('ideas');
@@ -14504,12 +14561,8 @@ async function downloadAndSaveSeedanceVideoForBatch(seedanceTaskId, folderName, 
   }
 
   const taskCreatedAt = Number(taskPayload?.created_at || taskPayload?.data?.created_at || 0);
-  const shortTaskId = seedanceTaskId.slice(-6);
-  const datePart = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '');
-  const directionPart = `方向${String(batchMeta.directionNumber).padStart(2, '0')}`;
-  const titlePart = String(batchMeta.ideaTitle || '').replace(/[\\/:*?"<>|]/g, '').slice(0, 20);
-  const roundPart = `第${batchMeta.variationRound + 1}轮`;
-  const originalName = `${batchMeta.paintingName}_${directionPart}_${titlePart}_${roundPart}_${datePart}_${shortTaskId}.mp4`;
+  const paintingPosition = getPaintingFrameworkPosition(batchMeta.directionNumber);
+  const originalName = formatPaintingSeedanceVideoLibraryName(taskCreatedAt, batchMeta.directionNumber);
   const storedName = `${sha256}.mp4`;
   await ensureVideoLibraryDir();
   const filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
@@ -14519,7 +14572,9 @@ async function downloadAndSaveSeedanceVideoForBatch(seedanceTaskId, folderName, 
     throw new Error('保存后文件大小校验失败');
   }
 
-  const note = `来自全自动批量任务（方向 ${batchMeta.directionNumber}）`;
+  const note = paintingPosition
+    ? `来自挂画创意素材·全自动（第${paintingPosition.groupNumber}组第${paintingPosition.itemNumber}个，方向${batchMeta.directionNumber}，第${batchMeta.variationRound + 1}轮）`
+    : `来自挂画创意素材·全自动（方向 ${batchMeta.directionNumber}）`;
   const item = dbInsertVideoLibraryItem({
     folderName,
     originalName: sanitizeVideoLibraryFileName(originalName),
@@ -18434,7 +18489,9 @@ export {
   handleGetPaintingBatchRun,
   handleGetPaintingBatchRunByRequest,
   handleGetPaintingBatchRunEstimate,
+  readMultipartFormBody,
   isValidPaintingClientRequestId,
+  parsePaintingIdeasWithJsonRetry,
   paintingPromptSimilarity,
   rewritePromptForDiversity,
   extractPaintingDiversitySummary,
@@ -18443,4 +18500,7 @@ export {
   PAINTING_BATCH_MODEL_REJECT_MESSAGE,
   getSeedanceRatePerSecond,
   computePaintingBatchCostEstimate,
+  getPaintingFrameworkPosition,
+  formatPaintingSeedanceVideoLibraryName,
+  formatSeedanceVideoLibraryName,
 };

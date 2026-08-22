@@ -38,6 +38,8 @@ export interface SeedanceTaskResult {
   createdAt?: number;
   updatedAt?: number;
   executionExpiresAfter?: number;
+  directionNumber?: number;
+  variationRound?: number;
   response: unknown;
 }
 
@@ -593,6 +595,8 @@ export async function createSeedanceTask(options: {
     createdAt: typeof json?.createdAt === 'number' ? json.createdAt : undefined,
     updatedAt: typeof json?.updatedAt === 'number' ? json.updatedAt : undefined,
     executionExpiresAfter: typeof json?.executionExpiresAfter === 'number' ? json.executionExpiresAfter : undefined,
+    directionNumber: options.directionNumber,
+    variationRound: options.variationRound,
     response: json?.response || json,
   };
 }
