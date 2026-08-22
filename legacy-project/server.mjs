@@ -9869,6 +9869,8 @@ async function readMultipartFormBody(req) {
 
   const formData = await request.formData();
   const file = formData.get('file');
+  const upperWoodFile = formData.get('upperWoodFile');
+  const lowerWoodFile = formData.get('lowerWoodFile');
   const files = formData.getAll('files').filter((item) => item instanceof File && item.size > 0);
   const filesKinds = parseJsonString(formData.get('files_kinds'), []);
 
@@ -9880,6 +9882,8 @@ async function readMultipartFormBody(req) {
     model: readValue(formData.get('model')),
     mediaKind: readValue(formData.get('media_kind')),
     file: file instanceof File ? file : null,
+    upperWoodFile: upperWoodFile instanceof File && upperWoodFile.size > 0 ? upperWoodFile : null,
+    lowerWoodFile: lowerWoodFile instanceof File && lowerWoodFile.size > 0 ? lowerWoodFile : null,
     files,
     filesKinds,
     // 挂画全自动批量任务创建时通过 multipart 传入的字段（字符串原样透传，由 handler 自行解析）。
@@ -13078,6 +13082,26 @@ async function handleCreatePaintingBatchRun(req, res) {
     const stored = await ensurePaintingBatchRunImage(imageHash, imageFile);
     imagePath = stored.filePath;
 
+    const storeOptionalWoodReference = async (file, label) => {
+      if (!(file instanceof File) || file.size <= 0) return null;
+      if (!readValue(file.type).startsWith('image/')) {
+        const error = new Error(`${label}必须是图片格式`);
+        error.statusCode = 400;
+        throw error;
+      }
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const hash = createHash('sha256').update(buffer).digest('hex');
+      const result = await ensurePaintingBatchRunImage(hash, file);
+      return {
+        imagePath: result.filePath,
+        imageHash: hash,
+        fileName: sanitizeFileName(file.name || `${label}.jpg`),
+        fileSize: result.size,
+      };
+    };
+    const upperWoodReference = await storeOptionalWoodReference(body.upperWoodFile, '上方木条参考图');
+    const lowerWoodReference = await storeOptionalWoodReference(body.lowerWoodFile, '下方木条参考图');
+
     const profile = body.profile && typeof body.profile === 'object'
       ? body.profile
       : (typeof body.profile === 'string' ? JSON.parse(body.profile) : null);
@@ -13169,6 +13193,10 @@ async function handleCreatePaintingBatchRun(req, res) {
     const batchOptions = {
       ...(body.options && typeof body.options === 'object' ? body.options : {}),
       costEstimate,
+      woodReferences: {
+        upper: upperWoodReference,
+        lower: lowerWoodReference,
+      },
     };
 
     // 批次记录与 40 个方向任务必须在同一事务内落库：事务成功后才 enqueue，禁止出现“批次已存在但任务只插了一半”。
@@ -13746,6 +13774,31 @@ const PAINTING_ROLLING_UNFOLD_MARKER = '【卷起挂画滚动展开与下方木�
 const PAINTING_REALISM_MARKER = '【真人实拍质感最高优先级】';
 const PAINTING_DYNAMIC_ENDING_MARKER = '【动态收尾强制规则】';
 const PAINTING_CONTENT_DETAIL_DIRECTION = 29;
+const PAINTING_WOOD_DETAIL_DIRECTION = 30;
+const PAINTING_CONTENT_DETAIL_VARIANTS = [
+  '茶几平放·正上方左到右：挂画完整平坦放在尺寸足够的茶几表面，上下木条与画布保持原样；摄影机接近垂直俯拍，从画面左侧向右侧连续扫过，禁止默认从右侧斜拍',
+  '墙面悬挂·近乎正面上到下：挂画完整稳固地挂在墙上，镜头位于近乎正面的轻微左侧机位，从画面上端向下端连续扫过，禁止明显右侧斜视',
+  '书桌平放·正上方下到上：挂画完整平坦放在宽阔书桌上，木条不得拆除或变形；摄影机垂直俯拍，从画面下端向上端连续扫过',
+  '房门悬挂·正面右到左：挂画通过真实挂点完整固定在平整房门上，机位接近正面，从画面右侧向左侧连续扫过，不得把门上挂画变成门的印花或壁画',
+  '长桌平放·左上到右下：挂画完整平坦放在尺寸足够的长桌或展示桌上，摄影机从正上方略带自然倾角，沿画面左上至右下的主视觉路径连续移动',
+  '书架平整外侧板悬挂·左到右：仅在尺寸足够、可真实承重的书架平整外侧竖板上完整悬挂，不得卡在层板中、悬空或遮住木条；镜头从左到右连续扫过原画内容',
+  '矮柜宽阔台面平放·右到左：挂画完整平坦放在深度和长度都足够的矮柜宽阔台面，摄影机以正上方俯拍为主，从画面右侧向左侧连续扫过',
+  '墙面悬挂·正面沿书法或山水路径：挂画完整固定在墙面，摄影机保持近乎正面，不从左右侧边斜拍；只沿参考图中真实存在的书法笔势或山水构图路径连续移动',
+];
+
+function getPaintingContentDetailVariant(variationIndex = 0) {
+  const index = Math.max(0, Math.floor(Number(variationIndex) || 0));
+  return PAINTING_CONTENT_DETAIL_VARIANTS[index % PAINTING_CONTENT_DETAIL_VARIANTS.length];
+}
+
+const PAINTING_CONTENT_DETAIL_VARIANT_MARKER = '【本次原画内容特写指定组合】';
+
+function ensurePaintingContentDetailVariant(promptText, variationIndex = 0) {
+  const normalized = String(promptText || '').trim();
+  const rule = getPaintingContentDetailVariant(variationIndex);
+  if (normalized.startsWith(PAINTING_CONTENT_DETAIL_VARIANT_MARKER)) return normalized;
+  return `${PAINTING_CONTENT_DETAIL_VARIANT_MARKER}\n${rule}\n本条4-6秒视频只执行上述一个摆放场景、一个主机位和一条连续移动路径。如下方其他文字与本指定组合冲突，以本段为准；不得改成右侧斜拍或其他摆放方式。\n\n${normalized}`;
+}
 const PAINTING_OBJECT_PERMANENCE_RULE = '若创意设定挂画已经上墙，挂画必须从第 0 秒起就真实、完整、稳固地存在于同一墙面坐标，并在全片保持相同尺寸、透视、挂点、墙面接触阴影和遮挡关系。开场可以暂时看不到挂画，但其所在墙面位置必须完全处于取景框之外，或被门框、屏风、人物、家具、绿植等真实不透明前景遮挡；后续只能依靠镜头移动或遮挡物自然移开而被拍到。只要前面镜头已经拍到挂画所在的完整墙面，该挂画就必须已经可见。严禁挂画淡入、浮现、透明变实、凭空生成、突然出现、逐渐长出、尺寸由小变大或中途贴到墙上；“揭示、进入画面、逐渐完整看到”只能表示摄影机改变取景后拍到一个从第 0 秒起就客观存在的挂画，绝不表示挂画本身出现。';
 const PAINTING_ROLLING_UNFOLD_RULE = '如果挂画开场处于卷起状态，从卷起到完全展开的全过程中，下方木条/下压杆必须始终存在并严格保持参考图中的原始形状、颜色、材质、长度、粗细、截面和两端轮廓，不得消失、变形、变色、伸长、缩短或变成圆柱形/圆杆。下方木条两端及周围不得新增任何物体、零件或装饰，包括但不限于圆柱、轴头、端帽、圆球、把手、系带或金属件。展开必须由人的双手合理控制，画布只能随着卷筒绕自身轴线旋转而逐圈滚动释放，严禁滑动、平移、平铺、抽拉、弹开或在无人操作时自行展开。';
 const PAINTING_LIVE_ACTION_REALISM_RULE = '整体必须呈现普通真实住宅中的真人实地拍摄质感，而不是三维渲染、AI样板间或过度精修的商业广告。空间允许轻微生活痕迹和自然不对称，沙发织物、窗帘、衣服与皮肤保留真实纹理、褶皱和细微瑕疵；自然光应有合理方向、层次、柔和阴影和轻微明暗差异，禁止全屋无阴影的均匀棚拍光、塑料材质、蜡像皮肤和过度磨皮。镜头保持稳定清楚，但运动应有真人摄影的自然起步、轻微惯性、减速和小幅构图修正，禁止数学式绝对匀速滑轨、虚拟摄像机漂移和明显手持抖动。人物按现实正常速度完成动作，动作之间允许自然衔接，每 1-2 秒持续产生新的有效动作或构图信息即可，禁止慢放、发呆、重复和为赶时间而机械连做过多动作。';
@@ -13812,8 +13865,8 @@ const PAINTING_FRAMEWORKS = [
     '其他方向02·从左向右横扫收束：挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与近期历史不同的合理场景。开场镜头位于空间左侧，挂画所在位置必须完全处于取景框右侧之外，不得先拍到空白悬挂墙面；随后用一个连续镜头按正常叙事速度从左向右平稳横扫，依次经过2-3件真实家具陈设和一个可选的自然人物动作，最后挂画从画面右侧被真实取景揭示，镜头自然减速但保持轻微横移惯性直至结束，不定格、不停成静态图片。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
     '其他方向03·从右向左横扫收束：挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与上一条及近期历史不同的合理场景。开场镜头位于空间右侧，挂画所在位置必须完全处于取景框左侧之外，不得先拍到空白悬挂墙面；随后用一个连续镜头按正常叙事速度从右向左平稳横扫，依次经过2-3件真实家具陈设和一个可选的自然人物动作，最后挂画从画面左侧被真实取景揭示，镜头自然减速但保持轻微横移惯性直至结束，不定格、不停成静态图片。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
     '其他方向04·对称构图与人物穿行：挂画位于对称构图中心，人物从画面一侧进入、完成放书或放杯动作后从另一侧离开；主体构图保持稳定，结尾在人物尚未完全离开时轻微推近，不追加无人静态定妆',
-    '其他方向05·画面内容移动特写：总时长固定为4-6秒，以挂画原画内容为唯一主体进行一镜到底近距离拍摄；根据画面构图选择从上到下、从下到上、从左到右、从右到左或沿书法笔势/山水路径平稳移动，依次展示书法飞白、印章、山水、花鸟或纹理等真实可见内容。镜头按正常速度持续移动并在仍有轻微惯性时结束，不定格，不拉远补拍墙面，不强行加入人物、家具或空间全景；严禁改字、补画、让二维画面景物动起来或把平面内容变成三维场景',
-    '其他方向06·木条工艺到整体：侧光近景展示上下木条、挂绳或实际可见连接结构，人物手指只沿木条边缘示意，随后让开，镜头拉远展示挂画在空间中的真实比例',
+    '其他方向05·画面内容移动特写：总时长固定为4-6秒，以挂画原画内容为唯一主体进行一镜到底近距离拍摄。每次复用必须从合理组合中轮换一种：挂画可完整悬挂在墙面、房门或可真实承重且尺寸足够的书架平整外侧板，也可连同上下木条完整平坦放在茶几、书桌、长桌、展示桌或矮柜宽阔台面上；不得倚靠、卡住、悬空或为了特写拆掉木条。机位必须在近乎正面、正上方垂直俯拍、轻微左侧或合理微倾中轮换，不得总是默认从右侧边斜拍。移动路径在上到下、下到上、左到右、右到左、对角线或沿书法笔势/山水路径中轮换，依次展示书法飞白、印章、山水、花鸟或纹理等真实可见内容。单条视频只选一个逻辑成立的摆放场景、一个主机位和一条连续路径，禁止在4-6秒内乱切多场景。镜头按正常速度持续移动并在仍有轻微惯性时结束，不定格，不拉远补拍空间，不强行加入人物或家具全景；严禁改字、补画、让二维画面景物动起来或把平面内容变成三维场景',
+    '其他方向06·实木压条工艺移动特写：以上下实木压条为主体，最多两个近景镜头；在“上木条左到右”、“上木条右到左”、“下木条左到右”、“下木条右到左”、“木条端部至画布连接处”中选择与近期不同的路径，清楚展示真实木纹、颜色、粗细、截面、平直两端及与画布的连接。如上下木条都拍，每根各用一个连续移动近景；如只拍一根，可在同一镜头中沿木纹到端部完成展示。不得默认拉远补拍整个房间，不得把平直方木条变成圆柱卷轴，不得新增轴头、端帽、圆球、把手或金属件',
   ],
   // 第 4 批：其他方向 7-16
   [
@@ -13884,7 +13937,7 @@ function countNearDuplicatePaintingIdeas(ideas) {
 function countPaintingIdeaStructureFailures(ideas, globalOffset = 0) {
   const furnishingPattern = /沙发|茶几|书架|绿植|地毯|落地灯|茶具|博古架|花瓶|文房摆件|餐桌|餐椅|玄关柜|书桌|边柜|床头柜|艺术灯具|电视柜|屏风|雕塑/g;
   return ideas.filter((item, index) => {
-    if (globalOffset + index + 1 === PAINTING_CONTENT_DETAIL_DIRECTION) return false;
+    if ([PAINTING_CONTENT_DETAIL_DIRECTION, PAINTING_WOOD_DETAIL_DIRECTION].includes(globalOffset + index + 1)) return false;
     const text = `${item.title}${item.summary}`;
     const furnishings = text.match(new RegExp(furnishingPattern.source, 'g')) || [];
     return !/(远景|全景)/.test(text) || new Set(furnishings).size < 2;
@@ -13902,7 +13955,7 @@ function requiredPaintingTimelineStages(duration) {
 
 function inspectPaintingPromptQuality(promptText, duration, ideaSummary = '') {
   const issues = [];
-  const isContentDetailScan = /画面内容移动特写|原画内容.{0,8}(?:移动|巡游|扫描)特写|沿.{0,12}(?:笔势|山水路径)/.test(ideaSummary);
+  const isContentDetailScan = /画面内容移动特写|原画内容.{0,8}(?:移动|巡游|扫描)特写|沿.{0,12}(?:笔势|山水路径)|实木压条.{0,8}(?:移动|工艺)?特写|木条端部至画布/.test(ideaSummary);
   const timelineRanges = String(promptText || '').match(/\d+(?:\.\d+)?\s*(?:-|–|—|~|～|至|到)\s*\d+(?:\.\d+)?\s*秒/g) || [];
   const requiredStages = requiredPaintingTimelineStages(duration);
   if (timelineRanges.length < requiredStages) {
@@ -13996,7 +14049,13 @@ ${scene ? `- 场景偏好：${scene}` : ''}
 ${extraRequirements ? `- 其他特殊要求：${extraRequirements}` : ''}
 
 【本批固定方向（共 ${frameworks.length} 条，必须严格逐条使用、顺序一一对应）】
-${frameworks.map((framework, index) => `${index + 1}. ${framework}\n   镜头结构：${getPaintingShotStructure(globalOffset + index + 1)}\n   若出现人物，本条服装主色必须为「${wardrobeAssignments[index]}」，可用其他协调色做小面积辅助。`).join('\n')}
+${frameworks.map((framework, index) => {
+  const directionNumber = globalOffset + index + 1;
+  const detailVariant = directionNumber === PAINTING_CONTENT_DETAIL_DIRECTION
+    ? `\n   本轮指定的摆放×机位×路径组合：${getPaintingContentDetailVariant(variationRound)}`
+    : '';
+  return `${index + 1}. ${framework}${detailVariant}\n   镜头结构：${getPaintingShotStructure(directionNumber)}\n   若出现人物，本条服装主色必须为「${wardrobeAssignments[index]}」，可用其他协调色做小面积辅助。`;
+}).join('\n')}
 
 【本轮变化与历史避重】
 - 当前为第 ${variationRound + 1} 轮变化。同一固定方向的大框架不变，但具体人物身份、家具组合、开场细节、动作衔接和构图必须形成这一轮的新执行版本。
@@ -14018,7 +14077,7 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
 12. 严格区分“内容阶段”和“镜头数量”：不得为了满足阶段数而机械切镜。一镜到底方向禁止硬切；主镜头＋动态收束方向最多 2 个镜头且不得为了结尾补切静态挂画；多镜头方向只在时间、空间或视觉尺度不连续时切换。
 13. 真人实拍优先：${PAINTING_LIVE_ACTION_REALISM_RULE}
 14. 动态收尾：${PAINTING_DYNAMIC_ENDING_RULE}
-15. 唯一例外：固定方向“其他方向05·画面内容移动特写”的总时长必须为 4-6 秒，且不执行第 7、8 条的家具陈设、远景/全景要求；它必须把绝大部分时长用于原画内容的一镜到底移动特写，不得为了满足空间规则拉远补拍房间。其他 39 个方向仍严格执行第 7、8 条。
+15. 特写例外：固定方向“其他方向05·画面内容移动特写”的总时长必须为 4-6 秒；它与“其他方向06·实木压条工艺移动特写”均不执行第 7、8 条的家具陈设、远景/全景要求。前者必须把绝大部分时长用于原画内容的一镜到底移动特写；后者必须聚焦上下实木压条的木纹、端部、截面和画布连接，最多两个近景镜头。两者都不得为了满足空间规则拉远补拍房间。其他 38 个方向仍严格执行第 7、8 条。
 
 【镜头语言（多样且克制）】
 - 动态运镜（稳定、连贯、按正常叙事速度推进）：推近、拉远、横向摇移、纵向/斜向移动、轻微升降或极小幅度环绕；保留真人摄影合理的起步、惯性、减速和小幅构图修正，不得写成机械绝对匀速，也不得用过慢运镜拖延内容。
@@ -14060,7 +14119,7 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
     const needsCriticalRetry = ideas.length !== count || countNearDuplicatePaintingIdeas(ideas) > 0;
     const hasRetryBudget = Date.now() - modelStartedAt < 25 * 1000;
     if (needsCriticalRetry && hasRetryBudget) {
-      const correctionPrompt = `${prompt}\n\n你上一次输出未通过质量检查：必须恰好输出 ${count} 条有效方案，标题和核心创意不得近似重复，并严格一一对应固定方向；除“其他方向05·画面内容移动特写”外，每条标题或核心创意都要明确写出远景/全景，并至少点名 2 件具体家具或陈设；内容移动特写不得添加这些空间要求。当前有 ${structureFailures} 条未满足空间结构要求。请重新输出完整 JSON 数组，不要解释。`;
+      const correctionPrompt = `${prompt}\n\n你上一次输出未通过质量检查：必须恰好输出 ${count} 条有效方案，标题和核心创意不得近似重复，并严格一一对应固定方向；除“其他方向05·画面内容移动特写”和“其他方向06·实木压条工艺移动特写”外，每条标题或核心创意都要明确写出远景/全景，并至少点名 2 件具体家具或陈设；两个特写方向不得添加这些空间要求。当前有 ${structureFailures} 条未满足空间结构要求。请重新输出完整 JSON 数组，不要解释。`;
       answer = await callDoubaoArkText({
         apiKey,
         model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
@@ -14170,6 +14229,9 @@ async function generatePaintingIdeaPromptCore(requestId, apiKey, profile, idea, 
 
   const isContentDetailScan = Number(idea?.directionNumber) === PAINTING_CONTENT_DETAIL_DIRECTION
     || /画面内容移动特写|原画内容.{0,8}(?:移动|巡游|扫描)特写/.test(`${ideaTitle}\n${ideaSummary}`);
+  const isWoodDetailScan = Number(idea?.directionNumber) === PAINTING_WOOD_DETAIL_DIRECTION
+    || /实木压条.{0,8}(?:移动|工艺)?特写|木条端部至画布/.test(`${ideaTitle}\n${ideaSummary}`);
+  const isCloseDetailScan = isContentDetailScan || isWoodDetailScan;
   const durationMin = isContentDetailScan ? 4 : (Number(idea?.durationMin) || Number(context.durationMin));
   const durationMax = isContentDetailScan ? 6 : (Number(idea?.durationMax) || Number(context.durationMax));
   const hasDurationRange =
@@ -14183,12 +14245,17 @@ async function generatePaintingIdeaPromptCore(requestId, apiKey, profile, idea, 
   const scene = readValue(idea?.scene) || readValue(context.scene);
   const extraRequirements = readValue(idea?.extraRequirements) || readValue(context.extraRequirements);
   const elementVariationIndex = Math.max(0, Math.floor(Number(context.elementVariationIndex) || 0));
+  const contentDetailVariant = isContentDetailScan
+    ? getPaintingContentDetailVariant(elementVariationIndex)
+    : '';
   const previousPrompt = readValue(context.previousPrompt).slice(0, 4000);
   const avoidElements = Array.isArray(context.avoidElements)
     ? context.avoidElements.filter(Boolean).slice(0, 12)
     : [];
   const creativeSubjectRequirements = isContentDetailScan
     ? '参考图中真实可见的文字、书法笔势、印章、山水、花鸟、装饰纹样与画布纹理，以及镜头选择该移动路径的构图依据；本方向不得强行加入人物、服装或家具'
+    : isWoodDetailScan
+      ? '上下实木压条的真实木纹、颜色、材质、粗细、截面、平直两端与画布连接处，以及左到右或右到左的连续移动路径；本方向不得强行加入人物、服装、家具全景或房间定妆镜头'
     : `${character ? `人物设定（${character}）` : '人物设定'}、符合「${styleProfile.label}」的服装款式与方案指定主色、${scene ? `指定场景（${scene}）` : '场景'}、构图、动作节奏、光影氛围和${audio ? `声音/音乐（${audio}）` : '声音'}`;
   const elementVariationRequirements = elementVariationIndex > 0 || avoidElements.length > 0
     ? `\n【同框架换元素重生成${elementVariationIndex > 0 ? `（第 ${elementVariationIndex} 个变化版本）` : ''}】
@@ -14218,6 +14285,7 @@ ${JSON.stringify(profile, null, 2)}
 - 不得因为产品是书法或国画就自动回到新中式；除非本轮风格明确为新中式，否则必须按上述风格重新设计配套环境。
 ${scene ? `- 用户指定场景偏好：${scene}` : ''}
 ${extraRequirements ? `\n【其他特殊要求】\n${extraRequirements}` : ''}
+${isContentDetailScan ? `\n【本次原画内容特写指定组合（必须严格执行）】\n${contentDetailVariant}\n单条只使用这一个摆放场景、一个主机位和一条连续路径，禁止改成默认右侧斜拍，禁止为了显得丰富而在4-6秒内切换多个场景。` : ''}
 ${elementVariationRequirements}
 
 【要求】
@@ -14225,8 +14293,8 @@ ${elementVariationRequirements}
 2. 画面中的一切动作、镜头、展开方式、光影、透视、材质表现都必须符合真实物理逻辑，不得出现穿模、悬浮、违反重力/光影/透视等不合理现象。如果出现卷轴式挂画或卷起后展开的画作，必须严格执行：${PAINTING_ROLLING_UNFOLD_RULE} 画面中任何物体的运动（挂画的上升、下降、平移、旋转、展开、翻面）都必须有明确的施动者（人的手、人的动作或合理的物理机制），严禁挂画或任何物体在没有手/人操作的情况下自行悬浮、漂浮、上升、移动、旋转——挂画要动，必须有人来拿、挂、展开或展示它，不能自己悬空位移。同一视频内如果出现人物（无论单人还是多人、无论跨多少个镜头或场景），所有人物必须长相、性别、年龄、发型、服装保持一致，严禁中途换人、换装或人物数量无故增减。若创意设定挂画已经上墙，必须严格执行：${PAINTING_OBJECT_PERMANENCE_RULE}
 3. 内容密度：整个视频必须包含连续、不同的有效阶段，阶段数量按目标时长动态要求——4 秒至少 3 个阶段，5-6 秒至少 3 个阶段，7-8 秒至少 4 个阶段，9-10 秒至少 5 个阶段，11-12 秒至少 6 个阶段，13-15 秒至少 7 个阶段；每个阶段必须发生新的、可见的人物动作、空间信息或构图关系变化，禁止把同一动作拆段凑数。内容阶段不等于镜头数量，一镜到底可以在同一个连续镜头中完成全部阶段。人物肢体、行走、坐下、翻书、喝茶和观看都必须按现实正常速度完成，动作之间允许符合人体惯性和真实摄影的自然衔接；每 1-2 秒持续出现新动作或新构图信息即可，禁止慢放、降速、重复、循环、人物发呆和长时间凝视，也禁止为了赶时间而机械连续完成过多动作。
 4. 提示词必须分三部分：产品固定约束、创意内容、负面约束。
-5. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。如画面中的挂画带有木条、挂轴或压杆等边框结构，这些结构必须保持档案中的形状、颜色、材质、粗细、长度、截面和两端轮廓不变；如涉及卷起或展开，全程不得变形、不得把木条变成圆柱形卷轴或圆杆、不得变色，也不得在两端或旁边新增任何圆柱、轴头、端帽、圆球、把手等构件。${isContentDetailScan ? PAINTING_CONTENT_DETAIL_SIZE_RULE : PAINTING_REAL_SIZE_RULE}
-6. 创意内容：结合创意方案，写清楚${creativeSubjectRequirements}。非内容移动特写方向的服装不得擅自全部改成米白、浅灰或卡其。必须严格继承创意方案标注的“一镜到底 / 主镜头＋动态收束 / 克制多镜头”结构：一镜到底要在所有时间段明确写“连续镜头、不切镜”，用一条简单稳定且具有自然起停、惯性和小幅构图修正的真人摄影路径串联动作，禁止机械绝对匀速滑轨；主镜头＋动态收束全片最多 2 个镜头，前面已展示挂画时不得为结尾再补切正面挂画；多镜头只在无法自然连续时切换。把视频从 0 秒开始按先后顺序无重叠地铺满到结束，每段写明起止时间及新的动作或空间信息，但不得因为进入新阶段就自动切镜；4 秒至少 3 段、5-6 秒至少 3 段、7-8 秒至少 4 段、9-10 秒至少 5 段、11-12 秒至少 6 段、13-15 秒至少 7 段。${isContentDetailScan ? '本方向是4-6秒原画内容移动特写：不要求远景/全景、人物或家具陈设，不得拉远补拍空间；镜头必须根据参考图真实构图选择一条连贯扫描路径，只拍参考图中确实存在的文字、笔触、印章、山水或花鸟细节，二维画面内容本身绝对静止，不能让山水、飞鸟、流水、植物或书法笔画产生动画。' : `整个视频至少有 1 个远景或全景，场景中自然出现 2-3 件符合「${styleProfile.label}」的家具或陈设，不能只有人、墙和画。`}所有动作按现实正常速度连续完成，镜头稳定但不能缓慢拖延。若方案写明挂画开场已经上墙，则挂画从第 0 秒起就在固定墙面坐标客观存在；内容密度来自人物生活动作、空间揭示、前后景和连续构图变化，不得为了凑动作重新取画或安装，更不得让挂画淡入、浮现或凭空生成。结尾必须执行：${PAINTING_DYNAMIC_ENDING_RULE} 全片实拍质感必须执行：${PAINTING_LIVE_ACTION_REALISM_RULE}
+5. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。如画面中的挂画带有木条、挂轴或压杆等边框结构，这些结构必须保持档案中的形状、颜色、材质、粗细、长度、截面和两端轮廓不变；如涉及卷起或展开，全程不得变形、不得把木条变成圆柱形卷轴或圆杆、不得变色，也不得在两端或旁边新增任何圆柱、轴头、端帽、圆球、把手等构件。${isCloseDetailScan ? PAINTING_CONTENT_DETAIL_SIZE_RULE : PAINTING_REAL_SIZE_RULE}
+6. 创意内容：结合创意方案，写清楚${creativeSubjectRequirements}。非内容移动特写方向的服装不得擅自全部改成米白、浅灰或卡其。必须严格继承创意方案标注的“一镜到底 / 主镜头＋动态收束 / 克制多镜头”结构：一镜到底要在所有时间段明确写“连续镜头、不切镜”，用一条简单稳定且具有自然起停、惯性和小幅构图修正的真人摄影路径串联动作，禁止机械绝对匀速滑轨；主镜头＋动态收束全片最多 2 个镜头，前面已展示挂画时不得为结尾再补切正面挂画；多镜头只在无法自然连续时切换。把视频从 0 秒开始按先后顺序无重叠地铺满到结束，每段写明起止时间及新的动作或空间信息，但不得因为进入新阶段就自动切镜；4 秒至少 3 段、5-6 秒至少 3 段、7-8 秒至少 4 段、9-10 秒至少 5 段、11-12 秒至少 6 段、13-15 秒至少 7 段。${isContentDetailScan ? '本方向是4-6秒原画内容移动特写：不要求远景/全景、人物或家具陈设，不得拉远补拍空间；镜头必须根据参考图真实构图选择一条连贯扫描路径，只拍参考图中确实存在的文字、笔触、印章、山水或花鸟细节，二维画面内容本身绝对静止，不能让山水、飞鸟、流水、植物或书法笔画产生动画。' : isWoodDetailScan ? '本方向是实木压条工艺移动特写：不要求远景/全景、人物或家具陈设，不得默认拉远补拍房间；最多两个近景镜头，每个镜头必须沿一根木条或其端部到画布连接处持续移动，不定格。只展示高清参考图中真实存在的木纹、颜色、平直形状、粗细、截面、两端与连接结构，禁止变成圆柱卷轴或新增任何零件。' : `整个视频至少有 1 个远景或全景，场景中自然出现 2-3 件符合「${styleProfile.label}」的家具或陈设，不能只有人、墙和画。`}所有动作按现实正常速度连续完成，镜头稳定但不能缓慢拖延。若方案写明挂画开场已经上墙，则挂画从第 0 秒起就在固定墙面坐标客观存在；内容密度来自人物生活动作、空间揭示、前后景和连续构图变化，不得为了凑动作重新取画或安装，更不得让挂画淡入、浮现或凭空生成。结尾必须执行：${PAINTING_DYNAMIC_ENDING_RULE} 全片实拍质感必须执行：${PAINTING_LIVE_ACTION_REALISM_RULE}
 7. 负面约束：明确列出不得改变的元素（挂画外观、画面内容、木条结构等）、必须避免的物理违背现象（穿模、悬浮、违反重力/光影/透视等）、禁止单一动作慢放/循环凑时长、禁止长时间静止、禁止快速晃动/快速变焦/急推/手持抖动、严禁挂画在无人操作时自行位移；已经上墙的挂画还必须禁止淡入、浮现、透明变实、凭空生成、突然出现、逐渐长出、由小变大和中途贴到墙上；尺寸方面必须明确禁止超大挂画、巨幅壁画、整墙画、落地画、画比人高、画比人宽、挂画宽度接近沙发一半或以上，以及透视或广角畸变造成的尺寸夸大；实拍质感方面禁止三维渲染感、AI样板间、蜡像皮肤、过度磨皮、塑料材质、全屋无阴影的均匀棚拍光、数学式绝对匀速滑轨和虚拟摄像机漂移；一镜到底方向禁止硬切、跳切、瞬间换景和人物位置突变，多镜头方向禁止无意义频繁切镜；如涉及卷轴或木条，还要禁止滑动式展开、木条变成圆柱或变色、两端新增圆柱/轴头/端帽。禁止出现送礼、方形礼盒、礼包盒、开箱和拆包装情节。
 ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之间，请你从该范围内挑选一个最合适的整数秒数；输出视频画布为 ${ratio}，这与挂画40×80厘米、1:2的物理外形无关。并在提示词最后单独写一行「总时长：X秒」（X 为你选定的整数，例如「总时长：8秒」）。` : `8. 总时长约 ${fallbackDuration} 秒；输出视频画布为 ${ratio}，这与挂画40×80厘米、1:2的物理外形无关。并在提示词最后单独写一行「总时长：${fallbackDuration}秒」。`}
 
@@ -14275,7 +14343,11 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
     }
   }
   // 尺寸锁定由服务端确定性追加，不依赖提示词模型是否完整保留这项关键产品约束。
-  promptText = ensurePaintingSizeLock(promptText, { contentDetailScan: isContentDetailScan });
+  promptText = ensurePaintingSizeLock(promptText, { contentDetailScan: isCloseDetailScan });
+  // 特写方向的摆放场景、机位和移动路径也由服务端确定性锁定，避免模型反复默认右侧斜拍。
+  if (isContentDetailScan) {
+    promptText = ensurePaintingContentDetailVariant(promptText, elementVariationIndex);
+  }
   if (qualityIssues.length > 0) {
     console.warn('[doubao painting] idea-prompt quality warning', { requestId, qualityIssues, retried: hasRetryBudget });
   }
@@ -14394,15 +14466,30 @@ async function sleepMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
-async function buildPaintingImageFileForSeedance(imagePath) {
+async function buildPaintingImageFileForSeedance(imagePath, baseName = 'painting') {
   if (!imagePath || !existsSync(imagePath)) {
     throw new Error('挂画原图不存在，无法提交 Seedance 任务');
   }
   const buffer = await readFile(imagePath);
   const ext = path.extname(imagePath).toLowerCase() || '.jpg';
   const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
-  const fileName = `painting${ext}`;
+  const fileName = `${sanitizeFileName(baseName) || 'painting'}${ext}`;
   return new File([buffer], fileName, { type: mimeType });
+}
+
+function getPaintingBatchReferenceSpecs(task, batchRun) {
+  const woodReferences = batchRun?.options?.woodReferences || {};
+  const isWoodDetailDirection = Number(task?.directionNumber) === PAINTING_WOOD_DETAIL_DIRECTION;
+  const specs = [
+    { imagePath: batchRun?.imagePath || '', baseName: 'painting-main', label: '图1是挂画正面主图，决定整体文字、图案、颜色、比例和木条位置' },
+  ];
+  if (isWoodDetailDirection && woodReferences.upper?.imagePath && existsSync(woodReferences.upper.imagePath)) {
+    specs.push({ imagePath: woodReferences.upper.imagePath, baseName: 'painting-upper-wood', label: '图2是上方实木压条高清结构图，只决定上方木条的木纹、颜色、形状、粗细、截面、两端及与画布的连接' });
+  }
+  if (isWoodDetailDirection && woodReferences.lower?.imagePath && existsSync(woodReferences.lower.imagePath)) {
+    specs.push({ imagePath: woodReferences.lower.imagePath, baseName: 'painting-lower-wood', label: `图${specs.length + 1}是下方实木压条高清结构图，只决定下方木条的木纹、颜色、形状、粗细、截面、两端及与画布的连接` });
+  }
+  return specs;
 }
 
 async function submitSeedanceTaskForBatchTask(task, batchRun) {
@@ -14415,13 +14502,19 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
     throw new Error('缺少视频生成提示词 prompt');
   }
 
-  const imageFile = await buildPaintingImageFileForSeedance(batchRun.imagePath);
-  const compressedFile = await compressMediaForArk(imageFile, 'image');
-  const normalized = await normalizeUploadedMediaInput(compressedFile, 'image');
-  const content = [
-    { type: 'text', text: task.prompt },
-    { type: 'image_url', image_url: { url: normalized.imageUrl }, role: 'reference_image' },
-  ];
+  const isWoodDetailDirection = Number(task.directionNumber) === PAINTING_WOOD_DETAIL_DIRECTION;
+  const referenceSpecs = getPaintingBatchReferenceSpecs(task, batchRun);
+
+  const referenceGuide = isWoodDetailDirection
+    ? `【参考图职责强制区分】\n${referenceSpecs.map((item) => item.label).join('\n')}。木条特写图中的桌面、墙面、手、尺子、包装物或其他背景都不属于产品，严禁复制到生成视频。如细节图与正面主图的作用冲突，整体画面以主图为准，对应木条局部结构以高清细节图为准。\n\n`
+    : '';
+  const content = [{ type: 'text', text: `${referenceGuide}${task.prompt}` }];
+  for (const spec of referenceSpecs) {
+    const imageFile = await buildPaintingImageFileForSeedance(spec.imagePath, spec.baseName);
+    const compressedFile = await compressMediaForArk(imageFile, 'image');
+    const normalized = await normalizeUploadedMediaInput(compressedFile, 'image');
+    content.push({ type: 'image_url', image_url: { url: normalized.imageUrl }, role: 'reference_image' });
+  }
 
   const model = batchRun.model || 'doubao-seedance-2-0-260128';
   const isSeedance25 = model === 'doubao-seedance-2-5-260628';
@@ -18512,4 +18605,7 @@ export {
   ensurePaintingSizeLock,
   inspectPaintingPromptQuality,
   PAINTING_REAL_SIZE_RULE,
+  getPaintingContentDetailVariant,
+  ensurePaintingContentDetailVariant,
+  getPaintingBatchReferenceSpecs,
 };

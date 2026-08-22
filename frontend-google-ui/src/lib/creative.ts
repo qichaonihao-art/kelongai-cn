@@ -1031,6 +1031,8 @@ export function getSeedanceRatePerSecond(model: string, resolution = '720p'): nu
 
 export interface CreatePaintingBatchRunOptions {
   file: File;
+  upperWoodFile?: File | null;
+  lowerWoodFile?: File | null;
   profile: PaintingProfile;
   plan: PaintingMaterialPlan;
   ideas: PaintingIdeaSummary[];
@@ -1091,6 +1093,8 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
 }> {
   const formData = new FormData();
   formData.append('file', options.file, options.file.name);
+  if (options.upperWoodFile) formData.append('upperWoodFile', options.upperWoodFile, options.upperWoodFile.name);
+  if (options.lowerWoodFile) formData.append('lowerWoodFile', options.lowerWoodFile, options.lowerWoodFile.name);
   formData.append('profile', JSON.stringify(options.profile));
   formData.append('plan', JSON.stringify(options.plan));
   formData.append('ideas', JSON.stringify(options.ideas));

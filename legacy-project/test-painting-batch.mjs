@@ -1,6 +1,6 @@
 // 无费测试脚本：不调用真实 Seedance / 豆包，也不监听端口。
 // 通过 KELONG_SKIP_LISTEN=1 + 临时 RUNTIME_STATE_DIR 复用 server.mjs 的真实逻辑。
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -59,6 +59,9 @@ const {
   ensurePaintingSizeLock,
   inspectPaintingPromptQuality,
   PAINTING_REAL_SIZE_RULE,
+  getPaintingContentDetailVariant,
+  ensurePaintingContentDetailVariant,
+  getPaintingBatchReferenceSpecs,
 } = server;
 
 let passed = 0;
@@ -654,6 +657,8 @@ console.log('\n[24] multipart 透传 creationRequestId');
 {
   const formData = new FormData();
   formData.append('file', new File([new Uint8Array([1])], 'painting.png', { type: 'image/png' }));
+  formData.append('upperWoodFile', new File([new Uint8Array([2])], 'upper-wood.jpg', { type: 'image/jpeg' }));
+  formData.append('lowerWoodFile', new File([new Uint8Array([3])], 'lower-wood.jpg', { type: 'image/jpeg' }));
   formData.append('profile', JSON.stringify({ name: '测试挂画' }));
   formData.append('creationRequestId', 'batch-multipart-000001');
   const encoded = new Request('http://localhost/upload', { method: 'POST', body: formData });
@@ -663,6 +668,8 @@ console.log('\n[24] multipart 透传 creationRequestId');
   const parsed = await readMultipartFormBody(req);
   assert(parsed.creationRequestId === 'batch-multipart-000001', 'multipart 安全编号完整传到批次 handler', parsed.creationRequestId);
   assert(parsed.file instanceof File && parsed.file.size === 1, 'multipart 图片仍正常解析');
+  assert(parsed.upperWoodFile instanceof File && parsed.upperWoodFile.name === 'upper-wood.jpg', 'multipart 透传上方木条选传图');
+  assert(parsed.lowerWoodFile instanceof File && parsed.lowerWoodFile.name === 'lower-wood.jpg', 'multipart 透传下方木条选传图');
 }
 
 // ===== T25 模型首次 JSON 非法时自动纠正一次 =====
@@ -719,6 +726,87 @@ console.log('\n[27] 全自动最终提示词尺寸锁定');
   );
   assert(!issues.some((item) => item.includes('宽40厘米')), '质量检查接受明确的沙发18%-22%尺度参照', JSON.stringify(issues));
   assert(PAINTING_REAL_SIZE_RULE.includes('输出视频') && PAINTING_REAL_SIZE_RULE.includes('挂画物理外形'), '核心规则区分视频画布与挂画物理外形');
+}
+
+// ===== T28 方向29特写的多场景、多机位、多路径轮换 =====
+console.log('\n[28] 方向29特写组合轮换');
+{
+  const variants = Array.from({ length: 8 }, (_, index) => getPaintingContentDetailVariant(index));
+  assert(new Set(variants).size === 8, '前8次特写复用使用8个不同执行组合');
+  assert(variants.some((item) => item.includes('茶几平放')) && variants.some((item) => item.includes('书桌平放')), '包含茶几和书桌平放特写');
+  assert(variants.some((item) => item.includes('墙面悬挂')) && variants.some((item) => item.includes('房门悬挂')) && variants.some((item) => item.includes('书架平整外侧板')), '包含墙面、房门和逻辑可行的书架悬挂');
+  assert(variants.some((item) => item.includes('上到下')) && variants.some((item) => item.includes('下到上')) && variants.some((item) => item.includes('左到右')) && variants.some((item) => item.includes('右到左')), '移动路径覆盖上下左右多方向');
+  assert(getPaintingContentDetailVariant(8) === variants[0], '第9次开始安全循环执行组合');
+
+  const locked = ensurePaintingContentDetailVariant('原提示词误写为右侧斜拍', 2);
+  assert(locked.startsWith('【本次原画内容特写指定组合】'), '最终Seedance提示词前置指定特写组合');
+  assert(locked.includes('书桌平放') && locked.includes('下到上'), '第3个变化版本锁定书桌平放与下到上');
+  assert(locked.includes('只执行上述一个摆放场景、一个主机位和一条连续移动路径'), '单条4-6秒不会为求丰富而乱切多场景');
+  assert(locked.includes('不得改成右侧斜拍'), '指定组合阻止模型再默认右侧斜拍');
+}
+
+// ===== T29 主图必传 + 上下木条选传的按方向精准引用 =====
+console.log('\n[29] 木条参考图按方向精准引用');
+{
+  const mainPath = join(stateDir, 'reference-main.jpg');
+  const upperPath = join(stateDir, 'reference-upper.jpg');
+  const lowerPath = join(stateDir, 'reference-lower.jpg');
+  writeFileSync(mainPath, new Uint8Array([1]));
+  writeFileSync(upperPath, new Uint8Array([2]));
+  writeFileSync(lowerPath, new Uint8Array([3]));
+  const run = {
+    imagePath: mainPath,
+    options: {
+      woodReferences: {
+        upper: { imagePath: upperPath },
+        lower: { imagePath: lowerPath },
+      },
+    },
+  };
+  const normalRefs = getPaintingBatchReferenceSpecs({ directionNumber: 1 }, run);
+  const contentDetailRefs = getPaintingBatchReferenceSpecs({ directionNumber: 29 }, run);
+  const woodDetailRefs = getPaintingBatchReferenceSpecs({ directionNumber: 30 }, run);
+  assert(normalRefs.length === 1 && normalRefs[0].baseName === 'painting-main', '普通方向只引用必传正面主图');
+  assert(contentDetailRefs.length === 1, '原画内容特写仍只引用正面主图');
+  assert(woodDetailRefs.length === 3, '方向30同时引用主图与两张选传木条图');
+  assert(woodDetailRefs.map((item) => item.baseName).join(',') === 'painting-main,painting-upper-wood,painting-lower-wood', '木条特写的三张参考图顺序稳定');
+  assert(woodDetailRefs[1].label.includes('上方实木压条') && woodDetailRefs[2].label.includes('下方实木压条'), '参考图角色标注明确区分上下木条');
+
+  const missingOptional = getPaintingBatchReferenceSpecs({ directionNumber: 30 }, { imagePath: mainPath, options: {} });
+  assert(missingOptional.length === 1, '未上传选传木条图时安全回退主图，不阻断批量生成');
+}
+
+// ===== T30 正式批次持久化两张选传木条图 =====
+console.log('\n[30] 批次持久化选传木条图');
+{
+  const ideas = Array.from({ length: 40 }, (_, index) => ({ id: `wood-${index + 1}`, directionNumber: index + 1, durationMin: 8, durationMax: 8 }));
+  const formData = new FormData();
+  formData.append('file', new File([new Uint8Array([1, 2, 3])], 'main.jpg', { type: 'image/jpeg' }));
+  formData.append('upperWoodFile', new File([new Uint8Array([4, 5, 6])], 'upper.jpg', { type: 'image/jpeg' }));
+  formData.append('lowerWoodFile', new File([new Uint8Array([7, 8, 9])], 'lower.jpg', { type: 'image/jpeg' }));
+  formData.append('profile', JSON.stringify({ name: '三图测试挂画' }));
+  formData.append('plan', JSON.stringify({ durationMin: 8, durationMax: 8, ratio: '9:16', stylePreset: 'modern-minimal' }));
+  formData.append('ideas', JSON.stringify(ideas));
+  formData.append('totalDirections', '40');
+  formData.append('model', PAINTING_BATCH_MODEL);
+  formData.append('resolution', '720p');
+  formData.append('ratio', '9:16');
+  formData.append('variationRound', '0');
+  formData.append('creationRequestId', 'batch-wood-refs-000001');
+  const encoded = new Request('http://localhost/api/painting/batch-runs', { method: 'POST', body: formData });
+  const req = Readable.fromWeb(encoded.body);
+  req.method = 'POST';
+  req.url = '/api/painting/batch-runs';
+  req.headers = Object.fromEntries(encoded.headers.entries());
+  const res = mockRes();
+  await handleCreatePaintingBatchRun(req, res);
+  const body = jsonBody(res);
+  const run = body.batchRunId ? dbGetPaintingBatchRun(body.batchRunId) : null;
+  assert(res._code === 202 && !!run, '携带两张选传图的正式批次创建成功', JSON.stringify(body));
+  assert(!!run?.options?.woodReferences?.upper && !!run?.options?.woodReferences?.lower, '上下木条元数据写入批次 options_json');
+  assert(existsSync(run?.options?.woodReferences?.upper?.imagePath || '') && existsSync(run?.options?.woodReferences?.lower?.imagePath || ''), '上下木条原图实际保存到批次运行目录');
+  assert(run?.options?.woodReferences?.upper?.fileName === 'upper.jpg' && run?.options?.woodReferences?.lower?.fileName === 'lower.jpg', '木条参考图文件名可追溯');
+  if (run) dbUpdatePaintingBatchRun(run.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);

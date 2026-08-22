@@ -164,6 +164,10 @@ interface PaintingHistoryItem {
   thumbnail?: string;
   uploadHistoryId?: number;
   imageFileName?: string;
+  upperWoodUploadHistoryId?: number;
+  upperWoodImageFileName?: string;
+  lowerWoodUploadHistoryId?: number;
+  lowerWoodImageFileName?: string;
   ratio: string;
   duration: number;
   stylePreset?: string;
@@ -1557,6 +1561,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [reverseMode, setReverseMode] = useState<ReverseMode>('direct');
   const [paintingImage, setPaintingImage] = useState<SelectedCreativeMedia | null>(null);
   const [paintingUploadHistoryId, setPaintingUploadHistoryId] = useState<number | null>(null);
+  const [paintingUpperWoodImage, setPaintingUpperWoodImage] = useState<SelectedCreativeMedia | null>(null);
+  const [paintingUpperWoodUploadHistoryId, setPaintingUpperWoodUploadHistoryId] = useState<number | null>(null);
+  const [paintingLowerWoodImage, setPaintingLowerWoodImage] = useState<SelectedCreativeMedia | null>(null);
+  const [paintingLowerWoodUploadHistoryId, setPaintingLowerWoodUploadHistoryId] = useState<number | null>(null);
   const [paintingProfile, setPaintingProfile] = useState<PaintingProfile | null>(null);
   const [paintingPlan, setPaintingPlan] = useState<PaintingMaterialPlan>({
     count: 10,
@@ -1582,6 +1590,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingHistory, setPaintingHistory] = useState<PaintingHistoryItem[]>([]);
   const [paintingError, setPaintingError] = useState('');
   const paintingFileInputRef = useRef<HTMLInputElement>(null);
+  const paintingUpperWoodFileInputRef = useRef<HTMLInputElement>(null);
+  const paintingLowerWoodFileInputRef = useRef<HTMLInputElement>(null);
   const paintingSeedanceSourceRef = useRef<{ prompt: string; directionNumber: number; variationRound: number } | null>(null);
 
   // 挂画全自动批量生成状态
@@ -2114,7 +2124,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   // 图片 / 方案 / 轮次 / 方向集合发生变化后，废弃旧创建幂等编号，避免把新批次错误恢复到旧批次。
   useEffect(() => {
     batchCreationRequestIdRef.current = null;
-  }, [paintingImage, paintingVariationRound, paintingBatchOnlyUnused, paintingPlan, paintingBatchIdeas]);
+  }, [paintingImage, paintingUpperWoodImage, paintingLowerWoodImage, paintingVariationRound, paintingBatchOnlyUnused, paintingPlan, paintingBatchIdeas]);
 
   useEffect(() => {
     const persistedMessages = serializeMessagesForStorage(messages);
@@ -3212,8 +3222,51 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
     setPaintingImage(null);
     setPaintingUploadHistoryId(null);
+    clearPaintingWoodReference('upper');
+    clearPaintingWoodReference('lower');
     if (paintingFileInputRef.current) {
       paintingFileInputRef.current.value = '';
+    }
+  }
+
+  function clearPaintingWoodReference(kind: 'upper' | 'lower') {
+    const current = kind === 'upper' ? paintingUpperWoodImage : paintingLowerWoodImage;
+    if (current) URL.revokeObjectURL(current.previewUrl);
+    if (kind === 'upper') {
+      setPaintingUpperWoodImage(null);
+      setPaintingUpperWoodUploadHistoryId(null);
+      if (paintingUpperWoodFileInputRef.current) paintingUpperWoodFileInputRef.current.value = '';
+    } else {
+      setPaintingLowerWoodImage(null);
+      setPaintingLowerWoodUploadHistoryId(null);
+      if (paintingLowerWoodFileInputRef.current) paintingLowerWoodFileInputRef.current.value = '';
+    }
+  }
+
+  async function handlePaintingWoodReferenceChange(kind: 'upper' | 'lower', file: File | null) {
+    setPaintingError('');
+    if (!file) return;
+    try {
+      if (!file.type.startsWith('image/')) throw new Error('木条参考图必须是图片格式。');
+      if (file.size > MAX_VIDEO_SIZE_BYTES) throw new Error('木条参考图请控制在150MB以内，建议单张4-8MB。');
+      const previewUrl = createMediaPreviewUrl(file);
+      const current = kind === 'upper' ? paintingUpperWoodImage : paintingLowerWoodImage;
+      if (current) URL.revokeObjectURL(current.previewUrl);
+      const selected = { kind: 'image' as const, file, previewUrl, fileName: file.name };
+      const historyId = await saveUploadHistory(file, 'image');
+      if (kind === 'upper') {
+        setPaintingUpperWoodImage(selected);
+        setPaintingUpperWoodUploadHistoryId(historyId || null);
+      } else {
+        setPaintingLowerWoodImage(selected);
+        setPaintingLowerWoodUploadHistoryId(historyId || null);
+      }
+      await refreshUploadHistories();
+    } catch (error) {
+      setPaintingError(error instanceof Error ? error.message : '木条参考图读取失败，请换一张再试。');
+    } finally {
+      const input = kind === 'upper' ? paintingUpperWoodFileInputRef.current : paintingLowerWoodFileInputRef.current;
+      if (input) input.value = '';
     }
   }
 
@@ -3231,6 +3284,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       if (paintingImage) {
         URL.revokeObjectURL(paintingImage.previewUrl);
       }
+      clearPaintingWoodReference('upper');
+      clearPaintingWoodReference('lower');
       setPaintingImage({ kind: 'image', file, previewUrl, fileName: file.name });
       setPaintingProfile(null);
       setPaintingIdeas([]);
@@ -3303,6 +3358,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       // 图片变化后不得复用旧缓存：用文件标识（名称+大小+修改时间）区分。
       image: paintingImage
         ? `${paintingImage.file.name}:${paintingImage.file.size}:${paintingImage.file.lastModified}`
+        : '',
+      upperWoodImage: paintingUpperWoodImage
+        ? `${paintingUpperWoodImage.file.name}:${paintingUpperWoodImage.file.size}:${paintingUpperWoodImage.file.lastModified}`
+        : '',
+      lowerWoodImage: paintingLowerWoodImage
+        ? `${paintingLowerWoodImage.file.name}:${paintingLowerWoodImage.file.size}:${paintingLowerWoodImage.file.lastModified}`
         : '',
     });
   }
@@ -3391,6 +3452,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (!paintingProfile) return;
     const usageKey = getPaintingIdeaUsageKey(paintingFrameworkBatch, paintingVariationRound, idea.id);
     const previousUsageCount = paintingIdeaUsageCounts[usageKey] || 0;
+    const isContentDetailIdea = Number(idea.directionNumber) === 29;
+    const isWoodDetailIdea = Number(idea.directionNumber) === 30;
+    const isRotatingDetailIdea = isContentDetailIdea || isWoodDetailIdea;
+    // 方向29每次复用都轮换“摆放×机位×路径”；其他方向仍只在用户点击换元素时变化。
+    const elementVariationIndex = options?.remixElements
+      ? previousUsageCount + 1
+      : (isRotatingDetailIdea ? previousUsageCount : 0);
+    const shouldAvoidPreviousPrompt = options?.remixElements || (isRotatingDetailIdea && previousUsageCount > 0);
+    const woodReferenceRequirement = isWoodDetailIdea
+      ? `本次Seedance参考图顺序：图1为挂画正面主图${paintingUpperWoodImage ? '，图2为上方实木压条高清图' : ''}${paintingLowerWoodImage ? `，图${paintingUpperWoodImage ? '3' : '2'}为下方实木压条高清图` : ''}。正面主图决定整体外观，木条细节图只决定对应木条的木纹、颜色、形状、粗细、截面、两端和画布连接。细节图里的背景、桌面、手或工具不属于产品，禁止复制。`
+      : '';
     setPaintingError('');
     setPaintingSelectedIdea(idea);
     setPaintingFullPrompt('');
@@ -3404,9 +3476,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         character: paintingPlan.character,
         audio: paintingPlan.audio,
         scene: paintingPlan.scene,
-        extraRequirements: paintingPlan.extraRequirements,
-        elementVariationIndex: options?.remixElements ? previousUsageCount + 1 : 0,
-        previousPrompt: options?.remixElements ? paintingIdeaLastPrompts[usageKey] || '' : '',
+        extraRequirements: [paintingPlan.extraRequirements, woodReferenceRequirement].filter(Boolean).join('\n'),
+        elementVariationIndex,
+        previousPrompt: shouldAvoidPreviousPrompt ? paintingIdeaLastPrompts[usageKey] || '' : '',
       });
       setPaintingFullPrompt(prompt);
       const nextUsageCounts = {
@@ -3427,7 +3499,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setSeedancePrompt(prompt.trim());
       setSeedanceRatio(ratio);
       setSeedanceDuration(durationSeconds);
-      const nextReferences = computeNextSeedanceReferencesWithPainting();
+      const nextReferences = computeNextSeedanceReferencesWithPainting(Number(idea.directionNumber) || 0);
       setSeedanceReferences(nextReferences);
       setSeedancePromptHighlight(true);
       setTimeout(() => setSeedancePromptHighlight(false), 2000);
@@ -3442,6 +3514,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         fullPrompt: prompt,
         uploadHistoryId: paintingUploadHistoryId || undefined,
         imageFileName: paintingImage?.fileName,
+        upperWoodUploadHistoryId: paintingUpperWoodUploadHistoryId || undefined,
+        upperWoodImageFileName: paintingUpperWoodImage?.fileName,
+        lowerWoodUploadHistoryId: paintingLowerWoodUploadHistoryId || undefined,
+        lowerWoodImageFileName: paintingLowerWoodImage?.fileName,
         ratio,
         duration: durationSeconds,
         stylePreset: paintingPlan.stylePreset,
@@ -3663,6 +3739,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   function buildPaintingBatchCreateOptions(ideas: PaintingIdeaSummary[], creationRequestId: string) {
     return {
       file: paintingImage!.file,
+      upperWoodFile: paintingUpperWoodImage?.file || null,
+      lowerWoodFile: paintingLowerWoodImage?.file || null,
       profile: paintingProfile!,
       plan: paintingPlan,
       ideas,
@@ -3878,12 +3956,23 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     return computeSeedanceReferencesWithImages(image ? [image] : []);
   }
 
-  function computeNextSeedanceReferencesWithPainting(): SeedanceReferenceFile[] {
-    return computeSeedanceReferencesWithImage(paintingImage);
+  function computeNextSeedanceReferencesWithPainting(directionNumber = 0): SeedanceReferenceFile[] {
+    const images = [paintingImage];
+    if (directionNumber === 30) images.push(paintingUpperWoodImage, paintingLowerWoodImage);
+    // 挂画自动流程使用一组全新、顺序固定的参考图，避免右侧面板残留其他流程的图片打乱“主图→上木条→下木条”顺序。
+    return images
+      .filter((item): item is SelectedCreativeMedia => Boolean(item))
+      .map((image) => ({
+        id: createMessageId('seedance_ref'),
+        kind: 'image' as const,
+        file: image.file,
+        previewUrl: createMediaPreviewUrl(image.file),
+        fileName: image.fileName,
+      }));
   }
 
   function appendPaintingToSeedanceReferences() {
-    setSeedanceReferences(computeNextSeedanceReferencesWithPainting());
+    setSeedanceReferences(computeNextSeedanceReferencesWithPainting(Number(paintingSelectedIdea?.directionNumber) || 0));
   }
 
   async function handlePaintingLoadHistory(item: PaintingHistoryItem) {
@@ -3932,6 +4021,25 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingUploadHistoryId(null);
       setPaintingError('这条旧历史记录没有可恢复的图片，请从历史图片中重新选择一次原图。');
     }
+
+    const restoreWoodReference = async (kind: 'upper' | 'lower', historyId?: number) => {
+      const history = historyId ? await getUploadHistoryItem(historyId).catch(() => null) : null;
+      const file = history?.kind === 'image' ? blobToFile(history) : null;
+      clearPaintingWoodReference(kind);
+      if (!file) return;
+      const selected = { kind: 'image' as const, file, previewUrl: createMediaPreviewUrl(file), fileName: file.name };
+      if (kind === 'upper') {
+        setPaintingUpperWoodImage(selected);
+        setPaintingUpperWoodUploadHistoryId(historyId || null);
+      } else {
+        setPaintingLowerWoodImage(selected);
+        setPaintingLowerWoodUploadHistoryId(historyId || null);
+      }
+    };
+    await Promise.all([
+      restoreWoodReference('upper', item.upperWoodUploadHistoryId),
+      restoreWoodReference('lower', item.lowerWoodUploadHistoryId),
+    ]);
     const restoredBatch = item.frameworkBatch || 0;
     const restoredRound = item.variationRound || 0;
     const restoredUsageCounts = { ...(item.ideaUsageCounts || {}) };
@@ -4168,6 +4276,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (paintingImage) {
       URL.revokeObjectURL(paintingImage.previewUrl);
     }
+    clearPaintingWoodReference('upper');
+    clearPaintingWoodReference('lower');
     setPaintingImage({ kind: 'image', file, previewUrl, fileName: file.name });
     setPaintingUploadHistoryId(item.id);
     setPaintingProfile(null);
@@ -4667,6 +4777,51 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     />
                   </div>
 
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-bold text-slate-700">实木压条高清参考（选传）</div>
+                        <div className="mt-1 text-[11px] leading-5 text-slate-500">只用于木条特写方向；建议每张4-8MB，拍全整根木条、两端和画布连接处。</div>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-amber-700">不影响常规生成</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="relative overflow-hidden rounded-xl border border-amber-200 bg-white">
+                        {paintingUpperWoodImage ? (
+                          <div className="p-2">
+                            <img src={paintingUpperWoodImage.previewUrl} alt="上方木条高清图" className="h-24 w-full rounded-lg bg-slate-100 object-contain" />
+                            <div className="mt-2 truncate pr-7 text-[10px] font-semibold text-slate-500">{paintingUpperWoodImage.fileName}</div>
+                            <button type="button" onClick={() => clearPaintingWoodReference('upper')} className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-white/90 text-slate-500 shadow" aria-label="移除上方木条图"><X className="size-3" /></button>
+                          </div>
+                        ) : (
+                          <button type="button" disabled={!paintingImage || paintingLoading !== 'idle'} onClick={() => paintingUpperWoodFileInputRef.current?.click()} className="flex h-32 w-full flex-col items-center justify-center gap-2 text-center text-slate-500 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50">
+                            <Plus className="size-4 text-amber-600" />
+                            <span className="text-xs font-bold">上方木条</span>
+                            <span className="text-[10px]">选传高清特写</span>
+                          </button>
+                        )}
+                        <input ref={paintingUpperWoodFileInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => void handlePaintingWoodReferenceChange('upper', event.target.files?.[0] ?? null)} />
+                      </div>
+
+                      <div className="relative overflow-hidden rounded-xl border border-amber-200 bg-white">
+                        {paintingLowerWoodImage ? (
+                          <div className="p-2">
+                            <img src={paintingLowerWoodImage.previewUrl} alt="下方木条高清图" className="h-24 w-full rounded-lg bg-slate-100 object-contain" />
+                            <div className="mt-2 truncate pr-7 text-[10px] font-semibold text-slate-500">{paintingLowerWoodImage.fileName}</div>
+                            <button type="button" onClick={() => clearPaintingWoodReference('lower')} className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-white/90 text-slate-500 shadow" aria-label="移除下方木条图"><X className="size-3" /></button>
+                          </div>
+                        ) : (
+                          <button type="button" disabled={!paintingImage || paintingLoading !== 'idle'} onClick={() => paintingLowerWoodFileInputRef.current?.click()} className="flex h-32 w-full flex-col items-center justify-center gap-2 text-center text-slate-500 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50">
+                            <Plus className="size-4 text-amber-600" />
+                            <span className="text-xs font-bold">下方木条</span>
+                            <span className="text-[10px]">选传高清特写</span>
+                          </button>
+                        )}
+                        <input ref={paintingLowerWoodFileInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => void handlePaintingWoodReferenceChange('lower', event.target.files?.[0] ?? null)} />
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
@@ -4903,10 +5058,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         </div>
                       </div>
                       <div className="grid gap-2">
-                        {paintingIdeas.map((idea) => {
+                        {paintingIdeas.map((idea, ideaIndex) => {
                           const usageKey = getPaintingIdeaUsageKey(paintingFrameworkBatch, paintingVariationRound, idea.id);
                           const usageCount = paintingIdeaUsageCounts[usageKey] || 0;
                           const isUsed = usageCount > 0;
+                          const directionNumber = Number(idea.directionNumber) || paintingFrameworkBatch * 10 + ideaIndex + 1;
                           return (
                           <div
                             key={idea.id}
@@ -4922,6 +5078,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
+                                  <span
+                                    className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[10px] font-black text-white"
+                                    title={`第 ${paintingFrameworkBatch + 1} 组第 ${ideaIndex + 1} 条 · 方向 ${String(directionNumber).padStart(2, '0')}`}
+                                  >
+                                    {ideaIndex + 1}
+                                  </span>
                                   <div className="text-xs font-black text-slate-800">{idea.title}</div>
                                   {isUsed && (
                                     <span className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">
@@ -4929,6 +5091,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                       已使用 {usageCount} 次
                                     </span>
                                   )}
+                                </div>
+                                <div className="mt-1 text-[10px] font-bold text-slate-400">
+                                  第 {paintingFrameworkBatch + 1} 组 · 第 {ideaIndex + 1} 条 · 方向 {String(directionNumber).padStart(2, '0')}
                                 </div>
                                 <div className="mt-1 text-xs leading-5 text-slate-500">{idea.summary}</div>
                               </div>
@@ -7074,6 +7239,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   {paintingProfile?.subject || '未描述主体'}
                 </div>
               </div>
+            </div>
+
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800">
+              参考图：正面主图 <b>1张（必传）</b>
+              {' '}· 上方木条 <b>{paintingUpperWoodImage ? '已附加' : '未上传'}</b>
+              {' '}· 下方木条 <b>{paintingLowerWoodImage ? '已附加' : '未上传'}</b>
+              <span className="block text-amber-600">木条图仅供实木压条特写方向使用，未上传也不会阻止批量生成。</span>
             </div>
 
             <dl className="mt-4 grid grid-cols-2 gap-2 text-xs">
