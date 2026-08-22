@@ -56,6 +56,9 @@ const {
   getPaintingFrameworkPosition,
   formatPaintingSeedanceVideoLibraryName,
   formatSeedanceVideoLibraryName,
+  ensurePaintingSizeLock,
+  inspectPaintingPromptQuality,
+  PAINTING_REAL_SIZE_RULE,
 } = server;
 
 let passed = 0;
@@ -692,6 +695,30 @@ console.log('\n[26] 挂画创意素材入库命名');
   assert(formatPaintingSeedanceVideoLibraryName(createdAt, 40) === '8月23日 14-30 第4组第10个.mp4', '方向40对应第4组第10个');
   assert(formatPaintingSeedanceVideoLibraryName(createdAt, 0) === '8月23日 14-30.mp4', '没有挂画方向号时严格回退原命名');
   assert(JSON.stringify(getPaintingFrameworkPosition(26)) === JSON.stringify({ groupNumber: 3, itemNumber: 6 }), '方向26可反查第3组第6个');
+}
+
+// ===== T27 全自动最终提示词尺寸锁定 =====
+console.log('\n[27] 全自动最终提示词尺寸锁定');
+{
+  const locked = ensurePaintingSizeLock('产品固定约束：测试\n创意内容：0-8秒连续拍摄');
+  assert(locked.startsWith('【挂画真实尺寸强制锁定】'), '尺寸锁定被确定性放在最终提示词最前面');
+  assert(/40×80厘米/.test(locked) && /1:2/.test(locked), '明确锁定挂画40×80厘米与1:2物理外形');
+  assert(/9:16画幅误当成挂画外形/.test(locked), '明确防止将视频9:16与挂画1:2混淆');
+  assert(/1\.8至2\.0米/.test(locked) && /18%-22%/.test(locked) && /大片空墙/.test(locked), '使用三人沙发与留白作为主尺度参照');
+  assert(/完整站立成年人/.test(locked) && !/成年人物可见身高/.test(locked), '人物参照不再使用不稳定的可见身高');
+  assert(/45-55mm/.test(locked) && /超广角/.test(locked), '空间镜头使用标准透视并禁止超广角夸大');
+  assert(locked.includes('【卷起挂画滚动展开与下方木条强制锁定】'), '最终提示词确定性追加卷起展开和下方木条锁定');
+  assert(/下方木条\/下压杆必须始终存在/.test(locked) && /不得消失、变形、变色、伸长、缩短/.test(locked), '下方木条全过程保持原始外观和颜色');
+  assert(/不得新增任何物体、零件或装饰/.test(locked), '禁止在下方木条两端及周围新增任何物体');
+  assert(/绕自身轴线旋转而逐圈滚动释放/.test(locked) && /严禁滑动、平移、平铺、抽拉、弹开/.test(locked), '卷起挂画只能滚动释放，禁止滑动或抽拉展开');
+
+  const issues = inspectPaintingPromptQuality(
+    '产品宽40厘米、高80厘米；三人沙发宽1.9米，挂画宽度占沙发的20%。\n0-2秒全景沙发和挂画\n2-4秒经过茶几和绿植\n4-6秒人物走过\n6-8秒镜头横移',
+    8,
+    '客厅连续横移'
+  );
+  assert(!issues.some((item) => item.includes('宽40厘米')), '质量检查接受明确的沙发18%-22%尺度参照', JSON.stringify(issues));
+  assert(PAINTING_REAL_SIZE_RULE.includes('输出视频') && PAINTING_REAL_SIZE_RULE.includes('挂画物理外形'), '核心规则区分视频画布与挂画物理外形');
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);
