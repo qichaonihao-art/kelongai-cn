@@ -859,23 +859,26 @@ console.log('\n[31] 静态上墙尺寸补偿分流');
     { staticWallSizeCompensation: true }
   );
   assert(compensated.startsWith('【挂画生成尺寸补偿锁定】'), '补偿规则被确定性放在最终 Seedance 提示词最前面');
-  assert(compensated.includes('25×50厘米') && compensated.includes('28%-30%') && compensated.includes('八分之一'), '补偿提示词统一使用25×50、人物三成和沙发八分之一');
+  assert(compensated.includes('15×30厘米') && compensated.includes('17%-18%') && compensated.includes('十二分之一'), '补偿提示词统一使用15×30、人物约六分之一和沙发十二分之一');
   assert(!compensated.includes('40×80') && !compensated.includes('宽40厘米') && !compensated.includes('高80厘米') && !compensated.includes('五分之一'), '最终补偿提示词不混入真实尺寸和旧比例');
-  assert(PAINTING_STATIC_WALL_COMPENSATED_SIZE_RULE.includes('25厘米') && PAINTING_STATIC_WALL_COMPENSATED_WHITESPACE_RULE.includes('八分之一'), '补偿尺寸与安装留白规则口径一致');
+  assert(PAINTING_STATIC_WALL_COMPENSATED_SIZE_RULE.includes('15厘米') && PAINTING_STATIC_WALL_COMPENSATED_WHITESPACE_RULE.includes('十二分之一'), '补偿尺寸与安装留白规则口径一致');
 
   const normalized = normalizePaintingPromptForStaticWallCompensation('宽40cm、高80cm；画高占人物45%-50%；画宽占沙发宽度的五分之一');
-  assert(normalized.includes('宽25厘米、高50厘米') && normalized.includes('28%-30%') && normalized.includes('八分之一'), '旧档案或历史提示词中的冲突尺寸会被确定性改写');
+  assert(normalized.includes('宽15厘米、高30厘米') && normalized.includes('17%-18%') && normalized.includes('十二分之一'), '旧档案或历史提示词中的冲突尺寸会被确定性改写');
+
+  const previousCompensation = normalizePaintingPromptForStaticWallCompensation('宽25厘米、高50厘米；画高占人物28%-30%；画宽占成年人肩宽55%-60%；画宽占沙发总宽的八分之一');
+  assert(previousCompensation.includes('宽15厘米、高30厘米') && previousCompensation.includes('17%-18%') && previousCompensation.includes('30%-35%') && previousCompensation.includes('十二分之一'), '上一版25×50补偿历史提示词也会升级为15×30');
 
   const compensationIssues = inspectPaintingPromptQuality(
-    '产品宽25厘米、高50厘米，画高占完整成人身高28%-30%，画宽占三人沙发八分之一。\n创意内容：0-2秒全景拍到挂钩上方大块空墙、挂画下方大块空间和完整三人沙发；2-4秒经过茶几和绿植；4-6秒人物走过；6-8秒镜头横移结束。',
+    '产品宽15厘米、高30厘米，画高占完整成人身高17%-18%，画宽占三人沙发十二分之一。\n创意内容：0-2秒全景拍到挂钩上方大块空墙、挂画下方大块空间和完整三人沙发；2-4秒经过茶几和绿植；4-6秒人物走过；6-8秒镜头横移结束。',
     8,
     '挂画开场已经固定上墙',
     { staticWallSizeCompensation: true }
   );
-  assert(!compensationIssues.some((item) => item.includes('补偿尺寸')), '质量检查接受25×50静态上墙补偿参照', JSON.stringify(compensationIssues));
+  assert(!compensationIssues.some((item) => item.includes('补偿尺寸')), '质量检查接受15×30静态上墙补偿参照', JSON.stringify(compensationIssues));
 
   const installationStillReal = ensurePaintingSizeLock('人物手持安装', { installationSequence: true });
-  assert(installationStillReal.includes('40×80厘米') && !installationStillReal.includes('25×50厘米'), '现场安装方向仍保持真实40×80尺寸');
+  assert(installationStillReal.includes('40×80厘米') && !installationStillReal.includes('15×30厘米'), '现场安装方向仍保持真实40×80尺寸');
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);
