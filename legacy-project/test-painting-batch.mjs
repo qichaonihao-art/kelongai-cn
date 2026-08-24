@@ -57,8 +57,12 @@ const {
   formatPaintingSeedanceVideoLibraryName,
   formatSeedanceVideoLibraryName,
   ensurePaintingSizeLock,
+  normalizePaintingPromptForStaticWallCompensation,
+  shouldUsePaintingStaticWallSizeCompensation,
   inspectPaintingPromptQuality,
   PAINTING_REAL_SIZE_RULE,
+  PAINTING_STATIC_WALL_COMPENSATED_SIZE_RULE,
+  PAINTING_STATIC_WALL_COMPENSATED_WHITESPACE_RULE,
   PAINTING_WALL_WHITESPACE_RULE,
   PAINTING_SCALE_ESTABLISHING_RULE,
   PAINTING_INSTALLATION_SCALE_RULE,
@@ -835,6 +839,43 @@ console.log('\n[30] 批次持久化选传木条图');
   assert(existsSync(run?.options?.woodReferences?.upper?.imagePath || '') && existsSync(run?.options?.woodReferences?.lower?.imagePath || ''), '上下木条原图实际保存到批次运行目录');
   assert(run?.options?.woodReferences?.upper?.fileName === 'upper.jpg' && run?.options?.woodReferences?.lower?.fileName === 'lower.jpg', '木条参考图文件名可追溯');
   if (run) dbUpdatePaintingBatchRun(run.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+}
+
+// ===== T31 静态上墙方向使用 Seedance 反向尺寸补偿 =====
+console.log('\n[31] 静态上墙尺寸补偿分流');
+{
+  assert(shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 3 }), '成品墙走近方向使用尺寸补偿');
+  assert(shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 15 }), '客厅沙发墙方向使用尺寸补偿');
+  assert(shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 31 }), '其他静态上墙方向使用尺寸补偿');
+  assert(!shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 1 }), '卷起展开并安装方向保持真实尺寸');
+  assert(!shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 2 }), '人物手持转身上墙方向保持真实尺寸');
+  assert(!shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 7 }), '人物手持讲解方向不套静态上墙补偿');
+  assert(!shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 29 }) && !shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 30 }), '画面与木条特写方向不套空间尺寸补偿');
+  assert(shouldUsePaintingStaticWallSizeCompensation({ title: '成品墙生活阅读', summary: '挂画开场已经固定上墙' }), '无方向号时可按静态上墙语义识别');
+  assert(!shouldUsePaintingStaticWallSizeCompensation({ title: '正面展示转身上墙', summary: '人物对准挂点挂好并扶正' }), '无方向号的现场安装语义不误用补偿');
+
+  const compensated = ensurePaintingSizeLock(
+    '产品固定约束：挂画宽40厘米、高80厘米，画高为完整成人身高的45%-50%，画宽占沙发宽度的五分之一。\n创意内容：0-2秒全景，2-4秒人物走动，4-6秒镜头横移，6-8秒自然结束。',
+    { staticWallSizeCompensation: true }
+  );
+  assert(compensated.startsWith('【挂画生成尺寸补偿锁定】'), '补偿规则被确定性放在最终 Seedance 提示词最前面');
+  assert(compensated.includes('25×50厘米') && compensated.includes('28%-30%') && compensated.includes('八分之一'), '补偿提示词统一使用25×50、人物三成和沙发八分之一');
+  assert(!compensated.includes('40×80') && !compensated.includes('宽40厘米') && !compensated.includes('高80厘米') && !compensated.includes('五分之一'), '最终补偿提示词不混入真实尺寸和旧比例');
+  assert(PAINTING_STATIC_WALL_COMPENSATED_SIZE_RULE.includes('25厘米') && PAINTING_STATIC_WALL_COMPENSATED_WHITESPACE_RULE.includes('八分之一'), '补偿尺寸与安装留白规则口径一致');
+
+  const normalized = normalizePaintingPromptForStaticWallCompensation('宽40cm、高80cm；画高占人物45%-50%；画宽占沙发宽度的五分之一');
+  assert(normalized.includes('宽25厘米、高50厘米') && normalized.includes('28%-30%') && normalized.includes('八分之一'), '旧档案或历史提示词中的冲突尺寸会被确定性改写');
+
+  const compensationIssues = inspectPaintingPromptQuality(
+    '产品宽25厘米、高50厘米，画高占完整成人身高28%-30%，画宽占三人沙发八分之一。\n创意内容：0-2秒全景拍到挂钩上方大块空墙、挂画下方大块空间和完整三人沙发；2-4秒经过茶几和绿植；4-6秒人物走过；6-8秒镜头横移结束。',
+    8,
+    '挂画开场已经固定上墙',
+    { staticWallSizeCompensation: true }
+  );
+  assert(!compensationIssues.some((item) => item.includes('补偿尺寸')), '质量检查接受25×50静态上墙补偿参照', JSON.stringify(compensationIssues));
+
+  const installationStillReal = ensurePaintingSizeLock('人物手持安装', { installationSequence: true });
+  assert(installationStillReal.includes('40×80厘米') && !installationStillReal.includes('25×50厘米'), '现场安装方向仍保持真实40×80尺寸');
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);

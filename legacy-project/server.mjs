@@ -13767,7 +13767,11 @@ function resolvePaintingStyleProfile(value) {
 }
 
 const PAINTING_REAL_SIZE_RULE = '【第一道锁·40×80厘米真实尺寸】这是宽40厘米、高80厘米、宽高比1:2的小型竖幅挂画，不是大型卷轴。优先按可见关系执行：挂画宽度约等于普通成年女性肩宽，不得明显宽于肩膀；画高严格约为完整站立成年人身高的一半。挂在标准房门旁时，画高约为门高的40%，画宽约为门宽的一半；挂在1.8-2.0米三人沙发上方时，画宽约为沙发宽度的五分之一。人物、房门或沙发必须与挂画处于相近景深，禁止用远近错位伪造比例。输出视频9:16只是视频画布，绝不是挂画外形；空间镜头使用45-55mm等效标准透视，禁止超广角、近大远小和先做巨幅画再缩小。';
+// Seedance 对“已经上墙”的静态空间场景存在稳定放大偏差。
+// 商品档案和安装/手持方向仍保持真实 40×80cm；仅在这类高风险 Seedance 提示词中使用 25×50cm 反向补偿。
+const PAINTING_STATIC_WALL_COMPENSATED_SIZE_RULE = '【最高优先级·静态上墙尺寸补偿】本条生成只执行25×50厘米（宽25厘米、高50厘米）、宽高比1:2的超小型竖幅挂画补偿尺寸，不得自行恢复为常规或大型卷轴。必须先建立正常尺寸的成年人、三人沙发和房间，再将挂画作为明显较小的墙面点缀放入。与完整站立成年人同景深时，画高只占人物完整身高的28%-30%，完整人物约等于3.4幅挂画的高度；画宽只占成年人肩宽的55%-60%，明显窄于双肩。与1.8-2.0米三人沙发同景深时，画宽只约占沙发总宽的八分之一，不超过一个沙发坐垫宽度的三分之一。如果其他要求与小尺寸冲突，必须优先继续缩小挂画，不得缩小人物、沙发、房门或房间。输出视频9:16只是视频画布，绝不是挂画外形；空间镜头使用45-55mm等效标准透视，禁止超广角、仰拍、近大远小和先做大画再拉远。';
 const PAINTING_WALL_WHITESPACE_RULE = '【第二道锁·墙面安装与上下留白】挂画上墙后属于墙面上的小型点缀。挂钩到天花板之间必须保留至少约1.2个挂画宽度的清楚空墙；上方木条到天花板的距离接近1幅挂画高度；挂画下边缘到地面的距离至少约1.2幅挂画高度。上下左右都要有大块连续空墙，挂钩不得贴近天花板、吊顶、横梁或画面顶边，挂画不得贴地、贴墙角、贴门框或贴柜体。若挂在三人沙发上方，画宽仍只约占沙发五分之一，不得为了突出文字而放大产品。';
+const PAINTING_STATIC_WALL_COMPENSATED_WHITESPACE_RULE = '【静态上墙补偿·安装留白】挂画是墙面上的超小型点缀。挂钩上方保留大块连续空墙，挂钩不得贴近天花板、吊顶、横梁或画面顶边；挂画下方保留大块墙面和地面关系，不得贴地、贴墙角、贴门框或贴柜体。若与三人沙发同框，画宽只约占沙发总宽的八分之一；若与完整站立成年人同框，画高只约占其完整身高的28%-30%。无法同时容纳家具和留白时，减少家具或让摄影机后退，不得上移、放大挂画。';
 const PAINTING_SCALE_ESTABLISHING_RULE = '【第三道锁·镜头尺寸交代】除原画内容特写和实木压条特写外，凡出现上墙成品，必须先用一次真正的远景/全景建立尺寸，再允许靠近。尺寸交代镜头同时拍到完整挂画、挂钩上方大块空墙和挂画下方空间，并至少带到以下一种相近景深参照：从头到脚完整站立成人、完整标准房门、完整三人沙发，或天花板与地面边界。禁止把中景/近景称为全景，禁止人物被桌子或画面边缘截断，禁止一边要求看清纹理一边用同一镜头证明全屋比例。后续近景只表示摄影机靠近，挂画尺寸、挂点、墙面坐标和透视边界全程不变。';
 const PAINTING_INSTALLATION_SCALE_RULE = '【安装方向专用人物标尺】本条是人物现场安装流程，不执行“挂画从第0秒已经上墙”。安装前先用真正的全景同时拍到人物从头到脚、完整挂画和地面，人物与挂画处于相近景深；人物把挂画竖直拿在身体正前方时，40厘米画宽约等于其肩宽，80厘米画高约等于其完整身高一半，视觉上大致从胸口延伸到大腿中段，不得到膝盖以下。人物按这个已经校准的小尺寸完成悬挂，挂好后产品不得突然变大；此时再执行墙面上下留白锁。安装尺寸交代镜头只负责证明比例，不要求同时看清文字、书法笔触或绢丝纹理，细节由之后的近景或专门特写方向完成。';
 const PAINTING_CONTENT_DETAIL_SIZE_RULE = '本产品真实成品尺寸仍固定为宽40厘米、高80厘米、宽高比1:2，挂画外观与二维画面比例不得改变。本方向允许镜头为查看原画内容而近距离合理裁切挂画边缘，不要求人物、家具或空间全景，也不得因为特写把产品重新设计成巨幅画、整墙画或三维场景；镜头移动过程中画布平面、文字、笔触、印章和图案之间的相对位置与比例必须始终不变。';
@@ -13778,6 +13782,22 @@ const PAINTING_REALISM_MARKER = '【真人实拍质感最高优先级】';
 const PAINTING_DYNAMIC_ENDING_MARKER = '【动态收尾强制规则】';
 const PAINTING_CONTENT_DETAIL_DIRECTION = 29;
 const PAINTING_WOOD_DETAIL_DIRECTION = 30;
+const PAINTING_STATIC_WALL_COMPENSATION_DIRECTIONS = new Set([
+  3, 6, 10,
+  ...Array.from({ length: 18 }, (_, index) => index + 11),
+  ...Array.from({ length: 10 }, (_, index) => index + 31),
+]);
+
+function shouldUsePaintingStaticWallSizeCompensation(idea = {}) {
+  const directionNumber = Number(idea?.directionNumber) || 0;
+  if (directionNumber > 0) {
+    return PAINTING_STATIC_WALL_COMPENSATION_DIRECTIONS.has(directionNumber);
+  }
+  const text = `${readValue(idea?.title)}\n${readValue(idea?.summary)}`;
+  if (isPaintingInstallationSequence(text)) return false;
+  if (/画面内容.{0,8}特写|实木压条.{0,8}特写|木条端部/.test(text)) return false;
+  return /(?:开场|第0秒|全程|已经|完成|稳固|固定).{0,16}(?:上墙|挂在.{0,8}墙|位于.{0,8}墙|墙面)|(?:沙发|电视|玄关|书房|茶室|卧室|餐厅|走廊|会客区|展陈).{0,12}(?:背景墙|主墙|侧墙|墙面挂画)/.test(text);
+}
 const PAINTING_CONTENT_DETAIL_VARIANTS = [
   '茶几平放·正上方左到右：挂画完整平坦放在尺寸足够的茶几表面，上下木条与画布保持原样；摄影机接近垂直俯拍，从画面左侧向右侧连续扫过，禁止默认从右侧斜拍',
   '墙面悬挂·近乎正面上到下：挂画完整稳固地挂在墙上，镜头位于近乎正面的轻微左侧机位，从画面上端向下端连续扫过，禁止明显右侧斜视',
@@ -13811,20 +13831,43 @@ function ensurePaintingContentDetailVariant(promptText, variationIndex = 0) {
   if (normalized.startsWith(PAINTING_CONTENT_DETAIL_VARIANT_MARKER)) return normalized;
   return `${PAINTING_CONTENT_DETAIL_VARIANT_MARKER}\n${rule}\n本条4-6秒视频只执行上述一个摆放场景、一个主机位和一条连续移动路径。如下方其他文字与本指定组合冲突，以本段为准；不得改成右侧斜拍或其他摆放方式。\n\n${normalized}`;
 }
+
+function normalizePaintingPromptForStaticWallCompensation(promptText) {
+  return String(promptText || '')
+    .replace(/(?:宽\s*)?40\s*(?:厘米|cm)?\s*[,，、/\-]\s*(?:高\s*)?80\s*(?:厘米|cm)?/gi, '宽25厘米、高50厘米')
+    .replace(/40\s*[×xX*]\s*80\s*(?:厘米|cm)?/g, '25×50厘米')
+    .replace(/宽\s*40\s*(?:厘米|cm).{0,8}高\s*80\s*(?:厘米|cm)/gis, '宽25厘米、高50厘米')
+    .replace(/((?:画高|挂画高度).{0,30})45\s*%\s*(?:-|–|—|~|～|至|到)\s*50\s*%/g, '$128%-30%')
+    .replace(/((?:画宽|挂画宽度).{0,30})(?:18\s*%\s*(?:-|–|—|~|～|至|到)\s*22\s*%|20\s*%)/g, '$112%-14%')
+    .replace(/沙发宽度的五分之一|沙发总宽的五分之一|约占沙发五分之一/g, '沙发总宽的八分之一')
+    .replace(/画宽.{0,10}(?:约等于|接近|与).{0,8}(?:成年人|女性|男性|人物)?肩宽/g, '画宽只占成年人肩宽的55%-60%')
+    .replace(/画高.{0,16}(?:完整站立)?(?:成年人|人物)身高的一半/g, '画高只占完整站立成年人身高的28%-30%');
+}
 const PAINTING_OBJECT_PERMANENCE_RULE = '若创意设定挂画已经上墙，挂画必须从第 0 秒起就真实、完整、稳固地存在于同一墙面坐标，并在全片保持相同尺寸、透视、挂点、墙面接触阴影和遮挡关系。开场可以暂时看不到挂画，但其所在墙面位置必须完全处于取景框之外，或被门框、屏风、人物、家具、绿植等真实不透明前景遮挡；后续只能依靠镜头移动或遮挡物自然移开而被拍到。只要前面镜头已经拍到挂画所在的完整墙面，该挂画就必须已经可见。严禁挂画淡入、浮现、透明变实、凭空生成、突然出现、逐渐长出、尺寸由小变大或中途贴到墙上；“揭示、进入画面、逐渐完整看到”只能表示摄影机改变取景后拍到一个从第 0 秒起就客观存在的挂画，绝不表示挂画本身出现。';
 const PAINTING_ROLLING_UNFOLD_RULE = '如果挂画开场处于卷起状态，从卷起到完全展开的全过程中，下方木条/下压杆必须始终存在并严格保持参考图中的原始形状、颜色、材质、长度、粗细、截面和两端轮廓，不得消失、变形、变色、伸长、缩短或变成圆柱形/圆杆。下方木条两端及周围不得新增任何物体、零件或装饰，包括但不限于圆柱、轴头、端帽、圆球、把手、系带或金属件。展开必须由人的双手合理控制，画布只能随着卷筒绕自身轴线旋转而逐圈滚动释放，严禁滑动、平移、平铺、抽拉、弹开或在无人操作时自行展开。';
 const PAINTING_LIVE_ACTION_REALISM_RULE = '整体必须呈现普通真实住宅中的真人实地拍摄质感，而不是三维渲染、AI样板间或过度精修的商业广告。空间允许轻微生活痕迹和自然不对称，沙发织物、窗帘、衣服与皮肤保留真实纹理、褶皱和细微瑕疵；自然光应有合理方向、层次、柔和阴影和轻微明暗差异，禁止全屋无阴影的均匀棚拍光、塑料材质、蜡像皮肤和过度磨皮。镜头保持稳定清楚，但运动应有真人摄影的自然起步、轻微惯性、减速和小幅构图修正，禁止数学式绝对匀速滑轨、虚拟摄像机漂移和明显手持抖动。人物按现实正常速度完成动作，动作之间允许自然衔接，每 1-2 秒持续产生新的有效动作或构图信息即可，禁止慢放、发呆、重复和为赶时间而机械连做过多动作。';
 const PAINTING_DYNAMIC_ENDING_RULE = '结尾不得为了“产品定妆”机械追加一个正对墙面挂画、固定机位、无人无动作的独立静态镜头。前面的主镜头已经完整展示产品时，直接在该镜头的连续动作或运镜中自然结束，不再补切正面挂画。若创意确实需要以挂画收束，最后阶段仍须保留至少一种清晰可见的连续变化：镜头轻微横移/推近/拉远、前景视差、人物尚未完成的自然动作、窗帘或植物的合理微动、或有方向的自然光影变化；镜头可以自然减速，但不得完全定住超过约 0.5 秒，不得让最后 1-2 秒看起来像一张静态图片。挂画自身若已上墙仍必须保持固定，动态只能来自摄影机、人物、前景或真实环境。';
 
 function ensurePaintingSizeLock(promptText, options = {}) {
-  let normalized = String(promptText || '').trim();
-  if (!normalized.startsWith(PAINTING_SIZE_LOCK_MARKER)) {
-    const sizeRule = options.contentDetailScan ? PAINTING_CONTENT_DETAIL_SIZE_RULE : PAINTING_REAL_SIZE_RULE;
+  const useStaticWallCompensation = Boolean(options.staticWallSizeCompensation) && !options.contentDetailScan && !options.installationSequence;
+  let normalized = useStaticWallCompensation
+    ? normalizePaintingPromptForStaticWallCompensation(promptText).trim()
+    : String(promptText || '').trim();
+  const sizeLockMarker = useStaticWallCompensation ? '【挂画生成尺寸补偿锁定】' : PAINTING_SIZE_LOCK_MARKER;
+  if (!normalized.startsWith(sizeLockMarker)) {
+    const sizeRule = options.contentDetailScan
+      ? PAINTING_CONTENT_DETAIL_SIZE_RULE
+      : useStaticWallCompensation
+        ? PAINTING_STATIC_WALL_COMPENSATED_SIZE_RULE
+        : PAINTING_REAL_SIZE_RULE;
     const wallScaleRules = options.contentDetailScan
       ? ''
-      : `\n\n${PAINTING_WALL_WHITESPACE_RULE}\n\n${PAINTING_SCALE_ESTABLISHING_RULE}${options.installationSequence ? `\n\n${PAINTING_INSTALLATION_SCALE_RULE}` : ''}`;
+      : `\n\n${useStaticWallCompensation ? PAINTING_STATIC_WALL_COMPENSATED_WHITESPACE_RULE : PAINTING_WALL_WHITESPACE_RULE}\n\n${PAINTING_SCALE_ESTABLISHING_RULE}${options.installationSequence ? `\n\n${PAINTING_INSTALLATION_SCALE_RULE}` : ''}`;
     // 确定性放在最终提示词最前面，避免长提示词中后置尺寸规则被弱化。
-    normalized = `${PAINTING_SIZE_LOCK_MARKER}\n${sizeRule}${wallScaleRules}\n负面限制：60×120厘米或更大的大型卷轴、超大挂画、巨幅壁画、画宽明显超过女性肩宽、画高明显超过完整成人身高一半、挂钩距天花板不足一个画宽、挂画下方距地面不足一幅画高、人物被截断却用作比例参照、透视夸大和超广角畸变。\n\n${normalized}`;
+    const negativeSizeRule = useStaticWallCompensation
+      ? '负面限制：常规或大型卷轴、超大挂画、巨幅壁画、画高超过完整成人身高的三分之一、画宽接近或超过成年人肩宽、画宽超过三人沙发总宽的八分之一、通过缩小人物或家具突出挂画、透视夸大和超广角畸变。'
+      : '负面限制：60×120厘米或更大的大型卷轴、超大挂画、巨幅壁画、画宽明显超过女性肩宽、画高明显超过完整成人身高一半、挂钩距天花板不足一个画宽、挂画下方距地面不足一幅画高、人物被截断却用作比例参照、透视夸大和超广角畸变。';
+    normalized = `${sizeLockMarker}\n${sizeRule}${wallScaleRules}\n${negativeSizeRule}\n\n${normalized}`;
   }
   if (!options.installationSequence && !normalized.includes(PAINTING_OBJECT_PERMANENCE_MARKER)) {
     normalized += `\n\n${PAINTING_OBJECT_PERMANENCE_MARKER}\n${PAINTING_OBJECT_PERMANENCE_RULE}`;
@@ -13968,8 +14011,9 @@ function requiredPaintingTimelineStages(duration) {
   return 7;
 }
 
-function inspectPaintingPromptQuality(promptText, duration, ideaSummary = '') {
+function inspectPaintingPromptQuality(promptText, duration, ideaSummary = '', options = {}) {
   const issues = [];
+  const useStaticWallCompensation = Boolean(options.staticWallSizeCompensation);
   const isContentDetailScan = /画面内容移动特写|原画内容.{0,8}(?:移动|巡游|扫描)特写|沿.{0,12}(?:笔势|山水路径)|实木压条.{0,8}(?:移动|工艺)?特写|木条端部至画布/.test(ideaSummary);
   const isInstallationSequence = !isContentDetailScan && isPaintingInstallationSequence(ideaSummary, promptText);
   const timelineRanges = String(promptText || '').match(/\d+(?:\.\d+)?\s*(?:-|–|—|~|～|至|到)\s*\d+(?:\.\d+)?\s*秒/g) || [];
@@ -14009,10 +14053,16 @@ function inspectPaintingPromptQuality(promptText, duration, ideaSummary = '') {
   if (fixedOnWall && materializesOnWall) {
     issues.push('挂画设定为已经上墙，但时间轴又让挂画开始出现或逐渐进入画面；必须改为第0秒持续存在，仅由取景或实体遮挡完成揭示');
   }
-  const hasExactPaintingSize = /40\s*(?:厘米|cm).*80\s*(?:厘米|cm)|宽\s*40.*高\s*80/is.test(promptText);
-  const hasScaleReference = /(完整站立成年人.*(?:45\s*%.*50\s*%|身高.{0,8}(?:一半|二分之一))|画高.{0,12}(?:完整|从头到脚).{0,8}(?:成人|人物).{0,8}(?:一半|二分之一)|画宽.{0,12}(?:女性|人物).{0,8}肩宽|房门.{0,20}(?:40\s*%|四成|一半)|沙发.*(?:18\s*%.*22\s*%|20\s*%|五分之一)|(?:18\s*%.*22\s*%|20\s*%|五分之一).*沙发)/s.test(promptText);
+  const hasExactPaintingSize = useStaticWallCompensation
+    ? /25\s*(?:厘米|cm).*50\s*(?:厘米|cm)|宽\s*25.*高\s*50/is.test(promptText)
+    : /40\s*(?:厘米|cm).*80\s*(?:厘米|cm)|宽\s*40.*高\s*80/is.test(promptText);
+  const hasScaleReference = useStaticWallCompensation
+    ? /(画高.{0,20}(?:28\s*%.*30\s*%|三成)|画宽.{0,20}(?:55\s*%.*60\s*%|肩宽)|沙发.{0,24}(?:八分之一|12\s*%.*14\s*%)|(?:八分之一|12\s*%.*14\s*%).{0,12}沙发)/s.test(promptText)
+    : /(完整站立成年人.*(?:45\s*%.*50\s*%|身高.{0,8}(?:一半|二分之一))|画高.{0,12}(?:完整|从头到脚).{0,8}(?:成人|人物).{0,8}(?:一半|二分之一)|画宽.{0,12}(?:女性|人物).{0,8}肩宽|房门.{0,20}(?:40\s*%|四成|一半)|沙发.*(?:18\s*%.*22\s*%|20\s*%|五分之一)|(?:18\s*%.*22\s*%|20\s*%|五分之一).*沙发)/s.test(promptText);
   if (!hasExactPaintingSize || (!isContentDetailScan && !hasScaleReference)) {
-    issues.push('缺少挂画宽40厘米、高80厘米，以及女性肩宽、完整成人身高一半、标准房门或三人沙发五分之一中的明确可见参照');
+    issues.push(useStaticWallCompensation
+      ? '缺少静态上墙补偿尺寸25×50厘米，以及人物身高28%-30%、肩宽55%-60%或三人沙发八分之一中的明确可见参照'
+      : '缺少挂画宽40厘米、高80厘米，以及女性肩宽、完整成人身高一半、标准房门或三人沙发五分之一中的明确可见参照');
   }
   if (hasWallMountedPresentation && !isContentDetailScan) {
     const hasWallWhitespace = /(挂钩.{0,24}(?:1\.2|一个以上|一(?:个|幅)).{0,10}(?:画宽|挂画宽度)|上方木条.{0,20}(?:一幅|1幅).{0,8}(?:画高|挂画高度)|挂钩上方.{0,12}(?:大块|明显|充足).{0,8}(?:空墙|留白))/s.test(promptText)
@@ -14276,6 +14326,9 @@ async function generatePaintingIdeaPromptCore(requestId, apiKey, profile, idea, 
     || /实木压条.{0,8}(?:移动|工艺)?特写|木条端部至画布/.test(`${ideaTitle}\n${ideaSummary}`);
   const isCloseDetailScan = isContentDetailScan || isWoodDetailScan;
   const isInstallationSequence = !isCloseDetailScan && isPaintingInstallationSequence(ideaTitle, ideaSummary);
+  const useStaticWallSizeCompensation = !isCloseDetailScan
+    && !isInstallationSequence
+    && shouldUsePaintingStaticWallSizeCompensation(idea);
   const durationMin = isContentDetailScan ? 4 : (Number(idea?.durationMin) || Number(context.durationMin));
   const durationMax = isContentDetailScan ? 6 : (Number(idea?.durationMax) || Number(context.durationMax));
   const hasDurationRange =
@@ -14296,6 +14349,21 @@ async function generatePaintingIdeaPromptCore(requestId, apiKey, profile, idea, 
   const avoidElements = Array.isArray(context.avoidElements)
     ? context.avoidElements.filter(Boolean).slice(0, 12)
     : [];
+  const profileForPrompt = useStaticWallSizeCompensation
+    ? normalizePaintingPromptForStaticWallCompensation(JSON.stringify(profile, null, 2))
+    : JSON.stringify(profile, null, 2);
+  const systemSizeRules = isCloseDetailScan
+    ? PAINTING_CONTENT_DETAIL_SIZE_RULE
+    : useStaticWallSizeCompensation
+      ? `${PAINTING_STATIC_WALL_COMPENSATED_SIZE_RULE}\n${PAINTING_STATIC_WALL_COMPENSATED_WHITESPACE_RULE}\n${PAINTING_SCALE_ESTABLISHING_RULE}`
+      : `${PAINTING_REAL_SIZE_RULE}\n${PAINTING_WALL_WHITESPACE_RULE}\n${PAINTING_SCALE_ESTABLISHING_RULE}${isInstallationSequence ? `\n${PAINTING_INSTALLATION_SCALE_RULE}` : ''}`;
+  const finalProductSizeRequirement = useStaticWallSizeCompensation
+    ? '尺寸与镜头必须执行上方静态上墙补偿规则；最终正文只能写宽25厘米、高50厘米，并选用人物身高28%-30%、肩宽55%-60%或三人沙发八分之一中的一个可见参照。不得写入其他物理尺寸或旧比例'
+    : '尺寸与镜头必须执行上方系统尺寸规则，但最终正文只需简洁写明40×80厘米和本条选用的一个可见参照关系，不要重复罗列多组厘米区间和百分比';
+  const finalNegativeSizeRequirement = useStaticWallSizeCompensation
+    ? '尺寸方面必须明确禁止自行恢复为常规或大型卷轴、画高超过完整成人身高的三分之一、画宽接近或超过成年人肩宽、画宽超过三人沙发总宽的八分之一、缩小人物或家具来突出挂画，以及透视或广角畸变造成的尺寸夸大'
+    : '尺寸方面必须明确禁止60×120厘米或更大的大型卷轴、画宽明显超过女性肩宽、画高明显超过完整成人身高一半、挂钩距天花板不足一个画宽、挂画下方距地面不足一幅画高、人物被截断却用作比例参照，以及透视或广角畸变造成的尺寸夸大';
+  const physicalSizeLabel = useStaticWallSizeCompensation ? '25×50厘米、1:2的生成补偿外形' : '40×80厘米、1:2的物理外形';
   const creativeSubjectRequirements = isContentDetailScan
     ? '参考图中真实可见的文字、书法笔势、印章、山水、花鸟、装饰纹样与画布纹理，以及镜头选择该移动路径的构图依据；本方向不得强行加入人物、服装或家具'
     : isWoodDetailScan
@@ -14312,10 +14380,10 @@ ${previousPrompt ? `- 必须避开上一版本已经使用的具体人物、服�
 ${avoidElements.length > 0 ? `\n- 还必须避开本批量以下已经使用的元素组合：\n${avoidElements.map((item, index) => `${index + 1}. ${item}`).join('\n')}` : ''}\n`
     : '';
 
-  const fullPrompt = `你是短视频提示词专家。请基于下面的「产品固定档案」和「创意方案」，写一段完整的 Seedance 视频生成提示词（中文，可直接提交给 Seedance）。
+  let fullPrompt = `你是短视频提示词专家。请基于下面的「产品固定档案」和「创意方案」，写一段完整的 Seedance 视频生成提示词（中文，可直接提交给 Seedance）。
 
 【产品固定档案（产品外观必须严格复刻，不得改动）】
-${JSON.stringify(profile, null, 2)}
+${profileForPrompt}
 
 【创意方案】
 标题：${ideaTitle}
@@ -14333,19 +14401,25 @@ ${isContentDetailScan ? `\n【本次原画内容特写指定组合（必须严�
 ${elementVariationRequirements}
 
 【系统尺寸规则（理解并落实到时间轴；最终产品约束中无需逐字重复，服务端会确定性前置）】
-${isCloseDetailScan ? PAINTING_CONTENT_DETAIL_SIZE_RULE : `${PAINTING_REAL_SIZE_RULE}\n${PAINTING_WALL_WHITESPACE_RULE}\n${PAINTING_SCALE_ESTABLISHING_RULE}${isInstallationSequence ? `\n${PAINTING_INSTALLATION_SCALE_RULE}` : ''}`}
+${systemSizeRules}
 
 【要求】
 1. 无论视频采用何种形式（静态展示、挂墙、手持、展开、人物互动等），都绝对不得改变挂画的样式、颜色和外观，必须与产品固定档案完全一致。
 2. 画面中的一切动作、镜头、展开方式、光影、透视、材质表现都必须符合真实物理逻辑，不得出现穿模、悬浮、违反重力/光影/透视等不合理现象。如果出现卷轴式挂画或卷起后展开的画作，必须严格执行：${PAINTING_ROLLING_UNFOLD_RULE} 画面中任何物体的运动（挂画的上升、下降、平移、旋转、展开、翻面）都必须有明确的施动者（人的手、人的动作或合理的物理机制），严禁挂画或任何物体在没有手/人操作的情况下自行悬浮、漂浮、上升、移动、旋转——挂画要动，必须有人来拿、挂、展开或展示它，不能自己悬空位移。同一视频内如果出现人物（无论单人还是多人、无论跨多少个镜头或场景），所有人物必须长相、性别、年龄、发型、服装保持一致，严禁中途换人、换装或人物数量无故增减。${isInstallationSequence ? '本条明确是人物现场安装流程：开场允许人物手持尚未上墙的挂画；只有挂好以后才锁定挂点和墙面坐标，禁止套用“第0秒已经上墙”的规则。' : `若创意设定挂画已经上墙，必须严格执行：${PAINTING_OBJECT_PERMANENCE_RULE}`}
 3. 内容密度：整个视频必须包含连续、不同的有效阶段，阶段数量按目标时长动态要求——4 秒至少 3 个阶段，5-6 秒至少 3 个阶段，7-8 秒至少 4 个阶段，9-10 秒至少 5 个阶段，11-12 秒至少 6 个阶段，13-15 秒至少 7 个阶段；每个阶段必须发生新的、可见的人物动作、空间信息或构图关系变化，禁止把同一动作拆段凑数。内容阶段不等于镜头数量，一镜到底可以在同一个连续镜头中完成全部阶段。人物肢体、行走、坐下、翻书、喝茶和观看都必须按现实正常速度完成，动作之间允许符合人体惯性和真实摄影的自然衔接；每 1-2 秒持续出现新动作或新构图信息即可，禁止慢放、降速、重复、循环、人物发呆和长时间凝视，也禁止为了赶时间而机械连续完成过多动作。
 4. 提示词必须分三部分：产品固定约束、创意内容、负面约束。
-5. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。如画面中的挂画带有木条、挂轴或压杆等边框结构，这些结构必须保持档案中的形状、颜色、材质、粗细、长度、截面和两端轮廓不变；如涉及卷起或展开，全程不得变形、不得把木条变成圆柱形卷轴或圆杆、不得变色，也不得在两端或旁边新增任何圆柱、轴头、端帽、圆球、把手等构件。尺寸与镜头必须执行上方系统尺寸规则，但最终正文只需简洁写明40×80厘米和本条选用的一个可见参照关系，不要重复罗列多组厘米区间和百分比。
+5. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。如画面中的挂画带有木条、挂轴或压杆等边框结构，这些结构必须保持档案中的形状、颜色、材质、粗细、长度、截面和两端轮廓不变；如涉及卷起或展开，全程不得变形、不得把木条变成圆柱形卷轴或圆杆、不得变色，也不得在两端或旁边新增任何圆柱、轴头、端帽、圆球、把手等构件。${finalProductSizeRequirement}。
 6. 创意内容：结合创意方案，写清楚${creativeSubjectRequirements}。非内容移动特写方向的服装不得擅自全部改成米白、浅灰或卡其。必须严格继承创意方案标注的“一镜到底 / 主镜头＋动态收束 / 克制多镜头”结构：一镜到底要在所有时间段明确写“连续镜头、不切镜”，用一条简单稳定且具有自然起停、惯性和小幅构图修正的真人摄影路径串联动作，禁止机械绝对匀速滑轨；主镜头＋动态收束全片最多 2 个镜头，前面已展示挂画时不得为结尾再补切正面挂画；多镜头只在无法自然连续时切换。把视频从 0 秒开始按先后顺序无重叠地铺满到结束，每段写明起止时间及新的动作或空间信息，但不得因为进入新阶段就自动切镜；4 秒至少 3 段、5-6 秒至少 3 段、7-8 秒至少 4 段、9-10 秒至少 5 段、11-12 秒至少 6 段、13-15 秒至少 7 段。${isContentDetailScan ? '本方向是4-6秒原画内容移动特写：不要求远景/全景、人物或家具陈设，不得拉远补拍空间；镜头必须根据参考图真实构图选择一条连贯扫描路径，只拍参考图中确实存在的文字、笔触、印章、山水或花鸟细节，二维画面内容本身绝对静止，不能让山水、飞鸟、流水、植物或书法笔画产生动画。' : isWoodDetailScan ? '本方向是实木压条工艺移动特写：不要求远景/全景、人物或家具陈设，不得默认拉远补拍房间；最多两个近景镜头，每个镜头必须沿一根木条或其端部到画布连接处持续移动，不定格。只展示高清参考图中真实存在的木纹、颜色、平直形状、粗细、截面、两端与连接结构，禁止变成圆柱卷轴或新增任何零件。' : isInstallationSequence ? '本方向是人物安装流程：开场真正全景必须让人物从头到脚完整可见，人物和挂画处于相近景深，挂画宽约等于肩宽、画高约为完整身高一半；这一个镜头只证明尺寸，不兼任文字或纹理特写。挂好后再用全景证明上方至少约1.2个画宽空墙、下方至少约1.2幅画高空间，最后如需展示细节只能另行靠近。' : `整个视频至少有 1 个远景或全景，场景中自然出现 2-3 件符合「${styleProfile.label}」的家具或陈设，不能只有人、墙和画。凡出现上墙成品，这个远景/全景必须同时交代挂钩上方大块空墙和挂画下方空间，并使用完整房门、从头到脚站立成人、完整三人沙发或天花板与地面边界中的一个相近景深参照；这个镜头只证明尺寸，不同时承担纹理特写。`}所有动作按现实正常速度连续完成，镜头稳定但不能缓慢拖延。${isInstallationSequence ? '本条在人物挂好以前不执行第0秒已上墙约束；挂好以后才固定挂点、尺寸和墙面坐标。' : '若方案写明挂画开场已经上墙，则挂画从第 0 秒起就在固定墙面坐标客观存在；内容密度来自人物生活动作、空间揭示、前后景和连续构图变化，不得为了凑动作重新取画或安装，更不得让挂画淡入、浮现或凭空生成。'}结尾必须执行：${PAINTING_DYNAMIC_ENDING_RULE} 全片实拍质感必须执行：${PAINTING_LIVE_ACTION_REALISM_RULE}
-7. 负面约束：明确列出不得改变的元素（挂画外观、画面内容、木条结构等）、必须避免的物理违背现象（穿模、悬浮、违反重力/光影/透视等）、禁止单一动作慢放/循环凑时长、禁止长时间静止、禁止快速晃动/快速变焦/急推/手持抖动、严禁挂画在无人操作时自行位移；已经上墙的挂画还必须禁止淡入、浮现、透明变实、凭空生成、突然出现、逐渐长出、由小变大和中途贴到墙上；尺寸方面必须明确禁止60×120厘米或更大的大型卷轴、画宽明显超过女性肩宽、画高明显超过完整成人身高一半、挂钩距天花板不足一个画宽、挂画下方距地面不足一幅画高、人物被截断却用作比例参照、以及透视或广角畸变造成的尺寸夸大；实拍质感方面禁止三维渲染感、AI样板间、蜡像皮肤、过度磨皮、塑料材质、全屋无阴影的均匀棚拍光、数学式绝对匀速滑轨和虚拟摄像机漂移；一镜到底方向禁止硬切、跳切、瞬间换景和人物位置突变，多镜头方向禁止无意义频繁切镜；如涉及卷轴或木条，还要禁止滑动式展开、木条变成圆柱或变色、两端新增圆柱/轴头/端帽。禁止出现送礼、方形礼盒、礼包盒、开箱和拆包装情节。
-${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之间，请你从该范围内挑选一个最合适的整数秒数；输出视频画布为 ${ratio}，这与挂画40×80厘米、1:2的物理外形无关。并在提示词最后单独写一行「总时长：X秒」（X 为你选定的整数，例如「总时长：8秒」）。` : `8. 总时长约 ${fallbackDuration} 秒；输出视频画布为 ${ratio}，这与挂画40×80厘米、1:2的物理外形无关。并在提示词最后单独写一行「总时长：${fallbackDuration}秒」。`}
+7. 负面约束：明确列出不得改变的元素（挂画外观、画面内容、木条结构等）、必须避免的物理违背现象（穿模、悬浮、违反重力/光影/透视等）、禁止单一动作慢放/循环凑时长、禁止长时间静止、禁止快速晃动/快速变焦/急推/手持抖动、严禁挂画在无人操作时自行位移；已经上墙的挂画还必须禁止淡入、浮现、透明变实、凭空生成、突然出现、逐渐长出、由小变大和中途贴到墙上；${finalNegativeSizeRequirement}；实拍质感方面禁止三维渲染感、AI样板间、蜡像皮肤、过度磨皮、塑料材质、全屋无阴影的均匀棚拍光、数学式绝对匀速滑轨和虚拟摄像机漂移；一镜到底方向禁止硬切、跳切、瞬间换景和人物位置突变，多镜头方向禁止无意义频繁切镜；如涉及卷轴或木条，还要禁止滑动式展开、木条变成圆柱或变色、两端新增圆柱/轴头/端帽。禁止出现送礼、方形礼盒、礼包盒、开箱和拆包装情节。
+${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之间，请你从该范围内挑选一个最合适的整数秒数；输出视频画布为 ${ratio}，这与挂画${physicalSizeLabel}无关。并在提示词最后单独写一行「总时长：X秒」（X 为你选定的整数，例如「总时长：8秒」）。` : `8. 总时长约 ${fallbackDuration} 秒；输出视频画布为 ${ratio}，这与挂画${physicalSizeLabel}无关。并在提示词最后单独写一行「总时长：${fallbackDuration}秒」。`}
 
 严格只输出这段提示词文本本身，不要输出任何解释、标题、序号或 markdown 包裹。`;
+
+  // 补偿方向发送给提示词模型的整份上下文也必须只有一套尺寸，
+  // 防止创意摘要、历史提示词或老档案把真实尺寸重新带入 Seedance 提示词。
+  if (useStaticWallSizeCompensation) {
+    fullPrompt = normalizePaintingPromptForStaticWallCompensation(fullPrompt);
+  }
 
   console.log('[doubao painting] idea-prompt request start', { requestId, title: ideaTitle });
 
@@ -14370,7 +14444,9 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
     durationSec = hasDurationRange ? Math.round((durationMin + durationMax) / 2) : fallbackDuration;
   }
   let resolvedDuration = Math.min(30, Math.max(4, Math.round(durationSec)));
-  const qualityIssues = inspectPaintingPromptQuality(promptText, resolvedDuration, ideaSummary);
+  const qualityIssues = inspectPaintingPromptQuality(promptText, resolvedDuration, ideaSummary, {
+    staticWallSizeCompensation: useStaticWallSizeCompensation,
+  });
   const hasRetryBudget = Date.now() - modelStartedAt < 25 * 1000;
   if (qualityIssues.length > 0 && hasRetryBudget) {
     const correctionPrompt = `${fullPrompt}\n\n【质量检查未通过，必须重写】\n${qualityIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\n请重新输出一份完整提示词，保留产品与创意方向，严格补齐连续时间轴、远景/全景和家居陈设。只输出重写后的提示词文本。`;
@@ -14393,6 +14469,7 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
   promptText = ensurePaintingSizeLock(promptText, {
     contentDetailScan: isCloseDetailScan,
     installationSequence: isInstallationSequence,
+    staticWallSizeCompensation: useStaticWallSizeCompensation,
   });
   // 特写方向的摆放场景、机位和移动路径也由服务端确定性锁定，避免模型反复默认右侧斜拍。
   if (isContentDetailScan) {
@@ -18653,8 +18730,12 @@ export {
   formatPaintingSeedanceVideoLibraryName,
   formatSeedanceVideoLibraryName,
   ensurePaintingSizeLock,
+  normalizePaintingPromptForStaticWallCompensation,
+  shouldUsePaintingStaticWallSizeCompensation,
   inspectPaintingPromptQuality,
   PAINTING_REAL_SIZE_RULE,
+  PAINTING_STATIC_WALL_COMPENSATED_SIZE_RULE,
+  PAINTING_STATIC_WALL_COMPENSATED_WHITESPACE_RULE,
   PAINTING_WALL_WHITESPACE_RULE,
   PAINTING_SCALE_ESTABLISHING_RULE,
   PAINTING_INSTALLATION_SCALE_RULE,
