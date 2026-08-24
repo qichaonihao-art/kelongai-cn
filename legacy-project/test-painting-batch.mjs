@@ -59,6 +59,8 @@ const {
   ensurePaintingSizeLock,
   inspectPaintingPromptQuality,
   PAINTING_REAL_SIZE_RULE,
+  PAINTING_WALL_WHITESPACE_RULE,
+  PAINTING_SCALE_ESTABLISHING_RULE,
   getPaintingContentDetailVariant,
   ensurePaintingContentDetailVariant,
   getPaintingBatchReferenceSpecs,
@@ -714,6 +716,11 @@ console.log('\n[27] 全自动最终提示词尺寸锁定');
   assert(/1\.8至2\.0米/.test(locked) && /18%-22%/.test(locked) && /大片空墙/.test(locked), '使用三人沙发与留白作为主尺度参照');
   assert(/完整站立成年人/.test(locked) && !/成年人物可见身高/.test(locked), '人物参照不再使用不稳定的可见身高');
   assert(/45-55mm/.test(locked) && /超广角/.test(locked), '空间镜头使用标准透视并禁止超广角夸大');
+  assert(locked.includes('【第二道锁·墙面安装与上下留白】'), '最终提示词前置墙面安装与上下留白锁');
+  assert(/净高约2\.6至2\.8米/.test(locked) && /29%-31%/.test(locked), '普通住宅墙面中画高只约占净高三成');
+  assert(/挂钩到天花板之间必须保留约45-60厘米/.test(locked) && /下边缘到地面保留约95-120厘米/.test(locked), '明确锁定挂钩上方与挂画下方留白');
+  assert(locked.includes('【第三道锁·镜头尺寸交代】'), '最终提示词前置镜头尺寸交代锁');
+  assert(/同时看到完整挂画、挂钩上方的大块空墙/.test(locked) && /之后才允许镜头靠近/.test(locked), '全景先证明尺寸，随后才允许靠近展示');
   assert(locked.includes('【卷起挂画滚动展开与下方木条强制锁定】'), '最终提示词确定性追加卷起展开和下方木条锁定');
   assert(/下方木条\/下压杆必须始终存在/.test(locked) && /不得消失、变形、变色、伸长、缩短/.test(locked), '下方木条全过程保持原始外观和颜色');
   assert(/不得新增任何物体、零件或装饰/.test(locked), '禁止在下方木条两端及周围新增任何物体');
@@ -726,6 +733,18 @@ console.log('\n[27] 全自动最终提示词尺寸锁定');
   );
   assert(!issues.some((item) => item.includes('宽40厘米')), '质量检查接受明确的沙发18%-22%尺度参照', JSON.stringify(issues));
   assert(PAINTING_REAL_SIZE_RULE.includes('输出视频') && PAINTING_REAL_SIZE_RULE.includes('挂画物理外形'), '核心规则区分视频画布与挂画物理外形');
+  assert(PAINTING_WALL_WHITESPACE_RULE.includes('挂钩不得顶到天花板') && PAINTING_SCALE_ESTABLISHING_RULE.includes('相近景深'), '三道锁覆盖安装位置和可靠镜头参照');
+
+  const closeDetailLocked = ensurePaintingSizeLock('内容特写测试', { contentDetailScan: true });
+  assert(!closeDetailLocked.includes('【第二道锁·墙面安装与上下留白】') && !closeDetailLocked.includes('【第三道锁·镜头尺寸交代】'), '内容与木条特写不被强制拉远补拍全屋');
+
+  const wallIssues = inspectPaintingPromptQuality(
+    '产品宽40厘米、高80厘米；完整站立成年人参照为45%-50%。\n0-2秒全景拍摄已经上墙的挂画\n2-4秒经过茶几和绿植\n4-6秒人物走过\n6-8秒镜头横移',
+    8,
+    '客厅挂画已经上墙'
+  );
+  assert(wallIssues.some((item) => item.includes('安装留白')), '质量检查会拦截缺少上下留白的上墙方案', JSON.stringify(wallIssues));
+  assert(wallIssues.some((item) => item.includes('尺寸交代镜头')), '质量检查会拦截没有墙顶与下方空间的上墙方案', JSON.stringify(wallIssues));
 }
 
 // ===== T28 方向29特写的多场景、多机位、多路径轮换 =====
