@@ -61,6 +61,8 @@ const {
   PAINTING_REAL_SIZE_RULE,
   PAINTING_WALL_WHITESPACE_RULE,
   PAINTING_SCALE_ESTABLISHING_RULE,
+  PAINTING_INSTALLATION_SCALE_RULE,
+  isPaintingInstallationSequence,
   getPaintingContentDetailVariant,
   ensurePaintingContentDetailVariant,
   getPaintingBatchReferenceSpecs,
@@ -712,15 +714,15 @@ console.log('\n[27] 全自动最终提示词尺寸锁定');
   const locked = ensurePaintingSizeLock('产品固定约束：测试\n创意内容：0-8秒连续拍摄');
   assert(locked.startsWith('【挂画真实尺寸强制锁定】'), '尺寸锁定被确定性放在最终提示词最前面');
   assert(/40×80厘米/.test(locked) && /1:2/.test(locked), '明确锁定挂画40×80厘米与1:2物理外形');
-  assert(/9:16画幅误当成挂画外形/.test(locked), '明确防止将视频9:16与挂画1:2混淆');
-  assert(/1\.8至2\.0米/.test(locked) && /18%-22%/.test(locked) && /大片空墙/.test(locked), '使用三人沙发与留白作为主尺度参照');
+  assert(/输出视频9:16只是视频画布/.test(locked), '明确防止将视频9:16与挂画1:2混淆');
+  assert(/1\.8-2\.0米/.test(locked) && /五分之一/.test(locked), '使用三人沙发作为可见尺度参照');
   assert(/完整站立成年人/.test(locked) && !/成年人物可见身高/.test(locked), '人物参照不再使用不稳定的可见身高');
   assert(/45-55mm/.test(locked) && /超广角/.test(locked), '空间镜头使用标准透视并禁止超广角夸大');
   assert(locked.includes('【第二道锁·墙面安装与上下留白】'), '最终提示词前置墙面安装与上下留白锁');
-  assert(/净高约2\.6至2\.8米/.test(locked) && /29%-31%/.test(locked), '普通住宅墙面中画高只约占净高三成');
-  assert(/挂钩到天花板之间必须保留约45-60厘米/.test(locked) && /下边缘到地面保留约95-120厘米/.test(locked), '明确锁定挂钩上方与挂画下方留白');
+  assert(/挂钩到天花板之间必须保留至少约1\.2个挂画宽度/.test(locked), '挂钩上方使用可见画宽倍数锁定留白');
+  assert(/下边缘到地面的距离至少约1\.2幅挂画高度/.test(locked), '挂画下方使用可见画高倍数锁定留白');
   assert(locked.includes('【第三道锁·镜头尺寸交代】'), '最终提示词前置镜头尺寸交代锁');
-  assert(/同时看到完整挂画、挂钩上方的大块空墙/.test(locked) && /之后才允许镜头靠近/.test(locked), '全景先证明尺寸，随后才允许靠近展示');
+  assert(/真正的远景\/全景建立尺寸/.test(locked) && /必须先用一次/.test(locked), '全景先证明尺寸，随后才允许靠近展示');
   assert(locked.includes('【卷起挂画滚动展开与下方木条强制锁定】'), '最终提示词确定性追加卷起展开和下方木条锁定');
   assert(/下方木条\/下压杆必须始终存在/.test(locked) && /不得消失、变形、变色、伸长、缩短/.test(locked), '下方木条全过程保持原始外观和颜色');
   assert(/不得新增任何物体、零件或装饰/.test(locked), '禁止在下方木条两端及周围新增任何物体');
@@ -732,8 +734,8 @@ console.log('\n[27] 全自动最终提示词尺寸锁定');
     '客厅连续横移'
   );
   assert(!issues.some((item) => item.includes('宽40厘米')), '质量检查接受明确的沙发18%-22%尺度参照', JSON.stringify(issues));
-  assert(PAINTING_REAL_SIZE_RULE.includes('输出视频') && PAINTING_REAL_SIZE_RULE.includes('挂画物理外形'), '核心规则区分视频画布与挂画物理外形');
-  assert(PAINTING_WALL_WHITESPACE_RULE.includes('挂钩不得顶到天花板') && PAINTING_SCALE_ESTABLISHING_RULE.includes('相近景深'), '三道锁覆盖安装位置和可靠镜头参照');
+  assert(PAINTING_REAL_SIZE_RULE.includes('输出视频') && PAINTING_REAL_SIZE_RULE.includes('绝不是挂画外形'), '核心规则区分视频画布与挂画物理外形');
+  assert(PAINTING_WALL_WHITESPACE_RULE.includes('挂钩不得贴近天花板') && PAINTING_SCALE_ESTABLISHING_RULE.includes('相近景深'), '三道锁覆盖安装位置和可靠镜头参照');
 
   const closeDetailLocked = ensurePaintingSizeLock('内容特写测试', { contentDetailScan: true });
   assert(!closeDetailLocked.includes('【第二道锁·墙面安装与上下留白】') && !closeDetailLocked.includes('【第三道锁·镜头尺寸交代】'), '内容与木条特写不被强制拉远补拍全屋');
@@ -745,6 +747,13 @@ console.log('\n[27] 全自动最终提示词尺寸锁定');
   );
   assert(wallIssues.some((item) => item.includes('安装留白')), '质量检查会拦截缺少上下留白的上墙方案', JSON.stringify(wallIssues));
   assert(wallIssues.some((item) => item.includes('尺寸交代镜头')), '质量检查会拦截没有墙顶与下方空间的上墙方案', JSON.stringify(wallIssues));
+
+  assert(isPaintingInstallationSequence('正面展示转身上墙', '人物对准挂点挂好并扶正挂轴'), '识别人物现场安装方向');
+  assert(!isPaintingInstallationSequence('成品上墙空间展示', '挂画第0秒已经上墙并全程固定'), '不会把开场已上墙方向误判为安装流程');
+  const installationLocked = ensurePaintingSizeLock('人物现场安装测试', { installationSequence: true });
+  assert(installationLocked.includes('【安装方向专用人物标尺】'), '安装方向确定性前置专用人物标尺');
+  assert(PAINTING_INSTALLATION_SCALE_RULE.includes('从头到脚') && PAINTING_INSTALLATION_SCALE_RULE.includes('胸口延伸到大腿中段'), '人物标尺使用完整全身和可见身体位置关系');
+  assert(!installationLocked.includes('【挂画全程存在与空间连续性强制锁定】'), '安装方向不再追加第0秒已经上墙的冲突规则');
 }
 
 // ===== T28 方向29特写的多场景、多机位、多路径轮换 =====
