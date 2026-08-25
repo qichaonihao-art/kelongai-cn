@@ -72,6 +72,9 @@ const {
   PAINTING_WALL_WHITESPACE_RULE,
   PAINTING_SCALE_ESTABLISHING_RULE,
   PAINTING_INSTALLATION_SCALE_RULE,
+  PAINTING_FRAMEWORKS,
+  PAINTING_CAMERA_EXPLANATION_DIRECTION,
+  getPaintingDirectionDuration,
   isPaintingInstallationSequence,
   getPaintingContentDetailVariant,
   ensurePaintingContentDetailVariant,
@@ -855,7 +858,7 @@ console.log('\n[31] 静态上墙尺寸补偿分流');
   assert(shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 31 }), '其他静态上墙方向使用尺寸补偿');
   assert(!shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 1 }), '卷起展开并安装方向保持真实尺寸');
   assert(!shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 2 }), '人物手持转身上墙方向保持真实尺寸');
-  assert(!shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 7 }), '人物手持讲解方向不套静态上墙补偿');
+  assert(shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 7 }), '成品墙面对镜头讲解方向使用静态上墙补偿');
   assert(!shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 29 }) && !shouldUsePaintingStaticWallSizeCompensation({ directionNumber: 30 }), '画面与木条特写方向不套空间尺寸补偿');
   assert(shouldUsePaintingStaticWallSizeCompensation({ title: '成品墙生活阅读', summary: '挂画开场已经固定上墙' }), '无方向号时可按静态上墙语义识别');
   assert(!shouldUsePaintingStaticWallSizeCompensation({ title: '正面展示转身上墙', summary: '人物对准挂点挂好并扶正' }), '无方向号的现场安装语义不误用补偿');
@@ -888,6 +891,24 @@ console.log('\n[31] 静态上墙尺寸补偿分流');
 
   const installationStillReal = ensurePaintingSizeLock('人物手持安装', { installationSequence: true });
   assert(installationStillReal.includes('40×80厘米') && !installationStillReal.includes('20×40厘米'), '现场安装方向仍保持真实40×80尺寸');
+}
+
+// ===== T33 第一组固定“成品墙面对镜头讲解”方向 =====
+console.log('\n[33] 第一组面对镜头讲解方向');
+{
+  const framework = PAINTING_FRAMEWORKS[0][PAINTING_CAMERA_EXPLANATION_DIRECTION - 1];
+  assert(PAINTING_CAMERA_EXPLANATION_DIRECTION === 7, '讲解方向固定在第一组第7个');
+  assert(/已经完整稳固地挂在墙面/.test(framework), '讲解开始前挂画已经上墙');
+  assert(/面对镜头持续自然讲解5-6秒/.test(framework), '人物面对镜头持续讲解5-6秒');
+  assert(/不遮挡挂画主体/.test(framework), '人物站位不得遮挡挂画主体');
+  assert(/声音开关/.test(framework) && /不得强制开启声音/.test(framework), '是否有声继续服从现有声音开关');
+  assert(/不同墙面/.test(framework) && /(客厅|书房|茶室)/.test(framework), '同一框架可在多种合理场景墙面变化');
+  assert(/一个连续/.test(framework), '讲解方向采用连续镜头而非频繁切镜');
+  assert(shouldUsePaintingStaticWallSizeCompensation({ directionNumber: PAINTING_CAMERA_EXPLANATION_DIRECTION }), '讲解方向应用静态上墙尺寸补偿');
+  const fixedDuration = getPaintingDirectionDuration(PAINTING_CAMERA_EXPLANATION_DIRECTION, 8, 8);
+  assert(fixedDuration.durationMin === 5 && fixedDuration.durationMax === 6, '讲解方向时长固定为5-6秒');
+  const normalDuration = getPaintingDirectionDuration(8, 8, 10);
+  assert(normalDuration.durationMin === 8 && normalDuration.durationMax === 10, '其他普通方向继续沿用用户时长');
 }
 
 // ===== T32 MiniMax H3 手动单条试验适配（全程 stub，不产生费用） =====

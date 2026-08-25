@@ -13766,8 +13766,9 @@ const PAINTING_REALISM_MARKER = '【真人实拍质感最高优先级】';
 const PAINTING_DYNAMIC_ENDING_MARKER = '【动态收尾强制规则】';
 const PAINTING_CONTENT_DETAIL_DIRECTION = 29;
 const PAINTING_WOOD_DETAIL_DIRECTION = 30;
+const PAINTING_CAMERA_EXPLANATION_DIRECTION = 7;
 const PAINTING_STATIC_WALL_COMPENSATION_DIRECTIONS = new Set([
-  3, 6, 10,
+  3, 6, PAINTING_CAMERA_EXPLANATION_DIRECTION, 10,
   ...Array.from({ length: 18 }, (_, index) => index + 11),
   ...Array.from({ length: 10 }, (_, index) => index + 31),
 ]);
@@ -13879,7 +13880,7 @@ const PAINTING_FRAMEWORKS = [
     '样片原型04·茶室安装完成：人物在茶室对准挂点挂好画、扶正下压杆，绕过茶桌后退端详并落座；镜头从茶具前景横移到安装中景，最后拉远展示茶席与挂画',
     '样片原型05·亲子协作家庭观看：成人负责对准挂点，孩子只扶稳挂画底部；挂好后两人检查端正，再与家人共同观看，其他人不参与大幅动作；镜头从协作中景转到家庭全景',
     '样片原型06·文化生活蒙太奇：用清晰硬切依次展示成品挂画、人物书写、茶席落座和画面笔触，每段都有独立动作；最后在人物完成落座、镜头仍沿茶席轻微横移时自然带到完整挂画，不追加静态定妆镜头，不得用慢放或重复镜头凑时长',
-    '样片原型07·轻奢讲解展示：现代轻奢空间中，人物面向镜头完整展示挂画，依次指明画面、材质和木条细节，随后侧身让出产品；全景交代空间、近景讲解，结尾保持人物侧身动作与镜头轻微拉远，不切静态产品定妆',
+    '样片原型07·成品墙面对镜头讲解：挂画从第0秒起已经完整稳固地挂在墙面固定位置；每轮根据整体风格和近期历史，在客厅、书房、茶室、玄关、餐厅、办公室会客区或其他适合挂画的真实场景中选择不同墙面。人物站在挂画前方略偏一侧，确保身体不遮挡挂画主体，面对镜头持续自然讲解5-6秒，口型连续、语速正常，并配合克制的手势偶尔指向画面、材质或上下木条；是否生成可听语音完全服从当前声音开关，本方向不得强制开启声音。采用一个连续的空间中远景到人物中景，开场先交代人物、完整挂画和场景比例，随后只做轻微横移或极小幅推近，在人物仍在讲解和做自然手势时结束，不切静态产品定妆镜头',
     '合理衍生01·侧面结构展开：侧面近景拍双手分别控制上木条与下压杆，真实滚动释放画布；转为正面全景确认完整外观，再切到墙边完成悬挂，重点展示结构而不是重复正面摆拍',
     '合理衍生02·墙前比高定位：人物先在墙前举起挂画比较高度，放低后调整站位与挂绳，再次抬起对准挂点、悬挂、扶正、后退检查；镜头以空间全景开场并跟随动作推进',
     '合理衍生03·成品墙生活阅读：挂画全程固定上墙，人物从前景经过并在沙发或桌边坐下阅读，翻页、放杯、自然抬头看画；镜头从生活全景转向挂画并在持续轻微推近中结束，不定格、不追加静态尾镜头',
@@ -13926,7 +13927,7 @@ const PAINTING_FRAMEWORKS = [
 ];
 
 // 内容阶段数不等于切镜数。按 40 个方向预先分配镜头结构，避免模型为了“丰富”而机械频繁切镜。
-const PAINTING_SINGLE_TAKE_DIRECTIONS = new Set([2, 3, 4, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 22, 26, 27, PAINTING_CONTENT_DETAIL_DIRECTION]);
+const PAINTING_SINGLE_TAKE_DIRECTIONS = new Set([2, 3, 4, PAINTING_CAMERA_EXPLANATION_DIRECTION, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 22, 26, 27, PAINTING_CONTENT_DETAIL_DIRECTION]);
 const PAINTING_HYBRID_DIRECTIONS = new Set([1, 5, 8, 16, 21, 23, 24, 25, 30, 31]);
 
 function getPaintingShotStructure(directionNumber) {
@@ -13943,6 +13944,16 @@ function getPaintingShotStructureLabel(directionNumber) {
   if (PAINTING_SINGLE_TAKE_DIRECTIONS.has(directionNumber)) return '一镜到底';
   if (PAINTING_HYBRID_DIRECTIONS.has(directionNumber)) return '主镜头＋动态收束';
   return '克制多镜头';
+}
+
+function getPaintingDirectionDuration(directionNumber, fallbackMin, fallbackMax) {
+  if (directionNumber === PAINTING_CONTENT_DETAIL_DIRECTION) {
+    return { durationMin: 4, durationMax: 6 };
+  }
+  if (directionNumber === PAINTING_CAMERA_EXPLANATION_DIRECTION) {
+    return { durationMin: 5, durationMax: 6 };
+  }
+  return { durationMin: fallbackMin, durationMax: fallbackMax };
 }
 
 function normalizePaintingIdeas(parsed) {
@@ -14216,11 +14227,12 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
     ideas = ideas.map((item, index) => {
       const directionNumber = globalOffset + index + 1;
       const shotLabel = getPaintingShotStructureLabel(directionNumber);
+      const directionDuration = getPaintingDirectionDuration(directionNumber, durationMin, durationMax);
       return {
         ...item,
         directionNumber,
-        durationMin: directionNumber === PAINTING_CONTENT_DETAIL_DIRECTION ? 4 : durationMin,
-        durationMax: directionNumber === PAINTING_CONTENT_DETAIL_DIRECTION ? 6 : durationMax,
+        durationMin: directionDuration.durationMin,
+        durationMax: directionDuration.durationMax,
         summary: item.summary.includes(shotLabel) ? item.summary : `【${shotLabel}】${item.summary}`,
       };
     });
@@ -18791,6 +18803,9 @@ export {
   PAINTING_WALL_WHITESPACE_RULE,
   PAINTING_SCALE_ESTABLISHING_RULE,
   PAINTING_INSTALLATION_SCALE_RULE,
+  PAINTING_FRAMEWORKS,
+  PAINTING_CAMERA_EXPLANATION_DIRECTION,
+  getPaintingDirectionDuration,
   isPaintingInstallationSequence,
   getPaintingContentDetailVariant,
   ensurePaintingContentDetailVariant,
