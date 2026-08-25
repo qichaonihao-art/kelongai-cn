@@ -11,6 +11,7 @@ import {
   paintingRetryBackoffMs,
   describePaintingNetworkError,
   generatePaintingRequestId,
+  getSeedanceRatePerSecond,
   waitForPaintingTask,
 } from './src/lib/creative';
 
@@ -232,6 +233,14 @@ async function main() {
     } finally {
       globalThis.fetch = origFetch;
     }
+  }
+
+  // ===== 8. H3试验模型价格只接受768P =====
+  console.log('\n[8] MiniMax H3 试验价格口径');
+  {
+    assert(getSeedanceRatePerSecond('MiniMax-H3', '768p') === 0.5, 'H3 768P = 0.50元/秒');
+    assert(getSeedanceRatePerSecond('MiniMax-H3', '720p') === null, 'H3不误用Seedance 720P价格');
+    assert(getSeedanceRatePerSecond('MiniMax-H3', '2K') === null, 'H3试验版尚未开放2K价格入口');
   }
 
   console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);

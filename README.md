@@ -120,6 +120,8 @@ cp legacy-project/.env.example legacy-project/.env
 
 - `ARK_API_KEY`
   - 豆包多模态真实调用必填
+- `MINIMAX_API_KEY`
+  - MiniMax H3 768P 手动单条视频试验必填；未配置时只禁用H3，不影响Seedance及全自动40条
 - `PUBLIC_BASE_URL`
   - 大视频分析推荐必填
   - 需要填你的公网可访问后端地址，例如 `https://your-domain.com`

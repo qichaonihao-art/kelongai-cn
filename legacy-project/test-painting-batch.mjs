@@ -9,6 +9,7 @@ import { Readable } from 'node:stream';
 const stateDir = mkdtempSync(join(tmpdir(), 'kelong-painting-test-'));
 process.env.RUNTIME_STATE_DIR = stateDir;
 process.env.KELONG_SKIP_LISTEN = '1';
+process.env.MINIMAX_API_KEY = 'test-minimax-key';
 
 // 拦截所有出站 fetch，杜绝任何真实付费/网络调用，并记录调用以便断言“未触发创建”。
 const fetchCalls = [];
@@ -43,6 +44,11 @@ const {
   handleGetPaintingBatchRun,
   handleGetPaintingBatchRunByRequest,
   handleGetPaintingBatchRunEstimate,
+  handleSeedanceCreateTask,
+  handleSeedanceGetTask,
+  encodeMiniMaxH3TaskId,
+  decodeMiniMaxH3TaskId,
+  MINIMAX_H3_MODEL,
   readMultipartFormBody,
   isValidPaintingClientRequestId,
   parsePaintingIdeasWithJsonRetry,
@@ -879,6 +885,77 @@ console.log('\n[31] 静态上墙尺寸补偿分流');
 
   const installationStillReal = ensurePaintingSizeLock('人物手持安装', { installationSequence: true });
   assert(installationStillReal.includes('40×80厘米') && !installationStillReal.includes('15×30厘米'), '现场安装方向仍保持真实40×80尺寸');
+}
+
+// ===== T32 MiniMax H3 手动单条试验适配（全程 stub，不产生费用） =====
+console.log('\n[32] MiniMax H3 手动单条试验适配');
+{
+  assert(encodeMiniMaxH3TaskId('424010985738629') === 'minimax-h3_424010985738629', 'H3任务编号带供应商前缀，刷新后仍可正确查询');
+  assert(decodeMiniMaxH3TaskId('minimax-h3_424010985738629') === '424010985738629', '查询上游前可还原H3原始任务编号');
+
+  const previousFetch = globalThis.fetch;
+  let submittedUrl = '';
+  let submittedPayload = null;
+  try {
+    globalThis.fetch = async (url, init = {}) => {
+      submittedUrl = String(url);
+      submittedPayload = init.body ? JSON.parse(String(init.body)) : null;
+      return new Response(JSON.stringify({ task_id: '424010985738629' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const createRes = mockRes();
+    await handleSeedanceCreateTask(mockReq('/api/seedance/tasks', {
+      model: MINIMAX_H3_MODEL,
+      prompt: '保持参考图中曾国藩家训文字、排版和笔画不变，镜头缓慢横移。',
+      taskMode: 'generate',
+      resolution: '768p',
+      ratio: '9:16',
+      duration: 8,
+      generateAudio: false,
+      watermark: false,
+    }), createRes);
+    const createBody = jsonBody(createRes);
+    assert(createRes._code === 200 && createBody.taskId === 'minimax-h3_424010985738629', 'H3创建成功后返回可持久化的带前缀任务编号', JSON.stringify(createBody));
+    assert(submittedUrl === 'https://api.minimaxi.com/v2/video_generation', 'H3提交到V2视频生成端点', submittedUrl);
+    assert(submittedPayload?.model === MINIMAX_H3_MODEL && submittedPayload?.resolution === '768P' && submittedPayload?.duration === 8 && submittedPayload?.ratio === '9:16', 'H3请求固定768P并保留时长与画幅', JSON.stringify(submittedPayload));
+    assert(!Object.hasOwn(submittedPayload || {}, 'generate_audio'), 'H3请求不误传Seedance专用声音参数');
+
+    globalThis.fetch = async (url) => {
+      submittedUrl = String(url);
+      return new Response(JSON.stringify({
+        task: {
+          id: '424010985738629',
+          model: MINIMAX_H3_MODEL,
+          status: 'succeeded',
+          created_at: 1785125529,
+          updated_at: 1785125946,
+          content: { url: 'https://example.com/h3-output.mp4' },
+          resolution: '768P',
+          duration: 8,
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    const queryRes = mockRes();
+    await handleSeedanceGetTask({}, queryRes, 'minimax-h3_424010985738629');
+    const queryBody = jsonBody(queryRes);
+    assert(submittedUrl.endsWith('/v2/query/video_generation/424010985738629'), 'H3查询使用原始上游任务编号', submittedUrl);
+    assert(queryRes._code === 200 && queryBody.status === 'succeeded' && queryBody.videoUrl === 'https://example.com/h3-output.mp4', 'H3查询状态和视频地址映射到现有前端结构', JSON.stringify(queryBody));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+
+  const badResolutionRes = mockRes();
+  await handleSeedanceCreateTask(mockReq('/api/seedance/tasks', {
+    model: MINIMAX_H3_MODEL,
+    prompt: '测试',
+    taskMode: 'generate',
+    resolution: '720p',
+    ratio: '9:16',
+    duration: 8,
+  }), badResolutionRes);
+  assert(badResolutionRes._code === 400 && jsonBody(badResolutionRes).error.includes('768p'), 'H3试验版拒绝非768P请求');
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);

@@ -498,8 +498,7 @@ function roundCost(value: number) {
 }
 
 function recordSeedanceCost(durationSeconds: number, model: SeedanceModelId, resolution = '720p') {
-  // 单价按 720P 档位估算（元/秒），复用统一的按秒价格来源，仅用于右上角本地消耗统计。
-  // 非 720P 分辨率价格尚未确认，getSeedanceRatePerSecond 返回 null 时跳过记录。
+  // 复用统一的按秒价格来源，仅用于右上角本地消耗统计；未确认价格的组合直接跳过。
   const ratePerSecond = getSeedanceRatePerSecond(model, resolution);
   if (ratePerSecond == null) return;
   const cost = roundCost(Math.max(0, durationSeconds) * ratePerSecond);
@@ -638,11 +637,12 @@ const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'
 const SEEDANCE_RESOLUTIONS_2_0 = ['480p', '720p', '1080p', '4k'] as const;
 const SEEDANCE_RESOLUTIONS_2_0_MINI = ['480p', '720p'] as const;
 const SEEDANCE_RESOLUTIONS_2_5 = ['480p', '720p'] as const;
+const MINIMAX_H3_RESOLUTIONS = ['768p'] as const;
 const SEEDANCE_DURATIONS = Array.from({ length: 12 }, (_, index) => index + 4);
 const SEEDANCE_DURATIONS_2_5 = Array.from({ length: 27 }, (_, index) => index + 4);
-type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628';
+type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628' | 'MiniMax-H3';
 type SeedanceTaskMode = 'generate' | 'video-edit-painting';
-type SeedanceResolution = '480p' | '720p' | '1080p' | '4k';
+type SeedanceResolution = '480p' | '720p' | '768p' | '1080p' | '4k';
 type ReverseMode = 'direct' | 'replace' | 'image' | 'painting';
 
 interface ReverseSeedanceSyncSnapshot {
@@ -654,12 +654,14 @@ interface ReverseSeedanceSyncSnapshot {
 }
 
 function getSeedanceModelLabel(model: SeedanceModelId) {
+  if (model === 'MiniMax-H3') return 'MiniMax H3 试验版';
   if (model === 'doubao-seedance-2-5-260628') return 'Seedance 2.5 测试版';
   if (model === 'doubao-seedance-2-0-mini-260615') return 'Seedance 2.0 mini';
   return 'Seedance 2.0 稳定版';
 }
 
 function getSeedanceResolutions(model: SeedanceModelId) {
+  if (model === 'MiniMax-H3') return MINIMAX_H3_RESOLUTIONS;
   if (model === 'doubao-seedance-2-5-260628') return SEEDANCE_RESOLUTIONS_2_5;
   if (model === 'doubao-seedance-2-0-mini-260615') return SEEDANCE_RESOLUTIONS_2_0_MINI;
   return SEEDANCE_RESOLUTIONS_2_0;
@@ -1112,7 +1114,7 @@ function loadSeedanceHistory() {
       .map((item) => ({
         ...item,
         // Records created before model switching were all Seedance 2.0.
-        model: item.model === 'doubao-seedance-2-5-260628' || item.model === 'doubao-seedance-2-0-mini-260615'
+        model: item.model === 'doubao-seedance-2-5-260628' || item.model === 'doubao-seedance-2-0-mini-260615' || item.model === 'MiniMax-H3'
           ? item.model as SeedanceModelId
           : 'doubao-seedance-2-0-260128' as SeedanceModelId,
         taskMode: item.taskMode === 'video-edit-painting'
@@ -1520,6 +1522,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [arkApiConfigured, setArkApiConfigured] = useState(true);
   const [dashscopeApiConfigured, setDashscopeApiConfigured] = useState(true);
   const [seedanceApiConfigured, setSeedanceApiConfigured] = useState(true);
+  const [minimaxApiConfigured, setMinimaxApiConfigured] = useState(true);
   const [publicBaseUrlConfigured, setPublicBaseUrlConfigured] = useState(false);
   const [doubaoMultimodalModel, setDoubaoMultimodalModel] = useState('doubao-seed-2-1-pro-260628');
   const [qwenMultimodalModel, setQwenMultimodalModel] = useState('qwen3.8-max');
@@ -1988,6 +1991,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setArkApiConfigured(status.arkApiKey);
       setDashscopeApiConfigured(status.dashscopeApiKey);
       setSeedanceApiConfigured(status.seedanceApiKey);
+      setMinimaxApiConfigured(status.minimaxApiKey);
       setPublicBaseUrlConfigured(status.publicBaseUrl);
       setDoubaoMultimodalModel(status.doubaoMultimodalModel || '');
       setQwenMultimodalModel(status.qwenMultimodalModel || 'qwen3.8-max');
@@ -2772,6 +2776,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     variationRound?: number;
   }) {
     const isVideoEdit = seedanceTaskMode === 'video-edit-painting';
+    const isMiniMaxH3 = !isVideoEdit && seedanceModel === 'MiniMax-H3';
     const prompt = isVideoEdit
       ? buildVideoEditPaintingPrompt(videoEditTarget, videoEditAdjustments)
       : (overrides?.prompt ?? seedancePrompt.trim());
@@ -2786,6 +2791,19 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
     const references = overrides?.references ?? seedanceReferences;
     const duration = overrides?.duration ?? seedanceDuration;
+
+    if (isMiniMaxH3 && !minimaxApiConfigured) {
+      setSeedanceError('服务端尚未配置 MINIMAX_API_KEY，暂时不能测试 MiniMax H3。');
+      return;
+    }
+    if (isMiniMaxH3 && references.some((item) => item.kind !== 'image')) {
+      setSeedanceError('H3试验版当前只接入参考图片，请先移除视频或音频素材。');
+      return;
+    }
+    if (isMiniMaxH3 && references.length > 5) {
+      setSeedanceError('H3试验版最多使用5张免费参考图片，请减少图片数量后重试。');
+      return;
+    }
 
     if (isVideoEdit) {
       const videoReferences = references.filter((item) => item.kind === 'video');
@@ -6172,7 +6190,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     <Sparkles className="size-3.5" />
                     模块二
                   </div>
-                  <h2 className="text-base font-black text-slate-900">Seedance 生成视频</h2>
+                  <h2 className="text-base font-black text-slate-900">AI 生成视频</h2>
                 </div>
                 <div className="flex flex-col items-end gap-1.5">
                   <select
@@ -6183,7 +6201,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       // Each model starts from a predictable profile so switching
                       // models cannot carry incompatible settings across.
                       setSeedanceRatio('9:16');
-                      setSeedanceResolution('720p');
+                      setSeedanceResolution(nextModel === 'MiniMax-H3' ? '768p' : '720p');
                       setSeedanceDuration(5);
                       setSeedanceGenerateAudio(nextModel === 'doubao-seedance-2-5-260628');
                       setSeedanceWatermark(false);
@@ -6191,17 +6209,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     disabled={isSeedanceLoading || seedanceTaskMode === 'video-edit-painting'}
                     className={cn(
                       "rounded-full border px-3 py-1 text-[10px] font-black outline-none transition-colors disabled:opacity-60",
-                      seedanceModel === 'doubao-seedance-2-5-260628'
+                      seedanceModel === 'MiniMax-H3'
+                        ? "border-sky-600 bg-sky-600 text-white shadow-[0_5px_14px_rgba(2,132,199,0.28)]"
+                        : seedanceModel === 'doubao-seedance-2-5-260628'
                         ? "border-violet-600 bg-violet-600 text-white shadow-[0_5px_14px_rgba(124,58,237,0.28)]"
                         : seedanceModel === 'doubao-seedance-2-0-mini-260615'
                           ? "border-amber-600 bg-amber-600 text-white shadow-[0_5px_14px_rgba(217,119,6,0.28)]"
                           : "border-emerald-600 bg-emerald-600 text-white shadow-[0_5px_14px_rgba(5,150,105,0.28)]"
                     )}
-                    aria-label="选择 Seedance 模型"
+                    aria-label="选择视频生成模型"
                   >
                     <option className="bg-white text-slate-800" value="doubao-seedance-2-0-260128">Seedance 2.0 稳定版</option>
                     <option className="bg-white text-slate-800" value="doubao-seedance-2-0-mini-260615">Seedance 2.0 mini</option>
                     <option className="bg-white text-slate-800" value="doubao-seedance-2-5-260628">Seedance 2.5 测试版</option>
+                    <option className="bg-white text-slate-800" value="MiniMax-H3">MiniMax H3 768P（试验）</option>
                   </select>
                   <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[10px] font-semibold text-slate-500">
                     今日 ¥{seedanceCostStats.daily} / 本月 ¥{seedanceCostStats.monthly} / 本年 ¥{seedanceCostStats.yearly}
@@ -6231,6 +6252,19 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   视频直接换画
                 </button>
               </div>
+
+              {seedanceTaskMode === 'generate' && seedanceModel === 'MiniMax-H3' && (
+                <div className={cn(
+                  "mb-4 rounded-xl border px-3 py-2 text-[11px] font-semibold leading-5",
+                  minimaxApiConfigured
+                    ? "border-sky-200 bg-sky-50 text-sky-700"
+                    : "border-amber-200 bg-amber-50 text-amber-700"
+                )}>
+                  {minimaxApiConfigured
+                    ? 'H3效果试验：固定768P，0.50元/秒；当前仅接入最多5张参考图片，不影响全自动40条的Seedance Mini设置。'
+                    : '需要先在服务端配置 MINIMAX_API_KEY，重启服务后才能提交H3测试任务。'}
+                </div>
+              )}
 
               <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3 relative">
                 {seedanceTaskMode === 'video-edit-painting' && (
@@ -6508,7 +6542,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       <span className="h-3.5 w-px bg-slate-200" />
                       <span className="inline-flex items-center gap-1">
                         <Volume2 className="size-3" />
-                        {seedanceGenerateAudio ? '声音' : '静音'}
+                        {seedanceModel === 'MiniMax-H3' ? 'H3音轨随模型' : seedanceGenerateAudio ? '声音' : '静音'}
                       </span>
                       <span className="h-3.5 w-px bg-slate-200" />
                       <span>{seedanceWatermark ? '水印' : '无水印'}</span>
@@ -6589,14 +6623,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           <button
                             type="button"
                             onClick={() => setSeedanceGenerateAudio((value) => !value)}
+                            disabled={seedanceModel === 'MiniMax-H3'}
                             className={cn(
-                              "rounded-xl border px-3 py-2 text-xs font-black transition-colors",
+                              "rounded-xl border px-3 py-2 text-xs font-black transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                               seedanceGenerateAudio
                                 ? "border-violet-300 bg-violet-50 text-violet-700"
                                 : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
                             )}
                           >
-                            {seedanceGenerateAudio ? '生成声音' : '不生成声音'}
+                            {seedanceModel === 'MiniMax-H3' ? 'H3无声音开关' : seedanceGenerateAudio ? '生成声音' : '不生成声音'}
                           </button>
                           <button
                             type="button"
@@ -6635,7 +6670,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   disabled={
                     !seedancePrompt.trim()
                     || isSeedanceLoading
-                    || !seedanceApiConfigured
+                    || (seedanceModel === 'MiniMax-H3' ? !minimaxApiConfigured : !seedanceApiConfigured)
                     || (seedanceTaskMode === 'video-edit-painting' && (
                       !videoEditTarget.trim()
                       || !videoEditSourceDuration

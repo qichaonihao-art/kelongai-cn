@@ -23,6 +23,7 @@ interface CreativeConfigStatus {
   arkApiKey: boolean;
   dashscopeApiKey: boolean;
   seedanceApiKey: boolean;
+  minimaxApiKey: boolean;
   publicBaseUrl: boolean;
   doubaoMultimodalModel?: string;
   qwenMultimodalModel?: string;
@@ -362,6 +363,7 @@ export async function getCreativeConfigStatus(): Promise<CreativeConfigStatus> {
       arkApiKey: !!json?.serverManaged?.arkApiKey,
       dashscopeApiKey: !!json?.serverManaged?.dashscopeApiKey,
       seedanceApiKey: !!json?.serverManaged?.seedanceApiKey,
+      minimaxApiKey: !!json?.serverManaged?.minimaxApiKey,
       publicBaseUrl: !!json?.serverManaged?.publicBaseUrl,
       doubaoMultimodalModel: json?.serverManaged?.doubaoMultimodalModel || '',
       qwenMultimodalModel: json?.serverManaged?.qwenMultimodalModel || '',
@@ -372,6 +374,7 @@ export async function getCreativeConfigStatus(): Promise<CreativeConfigStatus> {
       arkApiKey: false,
       dashscopeApiKey: false,
       seedanceApiKey: false,
+      minimaxApiKey: false,
       publicBaseUrl: false,
     };
   }
@@ -512,10 +515,10 @@ export async function sendCreativeMessage(options: {
 }
 
 export async function createSeedanceTask(options: {
-  model: 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628';
+  model: 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628' | 'MiniMax-H3';
   taskMode?: 'generate' | 'video_edit';
   prompt: string;
-  resolution: '480p' | '720p' | '1080p' | '4k';
+  resolution: '480p' | '720p' | '768p' | '1080p' | '4k';
   ratio: string;
   duration: number;
   generateAudio: boolean;
@@ -573,7 +576,7 @@ export async function createSeedanceTask(options: {
 
   const json = await response.json().catch(() => null);
   if (!response.ok) {
-    let message = `Seedance 创建任务失败（HTTP ${response.status}）`;
+    let message = `${options.model === 'MiniMax-H3' ? 'MiniMax H3' : 'Seedance'} 创建任务失败（HTTP ${response.status}）`;
     if (json?.error) {
       message = String(json.error);
     } else if (json?.upstream) {
@@ -584,7 +587,7 @@ export async function createSeedanceTask(options: {
 
   const taskId = String(json?.taskId || json?.id || '');
   if (!taskId) {
-    throw new Error('Seedance 创建任务失败：服务端未返回任务编号。');
+    throw new Error(`${options.model === 'MiniMax-H3' ? 'MiniMax H3' : 'Seedance'} 创建任务失败：服务端未返回任务编号。`);
   }
 
   return {
@@ -891,7 +894,8 @@ export async function querySeedanceTask(taskId: string): Promise<SeedanceTaskRes
 
   const json = await response.json().catch(() => null);
   if (!response.ok) {
-    let message = `Seedance 查询任务失败（HTTP ${response.status}）`;
+    const providerLabel = taskId.startsWith('minimax-h3_') ? 'MiniMax H3' : 'Seedance';
+    let message = `${providerLabel} 查询任务失败（HTTP ${response.status}）`;
     if (json?.error) {
       message = String(json.error);
     } else if (json?.upstream) {
@@ -1022,6 +1026,7 @@ export const SEEDANCE_PRICING_NOTE = '费用按提交给 Seedance 的 720P 设�
 // 当前系统只配置了 720P 档位口径；未知模型或非 720P 分辨率返回 null，调用方需显示“暂无法估算”，不得用固定单价兜底。
 export function getSeedanceRatePerSecond(model: string, resolution = '720p'): number | null {
   const res = String(resolution || '720p').toLowerCase();
+  if (model === 'MiniMax-H3') return res === '768p' ? 0.5 : null;
   if (res !== '720p') return null;
   if (model === 'doubao-seedance-2-0-mini-260615') return 0.2;
   if (model === 'doubao-seedance-2-0-260128') return 1.0;
