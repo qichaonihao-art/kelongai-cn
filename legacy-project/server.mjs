@@ -13769,6 +13769,8 @@ const PAINTING_WOOD_DETAIL_DIRECTION = 30;
 const PAINTING_CAMERA_EXPLANATION_DIRECTION = 7;
 const PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION = 26;
 const PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION = 27;
+const PAINTING_ROLLING_UNFOLD_DIRECTIONS = new Set([1, 8]);
+const PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION = '挂画在打开的时候是滚动打开的，不是滑动打开的，打开的过程中不要改变挂画下方木条的颜色和外观，也不要在木条的边缘增加新的物体。';
 const PAINTING_STATIC_WALL_COMPENSATION_DIRECTIONS = new Set([
   3, 6, PAINTING_CAMERA_EXPLANATION_DIRECTION, 10,
   ...Array.from({ length: 18 }, (_, index) => index + 11),
@@ -13784,6 +13786,13 @@ function shouldUsePaintingStaticWallSizeCompensation(idea = {}) {
   if (isPaintingInstallationSequence(text)) return false;
   if (/画面内容.{0,8}特写|实木压条.{0,8}特写|木条端部/.test(text)) return false;
   return /(?:开场|第0秒|全程|已经|完成|稳固|固定).{0,16}(?:上墙|挂在.{0,8}墙|位于.{0,8}墙|墙面)|(?:沙发|电视|玄关|书房|茶室|卧室|餐厅|走廊|会客区|展陈).{0,12}(?:背景墙|主墙|侧墙|墙面挂画)/.test(text);
+}
+
+function ensurePaintingRollingUnfoldInstruction(promptText, directionNumber) {
+  const normalized = String(promptText || '').trim();
+  if (!PAINTING_ROLLING_UNFOLD_DIRECTIONS.has(Number(directionNumber))) return normalized;
+  if (normalized.includes(PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION)) return normalized;
+  return `【卷轴打开方式固定要求】\n${PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION}\n\n${normalized}`;
 }
 const PAINTING_CONTENT_DETAIL_VARIANTS = [
   '茶几平放·正上方左到右：挂画完整平坦放在尺寸足够的茶几表面，上下木条与画布保持原样；摄影机接近垂直俯拍，从画面左侧向右侧连续扫过，禁止默认从右侧斜拍',
@@ -14472,6 +14481,8 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
     installationSequence: isInstallationSequence,
     staticWallSizeCompensation: useStaticWallSizeCompensation,
   });
+  // 第一组第1、8个卷起展开方向固定补入用户指定原句，确保最终交给视频模型时一定存在。
+  promptText = ensurePaintingRollingUnfoldInstruction(promptText, idea?.directionNumber);
   // 特写方向的摆放场景、机位和移动路径也由服务端确定性锁定，避免模型反复默认右侧斜拍。
   if (isContentDetailScan) {
     promptText = ensurePaintingContentDetailVariant(promptText, elementVariationIndex);
@@ -14636,7 +14647,8 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   const referenceGuide = isWoodDetailDirection
     ? `【参考图职责强制区分】\n${referenceSpecs.map((item) => item.label).join('\n')}。木条特写图中的桌面、墙面、手、尺子、包装物或其他背景都不属于产品，严禁复制到生成视频。如细节图与正面主图的作用冲突，整体画面以主图为准，对应木条局部结构以高清细节图为准。\n\n`
     : '';
-  const content = [{ type: 'text', text: `${referenceGuide}${task.prompt}` }];
+  const promptForSubmission = ensurePaintingRollingUnfoldInstruction(task.prompt, task.directionNumber);
+  const content = [{ type: 'text', text: `${referenceGuide}${promptForSubmission}` }];
   for (const spec of referenceSpecs) {
     const imageFile = await buildPaintingImageFileForSeedance(spec.imagePath, spec.baseName);
     const compressedFile = await compressMediaForArk(imageFile, 'image');
@@ -16507,7 +16519,8 @@ async function handleSeedanceCreateTask(req, res) {
     const body = isMultipartFormRequest(req)
       ? await readSeedanceTaskFormBody(req)
       : await readRequestBody(req);
-    const prompt = readValue(body?.prompt);
+    const manualDirection = Number(body?.directionNumber) || 0;
+    const prompt = ensurePaintingRollingUnfoldInstruction(readValue(body?.prompt), manualDirection);
     const model = readValue(body?.model) || 'doubao-seedance-2-0-260128';
     const taskMode = readValue(body?.taskMode) || 'generate';
     const resolution = readValue(body?.resolution) || '720p';
@@ -16818,7 +16831,6 @@ async function handleSeedanceCreateTask(req, res) {
 
     // 手动 / 换一轮（remix）提交成功后，标记该方向已被使用（“仅生成未使用方向”的服务端持久化依据）。
     const manualImageHash = String(body?.imageHash || '');
-    const manualDirection = Number(body?.directionNumber) || 0;
     const manualVariationRound = Number(body?.variationRound) || 0;
     if (manualImageHash && manualDirection && taskId) {
       dbMarkPaintingDirectionUsed(manualImageHash, manualVariationRound, manualDirection);
@@ -18812,6 +18824,8 @@ export {
   PAINTING_CAMERA_EXPLANATION_DIRECTION,
   PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION,
   PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION,
+  PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION,
+  ensurePaintingRollingUnfoldInstruction,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
   getPaintingContentDetailVariant,

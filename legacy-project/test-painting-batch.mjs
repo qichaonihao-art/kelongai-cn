@@ -10,6 +10,7 @@ const stateDir = mkdtempSync(join(tmpdir(), 'kelong-painting-test-'));
 process.env.RUNTIME_STATE_DIR = stateDir;
 process.env.KELONG_SKIP_LISTEN = '1';
 process.env.MINIMAX_API_KEY = 'test-minimax-key';
+process.env.SEEDANCE_API_KEY = 'test-seedance-key';
 
 // 拦截所有出站 fetch，杜绝任何真实付费/网络调用，并记录调用以便断言“未触发创建”。
 const fetchCalls = [];
@@ -76,6 +77,8 @@ const {
   PAINTING_CAMERA_EXPLANATION_DIRECTION,
   PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION,
   PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION,
+  PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION,
+  ensurePaintingRollingUnfoldInstruction,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
   getPaintingContentDetailVariant,
@@ -929,6 +932,49 @@ console.log('\n[34] 左右横扫快速揭示');
   const rightDuration = getPaintingDirectionDuration(PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION, 8, 9);
   assert(leftDuration.durationMin === 5 && leftDuration.durationMax === 6, '从左到右固定5-6秒');
   assert(rightDuration.durationMin === 5 && rightDuration.durationMax === 6, '从右到左固定5-6秒');
+}
+
+// ===== T35 两个卷起展开方向固定注入滚动原句 =====
+console.log('\n[35] 卷轴滚动打开固定原句');
+{
+  const direction1 = ensurePaintingRollingUnfoldInstruction('原始提示词', 1);
+  const direction8 = ensurePaintingRollingUnfoldInstruction('原始提示词', 8);
+  const direction2 = ensurePaintingRollingUnfoldInstruction('原始提示词', 2);
+  assert(direction1.includes(PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION), '第一组第1个固定加入滚动打开原句');
+  assert(direction8.includes(PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION), '第一组第8个固定加入滚动打开原句');
+  assert(direction2 === '原始提示词', '其他方向不额外加入该原句');
+  const idempotent = ensurePaintingRollingUnfoldInstruction(direction1, 1);
+  assert(idempotent.split(PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION).length - 1 === 1, '重复处理不会重复追加原句');
+
+  const previousFetch = globalThis.fetch;
+  let submittedPayload = null;
+  try {
+    globalThis.fetch = async (_url, init = {}) => {
+      submittedPayload = init.body ? JSON.parse(String(init.body)) : null;
+      return new Response(JSON.stringify({ id: 'seedance-test-rolling-1' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const createRes = mockRes();
+    await handleSeedanceCreateTask(mockReq('/api/seedance/tasks', {
+      model: 'doubao-seedance-2-0-260128',
+      prompt: '人物拿起卷起挂画并打开。',
+      directionNumber: 1,
+      taskMode: 'generate',
+      resolution: '720p',
+      ratio: '9:16',
+      duration: 6,
+      generateAudio: false,
+      watermark: false,
+    }), createRes);
+    const submittedText = submittedPayload?.content?.[0]?.text || '';
+    assert(createRes._code === 200, '卷起方向手动提交成功进入无费stub');
+    assert(submittedText.includes(PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION), '最终Seedance请求正文包含固定原句');
+    assert(submittedText.split(PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION).length - 1 === 1, '最终Seedance请求只包含一次固定原句');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 }
 
 // ===== T32 MiniMax H3 手动单条试验适配（全程 stub，不产生费用） =====
