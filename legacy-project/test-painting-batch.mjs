@@ -37,6 +37,7 @@ const {
   dbUpdatePaintingBatchRun,
   dbGetActivePaintingBatchRuns,
   dbGetPaintingBatchRunByCreationRequestId,
+  dbDeletePaintingBatchRun,
   dbGetPaintingBatchTasks,
   dbMarkPaintingDirectionUsed,
   dbGetPaintingUsedDirections,
@@ -49,6 +50,7 @@ const {
   handleGetPaintingBatchRun,
   handleGetPaintingBatchRunByRequest,
   handleGetPaintingBatchRunEstimate,
+  handleDeletePaintingBatchRun,
   handleSeedanceCreateTask,
   handleSeedanceGetTask,
   submitSeedanceTaskForBatchTask,
@@ -1298,7 +1300,34 @@ console.log('\n[40] 批量起始组、随机顺序与自定义数量');
   const randomBody = jsonBody(randomRes);
   const randomInserted = getCollectionDb().prepare('SELECT direction_number FROM painting_batch_tasks WHERE batch_run_id = ? ORDER BY id ASC').all(randomBody.batchRunId).map((row) => Number(row.direction_number));
   assert(randomRes._code === 202 && randomInserted.join(',') === '9,1,40,22,3', '随机顺序按传入乱序取前5条', randomInserted.join(','));
-  dbUpdatePaintingBatchRun(randomBody.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+dbUpdatePaintingBatchRun(randomBody.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+}
+
+// ===== T41 删除批量生成历史：仅允许终态，并级联删除任务明细 =====
+console.log('\n[41] 删除批量生成历史');
+{
+  dbInsertPaintingBatchRun({ batchRunId: 'run-delete-active', paintingName: '运行中的记录', status: 'running', controlStatus: 'running' });
+  dbInsertPaintingBatchTask({ batchRunId: 'run-delete-active', directionNumber: 1, batchIndex: 0, status: 'queued' });
+  const activeRes = mockRes();
+  await handleDeletePaintingBatchRun(mockReq('/api/painting/batch-runs/run-delete-active'), activeRes);
+  assert(activeRes._code === 409, '运行中批次拒绝删除', JSON.stringify(jsonBody(activeRes)));
+  assert(Boolean(dbGetPaintingBatchRun('run-delete-active')), '拒绝删除后批次记录仍保留');
+  assert(dbGetPaintingBatchTasks('run-delete-active').length === 1, '拒绝删除后任务明细仍保留');
+
+  dbInsertPaintingBatchRun({ batchRunId: 'run-delete-done', paintingName: '已完成记录', status: 'completed', controlStatus: 'completed' });
+  dbInsertPaintingBatchTask({ batchRunId: 'run-delete-done', directionNumber: 2, batchIndex: 0, status: 'completed', libraryItemId: 7788 });
+  const doneRes = mockRes();
+  await handleDeletePaintingBatchRun(mockReq('/api/painting/batch-runs/run-delete-done'), doneRes);
+  assert(doneRes._code === 200 && jsonBody(doneRes).ok === true, '已结束批次可以删除', JSON.stringify(jsonBody(doneRes)));
+  assert(!dbGetPaintingBatchRun('run-delete-done'), '批次历史已删除');
+  assert(dbGetPaintingBatchTasks('run-delete-done').length === 0, '批次任务明细同步删除');
+
+  const missingRes = mockRes();
+  await handleDeletePaintingBatchRun(mockReq('/api/painting/batch-runs/run-delete-done'), missingRes);
+  assert(missingRes._code === 404, '重复删除返回记录不存在');
+
+  dbUpdatePaintingBatchRun('run-delete-active', { status: 'stopped', controlStatus: 'stopped' });
+  assert(dbDeletePaintingBatchRun('run-delete-active') === true, '数据库删除原语返回成功');
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);

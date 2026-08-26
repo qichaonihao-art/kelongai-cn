@@ -1923,6 +1923,22 @@ function dbGetRecentPaintingBatchRuns(limit = 20) {
   return rows.map(normalizeBatchRun).filter(Boolean);
 }
 
+function dbDeletePaintingBatchRun(batchRunId) {
+  const db = getCollectionDb();
+  const id = String(batchRunId || '');
+  if (!id) return false;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare('DELETE FROM painting_batch_tasks WHERE batch_run_id = ?').run(id);
+    const result = db.prepare('DELETE FROM painting_batch_runs WHERE batch_run_id = ?').run(id);
+    db.exec('COMMIT');
+    return Number(result.changes || 0) > 0;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 function dbInsertPaintingBatchTask(data) {
   const db = getCollectionDb();
   const result = db.prepare(`
@@ -13382,6 +13398,26 @@ async function handleListPaintingBatchRuns(req, res) {
   }
 }
 
+async function handleDeletePaintingBatchRun(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const batchRunId = decodeURIComponent(url.pathname.replace(/^\/api\/painting\/batch-runs\//, ''));
+    const run = dbGetPaintingBatchRun(batchRunId);
+    if (!run) {
+      sendJson(res, 404, { error: '批量任务不存在或已被删除' });
+      return;
+    }
+    if (!['completed', 'failed', 'stopped', 'needs_review'].includes(run.status)) {
+      sendJson(res, 409, { error: '正在运行、暂停或停止收尾中的批次不能删除，请先终止并等待任务结束' });
+      return;
+    }
+    dbDeletePaintingBatchRun(batchRunId);
+    sendJson(res, 200, { ok: true, batchRunId });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '删除批量生成历史失败' });
+  }
+}
+
 async function handlePausePaintingBatchRun(req, res) {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
@@ -18519,6 +18555,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/painting/batch-runs/')) {
+    await handleDeletePaintingBatchRun(req, res);
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname.startsWith('/api/painting/batch-runs/by-request/')) {
     await handleGetPaintingBatchRunByRequest(req, res);
     return;
@@ -18899,6 +18940,7 @@ export {
   dbUpdatePaintingBatchRun,
   dbGetActivePaintingBatchRuns,
   dbGetPaintingBatchRunByCreationRequestId,
+  dbDeletePaintingBatchRun,
   dbGetPaintingBatchTasks,
   dbMarkPaintingDirectionUsed,
   dbGetPaintingUsedDirections,
@@ -18911,6 +18953,7 @@ export {
   handleGetPaintingBatchRun,
   handleGetPaintingBatchRunByRequest,
   handleGetPaintingBatchRunEstimate,
+  handleDeletePaintingBatchRun,
   handleSeedanceCreateTask,
   handleSeedanceGetTask,
   submitSeedanceTaskForBatchTask,

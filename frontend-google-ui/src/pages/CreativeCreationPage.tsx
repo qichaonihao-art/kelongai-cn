@@ -47,6 +47,7 @@ import {
   getPaintingBatchRun,
   getPaintingBatchRunByRequest,
   listPaintingBatchRuns,
+  deletePaintingBatchRun,
   pausePaintingBatchRun,
   resumePaintingBatchRun,
   stopPaintingBatchRun,
@@ -1649,6 +1650,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchDetail, setPaintingBatchDetail] = useState<PaintingBatchRunDetail | null>(null);
   const [paintingBatchRuns, setPaintingBatchRuns] = useState<PaintingBatchRun[]>([]);
   const [paintingBatchListError, setPaintingBatchListError] = useState('');
+  const [paintingBatchDeletingRunId, setPaintingBatchDeletingRunId] = useState<string | null>(null);
   const [paintingBatchActionLoading, setPaintingBatchActionLoading] = useState<'pause' | 'resume' | 'stop' | null>(null);
   const [paintingBatchCreating, setPaintingBatchCreating] = useState(false);
   const paintingBatchPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3761,6 +3763,32 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
+  async function handleDeletePaintingBatchRun(run: PaintingBatchRun) {
+    if (!PAINTING_BATCH_TERMINAL_STATUSES.includes(run.status)) {
+      setPaintingBatchListError('正在运行、暂停或停止收尾中的批次不能删除，请先终止并等待任务结束。');
+      return;
+    }
+    const confirmed = window.confirm(
+      `确定删除“${run.paintingName || '未命名挂画'}”的这条批量生成历史吗？\n\n只删除批次历史和任务明细，已经存入素材库的视频不会被删除。`
+    );
+    if (!confirmed) return;
+    setPaintingBatchDeletingRunId(run.batchRunId);
+    setPaintingBatchListError('');
+    try {
+      await deletePaintingBatchRun(run.batchRunId);
+      setPaintingBatchRuns((previous) => previous.filter((item) => item.batchRunId !== run.batchRunId));
+      if (paintingBatchActiveRunId === run.batchRunId) {
+        clearPaintingBatchPoll();
+        setPaintingBatchActiveRunId(null);
+        setPaintingBatchDetail(null);
+      }
+    } catch (error) {
+      setPaintingBatchListError(error instanceof Error ? error.message : '删除批量生成历史失败');
+    } finally {
+      setPaintingBatchDeletingRunId(null);
+    }
+  }
+
   async function handlePaintingOpenBatchConfirm() {
     if (!paintingProfile) {
       setPaintingError('请先完成产品分析。');
@@ -5324,7 +5352,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     </div>
                   )}
 
-                  {paintingBatchListError && !paintingBatchDetail && (
+                  {paintingBatchListError && (
                     <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-medium leading-5 text-red-500">{paintingBatchListError}</div>
                   )}
 
@@ -5485,29 +5513,45 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       <div className="space-y-1.5">
                         {paintingBatchRuns.map((run) => {
                           const isActive = run.batchRunId === paintingBatchActiveRunId;
+                          const canDelete = PAINTING_BATCH_TERMINAL_STATUSES.includes(run.status);
+                          const isDeleting = paintingBatchDeletingRunId === run.batchRunId;
                           return (
-                            <button
+                            <div
                               key={run.batchRunId}
-                              type="button"
-                              onClick={() => {
-                                setPaintingBatchActiveRunId(run.batchRunId);
-                                void pollPaintingBatch(run.batchRunId);
-                              }}
                               className={cn(
                                 'flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-colors',
                                 isActive ? 'border-rose-200 bg-white ring-1 ring-rose-100' : 'border-slate-200 bg-white hover:border-rose-200'
                               )}
                             >
-                              <div className="min-w-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPaintingBatchActiveRunId(run.batchRunId);
+                                  void pollPaintingBatch(run.batchRunId);
+                                }}
+                                className="min-w-0 flex-1 text-left"
+                              >
                                 <div className="truncate text-xs font-bold text-slate-700">{run.paintingName}</div>
                                 <div className="truncate text-[10px] text-slate-400">
                                   {formatHistoryTime(run.createdAt * 1000)} · {run.totalDirections} 条 · {run.targetFolderName || '通用素材'}
                                 </div>
+                              </button>
+                              <div className="flex shrink-0 items-center gap-1.5">
+                                <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', getPaintingBatchStatusTone(run.status))}>
+                                  {getPaintingBatchStatusLabel(run.status)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeletePaintingBatchRun(run)}
+                                  disabled={!canDelete || paintingBatchDeletingRunId !== null}
+                                  className="flex size-7 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-300"
+                                  aria-label={`删除${run.paintingName || '这条'}批量生成历史`}
+                                  title={canDelete ? '删除历史记录' : '任务结束后才能删除'}
+                                >
+                                  {isDeleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                                </button>
                               </div>
-                              <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold', getPaintingBatchStatusTone(run.status))}>
-                                {getPaintingBatchStatusLabel(run.status)}
-                              </span>
-                            </button>
+                            </div>
                           );
                         })}
                       </div>

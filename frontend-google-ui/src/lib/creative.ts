@@ -1235,6 +1235,16 @@ export async function listPaintingBatchRuns(): Promise<PaintingBatchRun[]> {
   return (Array.isArray(json?.runs) ? json.runs : []) as PaintingBatchRun[];
 }
 
+export async function deletePaintingBatchRun(batchRunId: string): Promise<void> {
+  const response = await fetch(`/api/painting/batch-runs/${encodeURIComponent(batchRunId)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw await readJsonError(response, `删除批量生成历史失败（HTTP ${response.status}）`);
+  }
+}
+
 async function postPaintingBatchRunAction(batchRunId: string, action: 'pause' | 'resume' | 'stop'): Promise<void> {
   const response = await fetch(`/api/painting/batch-runs/${encodeURIComponent(batchRunId)}/${action}`, {
     method: 'POST',
