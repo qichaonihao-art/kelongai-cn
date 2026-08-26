@@ -515,7 +515,7 @@ export async function sendCreativeMessage(options: {
 }
 
 export async function createSeedanceTask(options: {
-  model: 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628' | 'MiniMax-H3';
+  model: 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-fast-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628' | 'MiniMax-H3' | 'wan3.0-video';
   taskMode?: 'generate' | 'video_edit';
   prompt: string;
   resolution: '480p' | '720p' | '768p' | '1080p' | '4k';
@@ -576,7 +576,8 @@ export async function createSeedanceTask(options: {
 
   const json = await response.json().catch(() => null);
   if (!response.ok) {
-    let message = `${options.model === 'MiniMax-H3' ? 'MiniMax H3' : 'Seedance'} 创建任务失败（HTTP ${response.status}）`;
+    const providerLabel = options.model === 'MiniMax-H3' ? 'MiniMax H3' : options.model === 'wan3.0-video' ? 'Wan3.0 Video' : 'Seedance';
+    let message = `${providerLabel} 创建任务失败（HTTP ${response.status}）`;
     if (json?.error) {
       message = String(json.error);
     } else if (json?.upstream) {
@@ -587,7 +588,8 @@ export async function createSeedanceTask(options: {
 
   const taskId = String(json?.taskId || json?.id || '');
   if (!taskId) {
-    throw new Error(`${options.model === 'MiniMax-H3' ? 'MiniMax H3' : 'Seedance'} 创建任务失败：服务端未返回任务编号。`);
+    const providerLabel = options.model === 'MiniMax-H3' ? 'MiniMax H3' : options.model === 'wan3.0-video' ? 'Wan3.0 Video' : 'Seedance';
+    throw new Error(`${providerLabel} 创建任务失败：服务端未返回任务编号。`);
   }
 
   return {
@@ -874,6 +876,25 @@ export async function generatePaintingIdeaPrompt(
     throw new Error(message);
   }
 
+  // 完整提示词可能因质量检查触发二次生成，耗时会超过反向代理的同步请求窗口。
+  // 服务端改为后台任务后在这里统一轮询，避免“自动生成视频”按钮一直转圈。
+  if (response.status === 202 || json?.taskId) {
+    const taskId = String(json?.taskId || '');
+    if (!taskId) throw new Error('完整提示词任务创建失败：服务端未返回任务编号。');
+    const result = await waitForPaintingTask<{ prompt?: string; duration?: number }>(taskId, '完整提示词生成失败');
+    const prompt = String(result?.prompt || '').trim();
+    if (!prompt) throw new Error('完整提示词生成失败：后台任务返回内容为空。');
+    const parsedDuration = Number(result?.duration);
+    const fallbackDuration =
+      context?.durationMin && context?.durationMax
+        ? Math.round((context.durationMin + context.durationMax) / 2)
+        : 8;
+    return {
+      prompt,
+      duration: Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : fallbackDuration,
+    };
+  }
+
   const prompt = String(json?.prompt || '').trim();
   const parsedDuration = Number(json?.duration);
   const fallbackDuration =
@@ -894,7 +915,7 @@ export async function querySeedanceTask(taskId: string): Promise<SeedanceTaskRes
 
   const json = await response.json().catch(() => null);
   if (!response.ok) {
-    const providerLabel = taskId.startsWith('minimax-h3_') ? 'MiniMax H3' : 'Seedance';
+    const providerLabel = taskId.startsWith('minimax-h3_') ? 'MiniMax H3' : taskId.startsWith('wan3_') ? 'Wan3.0 Video' : 'Seedance';
     let message = `${providerLabel} 查询任务失败（HTTP ${response.status}）`;
     if (json?.error) {
       message = String(json.error);
@@ -1016,21 +1037,27 @@ export interface PaintingBatchRunEstimate {
   pricingNote: string;
 }
 
-// 全自动批量模式固定使用 Seedance 2.0 Mini，禁止跟随手动面板模型。
+// 全自动批量默认使用 Mini，确认弹窗可选择 Seedance 或 Wan3.0 与分辨率。
 export const SEEDANCE_BATCH_MODEL = 'doubao-seedance-2-0-mini-260615';
-export const SEEDANCE_BATCH_MODEL_LABEL = 'Seedance 2.0 Mini';
 export const SEEDANCE_BATCH_RESOLUTION = '720p';
-export const SEEDANCE_PRICING_NOTE = '费用按提交给 Seedance 的 720P 设置时长估算，实际以平台账单为准。';
+export const SEEDANCE_BATCH_MODEL_OPTIONS = [
+  { value: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0 稳定版' },
+  { value: 'doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast' },
+  { value: 'doubao-seedance-2-0-mini-260615', label: 'Seedance 2.0 Mini' },
+  { value: 'wan3.0-video', label: '千问 Wan3.0 Video' },
+] as const;
+export const SEEDANCE_BATCH_RESOLUTION_OPTIONS = ['480p', '720p'] as const;
+export const SEEDANCE_PRICING_NOTE = '费用按所选模型、分辨率与时长估算，实际以平台账单为准。';
 
-// 按秒单价（元/秒），与后端 getSeedanceRatePerSecond 保持一致，作为前端唯一的 Seedance 价格来源。
-// 当前系统只配置了 720P 档位口径；未知模型或非 720P 分辨率返回 null，调用方需显示“暂无法估算”，不得用固定单价兜底。
+// 按秒估算单价（元/秒），与后端 getSeedanceRatePerSecond 保持一致。
 export function getSeedanceRatePerSecond(model: string, resolution = '720p'): number | null {
   const res = String(resolution || '720p').toLowerCase();
   if (model === 'MiniMax-H3') return res === '768p' ? 0.5 : null;
-  if (res !== '720p') return null;
-  if (model === 'doubao-seedance-2-0-mini-260615') return 0.2;
-  if (model === 'doubao-seedance-2-0-260128') return 1.0;
-  if (model === 'doubao-seedance-2-5-260628') return 1.5;
+  if (model === 'doubao-seedance-2-0-mini-260615') return res === '480p' ? 0.1 : res === '720p' ? 0.2 : null;
+  if (model === 'doubao-seedance-2-0-fast-260128') return res === '480p' ? 0.3 : res === '720p' ? 0.6 : null;
+  if (model === 'doubao-seedance-2-0-260128') return res === '480p' ? 0.5 : res === '720p' ? 1.0 : null;
+  if (model === 'doubao-seedance-2-5-260628') return res === '720p' ? 1.5 : null;
+  if (model === 'wan3.0-video') return res === '480p' ? 0.21 : res === '720p' ? 0.42 : res === '1080p' ? 0.84 : null;
   return null;
 }
 

@@ -12950,19 +12950,26 @@ function handlePaintingTaskStatus(req, res, taskId) {
 }
 
 // ===== 挂画全自动批量：模型与费用 =====
-// 全自动批量模式固定使用 Seedance 2.0 Mini，禁止跟随手动面板模型，也禁止另外两种高价模型，避免误产生过高费用。
+// 默认仍使用 Mini，确认弹窗可显式选择 Seedance 或 Wan3.0；服务端白名单防止提交其他模型。
 const PAINTING_BATCH_MODEL = 'doubao-seedance-2-0-mini-260615';
-const PAINTING_BATCH_MODEL_LABEL = 'Seedance 2.0 Mini';
-const PAINTING_BATCH_MODEL_REJECT_MESSAGE = '全自动批量生成仅支持 Seedance 2.0 Mini 模型，以避免产生过高费用。';
+const PAINTING_BATCH_MODELS = new Set([
+  'doubao-seedance-2-0-260128',
+  'doubao-seedance-2-0-fast-260128',
+  'doubao-seedance-2-0-mini-260615',
+  'wan3.0-video',
+]);
+const PAINTING_BATCH_RESOLUTIONS = new Set(['480p', '720p']);
+const PAINTING_BATCH_MODEL_REJECT_MESSAGE = '全自动批量生成仅支持 Seedance 2.0 稳定版、Fast、Mini 或 Wan3.0 Video。';
 
-// 按秒单价（元/秒）。当前系统只配置了 720P 档位；其他分辨率价格尚未确认，一律返回 null，调用方需显示“暂无法估算”。
+// 按秒估算单价（元/秒）。Fast 使用当前控制台活动价折算；实际费用以火山方舟账单为准。
 function getSeedanceRatePerSecond(model, resolution = '720p') {
   const m = String(model || '');
   const res = String(resolution || '720p').toLowerCase();
-  if (res !== '720p') return null;
-  if (m === 'doubao-seedance-2-0-mini-260615') return 0.2;
-  if (m === 'doubao-seedance-2-0-260128') return 1.0;
-  if (m === 'doubao-seedance-2-5-260628') return 1.5;
+  if (m === 'doubao-seedance-2-0-mini-260615') return res === '480p' ? 0.1 : res === '720p' ? 0.2 : null;
+  if (m === 'doubao-seedance-2-0-fast-260128') return res === '480p' ? 0.3 : res === '720p' ? 0.6 : null;
+  if (m === 'doubao-seedance-2-0-260128') return res === '480p' ? 0.5 : res === '720p' ? 1.0 : null;
+  if (m === 'doubao-seedance-2-5-260628') return res === '720p' ? 1.5 : null;
+  if (m === 'wan3.0-video') return res === '480p' ? 0.21 : res === '720p' ? 0.42 : res === '1080p' ? 0.84 : null;
   return null;
 }
 
@@ -12991,7 +12998,7 @@ function computePaintingBatchCostEstimate(selectedIdeas, plan, model, resolution
     estimatedCostMin: ratePerSecond == null ? null : roundMoney(totalMinSeconds * ratePerSecond),
     estimatedCostMax: ratePerSecond == null ? null : roundMoney(totalMaxSeconds * ratePerSecond),
     currency: 'CNY',
-    pricingNote: '费用按提交给 Seedance 的 720P 设置时长估算，实际以平台账单为准。',
+    pricingNote: '费用按所选模型、分辨率与时长估算，实际以平台账单为准。',
     estimatedAt: Math.floor(Date.now() / 1000),
   };
 }
@@ -13008,11 +13015,6 @@ async function handleCreatePaintingBatchRun(req, res) {
       sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
       return;
     }
-    if (!seedanceApiKey) {
-      sendJson(res, 500, { error: '服务端未配置 SEEDANCE_API_KEY' });
-      return;
-    }
-
     const body = isMultipartFormRequest(req)
       ? await readMultipartFormBody(req)
       : await readRequestBody(req);
@@ -13111,17 +13113,22 @@ async function handleCreatePaintingBatchRun(req, res) {
       return;
     }
 
-    // 全自动批量模式固定 Mini 模型：收到任何非 Mini 模型直接拒绝，不跟随手动面板当前模型。
-    const requestedModel = readValue(body.model);
-    if (requestedModel && requestedModel !== PAINTING_BATCH_MODEL) {
+    const requestedModel = readValue(body.model) || PAINTING_BATCH_MODEL;
+    if (!PAINTING_BATCH_MODELS.has(requestedModel)) {
       sendJson(res, 400, { error: PAINTING_BATCH_MODEL_REJECT_MESSAGE });
       return;
     }
-    const model = PAINTING_BATCH_MODEL;
-    const resolution = readValue(body.resolution) || '720p';
-    // 批量模式固定 720P：收到任何非 720P 分辨率直接拒绝，避免实际提交参数与费用口径不一致。
-    if (String(resolution).toLowerCase() !== '720p') {
-      sendJson(res, 400, { error: '全自动批量生成目前仅支持720P，其他分辨率价格尚未确认。' });
+    const model = requestedModel;
+    const modelApiKey = model === 'wan3.0-video'
+      ? readValue(SERVER_CONFIG.dashscopeApiKey)
+      : seedanceApiKey;
+    if (!modelApiKey) {
+      sendJson(res, 500, { error: `服务端未配置 ${model === 'wan3.0-video' ? 'DASHSCOPE_API_KEY' : 'SEEDANCE_API_KEY'}` });
+      return;
+    }
+    const resolution = String(readValue(body.resolution) || '720p').toLowerCase();
+    if (!PAINTING_BATCH_RESOLUTIONS.has(resolution)) {
+      sendJson(res, 400, { error: '全自动批量生成仅支持480P或720P。' });
       return;
     }
     const ratio = readValue(body.ratio) || '9:16';
@@ -13486,20 +13493,20 @@ async function handleResubmitPaintingBatchTask(req, res) {
       });
       return;
     }
-    // 历史非 Mini 批次（含空模型，提交时会回落为 2.0）禁止重新提交新任务，需用户创建新的 Mini 批次。
+    // 仅允许当前批量白名单中的模型重新提交，防止历史异常模型产生意外费用。
     const batchRun = dbGetPaintingBatchRun(task.batchRunId);
     const batchModel = String(batchRun?.model || '');
-    if (batchModel !== PAINTING_BATCH_MODEL) {
+    if (!PAINTING_BATCH_MODELS.has(batchModel)) {
       sendJson(res, 400, {
-        error: '该历史批次使用的是非 Mini 模型，为避免过高费用禁止重新提交。请基于当前图片创建新的 Seedance 2.0 Mini 批次重新生成。',
+        error: '该历史批次使用的模型不在当前批量生成白名单中，为避免意外费用禁止重新提交。请创建新的批次重新生成。',
       });
       return;
     }
-    // 历史非 720P 批次同样禁止重新提交，避免价格口径不一致。
-    const batchResolution = String(batchRun?.resolution || '').toLowerCase();
-    if (batchResolution && batchResolution !== '720p') {
+    // 仅允许当前批量支持的分辨率重新提交。
+    const batchResolution = String(batchRun?.resolution || '720p').toLowerCase();
+    if (!PAINTING_BATCH_RESOLUTIONS.has(batchResolution)) {
       sendJson(res, 400, {
-        error: '该历史批次使用的是非 720P 分辨率，为避免价格口径不一致禁止重新提交。请基于当前图片创建新的 Seedance 2.0 Mini 720P 批次重新生成。',
+        error: '该历史批次使用的分辨率不在当前批量生成支持范围内，禁止重新提交。请创建新的480P或720P批次。',
       });
       return;
     }
@@ -13595,14 +13602,17 @@ async function handleGetPaintingBatchRunEstimate(req, res) {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const params = url.searchParams;
-    // 批量模式固定 Mini：收到其他模型直接拒绝，不返回误导性的“每条价格”。
-    const requestedModel = readValue(params.get('model'));
-    if (requestedModel && requestedModel !== PAINTING_BATCH_MODEL) {
+    const requestedModel = readValue(params.get('model')) || PAINTING_BATCH_MODEL;
+    if (!PAINTING_BATCH_MODELS.has(requestedModel)) {
       sendJson(res, 400, { error: PAINTING_BATCH_MODEL_REJECT_MESSAGE });
       return;
     }
-    const model = PAINTING_BATCH_MODEL;
-    const resolution = readValue(params.get('resolution')) || '720p';
+    const model = requestedModel;
+    const resolution = String(readValue(params.get('resolution')) || '720p').toLowerCase();
+    if (!PAINTING_BATCH_RESOLUTIONS.has(resolution)) {
+      sendJson(res, 400, { error: '全自动批量生成仅支持480P或720P。' });
+      return;
+    }
     const ratePerSecond = getSeedanceRatePerSecond(model, resolution);
     sendJson(res, 200, {
       ok: true,
@@ -13611,7 +13621,7 @@ async function handleGetPaintingBatchRunEstimate(req, res) {
         resolution,
         ratePerSecond,
         currency: 'CNY',
-        pricingNote: '费用按提交给 Seedance 的 720P 设置时长估算，实际以平台账单为准。',
+        pricingNote: '费用按所选模型、分辨率与时长估算，实际以平台账单为准。',
       },
     });
   } catch (error) {
@@ -14496,7 +14506,6 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
 }
 
 async function handlePaintingIdeaPrompt(req, res) {
-  const requestId = randomBytes(6).toString('hex');
   try {
     const apiKey = readValue(SERVER_CONFIG.arkApiKey);
     if (!apiKey) {
@@ -14512,15 +14521,30 @@ async function handlePaintingIdeaPrompt(req, res) {
       return;
     }
 
-    const { prompt, duration } = await generatePaintingIdeaPromptCore(requestId, apiKey, profile, idea, body);
-    sendJson(res, 200, { ok: true, prompt, duration });
+    // 与挂画分析、创意方案保持同一模式：先立即返回任务编号，再由前端轮询。
+    // 完整提示词可能触发质量重写，不能让浏览器/反向代理一直挂着同步连接。
+    const task = createPaintingTask('idea-prompt');
+    runPaintingIdeaPromptTask(task, apiKey, profile, idea, body);
+    sendJson(res, 202, { ok: true, taskId: task.id, status: task.status });
   } catch (error) {
-    console.error('[doubao painting] idea-prompt failed', { requestId, message: error?.message || '' });
     sendJson(res, 500, {
       error: error?.message || '完整提示词生成失败',
       debug: { stage: 'idea-prompt', rawText: error?.rawText }
     });
   }
+}
+
+async function runPaintingIdeaPromptTask(task, apiKey, profile, idea, context) {
+  try {
+    task.result = await generatePaintingIdeaPromptCore(task.id, apiKey, profile, idea, context);
+    task.status = 'done';
+  } catch (error) {
+    task.status = 'failed';
+    task.error = error?.message || '完整提示词生成失败';
+    task.debug = { stage: 'idea-prompt', rawText: error?.rawText };
+    console.error('[doubao painting] idea-prompt failed', { requestId: task.id, message: error?.message || '' });
+  }
+  task.doneAt = Date.now();
 }
 
 // ===== 挂画全自动批量任务 =====
@@ -14633,9 +14657,11 @@ function getPaintingBatchReferenceSpecs(task, batchRun) {
 
 async function submitSeedanceTaskForBatchTask(task, batchRun) {
   const requestId = randomBytes(6).toString('hex');
-  const apiKey = readValue(SERVER_CONFIG.seedanceApiKey);
+  const model = batchRun.model || 'doubao-seedance-2-0-260128';
+  const isWan3 = model === WAN3_VIDEO_MODEL;
+  const apiKey = isWan3 ? readValue(SERVER_CONFIG.dashscopeApiKey) : readValue(SERVER_CONFIG.seedanceApiKey);
   if (!apiKey) {
-    throw new Error('服务端未配置 SEEDANCE_API_KEY');
+    throw new Error(`服务端未配置 ${isWan3 ? 'DASHSCOPE_API_KEY' : 'SEEDANCE_API_KEY'}`);
   }
   if (!task.prompt) {
     throw new Error('缺少视频生成提示词 prompt');
@@ -14656,16 +14682,31 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
     content.push({ type: 'image_url', image_url: { url: normalized.imageUrl }, role: 'reference_image' });
   }
 
-  const model = batchRun.model || 'doubao-seedance-2-0-260128';
   const isSeedance25 = model === 'doubao-seedance-2-5-260628';
   const resolution = batchRun.resolution || '720p';
   const ratio = batchRun.ratio || '9:16';
-  const duration = Math.min(isSeedance25 ? 30 : 15, Math.max(4, Math.round(task.duration || 8)));
+  const duration = Math.min(isSeedance25 || isWan3 ? 30 : 15, Math.max(isWan3 ? 2 : 4, Math.round(task.duration || 8)));
   const generateAudio = batchRun.generateAudio !== false;
   const watermark = batchRun.watermark === true;
 
-  const upstreamUrl = 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
-  const requestPayload = {
+  const upstreamUrl = isWan3
+    ? `${DASHSCOPE_VIDEO_BASE_URL}/api/v1/services/aigc/video-generation/video-synthesis`
+    : 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
+  const requestPayload = isWan3 ? {
+    model: WAN3_VIDEO_MODEL,
+    input: {
+      prompt: content[0].text,
+      media: content.slice(1).map((item) => ({ type: 'reference_image', url: item.image_url.url })),
+    },
+    parameters: {
+      resolution: resolution.toUpperCase(),
+      ratio,
+      duration,
+      audio: generateAudio,
+      prompt_extend: false,
+      watermark,
+    },
+  } : {
     model,
     content,
     generate_audio: generateAudio,
@@ -14687,6 +14728,7 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
+      ...(isWan3 ? { 'X-DashScope-Async': 'enable' } : {}),
     },
     body: JSON.stringify(requestPayload),
     signal: AbortSignal.timeout(60 * 1000),
@@ -14700,12 +14742,13 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
 
   if (!upstreamRes.ok) {
     const rawError = json?.error?.message || json?.message || json?.code || '';
-    const error = new Error(translateUpstreamError(rawError, `Seedance 创建任务失败（状态码 ${upstreamRes.status}）`));
+    const error = new Error(translateUpstreamError(rawError, `${isWan3 ? 'Wan3.0 Video' : 'Seedance'} 创建任务失败（状态码 ${upstreamRes.status}）`));
     error.statusCode = upstreamRes.status;
     throw error;
   }
 
-  const seedanceTaskId = readValue(json?.id, json?.data?.id, json?.task_id, json?.taskId);
+  const rawTaskId = readValue(json?.id, json?.data?.id, json?.task_id, json?.taskId, json?.output?.task_id);
+  const seedanceTaskId = isWan3 && rawTaskId ? encodeWan3TaskId(rawTaskId) : rawTaskId;
   if (!seedanceTaskId) {
     throw new Error('Seedance 创建任务失败：服务端未返回任务编号');
   }
@@ -14721,51 +14764,14 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
 }
 
 async function pollSeedanceTaskForBatch(seedanceTaskId) {
-  const apiKey = readValue(SERVER_CONFIG.seedanceApiKey);
-  if (!apiKey) {
-    throw new Error('服务端未配置 SEEDANCE_API_KEY');
-  }
-  const upstreamUrl = `https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${encodeURIComponent(seedanceTaskId)}`;
-  const upstreamRes = await fetch(upstreamUrl, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${apiKey}` },
-    signal: AbortSignal.timeout(60 * 1000),
-  });
-  const responseText = await upstreamRes.text();
-  let json = null;
-  try {
-    json = responseText ? JSON.parse(responseText) : null;
-  } catch {}
-  if (!upstreamRes.ok) {
-    const rawError = json?.error?.message || json?.message || '';
-    throw new Error(translateUpstreamError(rawError, `Seedance 查询任务失败（状态码 ${upstreamRes.status}）`));
-  }
-  const status = extractSeedanceStatus(json);
-  const videoUrl = extractSeedanceVideoUrl(json);
-  return { status, videoUrl, response: json };
+  const task = await fetchManualVideoGenerationTask(seedanceTaskId);
+  return { status: task.status, videoUrl: task.videoUrl, response: task.payload };
 }
 
 async function downloadAndSaveSeedanceVideoForBatch(seedanceTaskId, folderName, batchMeta) {
-  const apiKey = readValue(SERVER_CONFIG.seedanceApiKey);
-  if (!apiKey) {
-    throw new Error('服务端未配置 SEEDANCE_API_KEY');
-  }
-
-  const taskResponse = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${encodeURIComponent(seedanceTaskId)}`, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-    signal: AbortSignal.timeout(60 * 1000),
-  });
-  const taskText = await taskResponse.text();
-  let taskPayload = null;
-  try {
-    taskPayload = taskText ? JSON.parse(taskText) : null;
-  } catch {}
-  if (!taskResponse.ok) {
-    const upstreamMessage = taskPayload?.error?.message || taskPayload?.message || '';
-    throw new Error(translateUpstreamError(upstreamMessage, '读取生成视频失败'));
-  }
-
-  const videoUrl = extractSeedanceVideoUrl(taskPayload);
+  const taskResult = await fetchManualVideoGenerationTask(seedanceTaskId);
+  const taskPayload = taskResult.payload;
+  const videoUrl = taskResult.videoUrl;
   if (!videoUrl) {
     throw new Error('这条生成记录还没有可保存的视频');
   }
@@ -15122,7 +15128,7 @@ async function processBatchTask(taskId) {
             break;
           }
           const statusLower = String(poll.status || '').toLowerCase();
-          if (['succeed', 'success', 'completed', 'done'].includes(statusLower)) {
+          if (['succeed', 'succeeded', 'success', 'completed', 'done'].includes(statusLower)) {
             if (poll.videoUrl) {
               dbUpdatePaintingBatchTask(task.id, {
                 status: 'video_succeeded',
@@ -16406,6 +16412,22 @@ function extractSeedanceStatus(payload) {
 
 const MINIMAX_H3_MODEL = 'MiniMax-H3';
 const MINIMAX_H3_TASK_PREFIX = 'minimax-h3_';
+const WAN3_VIDEO_MODEL = 'wan3.0-video';
+const WAN3_TASK_PREFIX = 'wan3_';
+const DASHSCOPE_VIDEO_BASE_URL = readValue(process.env.DASHSCOPE_VIDEO_BASE_URL) || 'https://dashscope.aliyuncs.com';
+
+function isWan3TaskId(taskId) {
+  return readValue(taskId).startsWith(WAN3_TASK_PREFIX);
+}
+
+function encodeWan3TaskId(taskId) {
+  const rawTaskId = readValue(taskId);
+  return rawTaskId.startsWith(WAN3_TASK_PREFIX) ? rawTaskId : `${WAN3_TASK_PREFIX}${rawTaskId}`;
+}
+
+function decodeWan3TaskId(taskId) {
+  return readValue(taskId).replace(new RegExp(`^${WAN3_TASK_PREFIX}`), '');
+}
 
 function isMiniMaxH3TaskId(taskId) {
   return readValue(taskId).startsWith(MINIMAX_H3_TASK_PREFIX);
@@ -16425,19 +16447,24 @@ function decodeMiniMaxH3TaskId(taskId) {
 async function fetchManualVideoGenerationTask(taskId) {
   const normalizedTaskId = readValue(taskId);
   const isMiniMaxH3 = isMiniMaxH3TaskId(normalizedTaskId);
-  const providerLabel = isMiniMaxH3 ? 'MiniMax H3' : 'Seedance';
+  const isWan3 = isWan3TaskId(normalizedTaskId);
+  const providerLabel = isMiniMaxH3 ? 'MiniMax H3' : isWan3 ? 'Wan3.0 Video' : 'Seedance';
   const apiKey = isMiniMaxH3
     ? readValue(SERVER_CONFIG.minimaxApiKey)
+    : isWan3
+      ? readValue(SERVER_CONFIG.dashscopeApiKey)
     : readValue(SERVER_CONFIG.seedanceApiKey);
   if (!apiKey) {
-    const error = new Error(`服务端未配置 ${isMiniMaxH3 ? 'MINIMAX_API_KEY' : 'SEEDANCE_API_KEY'}`);
+    const error = new Error(`服务端未配置 ${isMiniMaxH3 ? 'MINIMAX_API_KEY' : isWan3 ? 'DASHSCOPE_API_KEY' : 'SEEDANCE_API_KEY'}`);
     error.statusCode = 500;
     throw error;
   }
 
-  const upstreamTaskId = isMiniMaxH3 ? decodeMiniMaxH3TaskId(normalizedTaskId) : normalizedTaskId;
+  const upstreamTaskId = isMiniMaxH3 ? decodeMiniMaxH3TaskId(normalizedTaskId) : isWan3 ? decodeWan3TaskId(normalizedTaskId) : normalizedTaskId;
   const upstreamUrl = isMiniMaxH3
     ? `https://api.minimaxi.com/v2/query/video_generation/${encodeURIComponent(upstreamTaskId)}`
+    : isWan3
+      ? `${DASHSCOPE_VIDEO_BASE_URL}/api/v1/tasks/${encodeURIComponent(upstreamTaskId)}`
     : `https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${encodeURIComponent(upstreamTaskId)}`;
   const upstreamRes = await fetch(upstreamUrl, {
     method: 'GET',
@@ -16457,13 +16484,13 @@ async function fetchManualVideoGenerationTask(taskId) {
     throw error;
   }
 
-  const taskPayload = isMiniMaxH3 ? payload?.task : payload;
+  const taskPayload = isMiniMaxH3 ? payload?.task : isWan3 ? payload?.output : payload;
   return {
-    provider: isMiniMaxH3 ? 'minimax-h3' : 'seedance',
+    provider: isMiniMaxH3 ? 'minimax-h3' : isWan3 ? 'wan3' : 'seedance',
     providerLabel,
     taskId: normalizedTaskId,
-    status: isMiniMaxH3 ? readValue(taskPayload?.status) : extractSeedanceStatus(payload),
-    videoUrl: isMiniMaxH3 ? readValue(taskPayload?.content?.url) : extractSeedanceVideoUrl(payload),
+    status: isMiniMaxH3 ? readValue(taskPayload?.status) : isWan3 ? readValue(taskPayload?.task_status) : extractSeedanceStatus(payload),
+    videoUrl: isMiniMaxH3 ? readValue(taskPayload?.content?.url) : isWan3 ? readValue(taskPayload?.video_url) : extractSeedanceVideoUrl(payload),
     createdAt: Number(taskPayload?.created_at || 0) || undefined,
     updatedAt: Number(taskPayload?.updated_at || 0) || undefined,
     payload,
@@ -16528,10 +16555,14 @@ async function handleSeedanceCreateTask(req, res) {
     const duration = Number.parseInt(String(body?.duration || 5), 10);
     const isSeedance25 = model === 'doubao-seedance-2-5-260628';
     const isSeedanceMini = model === 'doubao-seedance-2-0-mini-260615';
+    const isSeedanceFast = model === 'doubao-seedance-2-0-fast-260128';
     const isMiniMaxH3 = model === MINIMAX_H3_MODEL;
-    const modelLabel = isMiniMaxH3 ? 'MiniMax H3' : isSeedance25 ? 'Seedance 2.5' : isSeedanceMini ? 'Seedance 2.0 mini' : 'Seedance 2.0';
+    const isWan3 = model === WAN3_VIDEO_MODEL;
+    const modelLabel = isMiniMaxH3 ? 'MiniMax H3' : isWan3 ? 'Wan3.0 Video' : isSeedance25 ? 'Seedance 2.5' : isSeedanceMini ? 'Seedance 2.0 mini' : isSeedanceFast ? 'Seedance 2.0 Fast' : 'Seedance 2.0';
     const resolvedApiKey = isMiniMaxH3
       ? readValue(SERVER_CONFIG.minimaxApiKey)
+      : isWan3
+        ? readValue(SERVER_CONFIG.dashscopeApiKey)
       : readValue(SERVER_CONFIG.seedanceApiKey);
     const isVideoEditTask = taskMode === 'video_edit';
     const generateAudio = body?.generateAudio !== false;
@@ -16552,7 +16583,7 @@ async function handleSeedanceCreateTask(req, res) {
     });
 
     if (!resolvedApiKey) {
-      sendJson(res, 500, { error: `服务端未配置 ${isMiniMaxH3 ? 'MINIMAX_API_KEY' : 'SEEDANCE_API_KEY'}` });
+      sendJson(res, 500, { error: `服务端未配置 ${isMiniMaxH3 ? 'MINIMAX_API_KEY' : isWan3 ? 'DASHSCOPE_API_KEY' : 'SEEDANCE_API_KEY'}` });
       return;
     }
 
@@ -16561,7 +16592,7 @@ async function handleSeedanceCreateTask(req, res) {
       return;
     }
 
-    if (!['doubao-seedance-2-0-260128', 'doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-5-260628', MINIMAX_H3_MODEL].includes(model)) {
+    if (!['doubao-seedance-2-0-260128', 'doubao-seedance-2-0-fast-260128', 'doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-5-260628', MINIMAX_H3_MODEL, WAN3_VIDEO_MODEL].includes(model)) {
       sendJson(res, 400, { error: '不支持的视频生成模型' });
       return;
     }
@@ -16573,7 +16604,9 @@ async function handleSeedanceCreateTask(req, res) {
 
     const supportedResolutions = isMiniMaxH3
       ? ['768p']
-      : isSeedance25 || isSeedanceMini
+      : isWan3
+        ? ['480p', '720p', '1080p']
+      : isSeedance25 || isSeedanceMini || isSeedanceFast
         ? ['480p', '720p']
         : ['480p', '720p', '1080p', '4k'];
     if (!supportedResolutions.includes(resolution)) {
@@ -16598,20 +16631,21 @@ async function handleSeedanceCreateTask(req, res) {
       return;
     }
 
-    const maxDuration = isSeedance25 ? 30 : 15;
+    const maxDuration = isSeedance25 || isWan3 ? 30 : 15;
+    const minDuration = isWan3 ? 2 : 4;
     if (isVideoEditTask && (ratio !== 'adaptive' || duration !== -1)) {
       sendJson(res, 400, { error: 'Seedance 2.5 视频编辑必须使用智能比例并跟随原视频时长' });
       return;
     }
-    if (!isVideoEditTask && (!Number.isInteger(duration) || duration < 4 || duration > maxDuration)) {
-      sendJson(res, 400, { error: `${modelLabel} 的 duration 需为 4 到 ${maxDuration} 秒之间的整数` });
+    if (!isVideoEditTask && (!Number.isInteger(duration) || duration < minDuration || duration > maxDuration)) {
+      sendJson(res, 400, { error: `${modelLabel} 的 duration 需为 ${minDuration} 到 ${maxDuration} 秒之间的整数` });
       return;
     }
 
-    const maxImageCount = isMiniMaxH3 ? 5 : isSeedance25 ? 30 : 9;
-    const maxVideoCount = isMiniMaxH3 ? 0 : isSeedance25 ? 10 : 3;
-    const maxAudioCount = isMiniMaxH3 ? 0 : isSeedance25 ? 10 : 3;
-    if (uploadedFiles.length > (isMiniMaxH3 ? 5 : isSeedance25 ? 50 : 13)) {
+    const maxImageCount = isMiniMaxH3 ? 5 : isWan3 ? 10 : isSeedance25 ? 30 : 9;
+    const maxVideoCount = isMiniMaxH3 ? 0 : isWan3 ? 5 : isSeedance25 ? 10 : 3;
+    const maxAudioCount = isMiniMaxH3 ? 0 : isWan3 ? 5 : isSeedance25 ? 10 : 3;
+    if (uploadedFiles.length > (isMiniMaxH3 ? 5 : isWan3 ? 10 : isSeedance25 ? 50 : 13)) {
       sendJson(res, 400, { error: `${modelLabel} 最多支持 ${maxImageCount} 张图片、${maxVideoCount} 个视频、${maxAudioCount} 段音频，请减少上传数量。` });
       return;
     }
@@ -16695,11 +16729,16 @@ async function handleSeedanceCreateTask(req, res) {
           sendJson(res, 400, { error: 'Seedance 参考音频单个文件不能超过 15MB。' });
           return;
         }
-        const normalized = await normalizeUploadedAudioInput(file);
+        const normalized = isWan3 ? null : await normalizeUploadedAudioInput(file);
+        const mediaResult = isWan3 ? await createPublicMediaUrl({ file, req }) : null;
+        if (isWan3 && !mediaResult?.ok) {
+          sendJson(res, 400, { error: mediaResult?.error || '音频参考上传失败，请检查 PUBLIC_BASE_URL 配置。' });
+          return;
+        }
         content.push({
           type: 'audio_url',
           audio_url: {
-            url: normalized.audioUrl
+            url: isWan3 ? mediaResult.url : normalized.audioUrl
           },
           role: 'reference_audio'
         });
@@ -16762,8 +16801,14 @@ async function handleSeedanceCreateTask(req, res) {
       }
     }
 
+    const wanMedia = isWan3 ? content.slice(1).map((item) => ({
+      type: item.type === 'image_url' ? 'reference_image' : item.type === 'video_url' ? 'reference_video' : 'reference_audio',
+      url: item.image_url?.url || item.video_url?.url || item.audio_url?.url,
+    })) : [];
     const upstreamUrl = isMiniMaxH3
       ? 'https://api.minimaxi.com/v2/video_generation'
+      : isWan3
+        ? `${DASHSCOPE_VIDEO_BASE_URL}/api/v1/services/aigc/video-generation/video-synthesis`
       : 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
     const requestPayload = isMiniMaxH3
       ? {
@@ -16774,7 +16819,18 @@ async function handleSeedanceCreateTask(req, res) {
           duration,
           aigc_watermark: watermark,
         }
-      : {
+      : isWan3 ? {
+          model: WAN3_VIDEO_MODEL,
+          input: { prompt, ...(wanMedia.length ? { media: wanMedia } : {}) },
+          parameters: {
+            resolution: resolution.toUpperCase(),
+            ratio,
+            duration,
+            audio: generateAudio,
+            prompt_extend: false,
+            watermark,
+          },
+        } : {
           model,
           content,
           generate_audio: generateAudio,
@@ -16795,7 +16851,8 @@ async function handleSeedanceCreateTask(req, res) {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${resolvedApiKey}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...(isWan3 ? { 'X-DashScope-Async': 'enable' } : {}),
       },
       body: JSON.stringify(requestPayload),
       signal: AbortSignal.timeout(60 * 1000)
@@ -16821,8 +16878,8 @@ async function handleSeedanceCreateTask(req, res) {
       return;
     }
 
-    const upstreamTaskId = readValue(json?.id, json?.data?.id, json?.task_id, json?.taskId);
-    const taskId = isMiniMaxH3 && upstreamTaskId ? encodeMiniMaxH3TaskId(upstreamTaskId) : upstreamTaskId;
+    const upstreamTaskId = readValue(json?.id, json?.data?.id, json?.task_id, json?.taskId, json?.output?.task_id);
+    const taskId = isMiniMaxH3 && upstreamTaskId ? encodeMiniMaxH3TaskId(upstreamTaskId) : isWan3 && upstreamTaskId ? encodeWan3TaskId(upstreamTaskId) : upstreamTaskId;
     console.log('[seedance create task] request complete', {
       requestId,
       taskId,
@@ -16839,7 +16896,7 @@ async function handleSeedanceCreateTask(req, res) {
     sendJson(res, 200, {
       ok: true,
       taskId,
-      provider: isMiniMaxH3 ? 'minimax-h3' : 'seedance',
+      provider: isMiniMaxH3 ? 'minimax-h3' : isWan3 ? 'wan3' : 'seedance',
       response: json
     });
   } catch (error) {
@@ -18784,6 +18841,8 @@ export {
   dbMarkPaintingDirectionUsed,
   dbGetPaintingUsedDirections,
   handlePaintingIdeas,
+  handlePaintingIdeaPrompt,
+  handlePaintingTaskStatus,
   handleRetryPaintingBatchTask,
   handleResubmitPaintingBatchTask,
   handleCreatePaintingBatchRun,
@@ -18796,6 +18855,9 @@ export {
   encodeMiniMaxH3TaskId,
   decodeMiniMaxH3TaskId,
   MINIMAX_H3_MODEL,
+  encodeWan3TaskId,
+  decodeWan3TaskId,
+  WAN3_VIDEO_MODEL,
   readMultipartFormBody,
   isValidPaintingClientRequestId,
   parsePaintingIdeasWithJsonRetry,
@@ -18804,6 +18866,8 @@ export {
   extractPaintingDiversitySummary,
   PaintingBatchSemaphore,
   PAINTING_BATCH_MODEL,
+  PAINTING_BATCH_MODELS,
+  PAINTING_BATCH_RESOLUTIONS,
   PAINTING_BATCH_MODEL_REJECT_MESSAGE,
   getSeedanceRatePerSecond,
   computePaintingBatchCostEstimate,

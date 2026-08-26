@@ -57,8 +57,9 @@ import {
   isPaintingCreationOutcomeUnknown,
   getSeedanceRatePerSecond,
   SEEDANCE_BATCH_MODEL,
-  SEEDANCE_BATCH_MODEL_LABEL,
+  SEEDANCE_BATCH_MODEL_OPTIONS,
   SEEDANCE_BATCH_RESOLUTION,
+  SEEDANCE_BATCH_RESOLUTION_OPTIONS,
   SEEDANCE_PRICING_NOTE,
   getPaintingFolderBinding,
   getPaintingUsedDirections,
@@ -638,9 +639,11 @@ const SEEDANCE_RESOLUTIONS_2_0 = ['480p', '720p', '1080p', '4k'] as const;
 const SEEDANCE_RESOLUTIONS_2_0_MINI = ['480p', '720p'] as const;
 const SEEDANCE_RESOLUTIONS_2_5 = ['480p', '720p'] as const;
 const MINIMAX_H3_RESOLUTIONS = ['768p'] as const;
+const WAN3_RESOLUTIONS = ['480p', '720p', '1080p'] as const;
 const SEEDANCE_DURATIONS = Array.from({ length: 12 }, (_, index) => index + 4);
 const SEEDANCE_DURATIONS_2_5 = Array.from({ length: 27 }, (_, index) => index + 4);
-type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628' | 'MiniMax-H3';
+const WAN3_DURATIONS = Array.from({ length: 29 }, (_, index) => index + 2);
+type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-fast-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628' | 'MiniMax-H3' | 'wan3.0-video';
 type SeedanceTaskMode = 'generate' | 'video-edit-painting';
 type SeedanceResolution = '480p' | '720p' | '768p' | '1080p' | '4k';
 type ReverseMode = 'direct' | 'replace' | 'image' | 'painting';
@@ -655,15 +658,18 @@ interface ReverseSeedanceSyncSnapshot {
 
 function getSeedanceModelLabel(model: SeedanceModelId) {
   if (model === 'MiniMax-H3') return 'MiniMax H3 试验版';
+  if (model === 'wan3.0-video') return '千问 Wan3.0 Video';
   if (model === 'doubao-seedance-2-5-260628') return 'Seedance 2.5 测试版';
   if (model === 'doubao-seedance-2-0-mini-260615') return 'Seedance 2.0 mini';
+  if (model === 'doubao-seedance-2-0-fast-260128') return 'Seedance 2.0 Fast';
   return 'Seedance 2.0 稳定版';
 }
 
 function getSeedanceResolutions(model: SeedanceModelId) {
   if (model === 'MiniMax-H3') return MINIMAX_H3_RESOLUTIONS;
+  if (model === 'wan3.0-video') return WAN3_RESOLUTIONS;
   if (model === 'doubao-seedance-2-5-260628') return SEEDANCE_RESOLUTIONS_2_5;
-  if (model === 'doubao-seedance-2-0-mini-260615') return SEEDANCE_RESOLUTIONS_2_0_MINI;
+  if (model === 'doubao-seedance-2-0-mini-260615' || model === 'doubao-seedance-2-0-fast-260128') return SEEDANCE_RESOLUTIONS_2_0_MINI;
   return SEEDANCE_RESOLUTIONS_2_0;
 }
 
@@ -1114,7 +1120,7 @@ function loadSeedanceHistory() {
       .map((item) => ({
         ...item,
         // Records created before model switching were all Seedance 2.0.
-        model: item.model === 'doubao-seedance-2-5-260628' || item.model === 'doubao-seedance-2-0-mini-260615' || item.model === 'MiniMax-H3'
+        model: item.model === 'doubao-seedance-2-5-260628' || item.model === 'doubao-seedance-2-0-fast-260128' || item.model === 'doubao-seedance-2-0-mini-260615' || item.model === 'MiniMax-H3' || item.model === 'wan3.0-video'
           ? item.model as SeedanceModelId
           : 'doubao-seedance-2-0-260128' as SeedanceModelId,
         taskMode: item.taskMode === 'video-edit-painting'
@@ -1604,6 +1610,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchOnlyUnused, setPaintingBatchOnlyUnused] = useState(true);
   const [paintingBatchFolder, setPaintingBatchFolder] = useState(loadLastVideoLibraryFolder);
   const [paintingBatchFolderId, setPaintingBatchFolderId] = useState<number | null>(null);
+  const [paintingBatchModel, setPaintingBatchModel] = useState<string>(SEEDANCE_BATCH_MODEL);
+  const [paintingBatchResolution, setPaintingBatchResolution] = useState<string>(SEEDANCE_BATCH_RESOLUTION);
   const [paintingBatchFolderList, setPaintingBatchFolderList] = useState<string[]>([]);
   const [paintingUsedDirections, setPaintingUsedDirections] = useState<number[]>([]);
   const [paintingBatchActiveRunId, setPaintingBatchActiveRunId] = useState<string | null>(null);
@@ -2777,6 +2785,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   }) {
     const isVideoEdit = seedanceTaskMode === 'video-edit-painting';
     const isMiniMaxH3 = !isVideoEdit && seedanceModel === 'MiniMax-H3';
+    const isWan3 = !isVideoEdit && seedanceModel === 'wan3.0-video';
     const prompt = isVideoEdit
       ? buildVideoEditPaintingPrompt(videoEditTarget, videoEditAdjustments)
       : (overrides?.prompt ?? seedancePrompt.trim());
@@ -2794,6 +2803,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
     if (isMiniMaxH3 && !minimaxApiConfigured) {
       setSeedanceError('服务端尚未配置 MINIMAX_API_KEY，暂时不能测试 MiniMax H3。');
+      return;
+    }
+    if (isWan3 && !dashscopeApiConfigured) {
+      setSeedanceError('服务端尚未配置 DASHSCOPE_API_KEY，暂时不能使用 Wan3.0 Video。');
       return;
     }
     if (isMiniMaxH3 && references.some((item) => item.kind !== 'image')) {
@@ -3117,10 +3130,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     let videoCount = seedanceReferences.filter((item) => item.kind === 'video').length;
     let audioCount = seedanceReferences.filter((item) => item.kind === 'audio').length;
     const isSeedance25 = seedanceModel === 'doubao-seedance-2-5-260628';
-    const maxImageCount = isSeedance25 ? 30 : 9;
-    const maxVideoCount = isSeedance25 ? 10 : 3;
-    const maxAudioCount = isSeedance25 ? 10 : 3;
-    const maxReferenceCount = isSeedance25 ? 50 : 13;
+    const isWan3 = seedanceModel === 'wan3.0-video';
+    const maxImageCount = isWan3 ? 10 : isSeedance25 ? 30 : 9;
+    const maxVideoCount = isWan3 ? 5 : isSeedance25 ? 10 : 3;
+    const maxAudioCount = isWan3 ? 5 : isSeedance25 ? 10 : 3;
+    const maxReferenceCount = isWan3 ? 10 : isSeedance25 ? 50 : 13;
 
     for (const file of Array.from(files)) {
       const kind = getSeedanceReferenceKind(file);
@@ -3763,8 +3777,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       plan: paintingPlan,
       ideas,
       totalDirections: ideas.length,
-      model: SEEDANCE_BATCH_MODEL,
-      resolution: SEEDANCE_BATCH_RESOLUTION,
+      model: paintingBatchModel,
+      resolution: paintingBatchResolution,
       ratio: paintingPlan.ratio || seedanceRatio,
       variationRound: paintingVariationRound,
       generateAudio: seedanceGenerateAudio,
@@ -4553,6 +4567,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const seedanceElapsedText = seedanceTask && !seedanceTask.videoUrl
     ? formatSeedanceWait(getSeedanceElapsedSeconds(seedanceTask, seedanceClock))
     : '';
+  const selectedVideoModelLabel = seedanceTaskMode === 'video-edit-painting'
+    ? 'Seedance 2.5 视频编辑'
+    : getSeedanceModelLabel(seedanceModel);
+  const activeVideoHistoryItem = seedanceTask
+    ? seedanceHistory.find((item) => item.taskId === seedanceTask.taskId)
+    : null;
+  const activeVideoModelLabel = activeVideoHistoryItem
+    ? getSeedanceHistoryModeLabel(activeVideoHistoryItem)
+    : selectedVideoModelLabel;
   const reverseApiConfigured = reverseModel === 'qwen' ? dashscopeApiConfigured : arkApiConfigured;
 
   return (
@@ -6201,7 +6224,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       // Each model starts from a predictable profile so switching
                       // models cannot carry incompatible settings across.
                       setSeedanceRatio('9:16');
-                      setSeedanceResolution(nextModel === 'MiniMax-H3' ? '768p' : '720p');
+                      setSeedanceResolution(nextModel === 'MiniMax-H3' ? '768p' : nextModel === 'wan3.0-video' ? '480p' : '720p');
                       setSeedanceDuration(5);
                       setSeedanceGenerateAudio(nextModel === 'doubao-seedance-2-5-260628');
                       setSeedanceWatermark(false);
@@ -6211,8 +6234,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       "rounded-full border px-3 py-1 text-[10px] font-black outline-none transition-colors disabled:opacity-60",
                       seedanceModel === 'MiniMax-H3'
                         ? "border-sky-600 bg-sky-600 text-white shadow-[0_5px_14px_rgba(2,132,199,0.28)]"
-                        : seedanceModel === 'doubao-seedance-2-5-260628'
+                      : seedanceModel === 'wan3.0-video'
+                        ? "border-indigo-600 bg-indigo-600 text-white shadow-[0_5px_14px_rgba(79,70,229,0.28)]"
+                      : seedanceModel === 'doubao-seedance-2-5-260628'
                         ? "border-violet-600 bg-violet-600 text-white shadow-[0_5px_14px_rgba(124,58,237,0.28)]"
+                        : seedanceModel === 'doubao-seedance-2-0-fast-260128'
+                          ? "border-cyan-600 bg-cyan-600 text-white shadow-[0_5px_14px_rgba(8,145,178,0.28)]"
                         : seedanceModel === 'doubao-seedance-2-0-mini-260615'
                           ? "border-amber-600 bg-amber-600 text-white shadow-[0_5px_14px_rgba(217,119,6,0.28)]"
                           : "border-emerald-600 bg-emerald-600 text-white shadow-[0_5px_14px_rgba(5,150,105,0.28)]"
@@ -6220,9 +6247,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     aria-label="选择视频生成模型"
                   >
                     <option className="bg-white text-slate-800" value="doubao-seedance-2-0-260128">Seedance 2.0 稳定版</option>
+                    <option className="bg-white text-slate-800" value="doubao-seedance-2-0-fast-260128">Seedance 2.0 Fast</option>
                     <option className="bg-white text-slate-800" value="doubao-seedance-2-0-mini-260615">Seedance 2.0 mini</option>
                     <option className="bg-white text-slate-800" value="doubao-seedance-2-5-260628">Seedance 2.5 测试版</option>
                     <option className="bg-white text-slate-800" value="MiniMax-H3">MiniMax H3 768P（试验）</option>
+                    <option className="bg-white text-slate-800" value="wan3.0-video">千问 Wan3.0 Video</option>
                   </select>
                   <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[10px] font-semibold text-slate-500">
                     今日 ¥{seedanceCostStats.daily} / 本月 ¥{seedanceCostStats.monthly} / 本年 ¥{seedanceCostStats.yearly}
@@ -6263,6 +6292,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   {minimaxApiConfigured
                     ? 'H3效果试验：固定768P，0.50元/秒；当前仅接入最多5张参考图片，不影响全自动40条的Seedance Mini设置。'
                     : '需要先在服务端配置 MINIMAX_API_KEY，重启服务后才能提交H3测试任务。'}
+                </div>
+              )}
+              {seedanceTaskMode === 'generate' && seedanceModel === 'wan3.0-video' && (
+                <div className={cn(
+                  "mb-4 rounded-xl border px-3 py-2 text-[11px] font-semibold leading-5",
+                  dashscopeApiConfigured
+                    ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                    : "border-amber-200 bg-amber-50 text-amber-700"
+                )}>
+                  {dashscopeApiConfigured
+                    ? 'Wan3.0 Video：默认480P，活动价约0.21元/秒；支持2-30秒，实际费用以阿里云账单为准。'
+                    : '需要先在服务端配置 DASHSCOPE_API_KEY，重启服务后才能提交 Wan3.0 任务。'}
                 </div>
               )}
 
@@ -6595,7 +6636,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         {seedanceTaskMode === 'generate' && <div className="mt-4">
                           <div className="mb-2 text-xs font-black text-slate-700">视频时长</div>
                           <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
-                            {(seedanceModel === 'doubao-seedance-2-5-260628' ? SEEDANCE_DURATIONS_2_5 : SEEDANCE_DURATIONS).map((duration) => (
+                            {(seedanceModel === 'wan3.0-video' ? WAN3_DURATIONS : seedanceModel === 'doubao-seedance-2-5-260628' ? SEEDANCE_DURATIONS_2_5 : SEEDANCE_DURATIONS).map((duration) => (
                               <button
                                 key={duration}
                                 type="button"
@@ -6670,7 +6711,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   disabled={
                     !seedancePrompt.trim()
                     || isSeedanceLoading
-                    || (seedanceModel === 'MiniMax-H3' ? !minimaxApiConfigured : !seedanceApiConfigured)
+                    || (seedanceModel === 'MiniMax-H3' ? !minimaxApiConfigured : seedanceModel === 'wan3.0-video' ? !dashscopeApiConfigured : !seedanceApiConfigured)
                     || (seedanceTaskMode === 'video-edit-painting' && (
                       !videoEditTarget.trim()
                       || !videoEditSourceDuration
@@ -6708,7 +6749,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 {isSeedanceLoading ? (
                   <div className="flex min-h-[180px] items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white p-3 text-xs font-bold text-violet-600">
                     <Loader2 className="size-4 animate-spin" />
-                    正在创建 Seedance 任务
+                    正在创建 {selectedVideoModelLabel} 任务
                   </div>
                 ) : seedanceTask ? (
                   <div className="space-y-2">
@@ -6745,13 +6786,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             ))}
                           </div>
                           <div className="text-sm font-black tracking-wider text-white">
-                            任务处理中
+                            {activeVideoModelLabel} 正在生成
                           </div>
                           <div className="mt-1.5 text-xs font-semibold text-cyan-300/80">
                             已等待 {seedanceElapsedText}
                           </div>
                           <div className="mt-3 text-[11px] text-slate-500">
-                            视频生成中，完成后将在此自动展示
+                            当前模型：{activeVideoModelLabel}，完成后将在此自动展示
                           </div>
                         </div>
                       </div>
@@ -6764,7 +6805,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           <div className="flex items-center gap-2">
                             <span className="flex h-2 w-2 rounded-full bg-emerald-500" />
                             <span className="text-xs font-black text-emerald-600">
-                              {getSeedanceStatusLabel(seedanceTask.status, true)}
+                              {activeVideoModelLabel} · {getSeedanceStatusLabel(seedanceTask.status, true)}
                             </span>
                           </div>
                           <span className="text-[11px] text-slate-400">
@@ -6814,10 +6855,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     {isSeedanceFailureStatus(seedanceTask.status) && !seedanceTask.videoUrl && (
                       <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-center">
                         <div className="text-sm font-black text-red-600">
-                          {getSeedanceStatusLabel(seedanceTask.status, false)}
+                          {activeVideoModelLabel} · {getSeedanceStatusLabel(seedanceTask.status, false)}
                         </div>
                         <div className="mt-1 text-xs text-red-400">
-                          任务执行失败，请检查提示词或参考素材后重试
+                          {activeVideoModelLabel} 任务执行失败，请检查提示词或参考素材后重试
                         </div>
                       </div>
                     )}
@@ -7283,11 +7324,46 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               <span className="block text-amber-600">木条图仅供实木压条特写方向使用，未上传也不会阻止批量生成。</span>
             </div>
 
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-black text-slate-700">生成模型</span>
+                <select
+                  value={paintingBatchModel}
+                  onChange={(event) => {
+                    setPaintingBatchModel(event.target.value);
+                    batchCreationRequestIdRef.current = null;
+                  }}
+                  disabled={paintingBatchCreating || paintingBatchConfirming}
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 outline-none focus:border-rose-300 disabled:cursor-not-allowed disabled:bg-slate-50"
+                >
+                  {SEEDANCE_BATCH_MODEL_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-black text-slate-700">分辨率</span>
+                <select
+                  value={paintingBatchResolution}
+                  onChange={(event) => {
+                    setPaintingBatchResolution(event.target.value);
+                    batchCreationRequestIdRef.current = null;
+                  }}
+                  disabled={paintingBatchCreating || paintingBatchConfirming}
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 outline-none focus:border-rose-300 disabled:cursor-not-allowed disabled:bg-slate-50"
+                >
+                  {SEEDANCE_BATCH_RESOLUTION_OPTIONS.map((resolution) => (
+                    <option key={resolution} value={resolution}>{resolution.toUpperCase()}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
             <dl className="mt-4 grid grid-cols-2 gap-2 text-xs">
               {[
-                ['批量模型', `${SEEDANCE_BATCH_MODEL_LABEL}（固定）`],
-                ['清晰度', `${SEEDANCE_BATCH_RESOLUTION.toUpperCase()}（固定）`],
-                ['计费单价', `${getSeedanceRatePerSecond(SEEDANCE_BATCH_MODEL, SEEDANCE_BATCH_RESOLUTION) ?? '暂无法估算'}元/秒`],
+                ['批量模型', getSeedanceModelLabel(paintingBatchModel as SeedanceModelId)],
+                ['清晰度', paintingBatchResolution.toUpperCase()],
+                ['计费单价', `${getSeedanceRatePerSecond(paintingBatchModel, paintingBatchResolution) ?? '暂无法估算'}元/秒`],
                 ['画面比例', paintingPlan.ratio || seedanceRatio],
                 ['单条时长', `${paintingPlan.durationMin}-${paintingPlan.durationMax} 秒`],
                 ['本轮风格', getPaintingStyleLabel(paintingPlan.stylePreset)],
@@ -7358,7 +7434,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   totalMinSeconds += min > 0 ? min : 0;
                   totalMaxSeconds += max > 0 ? max : 0;
                 }
-                const ratePerSecond = getSeedanceRatePerSecond(SEEDANCE_BATCH_MODEL, SEEDANCE_BATCH_RESOLUTION);
+                const ratePerSecond = getSeedanceRatePerSecond(paintingBatchModel, paintingBatchResolution);
                 const costMin = ratePerSecond == null ? null : Number((totalMinSeconds * ratePerSecond).toFixed(2));
                 const costMax = ratePerSecond == null ? null : Number((totalMaxSeconds * ratePerSecond).toFixed(2));
                 const sameRange = totalMinSeconds === totalMaxSeconds;
@@ -7370,7 +7446,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     ) : (
                       <>
                         {' '}· 预计总时长 {sameRange ? <b>{totalMaxSeconds} 秒</b> : <b>{totalMinSeconds}～{totalMaxSeconds} 秒</b>}
-                        {' '}· Mini <b>¥{ratePerSecond.toFixed(2)}/秒</b>
+                        {' '}· {getSeedanceModelLabel(paintingBatchModel as SeedanceModelId)} <b>¥{ratePerSecond.toFixed(2)}/秒</b>
                         {' '}· 预计费用 {sameRange ? <b>¥{costMax.toFixed(2)}</b> : <b>¥{costMin.toFixed(2)}～¥{costMax.toFixed(2)}</b>}
                       </>
                     )}

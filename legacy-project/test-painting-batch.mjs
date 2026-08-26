@@ -9,8 +9,10 @@ import { Readable } from 'node:stream';
 const stateDir = mkdtempSync(join(tmpdir(), 'kelong-painting-test-'));
 process.env.RUNTIME_STATE_DIR = stateDir;
 process.env.KELONG_SKIP_LISTEN = '1';
+process.env.ARK_API_KEY = 'test-ark-key';
 process.env.MINIMAX_API_KEY = 'test-minimax-key';
 process.env.SEEDANCE_API_KEY = 'test-seedance-key';
+process.env.DASHSCOPE_API_KEY = 'test-dashscope-key';
 
 // 拦截所有出站 fetch，杜绝任何真实付费/网络调用，并记录调用以便断言“未触发创建”。
 const fetchCalls = [];
@@ -39,6 +41,8 @@ const {
   dbMarkPaintingDirectionUsed,
   dbGetPaintingUsedDirections,
   handlePaintingIdeas,
+  handlePaintingIdeaPrompt,
+  handlePaintingTaskStatus,
   handleRetryPaintingBatchTask,
   handleResubmitPaintingBatchTask,
   handleCreatePaintingBatchRun,
@@ -50,12 +54,17 @@ const {
   encodeMiniMaxH3TaskId,
   decodeMiniMaxH3TaskId,
   MINIMAX_H3_MODEL,
+  encodeWan3TaskId,
+  decodeWan3TaskId,
+  WAN3_VIDEO_MODEL,
   readMultipartFormBody,
   isValidPaintingClientRequestId,
   parsePaintingIdeasWithJsonRetry,
   getSeedanceRatePerSecond,
   computePaintingBatchCostEstimate,
   PAINTING_BATCH_MODEL,
+  PAINTING_BATCH_MODELS,
+  PAINTING_BATCH_RESOLUTIONS,
   PAINTING_BATCH_MODEL_REJECT_MESSAGE,
   paintingPromptSimilarity,
   rewritePromptForDiversity,
@@ -338,6 +347,7 @@ console.log('\n[6] 并发提示词相似度复核');
 console.log('\n[7] Seedance 按秒单价（元/秒）');
 {
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615') === 0.2, 'Mini = 0.2 元/秒');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-fast-260128') === 0.6, 'Fast = 0.6 元/秒');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-260128') === 1.0, '2.0 = 1.0 元/秒');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-5-260628') === 1.5, '2.5 = 1.5 元/秒');
   assert(getSeedanceRatePerSecond('doubao-seedance-unknown') === null, '未知模型返回 null（无兜底单价）');
@@ -383,12 +393,16 @@ console.log('\n[11] 未知模型：无 0.5 兜底 → 费用估算为 null（前
   assert(est.estimatedCostMin === null && est.estimatedCostMax === null, '费用估算为 null（无 0.5 兜底）', JSON.stringify(est));
 }
 
-// ===== T12 批量估算接口：拒绝 2.0/2.5，接受 Mini =====
-console.log('\n[12] 批量估算接口：拒绝 2.0/2.5，接受 Mini');
+// ===== T12 批量估算接口：接受三个 2.0 版本，拒绝 2.5 =====
+console.log('\n[12] 批量估算接口：接受稳定版/Fast/Mini，拒绝 2.5');
 {
-  const resReject20 = mockRes();
-  await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-260128'), resReject20);
-  assert(resReject20._code === 400, '2.0 模型返回 400', `code=${resReject20._code}`);
+  const res20 = mockRes();
+  await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-260128&resolution=480p'), res20);
+  assert(res20._code === 200 && jsonBody(res20).estimate?.ratePerSecond === 0.5, '稳定版480P返回0.5元/秒', JSON.stringify(jsonBody(res20)));
+
+  const resFast = mockRes();
+  await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-fast-260128&resolution=720p'), resFast);
+  assert(resFast._code === 200 && jsonBody(resFast).estimate?.ratePerSecond === 0.6, 'Fast 720P返回0.6元/秒', JSON.stringify(jsonBody(resFast)));
 
   const resReject25 = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-5-260628'), resReject25);
@@ -406,16 +420,16 @@ console.log('\n[12] 批量估算接口：拒绝 2.0/2.5，接受 Mini');
   assert(resDefault._code === 200 && bodyDefault.estimate?.model === PAINTING_BATCH_MODEL, '未传模型时默认 Mini', JSON.stringify(bodyDefault));
 }
 
-// ===== T13 历史非 Mini 批次：无 taskId 禁止重新提交 =====
-console.log('\n[13] 历史非 Mini 批次：无 taskId 禁止重新提交');
+// ===== T13 历史非白名单批次：无 taskId 禁止重新提交 =====
+console.log('\n[13] 历史非白名单批次：无 taskId 禁止重新提交');
 {
-  dbInsertPaintingBatchRun({ batchRunId: 'run-nonmini', paintingName: 'nonmini', status: 'running', controlStatus: 'running', imageHash: 'hash-nonmini', model: 'doubao-seedance-2-0-260128' });
+  dbInsertPaintingBatchRun({ batchRunId: 'run-nonmini', paintingName: 'nonmini', status: 'running', controlStatus: 'running', imageHash: 'hash-nonmini', model: 'doubao-seedance-2-5-260628' });
   const task = dbInsertPaintingBatchTask({ batchRunId: 'run-nonmini', directionNumber: 1, batchIndex: 0, variationRound: 0, status: 'needs_review', seedanceTaskId: '', prompt: '', duration: 8 });
   const res = mockRes();
   await handleResubmitPaintingBatchTask(mockReq(`/api/painting/batch-tasks/${task.id}/resubmit`, { confirm: true }), res);
   const body = jsonBody(res);
-  assert(res._code === 400, '非 Mini 历史批次返回 400', `code=${res._code}`);
-  assert(String(body.error).includes('非 Mini 模型'), '错误信息提示非 Mini 模型', JSON.stringify(body));
+  assert(res._code === 400, '非白名单历史批次返回 400', `code=${res._code}`);
+  assert(String(body.error).includes('白名单'), '错误信息提示模型不在白名单', JSON.stringify(body));
   assert(dbGetPaintingBatchTask(task.id).status === 'needs_review', '任务状态未改动（仍 needs_review）');
 }
 
@@ -457,7 +471,7 @@ console.log('\n[15] options_json 费用估算快照（创建时写入，可追�
   assert(!!ce, 'options_json 中保存了 costEstimate 快照', JSON.stringify(fetched.options));
   assert(ce.ratePerSecond === 0.2 && ce.totalMinSeconds === 320 && ce.totalMaxSeconds === 320, '快照含单价与总时长', JSON.stringify(ce));
   assert(ce.estimatedCostMin === 64 && ce.estimatedCostMax === 64, '快照含费用估算', JSON.stringify(ce));
-  assert(fetched.model === PAINTING_BATCH_MODEL, '批次 model 固定为 Mini', fetched.model);
+  assert(fetched.model === PAINTING_BATCH_MODEL, '批次保存所选 model', fetched.model);
 }
 
 // ===== T16 按秒单价真正校验分辨率 =====
@@ -465,15 +479,19 @@ console.log('\n[16] 按秒单价：真正校验分辨率');
 {
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '720p') === 0.2, 'Mini + 720p = 0.2');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '720P') === 0.2, 'Mini + 720P(大写) = 0.2');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '480p') === 0.1, 'Mini + 480p = 0.1');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-fast-260128', '720p') === 0.6, 'Fast + 720p = 0.6');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-fast-260128', '480p') === 0.3, 'Fast + 480p = 0.3');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '1080p') === null, 'Mini + 1080p = null');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '4k') === null, 'Mini + 4k = null');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615') === 0.2, 'Mini + 未传分辨率（默认720p）= 0.2');
-  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-260128', '1080p') === null, '2.0 + 1080p = null');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-260128', '480p') === 0.5, '2.0 + 480p = 0.5');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-260128', '1080p') === null, '批量费用口径未开放2.0 + 1080p');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-5-260628', '720p') === 1.5, '2.5 + 720p = 1.5（手动模式仍可用）');
 }
 
-// ===== T17 创建批次接口：接受 720P，拒绝 1080P/4K =====
-console.log('\n[17] 创建批次接口：接受 720P，拒绝 1080P/4K');
+// ===== T17 创建批次接口：接受 480P/720P，拒绝 1080P/4K =====
+console.log('\n[17] 创建批次接口：接受 480P/720P，拒绝 1080P/4K');
 {
   const ideas = Array.from({ length: 40 }, (_, i) => ({ id: `c${i}`, directionNumber: i + 1, durationMin: 8, durationMax: 8 }));
   const IMG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
@@ -482,7 +500,7 @@ console.log('\n[17] 创建批次接口：接受 720P，拒绝 1080P/4K');
   const res1080 = mockRes();
   await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, resolution: '1080p' }), res1080);
   assert(res1080._code === 400, 'Mini + 1080p 返回 400', `code=${res1080._code}`);
-  assert(String(jsonBody(res1080).error).includes('仅支持720P'), '错误提示“仅支持720P”', jsonBody(res1080).error);
+  assert(String(jsonBody(res1080).error).includes('480P或720P'), '错误提示仅支持480P或720P', jsonBody(res1080).error);
 
   const res4k = mockRes();
   await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, resolution: '4k' }), res4k);
@@ -497,6 +515,14 @@ console.log('\n[17] 创建批次接口：接受 720P，拒绝 1080P/4K');
   assert(run720.model === PAINTING_BATCH_MODEL && String(run720.resolution).toLowerCase() === '720p', '批次 model=Mini 且 resolution=720p', JSON.stringify({ model: run720.model, resolution: run720.resolution }));
   // 立即停止该批次，避免后台处理器在后续断言期间产生噪声。
   dbUpdatePaintingBatchRun(body720.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+
+  const res480 = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, model: 'doubao-seedance-2-0-fast-260128', resolution: '480p', creationRequestId: 'batch-resolution-fast-480' }), res480);
+  const body480 = jsonBody(res480);
+  assert(res480._code === 202, 'Fast + 480p 返回 202', `code=${res480._code}`);
+  const run480 = dbGetPaintingBatchRun(body480.batchRunId);
+  assert(run480.model === 'doubao-seedance-2-0-fast-260128' && run480.resolution === '480p', '批次保存Fast与480p选择', JSON.stringify({ model: run480.model, resolution: run480.resolution }));
+  dbUpdatePaintingBatchRun(body480.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
 }
 
 // ===== T18 历史非 720P 批次：有 taskId 可查询，无 taskId 禁止重提 =====
@@ -508,7 +534,7 @@ console.log('\n[18] 历史非 720P 批次：有 taskId 可查询，无 taskId �
   const resNoTask = mockRes();
   await handleResubmitPaintingBatchTask(mockReq(`/api/painting/batch-tasks/${noTask.id}/resubmit`, { confirm: true }), resNoTask);
   assert(resNoTask._code === 400, '非 720P 历史批次无 taskId 返回 400', `code=${resNoTask._code}`);
-  assert(String(jsonBody(resNoTask).error).includes('非 720P'), '错误信息提示非 720P 分辨率', jsonBody(resNoTask).error);
+  assert(String(jsonBody(resNoTask).error).includes('支持范围'), '错误信息提示分辨率不在支持范围', jsonBody(resNoTask).error);
   assert(dbGetPaintingBatchTask(noTask.id).status === 'needs_review', '任务状态未改动（仍 needs_review）');
 
   // 有 taskId：仍可查询/保存（不重新提交）
@@ -977,6 +1003,37 @@ console.log('\n[35] 卷轴滚动打开固定原句');
   }
 }
 
+// ===== T36 Seedance 2.0 Fast 手动单条适配（全程 stub，不产生费用） =====
+console.log('\n[36] Seedance 2.0 Fast 手动单条适配');
+{
+  const previousFetch = globalThis.fetch;
+  let submittedPayload = null;
+  try {
+    globalThis.fetch = async (_url, init = {}) => {
+      submittedPayload = init.body ? JSON.parse(String(init.body)) : null;
+      return new Response(JSON.stringify({ id: 'seedance-fast-test-task' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const createRes = mockRes();
+    await handleSeedanceCreateTask(mockReq('/api/seedance/tasks', {
+      model: 'doubao-seedance-2-0-fast-260128',
+      prompt: '保持挂画文字、排版与木条外观不变，人物自然走过。',
+      taskMode: 'generate',
+      resolution: '480p',
+      ratio: '9:16',
+      duration: 6,
+      generateAudio: false,
+      watermark: false,
+    }), createRes);
+    assert(createRes._code === 200 && jsonBody(createRes).taskId === 'seedance-fast-test-task', 'Fast手动任务通过服务端白名单');
+    assert(submittedPayload?.model === 'doubao-seedance-2-0-fast-260128' && submittedPayload?.resolution === '480p', 'Fast模型ID与480P原样提交上游', JSON.stringify(submittedPayload));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+}
+
 // ===== T32 MiniMax H3 手动单条试验适配（全程 stub，不产生费用） =====
 console.log('\n[32] MiniMax H3 手动单条试验适配');
 {
@@ -1046,6 +1103,98 @@ console.log('\n[32] MiniMax H3 手动单条试验适配');
     duration: 8,
   }), badResolutionRes);
   assert(badResolutionRes._code === 400 && jsonBody(badResolutionRes).error.includes('768p'), 'H3试验版拒绝非768P请求');
+}
+
+// ===== T37 手动单条提示词改为后台任务，避免同步请求转圈 =====
+console.log('\n[37] 手动单条提示词后台任务');
+{
+  const previousFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      output_text: '产品固定约束：保持挂画内容、文字、颜色和上下木条不变。\n创意内容：0-2秒完整人物与挂画同框全景；2-4秒人物用双手将卷起挂画滚动打开；4-6秒扶正下方木条；6-8秒镜头轻微横移自然结束。\n负面约束：禁止滑动打开、悬浮、穿模、木条变色或新增物体。\n总时长：8秒',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+    const createRes = mockRes();
+    await handlePaintingIdeaPrompt(mockReq('/api/painting/idea-prompt', {
+      profile: { name: '测试挂画', frameStructure: '上下浅原木木条' },
+      idea: { id: 'direction-1', title: '滚动展开', summary: '人物双手把卷起挂画滚动打开', directionNumber: 1 },
+      durationMin: 8,
+      durationMax: 8,
+      ratio: '9:16',
+    }), createRes);
+    const createBody = jsonBody(createRes);
+    assert(createRes._code === 202 && /^painting-idea-prompt-/.test(createBody.taskId || ''), '手动提示词接口立即返回后台任务编号', JSON.stringify(createBody));
+
+    let statusBody = {};
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const statusRes = mockRes();
+      handlePaintingTaskStatus({}, statusRes, createBody.taskId);
+      statusBody = jsonBody(statusRes);
+      if (statusBody.status === 'done' || statusBody.status === 'failed') break;
+      await sleep(10);
+    }
+    assert(statusBody.status === 'done' && Boolean(statusBody.result?.prompt), '前端轮询可取得生成完成的提示词', JSON.stringify(statusBody));
+    assert(statusBody.result?.prompt?.includes(PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION), '后台生成链路仍固定注入滚动打开原句');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+}
+
+// ===== T38 Wan3.0 Video 手动任务适配（全程 stub，不产生费用） =====
+console.log('\n[38] Wan3.0 Video 手动任务适配');
+{
+  assert(encodeWan3TaskId('task-wan-test') === 'wan3_task-wan-test', 'Wan任务编号带供应商前缀');
+  assert(decodeWan3TaskId('wan3_task-wan-test') === 'task-wan-test', 'Wan查询前还原原始任务编号');
+  assert(getSeedanceRatePerSecond(WAN3_VIDEO_MODEL, '480p') === 0.21, 'Wan 480P活动估算价为0.21元/秒');
+  assert(PAINTING_BATCH_MODELS.has(WAN3_VIDEO_MODEL), 'Wan已加入全自动批量模型白名单');
+
+  const previousFetch = globalThis.fetch;
+  let submittedUrl = '';
+  let submittedHeaders = null;
+  let submittedPayload = null;
+  try {
+    globalThis.fetch = async (url, init = {}) => {
+      submittedUrl = String(url);
+      submittedHeaders = init.headers || {};
+      submittedPayload = init.body ? JSON.parse(String(init.body)) : null;
+      return new Response(JSON.stringify({ output: { task_id: 'task-wan-test', task_status: 'PENDING' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const createRes = mockRes();
+    await handleSeedanceCreateTask(mockReq('/api/seedance/tasks', {
+      model: WAN3_VIDEO_MODEL,
+      prompt: '保持曾国藩家训文字、排版与木条外观，镜头自然横移。',
+      taskMode: 'generate',
+      resolution: '480p',
+      ratio: '9:16',
+      duration: 6,
+      generateAudio: false,
+      watermark: false,
+    }), createRes);
+    const createBody = jsonBody(createRes);
+    assert(createRes._code === 200 && createBody.taskId === 'wan3_task-wan-test', 'Wan创建后返回带前缀任务编号', JSON.stringify(createBody));
+    assert(submittedUrl.endsWith('/api/v1/services/aigc/video-generation/video-synthesis'), 'Wan提交到DashScope异步视频端点', submittedUrl);
+    assert(submittedHeaders['X-DashScope-Async'] === 'enable', 'Wan请求启用异步任务模式');
+    assert(submittedPayload?.model === WAN3_VIDEO_MODEL && submittedPayload?.parameters?.resolution === '480P', 'Wan模型与480P参数正确提交', JSON.stringify(submittedPayload));
+    assert(submittedPayload?.parameters?.prompt_extend === false, 'Wan关闭提示词自动扩写，保护产品约束');
+
+    globalThis.fetch = async (url) => {
+      submittedUrl = String(url);
+      return new Response(JSON.stringify({ output: { task_id: 'task-wan-test', task_status: 'SUCCEEDED', video_url: 'https://example.com/wan-output.mp4' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const queryRes = mockRes();
+    await handleSeedanceGetTask({}, queryRes, 'wan3_task-wan-test');
+    const queryBody = jsonBody(queryRes);
+    assert(submittedUrl.endsWith('/api/v1/tasks/task-wan-test'), 'Wan查询使用还原后的原始任务编号', submittedUrl);
+    assert(queryRes._code === 200 && queryBody.status === 'SUCCEEDED' && queryBody.videoUrl === 'https://example.com/wan-output.mp4', 'Wan状态与视频地址映射到现有前端结构', JSON.stringify(queryBody));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);
