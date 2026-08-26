@@ -16485,14 +16485,29 @@ async function fetchManualVideoGenerationTask(taskId) {
   }
 
   const taskPayload = isMiniMaxH3 ? payload?.task : isWan3 ? payload?.output : payload;
+  const parseTaskTimestamp = (value) => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric > 1e12 ? Math.floor(numeric / 1000) : Math.floor(numeric);
+    const parsed = Date.parse(readValue(value));
+    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : undefined;
+  };
+  const errorMessage = readValue(
+    taskPayload?.message,
+    taskPayload?.error_message,
+    taskPayload?.error?.message,
+    payload?.message,
+    payload?.error?.message,
+  );
   return {
     provider: isMiniMaxH3 ? 'minimax-h3' : isWan3 ? 'wan3' : 'seedance',
     providerLabel,
     taskId: normalizedTaskId,
     status: isMiniMaxH3 ? readValue(taskPayload?.status) : isWan3 ? readValue(taskPayload?.task_status) : extractSeedanceStatus(payload),
     videoUrl: isMiniMaxH3 ? readValue(taskPayload?.content?.url) : isWan3 ? readValue(taskPayload?.video_url) : extractSeedanceVideoUrl(payload),
-    createdAt: Number(taskPayload?.created_at || 0) || undefined,
-    updatedAt: Number(taskPayload?.updated_at || 0) || undefined,
+    createdAt: parseTaskTimestamp(taskPayload?.created_at || taskPayload?.submit_time || taskPayload?.created_time),
+    updatedAt: parseTaskTimestamp(taskPayload?.updated_at || taskPayload?.end_time || taskPayload?.scheduled_time),
+    errorMessage,
     payload,
   };
 }
@@ -16519,6 +16534,7 @@ async function handleSeedanceGetTask(req, res, taskId) {
       videoUrl: task.videoUrl,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
+      errorMessage: task.errorMessage,
       executionExpiresAfter: Number(task.payload?.execution_expires_after || task.payload?.data?.execution_expires_after || 0) || undefined,
       response: task.payload
     });

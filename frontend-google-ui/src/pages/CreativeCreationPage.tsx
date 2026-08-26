@@ -135,6 +135,7 @@ interface SeedanceHistoryItem {
   videoUrl?: string;
   createdAt?: number;
   updatedAt?: number;
+  errorMessage?: string;
   savedAt: string;
   resolution?: SeedanceResolution;
   ratio: string;
@@ -1002,6 +1003,7 @@ function createSeedanceHistoryItem(
     videoUrl: task.videoUrl,
     createdAt,
     updatedAt: task.updatedAt,
+    errorMessage: task.errorMessage,
     savedAt: new Date().toISOString(),
     resolution: options.resolution,
     ratio: options.ratio,
@@ -1237,8 +1239,9 @@ function seedanceTaskToHistoryPatch(task: SeedanceTaskResult) {
   return {
     status: task.status,
     videoUrl: task.videoUrl,
-    createdAt: task.createdAt,
-    updatedAt: task.updatedAt,
+    ...(task.createdAt ? { createdAt: task.createdAt } : {}),
+    ...(task.updatedAt ? { updatedAt: task.updatedAt } : {}),
+    ...(task.errorMessage ? { errorMessage: task.errorMessage } : {}),
     savedAt: new Date().toISOString(),
   };
 }
@@ -1251,6 +1254,7 @@ function seedanceHistoryItemToTask(item: SeedanceHistoryItem): SeedanceTaskResul
     videoUrl: item.videoUrl,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
+    errorMessage: item.errorMessage,
     directionNumber: item.directionNumber,
     variationRound: item.variationRound,
     response: {
@@ -2073,6 +2077,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
             ? {
                 ...previous,
                 ...nextTask,
+                createdAt: nextTask.createdAt || previous.createdAt,
               }
             : previous
         );
@@ -2957,6 +2962,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
           ? {
               ...previous,
               ...nextTask,
+              createdAt: nextTask.createdAt || previous.createdAt,
             }
           : previous
       );
@@ -2981,6 +2987,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
           ? {
               ...previous,
               ...nextTask,
+              createdAt: nextTask.createdAt || previous.createdAt,
             }
           : previous
       );
@@ -6858,7 +6865,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           {activeVideoModelLabel} · {getSeedanceStatusLabel(seedanceTask.status, false)}
                         </div>
                         <div className="mt-1 text-xs text-red-400">
-                          {activeVideoModelLabel} 任务执行失败，请检查提示词或参考素材后重试
+                          {seedanceTask.errorMessage || `${activeVideoModelLabel} 任务执行失败，请检查提示词或参考素材后重试`}
                         </div>
                       </div>
                     )}

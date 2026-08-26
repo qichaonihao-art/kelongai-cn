@@ -38,6 +38,7 @@ export interface SeedanceTaskResult {
   videoUrl?: string;
   createdAt?: number;
   updatedAt?: number;
+  errorMessage?: string;
   executionExpiresAfter?: number;
   directionNumber?: number;
   variationRound?: number;
@@ -599,6 +600,7 @@ export async function createSeedanceTask(options: {
     videoUrl: typeof json?.videoUrl === 'string' ? json.videoUrl : undefined,
     createdAt: typeof json?.createdAt === 'number' ? json.createdAt : undefined,
     updatedAt: typeof json?.updatedAt === 'number' ? json.updatedAt : undefined,
+    errorMessage: typeof json?.errorMessage === 'string' ? json.errorMessage : undefined,
     executionExpiresAfter: typeof json?.executionExpiresAfter === 'number' ? json.executionExpiresAfter : undefined,
     directionNumber: options.directionNumber,
     variationRound: options.variationRound,

@@ -1182,7 +1182,7 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
 
     globalThis.fetch = async (url) => {
       submittedUrl = String(url);
-      return new Response(JSON.stringify({ output: { task_id: 'task-wan-test', task_status: 'SUCCEEDED', video_url: 'https://example.com/wan-output.mp4' } }), {
+      return new Response(JSON.stringify({ output: { task_id: 'task-wan-test', task_status: 'SUCCEEDED', video_url: 'https://example.com/wan-output.mp4', submit_time: '2026-08-26 23:20:00.000' } }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -1192,6 +1192,14 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
     const queryBody = jsonBody(queryRes);
     assert(submittedUrl.endsWith('/api/v1/tasks/task-wan-test'), 'Wan查询使用还原后的原始任务编号', submittedUrl);
     assert(queryRes._code === 200 && queryBody.status === 'SUCCEEDED' && queryBody.videoUrl === 'https://example.com/wan-output.mp4', 'Wan状态与视频地址映射到现有前端结构', JSON.stringify(queryBody));
+    assert(Number(queryBody.createdAt) > 0, 'Wan字符串格式的提交时间被转换为计时所需时间戳', JSON.stringify(queryBody));
+
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      output: { task_id: 'task-wan-test', task_status: 'FAILED', code: 'InvalidParameter', message: 'reference image is invalid' },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const failedRes = mockRes();
+    await handleSeedanceGetTask({}, failedRes, 'wan3_task-wan-test');
+    assert(jsonBody(failedRes).errorMessage === 'reference image is invalid', 'Wan失败任务向前端透传具体错误原因', JSON.stringify(jsonBody(failedRes)));
   } finally {
     globalThis.fetch = previousFetch;
   }
