@@ -51,6 +51,7 @@ const {
   handleGetPaintingBatchRunEstimate,
   handleSeedanceCreateTask,
   handleSeedanceGetTask,
+  submitSeedanceTaskForBatchTask,
   encodeMiniMaxH3TaskId,
   decodeMiniMaxH3TaskId,
   MINIMAX_H3_MODEL,
@@ -393,12 +394,12 @@ console.log('\n[11] 未知模型：无 0.5 兜底 → 费用估算为 null（前
   assert(est.estimatedCostMin === null && est.estimatedCostMax === null, '费用估算为 null（无 0.5 兜底）', JSON.stringify(est));
 }
 
-// ===== T12 批量估算接口：接受三个 2.0 版本，拒绝 2.5 =====
-console.log('\n[12] 批量估算接口：接受稳定版/Fast/Mini，拒绝 2.5');
+// ===== T12 批量估算接口：只接受四个低成本模型 =====
+console.log('\n[12] 批量估算接口：接受 Mini/Fast/H3/Wan，拒绝稳定版和2.5');
 {
   const res20 = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-260128&resolution=480p'), res20);
-  assert(res20._code === 200 && jsonBody(res20).estimate?.ratePerSecond === 0.5, '稳定版480P返回0.5元/秒', JSON.stringify(jsonBody(res20)));
+  assert(res20._code === 400, '稳定版不进入全自动批量模型白名单', JSON.stringify(jsonBody(res20)));
 
   const resFast = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-fast-260128&resolution=720p'), resFast);
@@ -407,6 +408,14 @@ console.log('\n[12] 批量估算接口：接受稳定版/Fast/Mini，拒绝 2.5'
   const resReject25 = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-5-260628'), resReject25);
   assert(resReject25._code === 400, '2.5 模型返回 400', `code=${resReject25._code}`);
+
+  const resH3 = mockRes();
+  await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=MiniMax-H3&resolution=768p'), resH3);
+  assert(resH3._code === 200 && jsonBody(resH3).estimate?.ratePerSecond === 0.5, 'H3 768P进入批量白名单并返回费用', JSON.stringify(jsonBody(resH3)));
+
+  const resH3WrongResolution = mockRes();
+  await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=MiniMax-H3&resolution=720p'), resH3WrongResolution);
+  assert(resH3WrongResolution._code === 400, 'H3批量任务拒绝720P，只允许768P');
 
   const resMini = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-mini-260615'), resMini);
@@ -482,6 +491,8 @@ console.log('\n[16] 按秒单价：真正校验分辨率');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '480p') === 0.1, 'Mini + 480p = 0.1');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-fast-260128', '720p') === 0.6, 'Fast + 720p = 0.6');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-fast-260128', '480p') === 0.3, 'Fast + 480p = 0.3');
+  assert(getSeedanceRatePerSecond('MiniMax-H3', '768p') === 0.5, 'H3 + 768p = 0.5');
+  assert(getSeedanceRatePerSecond('MiniMax-H3', '720p') === null, 'H3 + 720p = null');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '1080p') === null, 'Mini + 1080p = null');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '4k') === null, 'Mini + 4k = null');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615') === 0.2, 'Mini + 未传分辨率（默认720p）= 0.2');
@@ -523,6 +534,14 @@ console.log('\n[17] 创建批次接口：接受 480P/720P，拒绝 1080P/4K');
   const run480 = dbGetPaintingBatchRun(body480.batchRunId);
   assert(run480.model === 'doubao-seedance-2-0-fast-260128' && run480.resolution === '480p', '批次保存Fast与480p选择', JSON.stringify({ model: run480.model, resolution: run480.resolution }));
   dbUpdatePaintingBatchRun(body480.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+
+  const resH3 = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, model: 'MiniMax-H3', resolution: '768p', creationRequestId: 'batch-resolution-h3-768' }), resH3);
+  const bodyH3 = jsonBody(resH3);
+  assert(resH3._code === 202, 'H3 + 768p 返回 202', JSON.stringify(bodyH3));
+  const runH3 = dbGetPaintingBatchRun(bodyH3.batchRunId);
+  assert(runH3.model === 'MiniMax-H3' && runH3.resolution === '768p', '批次保存H3与768p选择', JSON.stringify({ model: runH3.model, resolution: runH3.resolution }));
+  dbUpdatePaintingBatchRun(bodyH3.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
 }
 
 // ===== T18 历史非 720P 批次：有 taskId 可查询，无 taskId 禁止重提 =====
@@ -1203,6 +1222,83 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
   } finally {
     globalThis.fetch = previousFetch;
   }
+}
+
+// ===== T39 MiniMax H3 全自动批量提交适配（全程 stub，不产生费用） =====
+console.log('\n[39] MiniMax H3 全自动批量提交适配');
+{
+  const previousFetch = globalThis.fetch;
+  const imagePath = join(stateDir, 'batch-h3-reference.png');
+  writeFileSync(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64'));
+  let submittedUrl = '';
+  let submittedPayload = null;
+  try {
+    globalThis.fetch = async (url, init = {}) => {
+      submittedUrl = String(url);
+      submittedPayload = init.body ? JSON.parse(String(init.body)) : null;
+      return new Response(JSON.stringify({ task_id: 'batch-h3-task' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const result = await submitSeedanceTaskForBatchTask(
+      { id: 3901, directionNumber: 2, prompt: '保持挂画内容不变，人物自然走近讲解。', duration: 6 },
+      { batchRunId: 'batch-h3-route-test', model: MINIMAX_H3_MODEL, resolution: '768p', ratio: '9:16', imagePath, generateAudio: false, watermark: false, options: {} },
+    );
+    assert(submittedUrl === 'https://api.minimaxi.com/v2/video_generation', 'H3全自动任务提交到MiniMax端点', submittedUrl);
+    assert(submittedPayload?.model === MINIMAX_H3_MODEL && submittedPayload?.resolution === '768P', 'H3全自动请求使用H3模型与768P', JSON.stringify(submittedPayload));
+    assert(result.seedanceTaskId === 'minimax-h3_batch-h3-task', 'H3全自动任务编号带供应商前缀', result.seedanceTaskId);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+}
+
+// ===== T40 批量起始组、随机顺序与自定义数量 =====
+console.log('\n[40] 批量起始组、随机顺序与自定义数量');
+{
+  const IMG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const base = {
+    image: IMG,
+    profile: { name: '顺序测试挂画', style: '现代', subject: '书法' },
+    plan: { durationMin: 6, durationMax: 6, ratio: '9:16', stylePreset: 'modern-minimal' },
+    model: PAINTING_BATCH_MODEL,
+    resolution: '720p',
+    onlyUnused: false,
+  };
+  const group2Order = [...Array.from({ length: 30 }, (_, index) => index + 11), ...Array.from({ length: 10 }, (_, index) => index + 1)];
+  const group2Ideas = group2Order.map((directionNumber) => ({ id: `g2-${directionNumber}`, directionNumber, title: `方向${directionNumber}`, durationMin: 6, durationMax: 6 }));
+  const group2Res = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', {
+    ...base,
+    ideas: group2Ideas,
+    totalDirections: 15,
+    requestedCount: 15,
+    startOrder: 'group2',
+    creationRequestId: 'batch-group2-count15',
+  }), group2Res);
+  const group2Body = jsonBody(group2Res);
+  assert(group2Res._code === 202 && group2Body.taskCount === 15, '从第2组开始可只创建15条', JSON.stringify(group2Body));
+  const group2Inserted = getCollectionDb().prepare('SELECT direction_number FROM painting_batch_tasks WHERE batch_run_id = ? ORDER BY id ASC').all(group2Body.batchRunId).map((row) => Number(row.direction_number));
+  assert(group2Inserted.join(',') === Array.from({ length: 15 }, (_, index) => index + 11).join(','), '第2组开始的15条依次为方向11至25', group2Inserted.join(','));
+  const group2Run = dbGetPaintingBatchRun(group2Body.batchRunId);
+  assert(group2Run.options?.startOrder === 'group2' && group2Run.options?.requestedCount === 15, '批次记录保存起始组和计划数量', JSON.stringify(group2Run.options));
+  dbUpdatePaintingBatchRun(group2Body.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+
+  const randomOrder = [9, 1, 40, 22, 3, ...Array.from({ length: 40 }, (_, index) => index + 1).filter((direction) => ![9, 1, 40, 22, 3].includes(direction))];
+  const randomIdeas = randomOrder.map((directionNumber) => ({ id: `random-${directionNumber}`, directionNumber, title: `方向${directionNumber}`, durationMin: 6, durationMax: 6 }));
+  const randomRes = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', {
+    ...base,
+    ideas: randomIdeas,
+    totalDirections: 5,
+    requestedCount: 5,
+    startOrder: 'random',
+    creationRequestId: 'batch-random-count5',
+  }), randomRes);
+  const randomBody = jsonBody(randomRes);
+  const randomInserted = getCollectionDb().prepare('SELECT direction_number FROM painting_batch_tasks WHERE batch_run_id = ? ORDER BY id ASC').all(randomBody.batchRunId).map((row) => Number(row.direction_number));
+  assert(randomRes._code === 202 && randomInserted.join(',') === '9,1,40,22,3', '随机顺序按传入乱序取前5条', randomInserted.join(','));
+  dbUpdatePaintingBatchRun(randomBody.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);

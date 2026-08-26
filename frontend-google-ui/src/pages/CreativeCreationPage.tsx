@@ -56,10 +56,10 @@ import {
   generatePaintingRequestId,
   isPaintingCreationOutcomeUnknown,
   getSeedanceRatePerSecond,
+  getPaintingBatchResolutionOptions,
   SEEDANCE_BATCH_MODEL,
   SEEDANCE_BATCH_MODEL_OPTIONS,
   SEEDANCE_BATCH_RESOLUTION,
-  SEEDANCE_BATCH_RESOLUTION_OPTIONS,
   SEEDANCE_PRICING_NOTE,
   getPaintingFolderBinding,
   getPaintingUsedDirections,
@@ -648,6 +648,30 @@ type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-fast-
 type SeedanceTaskMode = 'generate' | 'video-edit-painting';
 type SeedanceResolution = '480p' | '720p' | '768p' | '1080p' | '4k';
 type ReverseMode = 'direct' | 'replace' | 'image' | 'painting';
+type PaintingBatchStartOrder = 'group1' | 'group2' | 'group3' | 'group4' | 'random';
+
+const PAINTING_BATCH_START_OPTIONS: Array<{ value: PaintingBatchStartOrder; label: string }> = [
+  { value: 'group1', label: '从第1组开始' },
+  { value: 'group2', label: '从第2组开始' },
+  { value: 'group3', label: '从第3组开始' },
+  { value: 'group4', label: '从第4组开始' },
+  { value: 'random', label: '随机顺序' },
+];
+
+function createRandomPaintingDirectionOrder(): number[] {
+  const directions = Array.from({ length: 40 }, (_, index) => index + 1);
+  for (let index = directions.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [directions[index], directions[swapIndex]] = [directions[swapIndex], directions[index]];
+  }
+  return directions;
+}
+
+function parsePaintingBatchRequestedCount(value: string): number | null {
+  if (!value.trim()) return 40;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 40 ? parsed : null;
+}
 
 interface ReverseSeedanceSyncSnapshot {
   mode: Exclude<ReverseMode, 'painting'>;
@@ -1616,6 +1640,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchFolderId, setPaintingBatchFolderId] = useState<number | null>(null);
   const [paintingBatchModel, setPaintingBatchModel] = useState<string>(SEEDANCE_BATCH_MODEL);
   const [paintingBatchResolution, setPaintingBatchResolution] = useState<string>(SEEDANCE_BATCH_RESOLUTION);
+  const [paintingBatchStartOrder, setPaintingBatchStartOrder] = useState<PaintingBatchStartOrder>('group1');
+  const [paintingBatchRequestedCount, setPaintingBatchRequestedCount] = useState('');
+  const [paintingBatchRandomOrder, setPaintingBatchRandomOrder] = useState<number[]>(createRandomPaintingDirectionOrder);
   const [paintingBatchFolderList, setPaintingBatchFolderList] = useState<string[]>([]);
   const [paintingUsedDirections, setPaintingUsedDirections] = useState<number[]>([]);
   const [paintingBatchActiveRunId, setPaintingBatchActiveRunId] = useState<string | null>(null);
@@ -2141,7 +2168,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   // 图片 / 方案 / 轮次 / 方向集合发生变化后，废弃旧创建幂等编号，避免把新批次错误恢复到旧批次。
   useEffect(() => {
     batchCreationRequestIdRef.current = null;
-  }, [paintingImage, paintingUpperWoodImage, paintingLowerWoodImage, paintingVariationRound, paintingBatchOnlyUnused, paintingPlan, paintingBatchIdeas]);
+  }, [paintingImage, paintingUpperWoodImage, paintingLowerWoodImage, paintingVariationRound, paintingBatchOnlyUnused, paintingPlan, paintingBatchIdeas, paintingBatchStartOrder, paintingBatchRequestedCount, paintingBatchRandomOrder]);
 
   useEffect(() => {
     const persistedMessages = serializeMessagesForStorage(messages);
@@ -3629,6 +3656,31 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     return directionNumber > 0 && paintingUsedDirections.includes(directionNumber);
   }
 
+  function orderPaintingBatchIdeas(ideas: PaintingIdeaSummary[]): PaintingIdeaSummary[] {
+    const directionOrder = paintingBatchStartOrder === 'random'
+      ? paintingBatchRandomOrder
+      : (() => {
+          const startDirection = (Number(paintingBatchStartOrder.replace('group', '')) - 1) * 10 + 1;
+          return Array.from({ length: 40 }, (_, index) => ((startDirection - 1 + index) % 40) + 1);
+        })();
+    const orderIndex = new Map(directionOrder.map((direction, index) => [direction, index]));
+    return [...ideas].sort((left, right) => {
+      const leftDirection = Number(left.directionNumber) || 0;
+      const rightDirection = Number(right.directionNumber) || 0;
+      return (orderIndex.get(leftDirection) ?? 999) - (orderIndex.get(rightDirection) ?? 999);
+    });
+  }
+
+  function selectPaintingBatchIdeas(ideas: PaintingIdeaSummary[]): PaintingIdeaSummary[] {
+    const requestedCount = parsePaintingBatchRequestedCount(paintingBatchRequestedCount);
+    if (requestedCount === null) return [];
+    const ordered = orderPaintingBatchIdeas(ideas);
+    const available = paintingBatchOnlyUnused
+      ? ordered.filter((idea) => !isPaintingBatchIdeaUsed(idea, paintingVariationRound))
+      : ordered;
+    return available.slice(0, requestedCount);
+  }
+
   async function collectPaintingBatchIdeas(variationRound: number): Promise<PaintingIdeaSummary[]> {
     if (!paintingProfile) return [];
     const collected: PaintingIdeaSummary[] = [];
@@ -3762,6 +3814,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       }
       setPaintingBatchFolder(prefillFolder);
       setPaintingBatchFolderId(prefillFolderId);
+      if (paintingBatchStartOrder === 'random') {
+        setPaintingBatchRandomOrder(createRandomPaintingDirectionOrder());
+      }
       setPaintingBatchPrepareStage('');
       setPaintingBatchConfirmOpen(true);
     } catch (error) {
@@ -3776,6 +3831,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   }
 
   function buildPaintingBatchCreateOptions(ideas: PaintingIdeaSummary[], creationRequestId: string) {
+    const requestedCount = parsePaintingBatchRequestedCount(paintingBatchRequestedCount) ?? 40;
     return {
       file: paintingImage!.file,
       upperWoodFile: paintingUpperWoodImage?.file || null,
@@ -3783,7 +3839,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       profile: paintingProfile!,
       plan: paintingPlan,
       ideas,
-      totalDirections: ideas.length,
+      totalDirections: requestedCount,
+      startOrder: paintingBatchStartOrder,
+      requestedCount,
       model: paintingBatchModel,
       resolution: paintingBatchResolution,
       ratio: paintingPlan.ratio || seedanceRatio,
@@ -3860,11 +3918,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   async function handlePaintingConfirmBatch() {
     if (!paintingImage || !paintingProfile) return;
     if (paintingBatchCreating || paintingBatchConfirming) return;
-    let ideas = paintingBatchIdeas;
-    if (paintingBatchOnlyUnused) {
-      ideas = ideas.filter((idea) => !isPaintingBatchIdeaUsed(idea, paintingVariationRound));
+    const requestedCount = parsePaintingBatchRequestedCount(paintingBatchRequestedCount);
+    if (requestedCount === null) {
+      setPaintingError('生成数量请输入1到40之间的整数，留空则默认生成40条。');
+      return;
     }
-    if (!ideas.length) {
+    const orderedIdeas = orderPaintingBatchIdeas(paintingBatchIdeas);
+    const selectedIdeas = selectPaintingBatchIdeas(paintingBatchIdeas);
+    if (!selectedIdeas.length) {
       setPaintingError('没有可生成的方向：当前轮次的方向都已使用过。可取消“仅生成未使用方向”或换一轮再试。');
       setPaintingBatchConfirmOpen(false);
       return;
@@ -3878,7 +3939,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
     const creationRequestId = batchCreationRequestIdRef.current;
     try {
-      const result = await createPaintingBatchRun(buildPaintingBatchCreateOptions(ideas, creationRequestId));
+      const result = await createPaintingBatchRun(buildPaintingBatchCreateOptions(orderedIdeas, creationRequestId));
       enterPaintingBatchProgress(result.batchRunId);
     } catch (error) {
       setPaintingBatchCreating(false);
@@ -3887,7 +3948,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         return;
       }
       // 网络错误：批次可能已创建但响应丢失，进入自动确认（绝不更换编号）。
-      await confirmPaintingBatchCreation(ideas, creationRequestId);
+      await confirmPaintingBatchCreation(orderedIdeas, creationRequestId);
     }
   }
 
@@ -5287,9 +5348,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             </span>
                           </div>
                           {paintingBatchDetail.run.createdAt > 0 && (
-                            <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-600">
-                              <Clock className="size-3.5" />
-                              已运行 {formatElapsedDuration(Math.max(0, Math.floor(paintingBatchClock / 1000) - paintingBatchDetail.run.createdAt)) || '0秒'}
+                            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                              <div className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-600">
+                                <Clock className="size-3.5" />
+                                已运行 {formatElapsedDuration(Math.max(0, Math.floor(paintingBatchClock / 1000) - paintingBatchDetail.run.createdAt)) || '0秒'}
+                              </div>
+                              <div className="inline-flex items-center rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-bold text-violet-700 ring-1 ring-violet-100">
+                                正在使用：{getSeedanceModelLabel(paintingBatchDetail.run.model as SeedanceModelId)}
+                              </div>
                             </div>
                           )}
                           <div className="mt-1 text-xs text-slate-500">
@@ -7337,7 +7403,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 <select
                   value={paintingBatchModel}
                   onChange={(event) => {
-                    setPaintingBatchModel(event.target.value);
+                    const nextModel = event.target.value;
+                    const nextResolutions = getPaintingBatchResolutionOptions(nextModel);
+                    setPaintingBatchModel(nextModel);
+                    setPaintingBatchResolution((current) => nextResolutions.includes(current) ? current : nextResolutions[0]);
                     batchCreationRequestIdRef.current = null;
                   }}
                   disabled={paintingBatchCreating || paintingBatchConfirming}
@@ -7359,10 +7428,54 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   disabled={paintingBatchCreating || paintingBatchConfirming}
                   className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 outline-none focus:border-rose-300 disabled:cursor-not-allowed disabled:bg-slate-50"
                 >
-                  {SEEDANCE_BATCH_RESOLUTION_OPTIONS.map((resolution) => (
+                  {getPaintingBatchResolutionOptions(paintingBatchModel).map((resolution) => (
                     <option key={resolution} value={resolution}>{resolution.toUpperCase()}</option>
                   ))}
                 </select>
+              </label>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-black text-slate-700">从第几组开始</span>
+                <select
+                  value={paintingBatchStartOrder}
+                  onChange={(event) => {
+                    const nextOrder = event.target.value as PaintingBatchStartOrder;
+                    setPaintingBatchStartOrder(nextOrder);
+                    if (nextOrder === 'random') setPaintingBatchRandomOrder(createRandomPaintingDirectionOrder());
+                    batchCreationRequestIdRef.current = null;
+                  }}
+                  disabled={paintingBatchCreating || paintingBatchConfirming}
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 outline-none focus:border-rose-300 disabled:cursor-not-allowed disabled:bg-slate-50"
+                >
+                  {PAINTING_BATCH_START_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-black text-slate-700">生成数量</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={40}
+                  step={1}
+                  value={paintingBatchRequestedCount}
+                  onChange={(event) => {
+                    setPaintingBatchRequestedCount(event.target.value);
+                    batchCreationRequestIdRef.current = null;
+                  }}
+                  placeholder="留空默认40"
+                  disabled={paintingBatchCreating || paintingBatchConfirming}
+                  className={cn(
+                    'h-11 w-full rounded-xl border bg-white px-3 text-xs font-bold text-slate-700 outline-none disabled:cursor-not-allowed disabled:bg-slate-50',
+                    parsePaintingBatchRequestedCount(paintingBatchRequestedCount) === null ? 'border-red-300 focus:border-red-400' : 'border-slate-200 focus:border-rose-300'
+                  )}
+                />
+                {parsePaintingBatchRequestedCount(paintingBatchRequestedCount) === null && (
+                  <span className="mt-1 block text-[10px] font-bold text-red-500">请输入1–40的整数</span>
+                )}
               </label>
             </div>
 
@@ -7370,6 +7483,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               {[
                 ['批量模型', getSeedanceModelLabel(paintingBatchModel as SeedanceModelId)],
                 ['清晰度', paintingBatchResolution.toUpperCase()],
+                ['生成顺序', PAINTING_BATCH_START_OPTIONS.find((option) => option.value === paintingBatchStartOrder)?.label || '从第1组开始'],
+                ['计划数量', `${parsePaintingBatchRequestedCount(paintingBatchRequestedCount) ?? '输入有误'} 条`],
                 ['计费单价', `${getSeedanceRatePerSecond(paintingBatchModel, paintingBatchResolution) ?? '暂无法估算'}元/秒`],
                 ['画面比例', paintingPlan.ratio || seedanceRatio],
                 ['单条时长', `${paintingPlan.durationMin}-${paintingPlan.durationMax} 秒`],
@@ -7429,9 +7544,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
             <div className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-xs leading-5 text-rose-700">
               {(() => {
-                const effectiveIdeas = paintingBatchOnlyUnused
-                  ? paintingBatchIdeas.filter((idea) => !isPaintingBatchIdeaUsed(idea, paintingVariationRound))
-                  : paintingBatchIdeas;
+                const effectiveIdeas = selectPaintingBatchIdeas(paintingBatchIdeas);
                 const effectiveCount = effectiveIdeas.length;
                 let totalMinSeconds = 0;
                 let totalMaxSeconds = 0;
@@ -7458,7 +7571,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       </>
                     )}
                     {' '}· 方向 29 固定为 4～6 秒一镜到底。
-                    {effectiveCount === 0 && <span className="mt-1 block font-bold text-red-600">当前轮次方向已全部使用，无法生成。</span>}
+                    {paintingBatchRequestedCount.trim() && effectiveCount < (parsePaintingBatchRequestedCount(paintingBatchRequestedCount) || 0) && (
+                      <span className="mt-1 block font-bold text-amber-600">可用方向不足，将按当前顺序生成剩余的 {effectiveCount} 条。</span>
+                    )}
+                    {effectiveCount === 0 && parsePaintingBatchRequestedCount(paintingBatchRequestedCount) !== null && <span className="mt-1 block font-bold text-red-600">当前轮次方向已全部使用，无法生成。</span>}
                     <span className="mt-1 block text-rose-500">{SEEDANCE_PRICING_NOTE}</span>
                   </>
                 );
@@ -7495,7 +7611,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   </button>
                   <button
                     type="button"
-                    disabled={paintingBatchCreating || paintingBatchConfirming}
+                    disabled={paintingBatchCreating || paintingBatchConfirming || parsePaintingBatchRequestedCount(paintingBatchRequestedCount) === null}
                     onClick={() => void handlePaintingConfirmBatch()}
                     className="inline-flex h-10 items-center gap-2 rounded-full bg-amber-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
@@ -7514,7 +7630,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   </button>
                   <button
                     type="button"
-                    disabled={paintingBatchCreating || paintingBatchConfirming || paintingBatchIdeas.length === 0}
+                    disabled={paintingBatchCreating || paintingBatchConfirming || parsePaintingBatchRequestedCount(paintingBatchRequestedCount) === null || selectPaintingBatchIdeas(paintingBatchIdeas).length === 0}
                     onClick={() => void handlePaintingConfirmBatch()}
                     className="inline-flex h-10 items-center gap-2 rounded-full bg-rose-600 px-5 text-xs font-bold text-white shadow-sm shadow-rose-200 hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
                   >

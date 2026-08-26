@@ -1039,16 +1039,18 @@ export interface PaintingBatchRunEstimate {
   pricingNote: string;
 }
 
-// 全自动批量默认使用 Mini，确认弹窗可选择 Seedance 或 Wan3.0 与分辨率。
+// 全自动批量只开放成本较低的四个模型；稳定版与 2.5 不进入批量付费入口。
 export const SEEDANCE_BATCH_MODEL = 'doubao-seedance-2-0-mini-260615';
 export const SEEDANCE_BATCH_RESOLUTION = '720p';
 export const SEEDANCE_BATCH_MODEL_OPTIONS = [
-  { value: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0 稳定版' },
-  { value: 'doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast' },
   { value: 'doubao-seedance-2-0-mini-260615', label: 'Seedance 2.0 Mini' },
+  { value: 'doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast' },
+  { value: 'MiniMax-H3', label: 'MiniMax H3' },
   { value: 'wan3.0-video', label: '千问 Wan3.0 Video' },
 ] as const;
-export const SEEDANCE_BATCH_RESOLUTION_OPTIONS = ['480p', '720p'] as const;
+export function getPaintingBatchResolutionOptions(model: string): readonly string[] {
+  return model === 'MiniMax-H3' ? ['768p'] : ['480p', '720p'];
+}
 export const SEEDANCE_PRICING_NOTE = '费用按所选模型、分辨率与时长估算，实际以平台账单为准。';
 
 // 按秒估算单价（元/秒），与后端 getSeedanceRatePerSecond 保持一致。
@@ -1071,6 +1073,8 @@ export interface CreatePaintingBatchRunOptions {
   plan: PaintingMaterialPlan;
   ideas: PaintingIdeaSummary[];
   totalDirections: number;
+  startOrder: string;
+  requestedCount: number;
   model: string;
   resolution: string;
   ratio: string;
@@ -1133,6 +1137,8 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
   formData.append('plan', JSON.stringify(options.plan));
   formData.append('ideas', JSON.stringify(options.ideas));
   formData.append('totalDirections', String(options.totalDirections));
+  formData.append('startOrder', options.startOrder);
+  formData.append('requestedCount', String(options.requestedCount));
   formData.append('model', options.model);
   formData.append('resolution', options.resolution);
   formData.append('ratio', options.ratio);

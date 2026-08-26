@@ -9875,6 +9875,8 @@ async function readMultipartFormBody(req) {
     plan: readValue(formData.get('plan')),
     ideas: readValue(formData.get('ideas')),
     totalDirections: readValue(formData.get('totalDirections')),
+    startOrder: readValue(formData.get('startOrder')),
+    requestedCount: readValue(formData.get('requestedCount')),
     resolution: readValue(formData.get('resolution')),
     ratio: readValue(formData.get('ratio')),
     variationRound: readValue(formData.get('variationRound')),
@@ -12950,16 +12952,24 @@ function handlePaintingTaskStatus(req, res, taskId) {
 }
 
 // ===== 挂画全自动批量：模型与费用 =====
-// 默认仍使用 Mini，确认弹窗可显式选择 Seedance 或 Wan3.0；服务端白名单防止提交其他模型。
+// 全自动批量只开放成本较低的四个模型；稳定版与 2.5 不进入批量付费入口。
 const PAINTING_BATCH_MODEL = 'doubao-seedance-2-0-mini-260615';
 const PAINTING_BATCH_MODELS = new Set([
-  'doubao-seedance-2-0-260128',
-  'doubao-seedance-2-0-fast-260128',
   'doubao-seedance-2-0-mini-260615',
+  'doubao-seedance-2-0-fast-260128',
+  'MiniMax-H3',
   'wan3.0-video',
 ]);
-const PAINTING_BATCH_RESOLUTIONS = new Set(['480p', '720p']);
-const PAINTING_BATCH_MODEL_REJECT_MESSAGE = '全自动批量生成仅支持 Seedance 2.0 稳定版、Fast、Mini 或 Wan3.0 Video。';
+const PAINTING_BATCH_RESOLUTIONS = new Set(['480p', '720p', '768p']);
+const PAINTING_BATCH_MODEL_REJECT_MESSAGE = '全自动批量生成仅支持 Seedance 2.0 Mini、Fast、MiniMax H3 或 Wan3.0 Video。';
+
+function getPaintingBatchSupportedResolutions(model) {
+  return String(model || '') === 'MiniMax-H3' ? ['768p'] : ['480p', '720p'];
+}
+
+function isPaintingBatchResolutionSupported(model, resolution) {
+  return getPaintingBatchSupportedResolutions(model).includes(String(resolution || '').toLowerCase());
+}
 
 // 按秒估算单价（元/秒）。Fast 使用当前控制台活动价折算；实际费用以火山方舟账单为准。
 function getSeedanceRatePerSecond(model, resolution = '720p') {
@@ -12967,6 +12977,7 @@ function getSeedanceRatePerSecond(model, resolution = '720p') {
   const res = String(resolution || '720p').toLowerCase();
   if (m === 'doubao-seedance-2-0-mini-260615') return res === '480p' ? 0.1 : res === '720p' ? 0.2 : null;
   if (m === 'doubao-seedance-2-0-fast-260128') return res === '480p' ? 0.3 : res === '720p' ? 0.6 : null;
+  if (m === 'MiniMax-H3') return res === '768p' ? 0.5 : null;
   if (m === 'doubao-seedance-2-0-260128') return res === '480p' ? 0.5 : res === '720p' ? 1.0 : null;
   if (m === 'doubao-seedance-2-5-260628') return res === '720p' ? 1.5 : null;
   if (m === 'wan3.0-video') return res === '480p' ? 0.21 : res === '720p' ? 0.42 : res === '1080p' ? 0.84 : null;
@@ -13107,9 +13118,21 @@ async function handleCreatePaintingBatchRun(req, res) {
       return;
     }
 
-    const totalDirections = Math.min(120, Math.max(1, Number(body.totalDirections) || 40));
+    const requestedCount = body.requestedCount === undefined || body.requestedCount === ''
+      ? (body.totalDirections === undefined || body.totalDirections === '' ? 40 : Number(body.totalDirections))
+      : Number(body.requestedCount);
+    if (!Number.isInteger(requestedCount) || requestedCount < 1 || requestedCount > 40) {
+      sendJson(res, 400, { error: '生成数量必须是1到40之间的整数；留空时默认生成40条。' });
+      return;
+    }
+    const totalDirections = requestedCount;
     if (ideas.length < totalDirections) {
       sendJson(res, 400, { error: `创意方向数量不足，已提供 ${ideas.length} 条，需要 ${totalDirections} 条` });
+      return;
+    }
+    const startOrder = readValue(body.startOrder) || 'group1';
+    if (!['group1', 'group2', 'group3', 'group4', 'random'].includes(startOrder)) {
+      sendJson(res, 400, { error: '生成顺序不合法，请选择第1至第4组或随机顺序。' });
       return;
     }
 
@@ -13119,16 +13142,18 @@ async function handleCreatePaintingBatchRun(req, res) {
       return;
     }
     const model = requestedModel;
-    const modelApiKey = model === 'wan3.0-video'
-      ? readValue(SERVER_CONFIG.dashscopeApiKey)
-      : seedanceApiKey;
+    const modelApiKey = model === 'MiniMax-H3'
+      ? readValue(SERVER_CONFIG.minimaxApiKey)
+      : model === 'wan3.0-video'
+        ? readValue(SERVER_CONFIG.dashscopeApiKey)
+        : seedanceApiKey;
     if (!modelApiKey) {
-      sendJson(res, 500, { error: `服务端未配置 ${model === 'wan3.0-video' ? 'DASHSCOPE_API_KEY' : 'SEEDANCE_API_KEY'}` });
+      sendJson(res, 500, { error: `服务端未配置 ${model === 'MiniMax-H3' ? 'MINIMAX_API_KEY' : model === 'wan3.0-video' ? 'DASHSCOPE_API_KEY' : 'SEEDANCE_API_KEY'}` });
       return;
     }
     const resolution = String(readValue(body.resolution) || '720p').toLowerCase();
-    if (!PAINTING_BATCH_RESOLUTIONS.has(resolution)) {
-      sendJson(res, 400, { error: '全自动批量生成仅支持480P或720P。' });
+    if (!isPaintingBatchResolutionSupported(model, resolution)) {
+      sendJson(res, 400, { error: `${model === 'MiniMax-H3' ? 'MiniMax H3' : '所选模型'}仅支持${getPaintingBatchSupportedResolutions(model).map((item) => item.toUpperCase()).join('或')}。` });
       return;
     }
     const ratio = readValue(body.ratio) || '9:16';
@@ -13164,7 +13189,7 @@ async function handleCreatePaintingBatchRun(req, res) {
       folderName: targetFolderName,
     });
 
-    let selectedIdeas = ideas.slice(0, totalDirections);
+    let selectedIdeas = [...ideas];
     // 服务端重新校验“仅生成未使用方向”：以服务端持久化的方向使用记录为准，避免前端统计不准确导致重复生成。
     if (onlyUnused) {
       const usedDirections = new Set(dbGetPaintingUsedDirections(imageHash, variationRound));
@@ -13173,6 +13198,7 @@ async function handleCreatePaintingBatchRun(req, res) {
         return directionNumber > 0 && !usedDirections.has(directionNumber);
       });
     }
+    selectedIdeas = selectedIdeas.slice(0, totalDirections);
     if (selectedIdeas.length === 0) {
       sendJson(res, 400, { error: '没有可生成的方向：当前轮次的方向都已使用过。可取消“仅生成未使用方向”或换一轮再试。' });
       return;
@@ -13183,6 +13209,8 @@ async function handleCreatePaintingBatchRun(req, res) {
     const costEstimate = computePaintingBatchCostEstimate(selectedIdeas, plan, model, resolution);
     const batchOptions = {
       ...(body.options && typeof body.options === 'object' ? body.options : {}),
+      startOrder,
+      requestedCount,
       costEstimate,
       woodReferences: {
         upper: upperWoodReference,
@@ -13190,7 +13218,7 @@ async function handleCreatePaintingBatchRun(req, res) {
       },
     };
 
-    // 批次记录与 40 个方向任务必须在同一事务内落库：事务成功后才 enqueue，禁止出现“批次已存在但任务只插了一半”。
+    // 批次记录与本次选中的方向任务必须在同一事务内落库：事务成功后才 enqueue，禁止出现“批次已存在但任务只插了一半”。
     const batchDb = getCollectionDb();
     batchDb.exec('BEGIN IMMEDIATE');
     let run;
@@ -13504,9 +13532,9 @@ async function handleResubmitPaintingBatchTask(req, res) {
     }
     // 仅允许当前批量支持的分辨率重新提交。
     const batchResolution = String(batchRun?.resolution || '720p').toLowerCase();
-    if (!PAINTING_BATCH_RESOLUTIONS.has(batchResolution)) {
+    if (!isPaintingBatchResolutionSupported(batchModel, batchResolution)) {
       sendJson(res, 400, {
-        error: '该历史批次使用的分辨率不在当前批量生成支持范围内，禁止重新提交。请创建新的480P或720P批次。',
+        error: `该历史批次使用的分辨率不在当前模型支持范围内，禁止重新提交。当前模型仅支持${getPaintingBatchSupportedResolutions(batchModel).map((item) => item.toUpperCase()).join('或')}。`,
       });
       return;
     }
@@ -13609,8 +13637,8 @@ async function handleGetPaintingBatchRunEstimate(req, res) {
     }
     const model = requestedModel;
     const resolution = String(readValue(params.get('resolution')) || '720p').toLowerCase();
-    if (!PAINTING_BATCH_RESOLUTIONS.has(resolution)) {
-      sendJson(res, 400, { error: '全自动批量生成仅支持480P或720P。' });
+    if (!isPaintingBatchResolutionSupported(model, resolution)) {
+      sendJson(res, 400, { error: `${model === 'MiniMax-H3' ? 'MiniMax H3' : '所选模型'}仅支持${getPaintingBatchSupportedResolutions(model).map((item) => item.toUpperCase()).join('或')}。` });
       return;
     }
     const ratePerSecond = getSeedanceRatePerSecond(model, resolution);
@@ -14657,11 +14685,16 @@ function getPaintingBatchReferenceSpecs(task, batchRun) {
 
 async function submitSeedanceTaskForBatchTask(task, batchRun) {
   const requestId = randomBytes(6).toString('hex');
-  const model = batchRun.model || 'doubao-seedance-2-0-260128';
+  const model = batchRun.model || PAINTING_BATCH_MODEL;
+  const isMiniMaxH3 = model === MINIMAX_H3_MODEL;
   const isWan3 = model === WAN3_VIDEO_MODEL;
-  const apiKey = isWan3 ? readValue(SERVER_CONFIG.dashscopeApiKey) : readValue(SERVER_CONFIG.seedanceApiKey);
+  const apiKey = isMiniMaxH3
+    ? readValue(SERVER_CONFIG.minimaxApiKey)
+    : isWan3
+      ? readValue(SERVER_CONFIG.dashscopeApiKey)
+      : readValue(SERVER_CONFIG.seedanceApiKey);
   if (!apiKey) {
-    throw new Error(`服务端未配置 ${isWan3 ? 'DASHSCOPE_API_KEY' : 'SEEDANCE_API_KEY'}`);
+    throw new Error(`服务端未配置 ${isMiniMaxH3 ? 'MINIMAX_API_KEY' : isWan3 ? 'DASHSCOPE_API_KEY' : 'SEEDANCE_API_KEY'}`);
   }
   if (!task.prompt) {
     throw new Error('缺少视频生成提示词 prompt');
@@ -14689,10 +14722,19 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   const generateAudio = batchRun.generateAudio !== false;
   const watermark = batchRun.watermark === true;
 
-  const upstreamUrl = isWan3
-    ? `${DASHSCOPE_VIDEO_BASE_URL}/api/v1/services/aigc/video-generation/video-synthesis`
-    : 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
-  const requestPayload = isWan3 ? {
+  const upstreamUrl = isMiniMaxH3
+    ? 'https://api.minimaxi.com/v2/video_generation'
+    : isWan3
+      ? `${DASHSCOPE_VIDEO_BASE_URL}/api/v1/services/aigc/video-generation/video-synthesis`
+      : 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
+  const requestPayload = isMiniMaxH3 ? {
+    model: MINIMAX_H3_MODEL,
+    content,
+    resolution: '768P',
+    ratio,
+    duration,
+    aigc_watermark: watermark,
+  } : isWan3 ? {
     model: WAN3_VIDEO_MODEL,
     input: {
       prompt: content[0].text,
@@ -14742,13 +14784,17 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
 
   if (!upstreamRes.ok) {
     const rawError = json?.error?.message || json?.message || json?.code || '';
-    const error = new Error(translateUpstreamError(rawError, `${isWan3 ? 'Wan3.0 Video' : 'Seedance'} 创建任务失败（状态码 ${upstreamRes.status}）`));
+    const error = new Error(translateUpstreamError(rawError, `${isMiniMaxH3 ? 'MiniMax H3' : isWan3 ? 'Wan3.0 Video' : 'Seedance'} 创建任务失败（状态码 ${upstreamRes.status}）`));
     error.statusCode = upstreamRes.status;
     throw error;
   }
 
   const rawTaskId = readValue(json?.id, json?.data?.id, json?.task_id, json?.taskId, json?.output?.task_id);
-  const seedanceTaskId = isWan3 && rawTaskId ? encodeWan3TaskId(rawTaskId) : rawTaskId;
+  const seedanceTaskId = isMiniMaxH3 && rawTaskId
+    ? encodeMiniMaxH3TaskId(rawTaskId)
+    : isWan3 && rawTaskId
+      ? encodeWan3TaskId(rawTaskId)
+      : rawTaskId;
   if (!seedanceTaskId) {
     throw new Error('Seedance 创建任务失败：服务端未返回任务编号');
   }
@@ -18867,6 +18913,7 @@ export {
   handleGetPaintingBatchRunEstimate,
   handleSeedanceCreateTask,
   handleSeedanceGetTask,
+  submitSeedanceTaskForBatchTask,
   fetchManualVideoGenerationTask,
   encodeMiniMaxH3TaskId,
   decodeMiniMaxH3TaskId,
