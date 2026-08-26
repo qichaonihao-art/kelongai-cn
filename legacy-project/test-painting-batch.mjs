@@ -74,6 +74,8 @@ const {
   PAINTING_INSTALLATION_SCALE_RULE,
   PAINTING_FRAMEWORKS,
   PAINTING_CAMERA_EXPLANATION_DIRECTION,
+  PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION,
+  PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
   getPaintingContentDetailVariant,
@@ -909,6 +911,24 @@ console.log('\n[33] 第一组面对镜头讲解方向');
   assert(fixedDuration.durationMin === 5 && fixedDuration.durationMax === 6, '讲解方向时长固定为5-6秒');
   const normalDuration = getPaintingDirectionDuration(8, 8, 10);
   assert(normalDuration.durationMin === 8 && normalDuration.durationMax === 10, '其他普通方向继续沿用用户时长');
+}
+
+// ===== T34 左右横扫方向缩短前置铺垫 =====
+console.log('\n[34] 左右横扫快速揭示');
+{
+  const getFramework = (directionNumber) => PAINTING_FRAMEWORKS[Math.floor((directionNumber - 1) / 10)][(directionNumber - 1) % 10];
+  const leftToRight = getFramework(PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION);
+  const rightToLeft = getFramework(PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION);
+  assert(PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION === 26 && PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION === 27, '左右横扫仍固定在第3组第6、7个');
+  assert(/总时长固定5-6秒/.test(leftToRight) && /总时长固定5-6秒/.test(rightToLeft), '左右横扫时长都固定为5-6秒');
+  assert(/0-1秒只做极短空间起幅/.test(leftToRight) && /0-1秒只做极短空间起幅/.test(rightToLeft), '开场铺垫压缩到约1秒');
+  assert(/最迟在第2秒/.test(leftToRight) && /最迟在第2秒/.test(rightToLeft), '挂画最迟在第2秒开始进入画面');
+  assert(/2秒至结尾让完整挂画持续保留/.test(leftToRight) && /2秒至结尾让完整挂画持续保留/.test(rightToLeft), '后半段持续展示完整挂画');
+  assert(/严禁拖到最后1-2秒才出现挂画/.test(leftToRight) && /严禁拖到最后1-2秒才出现挂画/.test(rightToLeft), '明确禁止结尾才揭示挂画');
+  const leftDuration = getPaintingDirectionDuration(PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION, 8, 9);
+  const rightDuration = getPaintingDirectionDuration(PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION, 8, 9);
+  assert(leftDuration.durationMin === 5 && leftDuration.durationMax === 6, '从左到右固定5-6秒');
+  assert(rightDuration.durationMin === 5 && rightDuration.durationMax === 6, '从右到左固定5-6秒');
 }
 
 // ===== T32 MiniMax H3 手动单条试验适配（全程 stub，不产生费用） =====

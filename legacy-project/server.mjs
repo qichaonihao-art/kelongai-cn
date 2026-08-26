@@ -13767,6 +13767,8 @@ const PAINTING_DYNAMIC_ENDING_MARKER = '【动态收尾强制规则】';
 const PAINTING_CONTENT_DETAIL_DIRECTION = 29;
 const PAINTING_WOOD_DETAIL_DIRECTION = 30;
 const PAINTING_CAMERA_EXPLANATION_DIRECTION = 7;
+const PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION = 26;
+const PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION = 27;
 const PAINTING_STATIC_WALL_COMPENSATION_DIRECTIONS = new Set([
   3, 6, PAINTING_CAMERA_EXPLANATION_DIRECTION, 10,
   ...Array.from({ length: 18 }, (_, index) => index + 11),
@@ -13905,8 +13907,8 @@ const PAINTING_FRAMEWORKS = [
     '成品空间09·办公室会客区：挂画固定在会客区背景墙，两人进入、放下文件、落座交谈；镜头从桌面前景横摇到人物与挂画，人物不需要刻意指画',
     '成品空间10·酒店展陈：挂画固定在精品酒店或艺术展陈墙，人物从远处经过或短暂停留；镜头持续利用沙发、雕塑或灯具前景形成视差，在人物自然经过与产品同框时结束，不追加正面静态产品定妆',
     '其他方向01·软装配色呼应：挂画已经上墙，人物依次调整靠枕、花瓶与小型绿植，使其中两种颜色呼应画面主色，后退观察；镜头从软装近景拉到整体空间',
-    '其他方向02·从左向右横扫收束：挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与近期历史不同的合理场景。开场镜头位于空间左侧，挂画所在位置必须完全处于取景框右侧之外，不得先拍到空白悬挂墙面；随后用一个连续镜头按正常叙事速度从左向右平稳横扫，依次经过2-3件真实家具陈设和一个可选的自然人物动作，最后挂画从画面右侧被真实取景揭示，镜头自然减速但保持轻微横移惯性直至结束，不定格、不停成静态图片。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
-    '其他方向03·从右向左横扫收束：挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与上一条及近期历史不同的合理场景。开场镜头位于空间右侧，挂画所在位置必须完全处于取景框左侧之外，不得先拍到空白悬挂墙面；随后用一个连续镜头按正常叙事速度从右向左平稳横扫，依次经过2-3件真实家具陈设和一个可选的自然人物动作，最后挂画从画面左侧被真实取景揭示，镜头自然减速但保持轻微横移惯性直至结束，不定格、不停成静态图片。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
+    '其他方向02·从左向右快速揭示：总时长固定5-6秒，挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与近期历史不同的合理场景。0-1秒只做极短空间起幅，镜头位于空间左侧，挂画所在位置处于取景框右侧之外，最多快速经过1-2件真实家具或一个简短人物动作，不得长时间铺垫；1-2秒连续向右平稳横扫，挂画必须最迟在第2秒从画面右侧开始进入取景并迅速完整可见；2秒至结尾让完整挂画持续保留在画面中，同时通过剩余家具前景、人物轻微动作和横移视差展示场景搭配。镜头自然减速但始终保持轻微向右横移惯性，不定格、不停成静态图片，严禁拖到最后1-2秒才出现挂画。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
+    '其他方向03·从右向左快速揭示：总时长固定5-6秒，挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与上一条及近期历史不同的合理场景。0-1秒只做极短空间起幅，镜头位于空间右侧，挂画所在位置处于取景框左侧之外，最多快速经过1-2件真实家具或一个简短人物动作，不得长时间铺垫；1-2秒连续向左平稳横扫，挂画必须最迟在第2秒从画面左侧开始进入取景并迅速完整可见；2秒至结尾让完整挂画持续保留在画面中，同时通过剩余家具前景、人物轻微动作和横移视差展示场景搭配。镜头自然减速但始终保持轻微向左横移惯性，不定格、不停成静态图片，严禁拖到最后1-2秒才出现挂画。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
     '其他方向04·对称构图与人物穿行：挂画位于对称构图中心，人物从画面一侧进入、完成放书或放杯动作后从另一侧离开；主体构图保持稳定，结尾在人物尚未完全离开时轻微推近，不追加无人静态定妆',
     '其他方向05·画面内容移动特写：总时长固定为4-6秒，以挂画原画内容为唯一主体进行一镜到底近距离拍摄。每次复用必须从合理组合中轮换一种：挂画可完整悬挂在墙面、房门或可真实承重且尺寸足够的书架平整外侧板，也可连同上下木条完整平坦放在茶几、书桌、长桌、展示桌或矮柜宽阔台面上；不得倚靠、卡住、悬空或为了特写拆掉木条。机位必须在近乎正面、正上方垂直俯拍、轻微左侧或合理微倾中轮换，不得总是默认从右侧边斜拍。移动路径在上到下、下到上、左到右、右到左、对角线或沿书法笔势/山水路径中轮换，依次展示书法飞白、印章、山水、花鸟或纹理等真实可见内容。单条视频只选一个逻辑成立的摆放场景、一个主机位和一条连续路径，禁止在4-6秒内乱切多场景。镜头按正常速度持续移动并在仍有轻微惯性时结束，不定格，不拉远补拍空间，不强行加入人物或家具全景；严禁改字、补画、让二维画面景物动起来或把平面内容变成三维场景',
     '其他方向06·实木压条工艺移动特写：以上下实木压条为主体，最多两个近景镜头；在“上木条左到右”、“上木条右到左”、“下木条左到右”、“下木条右到左”、“木条端部至画布连接处”中选择与近期不同的路径，清楚展示真实木纹、颜色、粗细、截面、平直两端及与画布的连接。如上下木条都拍，每根各用一个连续移动近景；如只拍一根，可在同一镜头中沿木纹到端部完成展示。不得默认拉远补拍整个房间，不得把平直方木条变成圆柱卷轴，不得新增轴头、端帽、圆球、把手或金属件',
@@ -13927,7 +13929,7 @@ const PAINTING_FRAMEWORKS = [
 ];
 
 // 内容阶段数不等于切镜数。按 40 个方向预先分配镜头结构，避免模型为了“丰富”而机械频繁切镜。
-const PAINTING_SINGLE_TAKE_DIRECTIONS = new Set([2, 3, 4, PAINTING_CAMERA_EXPLANATION_DIRECTION, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 22, 26, 27, PAINTING_CONTENT_DETAIL_DIRECTION]);
+const PAINTING_SINGLE_TAKE_DIRECTIONS = new Set([2, 3, 4, PAINTING_CAMERA_EXPLANATION_DIRECTION, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 22, PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION, PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION, PAINTING_CONTENT_DETAIL_DIRECTION]);
 const PAINTING_HYBRID_DIRECTIONS = new Set([1, 5, 8, 16, 21, 23, 24, 25, 30, 31]);
 
 function getPaintingShotStructure(directionNumber) {
@@ -13951,6 +13953,9 @@ function getPaintingDirectionDuration(directionNumber, fallbackMin, fallbackMax)
     return { durationMin: 4, durationMax: 6 };
   }
   if (directionNumber === PAINTING_CAMERA_EXPLANATION_DIRECTION) {
+    return { durationMin: 5, durationMax: 6 };
+  }
+  if ([PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION, PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION].includes(directionNumber)) {
     return { durationMin: 5, durationMax: 6 };
   }
   return { durationMin: fallbackMin, durationMax: fallbackMax };
@@ -18805,6 +18810,8 @@ export {
   PAINTING_INSTALLATION_SCALE_RULE,
   PAINTING_FRAMEWORKS,
   PAINTING_CAMERA_EXPLANATION_DIRECTION,
+  PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION,
+  PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
   getPaintingContentDetailVariant,
