@@ -8,6 +8,7 @@ const {
   extractEnhancementOutputUrl,
   normalizeEnhancementRemoteStatus,
   normalizeMediaKitUploadHeaders,
+  buildVideoEnhancementRetryUpdates,
 } = await import('./server.mjs');
 
 assert.equal(parseFpsFraction('30000/1001'), 29.97);
@@ -32,5 +33,14 @@ assert.deepEqual(
   ]),
   { 'x-upload-token': 'abc', 'x-request-id': 'request-1' },
 );
+assert.deepEqual(buildVideoEnhancementRetryUpdates(123), {
+  status: 'queued',
+  externalTaskId: '',
+  requestId: '',
+  inputMediaUri: '',
+  attemptCount: 0,
+  errorMessage: '',
+  nextPollAt: 123,
+});
 
 console.log('视频画质增强 — 无费测试通过');

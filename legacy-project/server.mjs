@@ -2209,13 +2209,17 @@ function scheduleVideoEnhancementWorker(delayMs = MEDIAKIT_ENHANCEMENT_POLL_INTE
   videoEnhancementWorkerTimer.unref?.();
 }
 
+function buildVideoEnhancementRetryUpdates(nowSeconds = Math.floor(Date.now() / 1000)) {
+  return {
+    status: 'queued', externalTaskId: '', requestId: '', inputMediaUri: '', attemptCount: 0, errorMessage: '',
+    nextPollAt: nowSeconds,
+  };
+}
+
 function retryVideoEnhancementTask(id) {
   const task = dbGetVideoEnhancementTask(id);
   if (!task) return null;
-  const updated = dbUpdateVideoEnhancementTask(id, {
-    status: 'queued', externalTaskId: null, requestId: '', inputMediaUri: '', attemptCount: 0, errorMessage: '',
-    nextPollAt: Math.floor(Date.now() / 1000),
-  });
+  const updated = dbUpdateVideoEnhancementTask(id, buildVideoEnhancementRetryUpdates());
   scheduleVideoEnhancementWorker(100);
   return updated;
 }
@@ -19604,4 +19608,5 @@ export {
   extractEnhancementOutputUrl,
   normalizeEnhancementRemoteStatus,
   normalizeMediaKitUploadHeaders,
+  buildVideoEnhancementRetryUpdates,
 };

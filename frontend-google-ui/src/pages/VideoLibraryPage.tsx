@@ -115,6 +115,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [isFolderOpen, setIsFolderOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
+  const [retryingEnhancementId, setRetryingEnhancementId] = useState<number | null>(null);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -588,6 +589,34 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     setLocalDownloadProgress((previous) => previous ? { ...previous, status: 'stopped', currentName: '' } : previous);
   }
 
+  async function handleRetryVideoEnhancement(item: VideoLibraryItem) {
+    const enhancementId = item.enhancement?.id;
+    if (!enhancementId || retryingEnhancementId !== null) return;
+    setError('');
+    setNotice('');
+    setRetryingEnhancementId(enhancementId);
+    try {
+      await retryVideoEnhancement(enhancementId);
+      setItems((current) => current.map((currentItem) => currentItem.id === item.id && currentItem.enhancement
+        ? {
+            ...currentItem,
+            enhancement: {
+              ...currentItem.enhancement,
+              status: 'queued',
+              errorMessage: '',
+              attemptCount: 0,
+            },
+          }
+        : currentItem));
+      setNotice('已重新提交，正在上传原视频并启动画质增强。');
+      await refresh();
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : '重试失败');
+    } finally {
+      setRetryingEnhancementId(null);
+    }
+  }
+
   function renderVideoCard(item: VideoLibraryItem) {
     const isUnread = unreadVideoIds.has(item.id);
     const enhancementStatusLabel: Record<string, string> = {
@@ -660,9 +689,13 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
               {item.enhancement.status === 'failed' && (
                 <button
                   type="button"
-                  className="mt-1 rounded-md bg-white px-2 py-1 font-black text-red-600 ring-1 ring-red-200"
-                  onClick={() => void retryVideoEnhancement(item.enhancement!.id).then(() => refresh()).catch((retryError) => setError(retryError instanceof Error ? retryError.message : '重试失败'))}
-                >重新尝试</button>
+                  disabled={retryingEnhancementId !== null}
+                  className="mt-1 inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 font-black text-red-600 ring-1 ring-red-200 disabled:cursor-wait disabled:opacity-60"
+                  onClick={() => void handleRetryVideoEnhancement(item)}
+                >
+                  {retryingEnhancementId === item.enhancement.id && <Loader2 className="size-3 animate-spin" />}
+                  {retryingEnhancementId === item.enhancement.id ? '正在重试' : '重新尝试'}
+                </button>
               )}
               {item.enhancement.status === 'skipped' && (
                 <button
