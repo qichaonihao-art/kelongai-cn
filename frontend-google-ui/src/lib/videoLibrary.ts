@@ -227,6 +227,15 @@ export async function retryVideoEnhancement(id: number) {
   return json?.task;
 }
 
+export async function startVideoEnhancement(id: number) {
+  const response = await fetch(`/api/video-library/videos/${id}/enhance`, {
+    method: 'POST', credentials: 'include',
+  });
+  const json = await readJson(response);
+  if (!response.ok) throw new Error(errorMessage(json, '启动画质增强失败'));
+  return json?.item as VideoLibraryItem;
+}
+
 export async function updateVideoLibraryItem(id: number, input: { note?: string; originalName?: string; folderName?: string }) {
   const response = await fetch(`/api/video-library/videos/${id}`, {
     method: 'PATCH',

@@ -1946,6 +1946,16 @@ async function queueVideoEnhancementForLibraryItem(item, { enabled = false, req 
   if (!item?.id) return { queued: false, reason: 'missing_item' };
   const raw = getCollectionDb().prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(item.id));
   if (!raw) return { queued: false, reason: 'missing_item' };
+  const inputBaseUrl = req ? resolvePublicBaseUrl(req) : getConfiguredPublicBaseUrl();
+  let task = enabled ? dbGetVideoEnhancementTaskBySource(item.id) : null;
+  if (enabled && !task) {
+    task = dbQueueVideoEnhancement({
+      sourceItemId: item.id,
+      publicToken: randomBytes(24).toString('hex'),
+      inputBaseUrl,
+    });
+    dbUpdateVideoEnhancementTask(task.id, { status: 'checking', errorMessage: '', nextPollAt: 0 });
+  }
   const filePath = path.join(VIDEO_LIBRARY_DIR, raw.stored_name);
   let metadata;
   try {
@@ -1953,23 +1963,37 @@ async function queueVideoEnhancementForLibraryItem(item, { enabled = false, req 
     item = dbUpdateVideoLibraryMetadata(item.id, metadata);
   } catch (error) {
     console.warn('[video enhancement] metadata_probe_failed', { itemId: item.id, message: error?.message || '' });
-    return { queued: false, reason: 'metadata_failed', item };
+    if (task) {
+      task = dbUpdateVideoEnhancementTask(task.id, {
+        status: 'failed', errorMessage: `读取原视频分辨率失败：${error?.message || 'ffprobe 无法识别视频'}`, nextPollAt: 0,
+      });
+      item = dbGetVideoLibraryItem(item.id) || item;
+    }
+    return { queued: false, reason: 'metadata_failed', task, item };
   }
   if (!enabled) return { queued: false, reason: 'disabled', item };
-  if (!isVideo480pOrLower(metadata)) return { queued: false, reason: 'not_480p', item };
-  if (!readValue(SERVER_CONFIG.mediakitApiKey)) return { queued: false, reason: 'not_configured', item };
-  const inputBaseUrl = req ? resolvePublicBaseUrl(req) : getConfiguredPublicBaseUrl();
-  if (!inputBaseUrl) return { queued: false, reason: 'public_base_url_missing', item };
-  const existing = dbGetVideoEnhancementTaskBySource(item.id);
-  if (existing?.status === 'completed') return { queued: false, reason: 'already_completed', task: existing, item };
-  if (existing?.status === 'failed') return { queued: false, reason: 'existing_failed', task: existing, item };
-  const task = existing || dbQueueVideoEnhancement({
-    sourceItemId: item.id,
-    publicToken: randomBytes(24).toString('hex'),
-    inputBaseUrl,
+  if (task?.status === 'completed') return { queued: false, reason: 'already_completed', task, item: dbGetVideoLibraryItem(item.id) || item };
+  if (task?.status === 'failed' && task.attemptCount > 0) return { queued: false, reason: 'existing_failed', task, item: dbGetVideoLibraryItem(item.id) || item };
+  if (!isVideo480pOrLower(metadata)) {
+    task = dbUpdateVideoEnhancementTask(task.id, {
+      status: 'skipped', errorMessage: `检测到原视频为 ${metadata.width}×${metadata.height}，不是480P及以下，无需增强`,
+      nextPollAt: 0, completedAt: Math.floor(Date.now() / 1000),
+    });
+    return { queued: false, reason: 'not_480p', task, item: dbGetVideoLibraryItem(item.id) || item };
+  }
+  if (!readValue(SERVER_CONFIG.mediakitApiKey)) {
+    task = dbUpdateVideoEnhancementTask(task.id, { status: 'failed', errorMessage: '服务器未配置 MEDIAKIT_API_KEY', nextPollAt: 0 });
+    return { queued: false, reason: 'not_configured', task, item: dbGetVideoLibraryItem(item.id) || item };
+  }
+  if (!inputBaseUrl) {
+    task = dbUpdateVideoEnhancementTask(task.id, { status: 'failed', errorMessage: '服务器未配置 PUBLIC_BASE_URL', nextPollAt: 0 });
+    return { queued: false, reason: 'public_base_url_missing', task, item: dbGetVideoLibraryItem(item.id) || item };
+  }
+  task = dbUpdateVideoEnhancementTask(task.id, {
+    status: task.externalTaskId ? 'processing' : 'queued', errorMessage: '', nextPollAt: Math.floor(Date.now() / 1000),
   });
   scheduleVideoEnhancementWorker(100);
-  return { queued: true, task, item };
+  return { queued: true, task, item: dbGetVideoLibraryItem(item.id) || item };
 }
 
 async function handlePublicEnhancementInput(req, res, token) {
@@ -2137,6 +2161,19 @@ function retryVideoEnhancementTask(id) {
   });
   scheduleVideoEnhancementWorker(100);
   return updated;
+}
+
+async function handleStartVideoEnhancement(req, res, id) {
+  const item = dbGetVideoLibraryItem(id);
+  if (!item) { sendJson(res, 404, { error: '视频素材不存在' }); return; }
+  const result = await queueVideoEnhancementForLibraryItem(item, { enabled: true, req });
+  const statusCode = result.queued || ['already_completed', 'not_480p'].includes(result.reason) ? 200 : 400;
+  sendJson(res, statusCode, {
+    ok: statusCode === 200,
+    item: result.item || dbGetVideoLibraryItem(id),
+    enhancement: result,
+    error: statusCode === 200 ? undefined : (result.task?.errorMessage || '画质增强未能启动'),
+  });
 }
 
 function dbUpdateVideoLibraryNote(id, note) {
@@ -19265,6 +19302,12 @@ const server = createServer(async (req, res) => {
     const task = retryVideoEnhancementTask(id);
     if (!task) sendJson(res, 404, { error: '画质增强任务不存在' });
     else sendJson(res, 200, { ok: true, task });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname.startsWith('/api/video-library/videos/') && url.pathname.endsWith('/enhance')) {
+    const id = decodeURIComponent(url.pathname.replace(/^\/api\/video-library\/videos\//, '').replace(/\/enhance$/, ''));
+    await handleStartVideoEnhancement(req, res, id);
     return;
   }
 
