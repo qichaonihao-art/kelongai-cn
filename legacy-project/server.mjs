@@ -1190,6 +1190,7 @@ function getCollectionDb() {
         request_id TEXT NOT NULL DEFAULT '',
         public_token TEXT NOT NULL UNIQUE,
         input_base_url TEXT NOT NULL DEFAULT '',
+        input_media_uri TEXT NOT NULL DEFAULT '',
         error_message TEXT NOT NULL DEFAULT '',
         attempt_count INTEGER NOT NULL DEFAULT 0,
         next_poll_at INTEGER NOT NULL DEFAULT 0,
@@ -1316,6 +1317,7 @@ function getCollectionDb() {
       try { collectionDb.exec(statement); } catch {}
     }
     try { collectionDb.exec(`ALTER TABLE video_enhancement_tasks ADD COLUMN input_base_url TEXT NOT NULL DEFAULT ''`); } catch {}
+    try { collectionDb.exec(`ALTER TABLE video_enhancement_tasks ADD COLUMN input_media_uri TEXT NOT NULL DEFAULT ''`); } catch {}
 
     // Migration: ensure video_library_folders has a stable id column for binding.
     const folderColumns = collectionDb.prepare(`PRAGMA table_info(video_library_folders)`).all();
@@ -1887,7 +1889,8 @@ function dbQueueVideoEnhancement({ sourceItemId, publicToken, inputBaseUrl }) {
 function dbUpdateVideoEnhancementTask(id, updates = {}) {
   const mapping = {
     outputItemId: 'output_item_id', status: 'status', externalTaskId: 'external_task_id', requestId: 'request_id',
-    errorMessage: 'error_message', attemptCount: 'attempt_count', nextPollAt: 'next_poll_at', completedAt: 'completed_at',
+    inputMediaUri: 'input_media_uri', errorMessage: 'error_message', attemptCount: 'attempt_count',
+    nextPollAt: 'next_poll_at', completedAt: 'completed_at',
   };
   const fields = [];
   const values = [];
@@ -1987,10 +1990,6 @@ async function queueVideoEnhancementForLibraryItem(item, { enabled = false, req 
     task = dbUpdateVideoEnhancementTask(task.id, { status: 'failed', errorMessage: '服务器未配置 MEDIAKIT_API_KEY', nextPollAt: 0 });
     return { queued: false, reason: 'not_configured', task, item: dbGetVideoLibraryItem(item.id) || item };
   }
-  if (!inputBaseUrl) {
-    task = dbUpdateVideoEnhancementTask(task.id, { status: 'failed', errorMessage: '服务器未配置 PUBLIC_BASE_URL', nextPollAt: 0 });
-    return { queued: false, reason: 'public_base_url_missing', task, item: dbGetVideoLibraryItem(item.id) || item };
-  }
   task = dbUpdateVideoEnhancementTask(task.id, {
     status: task.externalTaskId ? 'processing' : 'queued', errorMessage: '', nextPollAt: Math.floor(Date.now() / 1000),
   });
@@ -2039,10 +2038,10 @@ async function handlePublicEnhancementInput(req, res, token) {
 
 async function submitVideoEnhancement(row) {
   const apiKey = readValue(SERVER_CONFIG.mediakitApiKey);
-  const inputUrl = getEnhancementInputUrl(row);
   if (!apiKey) throw new Error('服务端未配置 MEDIAKIT_API_KEY');
-  if (!inputUrl) throw new Error('服务端未配置 PUBLIC_BASE_URL，增强服务无法读取原视频');
-  const source = getCollectionDb().prepare('SELECT sha256 FROM video_library_items WHERE id = ?').get(Number(row.source_item_id));
+  const source = getCollectionDb().prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(row.source_item_id));
+  if (!source) throw new Error('原视频已被删除');
+  const inputUrl = readValue(row.input_media_uri) || await uploadVideoToMediaKit(row, source, apiKey);
   const response = await fetch(`${MEDIAKIT_API_BASE_URL}/api/v1/tools/enhance-video`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -2051,7 +2050,6 @@ async function submitVideoEnhancement(row) {
       scene: 'aigc',
       tool_version: 'standard',
       resolution: '1080p',
-      client_token: `kelongai-${String(source?.sha256 || row.id).slice(0, 32)}-standard-1080p`,
     }),
     signal: AbortSignal.timeout(60 * 1000),
   });
@@ -2064,6 +2062,62 @@ async function submitVideoEnhancement(row) {
     status: 'submitted', externalTaskId, requestId: readValue(payload?.request_id), errorMessage: '',
     nextPollAt: Math.floor(Date.now() / 1000) + 10,
   });
+}
+
+function normalizeMediaKitUploadHeaders(value) {
+  if (!value) return {};
+  if (!Array.isArray(value) && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, headerValue]) => [String(key), String(headerValue)]));
+  }
+  if (!Array.isArray(value)) return {};
+  const entries = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const key = readValue(item.key, item.name, item.header, item.header_name);
+    const headerValue = readValue(item.value, item.header_value);
+    if (key && headerValue) entries.push([key, headerValue]);
+  }
+  return Object.fromEntries(entries);
+}
+
+async function uploadVideoToMediaKit(taskRow, source, apiKey) {
+  const requestResponse = await fetch(`${MEDIAKIT_API_BASE_URL}/api/v1/tools-sync/request-media-upload-url`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: '{}',
+    signal: AbortSignal.timeout(60 * 1000),
+  });
+  const requestText = await requestResponse.text();
+  const requestPayload = parseJsonString(requestText, null);
+  if (!requestResponse.ok || requestPayload?.success === false) {
+    throw new Error(readValue(requestPayload?.error?.message, requestPayload?.message) || `申请媒体上传地址失败（HTTP ${requestResponse.status}）`);
+  }
+  const uploadResult = requestPayload?.result || requestPayload?.data?.result || requestPayload?.data || {};
+  const mediaUri = readValue(uploadResult?.file_id, uploadResult?.fileId);
+  const uploadUrl = readValue(uploadResult?.upload_url, uploadResult?.uploadUrl);
+  const uploadMethod = readValue(uploadResult?.method).toUpperCase() || 'PUT';
+  if (!mediaUri || !uploadUrl) throw new Error('AI MediaKit 未返回媒体上传地址或文件标识');
+
+  const sourcePath = path.join(VIDEO_LIBRARY_DIR, source.stored_name);
+  const sourceInfo = await stat(sourcePath);
+  const uploadHeaders = {
+    ...normalizeMediaKitUploadHeaders(uploadResult?.upload_headers || uploadResult?.uploadHeaders),
+    'Content-Type': source.mime_type || 'video/mp4',
+    'Content-Length': String(sourceInfo.size),
+  };
+  const uploadResponse = await fetch(uploadUrl, {
+    method: uploadMethod,
+    headers: uploadHeaders,
+    body: createReadStream(sourcePath),
+    duplex: 'half',
+    signal: AbortSignal.timeout(5 * 60 * 1000),
+  });
+  if (!uploadResponse.ok) {
+    const uploadError = await uploadResponse.text().catch(() => '');
+    throw new Error(`上传原视频到 AI MediaKit 失败（HTTP ${uploadResponse.status}${uploadError ? `：${uploadError.slice(0, 160)}` : ''}）`);
+  }
+  dbUpdateVideoEnhancementTask(taskRow.id, { inputMediaUri: mediaUri, errorMessage: '' });
+  return mediaUri;
 }
 
 async function downloadEnhancedVideo(row, outputUrl) {
@@ -2159,7 +2213,8 @@ function retryVideoEnhancementTask(id) {
   const task = dbGetVideoEnhancementTask(id);
   if (!task) return null;
   const updated = dbUpdateVideoEnhancementTask(id, {
-    status: task.externalTaskId ? 'processing' : 'queued', attemptCount: 0, errorMessage: '', nextPollAt: Math.floor(Date.now() / 1000),
+    status: 'queued', externalTaskId: null, requestId: '', inputMediaUri: '', attemptCount: 0, errorMessage: '',
+    nextPollAt: Math.floor(Date.now() / 1000),
   });
   scheduleVideoEnhancementWorker(100);
   return updated;
@@ -19548,4 +19603,5 @@ export {
   isVideo480pOrLower,
   extractEnhancementOutputUrl,
   normalizeEnhancementRemoteStatus,
+  normalizeMediaKitUploadHeaders,
 };

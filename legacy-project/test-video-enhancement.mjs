@@ -7,6 +7,7 @@ const {
   isVideo480pOrLower,
   extractEnhancementOutputUrl,
   normalizeEnhancementRemoteStatus,
+  normalizeMediaKitUploadHeaders,
 } = await import('./server.mjs');
 
 assert.equal(parseFpsFraction('30000/1001'), 29.97);
@@ -19,6 +20,17 @@ assert.equal(normalizeEnhancementRemoteStatus({ data: { status: 'COMPLETED' } })
 assert.equal(
   extractEnhancementOutputUrl({ result: { outputs: [{ video_url: 'https://example.com/enhanced.mp4' }] } }),
   'https://example.com/enhanced.mp4',
+);
+assert.deepEqual(
+  normalizeMediaKitUploadHeaders({ 'x-upload-token': 'abc', 'x-number': 123 }),
+  { 'x-upload-token': 'abc', 'x-number': '123' },
+);
+assert.deepEqual(
+  normalizeMediaKitUploadHeaders([
+    { key: 'x-upload-token', value: 'abc' },
+    { name: 'x-request-id', value: 'request-1' },
+  ]),
+  { 'x-upload-token': 'abc', 'x-request-id': 'request-1' },
 );
 
 console.log('视频画质增强 — 无费测试通过');
