@@ -350,7 +350,7 @@ console.log('\n[6] 并发提示词相似度复核');
 console.log('\n[7] Seedance 按秒单价（元/秒）');
 {
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615') === 0.2, 'Mini = 0.2 元/秒');
-  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-fast-260128') === 0.6, 'Fast = 0.6 元/秒');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-fast-260128') === 0.598, 'Fast 720P = 0.598 元/秒');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-260128') === 1.0, '2.0 = 1.0 元/秒');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-5-260628') === 1.5, '2.5 = 1.5 元/秒');
   assert(getSeedanceRatePerSecond('doubao-seedance-unknown') === null, '未知模型返回 null（无兜底单价）');
@@ -405,7 +405,7 @@ console.log('\n[12] 批量估算接口：接受 Mini/Fast/H3/Wan，拒绝稳定�
 
   const resFast = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-fast-260128&resolution=720p'), resFast);
-  assert(resFast._code === 200 && jsonBody(resFast).estimate?.ratePerSecond === 0.6, 'Fast 720P返回0.6元/秒', JSON.stringify(jsonBody(resFast)));
+  assert(resFast._code === 200 && jsonBody(resFast).estimate?.ratePerSecond === 0.598, 'Fast 720P返回0.598元/秒', JSON.stringify(jsonBody(resFast)));
 
   const resReject25 = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-5-260628'), resReject25);
@@ -491,14 +491,14 @@ console.log('\n[16] 按秒单价：真正校验分辨率');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '720p') === 0.2, 'Mini + 720p = 0.2');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '720P') === 0.2, 'Mini + 720P(大写) = 0.2');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '480p') === 0.1, 'Mini + 480p = 0.1');
-  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-fast-260128', '720p') === 0.6, 'Fast + 720p = 0.6');
-  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-fast-260128', '480p') === 0.3, 'Fast + 480p = 0.3');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-fast-260128', '720p') === 0.598, 'Fast + 720p = 0.598');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-fast-260128', '480p') === 0.278, 'Fast + 480p = 0.278');
   assert(getSeedanceRatePerSecond('MiniMax-H3', '768p') === 0.5, 'H3 + 768p = 0.5');
   assert(getSeedanceRatePerSecond('MiniMax-H3', '720p') === null, 'H3 + 720p = null');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '1080p') === null, 'Mini + 1080p = null');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615', '4k') === null, 'Mini + 4k = null');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-mini-260615') === 0.2, 'Mini + 未传分辨率（默认720p）= 0.2');
-  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-260128', '480p') === 0.5, '2.0 + 480p = 0.5');
+  assert(getSeedanceRatePerSecond('doubao-seedance-2-0-260128', '480p') === 0.46, '2.0 + 480p = 0.46');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-0-260128', '1080p') === null, '批量费用口径未开放2.0 + 1080p');
   assert(getSeedanceRatePerSecond('doubao-seedance-2-5-260628', '720p') === 1.5, '2.5 + 720p = 1.5（手动模式仍可用）');
 }

@@ -6,6 +6,19 @@ export interface VideoLibraryItem {
   fileSize: number;
   sha256: string;
   note: string;
+  width: number;
+  height: number;
+  fps: number;
+  durationSeconds: number;
+  variant: 'original' | 'enhanced' | string;
+  sourceItemId: number | null;
+  enhancement: {
+    id: number;
+    status: string;
+    targetResolution: string;
+    errorMessage: string;
+    outputItemId: number | null;
+  } | null;
   createdAt: number;
   updatedAt: number;
   streamUrl: string;
@@ -185,6 +198,7 @@ export async function saveSeedanceVideoToLibrary(input: {
   createdAt?: number;
   paintingDirectionNumber?: number;
   paintingVariationRound?: number;
+  autoEnhance480p?: boolean;
 }) {
   const response = await fetch('/api/video-library/import-seedance', {
     method: 'POST',
@@ -200,7 +214,17 @@ export async function saveSeedanceVideoToLibrary(input: {
     sourceBytes: Number(json?.sourceBytes || 0),
     savedBytes: Number(json?.savedBytes || 0),
     message: typeof json?.message === 'string' ? json.message : '已保存到视频素材库',
+    enhancement: json?.enhancement || null,
   };
+}
+
+export async function retryVideoEnhancement(id: number) {
+  const response = await fetch(`/api/video-library/enhancements/${id}/retry`, {
+    method: 'POST', credentials: 'include',
+  });
+  const json = await readJson(response);
+  if (!response.ok) throw new Error(errorMessage(json, '重新启动画质增强失败'));
+  return json?.task;
 }
 
 export async function updateVideoLibraryItem(id: number, input: { note?: string; originalName?: string; folderName?: string }) {

@@ -12,6 +12,7 @@ import {
   getVideoLibrary,
   getVideoLibrarySummary,
   markVideoLibraryItemsRead,
+  retryVideoEnhancement,
   updateVideoLibraryItem,
   uploadVideoLibraryVideo,
   type VideoLibraryItem,
@@ -162,6 +163,21 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   useEffect(() => {
     void refresh();
   }, [selectedFolder]);
+
+  useEffect(() => {
+    if (!items.some((item) => item.enhancement && !['completed', 'failed'].includes(item.enhancement.status))) return;
+    const timer = window.setInterval(() => {
+      void Promise.all([
+        getVideoLibrary({ folder: selectedFolder, query: search.trim() }),
+        getVideoLibrarySummary().catch(() => null),
+      ]).then(([result, summary]) => {
+        setItems(result.items);
+        setFolders(result.folders);
+        if (summary) applyUnreadSummary(summary);
+      }).catch(() => {});
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [items, selectedFolder, search]);
 
   useEffect(() => {
     let cancelled = false;
@@ -621,9 +637,25 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             </button>
           </div>
           <div className="mt-1 flex items-center justify-between text-[10px] font-semibold text-slate-400">
-            <span>{formatVideoLibrarySize(item.fileSize)}</span>
+            <span>{formatVideoLibrarySize(item.fileSize)}{item.width > 0 && item.height > 0 ? ` · ${item.width}×${item.height}` : ''}</span>
             <span>{formatVideoLibraryTime(item.createdAt)}</span>
           </div>
+          {item.variant === 'enhanced' && (
+            <div className="mt-2 rounded-lg bg-emerald-50 px-2 py-1.5 text-[10px] font-black text-emerald-700">已完成标准版 1080P 画质增强</div>
+          )}
+          {item.enhancement && item.enhancement.status !== 'completed' && (
+            <div className={cn('mt-2 rounded-lg px-2 py-1.5 text-[10px] font-bold', item.enhancement.status === 'failed' ? 'bg-red-50 text-red-600' : 'bg-cyan-50 text-cyan-700')}>
+              <div>{item.enhancement.status === 'failed' ? '画质增强失败' : '正在后台增强至 1080P'}</div>
+              {item.enhancement.errorMessage && <div className="mt-0.5 line-clamp-2 font-medium">{item.enhancement.errorMessage}</div>}
+              {item.enhancement.status === 'failed' && (
+                <button
+                  type="button"
+                  className="mt-1 rounded-md bg-white px-2 py-1 font-black text-red-600 ring-1 ring-red-200"
+                  onClick={() => void retryVideoEnhancement(item.enhancement!.id).then(() => refresh()).catch((retryError) => setError(retryError instanceof Error ? retryError.message : '重试失败'))}
+                >重新尝试</button>
+              )}
+            </div>
+          )}
           {item.note && <p className="mt-2 line-clamp-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-bold leading-4 text-amber-700">{item.note}</p>}
           <div className="mt-2 flex items-center gap-1.5">
             <a href={item.downloadUrl} download={item.downloadName} className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-200">

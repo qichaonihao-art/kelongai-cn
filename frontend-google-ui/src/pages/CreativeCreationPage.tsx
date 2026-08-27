@@ -500,6 +500,10 @@ function roundCost(value: number) {
   return Math.round((value || 0) * 100) / 100;
 }
 
+function formatVideoRate(rate: number): string {
+  return rate.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+}
+
 function recordSeedanceCost(durationSeconds: number, model: SeedanceModelId, resolution = '720p') {
   // 复用统一的按秒价格来源，仅用于右上角本地消耗统计；未确认价格的组合直接跳过。
   const ratePerSecond = getSeedanceRatePerSecond(model, resolution);
@@ -1593,6 +1597,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [isSavingToVideoLibrary, setIsSavingToVideoLibrary] = useState(false);
   const [videoLibrarySaveError, setVideoLibrarySaveError] = useState('');
   const [videoLibrarySaveNotice, setVideoLibrarySaveNotice] = useState('');
+  const [videoLibraryAutoEnhance480p, setVideoLibraryAutoEnhance480p] = useState(false);
   const [showAtMenu, setShowAtMenu] = useState(false);
   const [atMenuFilter, setAtMenuFilter] = useState("");
   const [atMenuSelectedIndex, setAtMenuSelectedIndex] = useState(0);
@@ -1637,6 +1642,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchPreparing, setPaintingBatchPreparing] = useState(false);
   const [paintingBatchIdeas, setPaintingBatchIdeas] = useState<PaintingIdeaSummary[]>([]);
   const [paintingBatchOnlyUnused, setPaintingBatchOnlyUnused] = useState(true);
+  const [paintingBatchAutoEnhance480p, setPaintingBatchAutoEnhance480p] = useState(false);
   const [paintingBatchFolder, setPaintingBatchFolder] = useState(loadLastVideoLibraryFolder);
   const [paintingBatchFolderId, setPaintingBatchFolderId] = useState<number | null>(null);
   const [paintingBatchModel, setPaintingBatchModel] = useState<string>(SEEDANCE_BATCH_MODEL);
@@ -3080,6 +3086,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         createdAt: target.createdAt,
         paintingDirectionNumber: target.directionNumber,
         paintingVariationRound: target.variationRound,
+        autoEnhance480p: videoLibraryAutoEnhance480p,
       });
       if (result.sourceBytes !== result.savedBytes) {
         throw new Error('保存后文件大小校验失败，请重试');
@@ -3090,7 +3097,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
           ? { ...item, libraryFolder: result.item.folderName }
           : item
       )));
-      setVideoLibrarySaveNotice(`${result.message}：${result.item.originalName}`);
+      const enhancementSuffix = videoLibraryAutoEnhance480p
+        ? result.enhancement?.queued
+          ? '；480P画质增强已在后台启动'
+          : result.enhancement?.reason === 'not_480p'
+            ? '；检测到原片并非480P，无需启动增强'
+            : result.enhancement?.reason === 'not_configured'
+              ? '；原片已保存，但服务器尚未配置画质增强密钥'
+              : result.enhancement?.reason === 'public_base_url_missing'
+                ? '；原片已保存，但服务器尚未配置公网地址，画质增强未启动'
+                : '；原片已保存，画质增强暂未启动'
+        : '';
+      setVideoLibrarySaveNotice(`${result.message}：${result.item.originalName}${enhancementSuffix}`);
       setSeedanceLibrarySaveTarget(null);
     } catch (error) {
       setVideoLibrarySaveError(error instanceof Error ? error.message : '保存到视频素材库失败');
@@ -3881,6 +3899,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       targetFolderId: paintingBatchFolderId,
       targetFolderName: paintingBatchFolder,
       onlyUnused: paintingBatchOnlyUnused,
+      autoEnhance480p: paintingBatchAutoEnhance480p,
       creationRequestId,
     };
   }
@@ -4673,6 +4692,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     ? getSeedanceHistoryModeLabel(activeVideoHistoryItem)
     : selectedVideoModelLabel;
   const reverseApiConfigured = reverseModel === 'qwen' ? dashscopeApiConfigured : arkApiConfigured;
+  const selectedVideoRate = getSeedanceRatePerSecond(seedanceModel, seedanceResolution);
+  const selectedVideoEstimatedCost = selectedVideoRate == null || seedanceDuration <= 0
+    ? null
+    : roundCost(seedanceDuration * selectedVideoRate);
 
   return (
     <div className="h-screen bg-slate-200 flex flex-col">
@@ -6672,6 +6695,22 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   </button>
                 )}
 
+                {seedanceTaskMode === 'generate' && (
+                  <span
+                    className={cn(
+                      "mt-3 ml-2 inline-flex items-center rounded-full border px-3 py-1.5 text-[11px] font-bold shadow-sm",
+                      selectedVideoRate == null
+                        ? "border-amber-200 bg-amber-50 text-amber-600"
+                        : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    )}
+                    title={selectedVideoRate == null ? '当前模型与分辨率的单价尚未配置' : '按当前选择估算，实际以平台账单为准'}
+                  >
+                    {selectedVideoRate == null || selectedVideoEstimatedCost == null
+                      ? `${seedanceResolution.toUpperCase()}价格暂未配置`
+                      : `¥${formatVideoRate(selectedVideoRate)}/秒 · ${seedanceDuration}秒预计 ¥${selectedVideoEstimatedCost.toFixed(2)}`}
+                  </span>
+                )}
+
                 {/* 底部工具栏：添加素材 + 设置 */}
                 <div className="mt-3 flex items-center gap-2">
                   {seedanceTaskMode === 'generate' && (
@@ -7357,6 +7396,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 )}
               </div>
 
+              <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={videoLibraryAutoEnhance480p}
+                  onChange={(event) => setVideoLibraryAutoEnhance480p(event.target.checked)}
+                  disabled={isSavingToVideoLibrary}
+                  className="mt-0.5 size-4 accent-cyan-600"
+                />
+                <span>
+                  <span className="block text-xs font-black text-cyan-900">480P 保存后自动增强至 1080P</span>
+                  <span className="mt-1 block text-[10px] leading-4 text-cyan-700">按实际文件分辨率检测；原片保留，标准版增强片在后台完成后另存一份，并保持原帧率。此项会产生 AI MediaKit 增强费用。</span>
+                </span>
+              </label>
+
               {videoLibrarySaveError && (
                 <div className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium leading-5 text-red-600">
                   {videoLibrarySaveError}
@@ -7551,6 +7604,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               />
               <span className="text-xs font-bold text-slate-700">仅生成未使用方向</span>
               <span className="text-[10px] text-slate-400">（默认，跳过当前轮次已生成过的方向）</span>
+            </label>
+
+            <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2.5">
+              <input
+                type="checkbox"
+                checked={paintingBatchAutoEnhance480p}
+                onChange={(event) => setPaintingBatchAutoEnhance480p(event.target.checked)}
+                disabled={paintingBatchCreating || paintingBatchConfirming}
+                className="mt-0.5 size-4 accent-cyan-600"
+              />
+              <span>
+                <span className="block text-xs font-bold text-cyan-900">480P 入库后自动增强至 1080P</span>
+                <span className="mt-0.5 block text-[10px] leading-4 text-cyan-700">仅处理实际为480P及以下的视频；后台异步执行，保留原片，增强片另存，并产生 AI MediaKit 增强费用。</span>
+              </span>
             </label>
 
             <div className="mt-4">

@@ -1058,8 +1058,8 @@ export function getSeedanceRatePerSecond(model: string, resolution = '720p'): nu
   const res = String(resolution || '720p').toLowerCase();
   if (model === 'MiniMax-H3') return res === '768p' ? 0.5 : null;
   if (model === 'doubao-seedance-2-0-mini-260615') return res === '480p' ? 0.1 : res === '720p' ? 0.2 : null;
-  if (model === 'doubao-seedance-2-0-fast-260128') return res === '480p' ? 0.3 : res === '720p' ? 0.6 : null;
-  if (model === 'doubao-seedance-2-0-260128') return res === '480p' ? 0.5 : res === '720p' ? 1.0 : null;
+  if (model === 'doubao-seedance-2-0-fast-260128') return res === '480p' ? 0.278 : res === '720p' ? 0.598 : null;
+  if (model === 'doubao-seedance-2-0-260128') return res === '480p' ? 0.46 : res === '720p' ? 1.0 : null;
   if (model === 'doubao-seedance-2-5-260628') return res === '720p' ? 1.5 : null;
   if (model === 'wan3.0-video') return res === '480p' ? 0.21 : res === '720p' ? 0.42 : res === '1080p' ? 0.84 : null;
   return null;
@@ -1086,6 +1086,7 @@ export interface CreatePaintingBatchRunOptions {
   targetFolderId?: number | null;
   targetFolderName?: string;
   onlyUnused?: boolean;
+  autoEnhance480p?: boolean;
   creationRequestId: string;
 }
 
@@ -1157,6 +1158,7 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
     formData.append('targetFolderName', options.targetFolderName);
   }
   formData.append('onlyUnused', String(options.onlyUnused === true));
+  formData.append('autoEnhance480p', String(options.autoEnhance480p === true));
 
   const response = await fetch('/api/painting/batch-runs', {
     method: 'POST',

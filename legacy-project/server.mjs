@@ -55,6 +55,9 @@ const VIDEO_LIBRARY_THUMBNAIL_CONCURRENCY = 2;
 const VIDEO_LIBRARY_PREVIEW_MAX_WIDTH = 540;
 const VIDEO_LIBRARY_STREAM_HIGH_WATER_MARK = 1024 * 1024;
 const VIDEO_LIBRARY_ACCEL_REDIRECT_PREFIX = String(process.env.VIDEO_LIBRARY_ACCEL_REDIRECT_PREFIX || '').trim().replace(/\/$/, '');
+const MEDIAKIT_API_BASE_URL = String(process.env.MEDIAKIT_API_BASE_URL || 'https://mediakit.cn-beijing.volces.com').trim().replace(/\/+$/g, '');
+const MEDIAKIT_ENHANCEMENT_POLL_INTERVAL_MS = 10 * 1000;
+const MEDIAKIT_ENHANCEMENT_MAX_ATTEMPTS = 5;
 const VIDEO_LIBRARY_MIME_BY_EXTENSION = new Map([
   ['.mp4', 'video/mp4'],
   ['.m4v', 'video/x-m4v'],
@@ -67,6 +70,8 @@ const videoLibraryThumbnailJobs = [];
 const videoLibraryThumbnailPromises = new Map();
 const videoLibraryPreviewPromises = new Map();
 let activeVideoLibraryThumbnailJobs = 0;
+let videoEnhancementWorkerTimer = null;
+let videoEnhancementWorkerActive = false;
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
 const VOICE_ARCHIVE_FILE = path.join(RUNTIME_STATE_DIR, 'voice-archive.json');
 const HOME_CULTURE_MOTTOS_FILE = path.join(RUNTIME_STATE_DIR, 'home-culture-mottos.json');
@@ -118,7 +123,8 @@ const SERVER_CONFIG = {
   doubaoTopmodelApiKey: process.env.DOUBAO_TOPMODEL_API_KEY || '',
   deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
   webSearchApiKey: process.env.WEB_SEARCH_API_KEY || '',
-  dashscopeApiKey: process.env.DASHSCOPE_API_KEY || ''
+  dashscopeApiKey: process.env.DASHSCOPE_API_KEY || '',
+  mediakitApiKey: process.env.MEDIAKIT_API_KEY || '',
 };
 
 const DOUYIN_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
@@ -554,6 +560,44 @@ async function getVideoDurationSeconds(filePath) {
   }
 }
 
+function parseFpsFraction(value) {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  const [numerator, denominator = '1'] = text.split('/');
+  const fps = Number(numerator) / Number(denominator || 1);
+  return Number.isFinite(fps) && fps > 0 ? Math.round(fps * 1000) / 1000 : 0;
+}
+
+async function probeVideoMetadata(filePath) {
+  const { stdout } = await execFileAsync('ffprobe', [
+    '-v', 'error',
+    '-select_streams', 'v:0',
+    '-show_entries', 'stream=width,height,avg_frame_rate,r_frame_rate:format=duration',
+    '-of', 'json',
+    filePath,
+  ], { timeout: 30 * 1000, killSignal: 'SIGKILL' });
+  const parsed = JSON.parse(String(stdout || '{}'));
+  const stream = Array.isArray(parsed?.streams) ? parsed.streams[0] : null;
+  const width = Number(stream?.width || 0);
+  const height = Number(stream?.height || 0);
+  const fps = parseFpsFraction(stream?.avg_frame_rate) || parseFpsFraction(stream?.r_frame_rate);
+  const durationSeconds = Number(parsed?.format?.duration || 0);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error('无法读取视频分辨率');
+  }
+  return {
+    width,
+    height,
+    fps,
+    durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? Math.round(durationSeconds * 1000) / 1000 : 0,
+  };
+}
+
+function isVideo480pOrLower(metadata) {
+  const shortEdge = Math.min(Number(metadata?.width || 0), Number(metadata?.height || 0));
+  return shortEdge > 0 && shortEdge <= 480;
+}
+
 async function validateDownloadedVideoFile(filePath, timeoutMs = 30000) {
   let formatStdout = '';
   let streamsStdout = '';
@@ -955,6 +999,7 @@ async function handleConfigStatus(req, res) {
       douyinApiToken: !!readValue(SERVER_CONFIG.douyinApiToken),
       gptImageApiKey: !!readValue(SERVER_CONFIG.gptImageApiKey),
       dashscopeApiKey: !!readValue(SERVER_CONFIG.dashscopeApiKey),
+      mediakitApiKey: !!readValue(SERVER_CONFIG.mediakitApiKey),
       doubaoMultimodalModel: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
       qwenMultimodalModel: QWEN_CREATIVE_MULTIMODAL_MODEL,
       voiceCloneMockMode: VOICE_CLONE_MOCK_MODE,
@@ -1117,12 +1162,42 @@ function getCollectionDb() {
         file_size INTEGER NOT NULL DEFAULT 0,
         sha256 TEXT NOT NULL UNIQUE,
         note TEXT NOT NULL DEFAULT '',
+        width INTEGER NOT NULL DEFAULT 0,
+        height INTEGER NOT NULL DEFAULT 0,
+        fps REAL NOT NULL DEFAULT 0,
+        duration_seconds REAL NOT NULL DEFAULT 0,
+        variant TEXT NOT NULL DEFAULT 'original',
+        source_item_id INTEGER,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
       CREATE INDEX IF NOT EXISTS idx_video_library_folder ON video_library_items(folder_name);
       CREATE INDEX IF NOT EXISTS idx_video_library_created ON video_library_items(created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS video_enhancement_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_item_id INTEGER NOT NULL,
+        output_item_id INTEGER,
+        provider TEXT NOT NULL DEFAULT 'volc-mediakit',
+        tool_version TEXT NOT NULL DEFAULT 'standard',
+        target_resolution TEXT NOT NULL DEFAULT '1080p',
+        scene TEXT NOT NULL DEFAULT 'aigc',
+        status TEXT NOT NULL DEFAULT 'queued',
+        external_task_id TEXT NOT NULL DEFAULT '',
+        request_id TEXT NOT NULL DEFAULT '',
+        public_token TEXT NOT NULL UNIQUE,
+        input_base_url TEXT NOT NULL DEFAULT '',
+        error_message TEXT NOT NULL DEFAULT '',
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_poll_at INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        completed_at INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(source_item_id, tool_version, target_resolution)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_video_enhancement_status ON video_enhancement_tasks(status, next_poll_at);
 
       CREATE TABLE IF NOT EXISTS video_library_folders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1226,6 +1301,19 @@ function getCollectionDb() {
     } catch {
       // Column already exists, ignore
     }
+
+    // Migration: video library metadata and enhancement lineage.
+    for (const statement of [
+      `ALTER TABLE video_library_items ADD COLUMN width INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE video_library_items ADD COLUMN height INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE video_library_items ADD COLUMN fps REAL NOT NULL DEFAULT 0`,
+      `ALTER TABLE video_library_items ADD COLUMN duration_seconds REAL NOT NULL DEFAULT 0`,
+      `ALTER TABLE video_library_items ADD COLUMN variant TEXT NOT NULL DEFAULT 'original'`,
+      `ALTER TABLE video_library_items ADD COLUMN source_item_id INTEGER`,
+    ]) {
+      try { collectionDb.exec(statement); } catch {}
+    }
+    try { collectionDb.exec(`ALTER TABLE video_enhancement_tasks ADD COLUMN input_base_url TEXT NOT NULL DEFAULT ''`); } catch {}
 
     // Migration: ensure video_library_folders has a stable id column for binding.
     const folderColumns = collectionDb.prepare(`PRAGMA table_info(video_library_folders)`).all();
@@ -1633,6 +1721,13 @@ function formatPaintingSeedanceVideoLibraryName(createdAt, directionNumber) {
 
 function normalizeVideoLibraryItem(row) {
   if (!row) return null;
+  const enhancement = row.enhancement_id ? {
+    id: Number(row.enhancement_id),
+    status: String(row.enhancement_status || ''),
+    targetResolution: String(row.enhancement_target_resolution || '1080p'),
+    errorMessage: String(row.enhancement_error_message || ''),
+    outputItemId: row.enhancement_output_item_id ? Number(row.enhancement_output_item_id) : null,
+  } : null;
   return {
     id: Number(row.id),
     folderName: row.folder_name,
@@ -1641,6 +1736,13 @@ function normalizeVideoLibraryItem(row) {
     fileSize: Number(row.file_size || 0),
     sha256: row.sha256,
     note: row.note || '',
+    width: Number(row.width || 0),
+    height: Number(row.height || 0),
+    fps: Number(row.fps || 0),
+    durationSeconds: Number(row.duration_seconds || 0),
+    variant: String(row.variant || 'original'),
+    sourceItemId: row.source_item_id ? Number(row.source_item_id) : null,
+    enhancement,
     createdAt: Number(row.created_at || 0),
     updatedAt: Number(row.updated_at || 0),
     streamUrl: `/api/video-library/videos/${Number(row.id)}/file?preview=1`,
@@ -1664,7 +1766,18 @@ function dbGetVideoLibraryItems({ folderName = '', query = '' } = {}) {
     params.push(pattern, pattern, pattern);
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-  const rows = db.prepare(`SELECT * FROM video_library_items ${where} ORDER BY created_at DESC, id DESC`).all(...params);
+  const rows = db.prepare(`
+    SELECT v.*,
+      e.id AS enhancement_id,
+      e.status AS enhancement_status,
+      e.target_resolution AS enhancement_target_resolution,
+      e.error_message AS enhancement_error_message,
+      e.output_item_id AS enhancement_output_item_id
+    FROM video_library_items v
+    LEFT JOIN video_enhancement_tasks e ON e.source_item_id = v.id
+    ${where ? where.replaceAll('folder_name', 'v.folder_name').replaceAll('original_name', 'v.original_name').replaceAll('note', 'v.note') : ''}
+    ORDER BY v.created_at DESC, v.id DESC
+  `).all(...params);
   return rows.map(normalizeVideoLibraryItem).filter(Boolean);
 }
 
@@ -1693,7 +1806,17 @@ function dbCreateVideoLibraryFolder(folderName) {
 }
 
 function dbGetVideoLibraryItem(id) {
-  const row = getCollectionDb().prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(id));
+  const row = getCollectionDb().prepare(`
+    SELECT v.*,
+      e.id AS enhancement_id,
+      e.status AS enhancement_status,
+      e.target_resolution AS enhancement_target_resolution,
+      e.error_message AS enhancement_error_message,
+      e.output_item_id AS enhancement_output_item_id
+    FROM video_library_items v
+    LEFT JOIN video_enhancement_tasks e ON e.source_item_id = v.id
+    WHERE v.id = ?
+  `).get(Number(id));
   return normalizeVideoLibraryItem(row);
 }
 
@@ -1702,13 +1825,318 @@ function dbFindVideoLibraryByHash(sha256) {
   return normalizeVideoLibraryItem(row);
 }
 
-function dbInsertVideoLibraryItem({ folderName, originalName, storedName, mimeType, fileSize, sha256, note }) {
+function dbInsertVideoLibraryItem({ folderName, originalName, storedName, mimeType, fileSize, sha256, note, width = 0, height = 0, fps = 0, durationSeconds = 0, variant = 'original', sourceItemId = null }) {
   const result = getCollectionDb().prepare(`
     INSERT INTO video_library_items
-      (folder_name, original_name, stored_name, mime_type, file_size, sha256, note)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(folderName, originalName, storedName, mimeType, fileSize, sha256, note);
+      (folder_name, original_name, stored_name, mime_type, file_size, sha256, note, width, height, fps, duration_seconds, variant, source_item_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(folderName, originalName, storedName, mimeType, fileSize, sha256, note, Number(width || 0), Number(height || 0), Number(fps || 0), Number(durationSeconds || 0), String(variant || 'original'), sourceItemId ? Number(sourceItemId) : null);
   return dbGetVideoLibraryItem(Number(result.lastInsertRowid));
+}
+
+function dbUpdateVideoLibraryMetadata(id, metadata) {
+  getCollectionDb().prepare(`
+    UPDATE video_library_items SET width = ?, height = ?, fps = ?, duration_seconds = ?, updated_at = unixepoch() WHERE id = ?
+  `).run(Number(metadata?.width || 0), Number(metadata?.height || 0), Number(metadata?.fps || 0), Number(metadata?.durationSeconds || 0), Number(id));
+  return dbGetVideoLibraryItem(id);
+}
+
+function normalizeVideoEnhancementTask(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    sourceItemId: Number(row.source_item_id),
+    outputItemId: row.output_item_id ? Number(row.output_item_id) : null,
+    status: String(row.status || ''),
+    externalTaskId: String(row.external_task_id || ''),
+    requestId: String(row.request_id || ''),
+    targetResolution: String(row.target_resolution || '1080p'),
+    errorMessage: String(row.error_message || ''),
+    attemptCount: Number(row.attempt_count || 0),
+    nextPollAt: Number(row.next_poll_at || 0),
+    createdAt: Number(row.created_at || 0),
+    updatedAt: Number(row.updated_at || 0),
+    completedAt: Number(row.completed_at || 0),
+  };
+}
+
+function dbGetVideoEnhancementTask(id) {
+  return normalizeVideoEnhancementTask(getCollectionDb().prepare('SELECT * FROM video_enhancement_tasks WHERE id = ?').get(Number(id)));
+}
+
+function dbGetVideoEnhancementTaskBySource(sourceItemId) {
+  return normalizeVideoEnhancementTask(getCollectionDb().prepare(`
+    SELECT * FROM video_enhancement_tasks
+    WHERE source_item_id = ? AND tool_version = 'standard' AND target_resolution = '1080p'
+    LIMIT 1
+  `).get(Number(sourceItemId)));
+}
+
+function dbQueueVideoEnhancement({ sourceItemId, publicToken, inputBaseUrl }) {
+  const db = getCollectionDb();
+  db.prepare(`
+    INSERT OR IGNORE INTO video_enhancement_tasks
+      (source_item_id, public_token, input_base_url, status, next_poll_at)
+    VALUES (?, ?, ?, 'queued', unixepoch())
+  `).run(Number(sourceItemId), String(publicToken), String(inputBaseUrl || ''));
+  return dbGetVideoEnhancementTaskBySource(sourceItemId);
+}
+
+function dbUpdateVideoEnhancementTask(id, updates = {}) {
+  const mapping = {
+    outputItemId: 'output_item_id', status: 'status', externalTaskId: 'external_task_id', requestId: 'request_id',
+    errorMessage: 'error_message', attemptCount: 'attempt_count', nextPollAt: 'next_poll_at', completedAt: 'completed_at',
+  };
+  const fields = [];
+  const values = [];
+  for (const [key, column] of Object.entries(mapping)) {
+    if (updates[key] === undefined) continue;
+    fields.push(`${column} = ?`);
+    values.push(updates[key]);
+  }
+  if (!fields.length) return dbGetVideoEnhancementTask(id);
+  fields.push('updated_at = unixepoch()');
+  values.push(Number(id));
+  getCollectionDb().prepare(`UPDATE video_enhancement_tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  return dbGetVideoEnhancementTask(id);
+}
+
+function getPendingVideoEnhancementTask() {
+  return getCollectionDb().prepare(`
+    SELECT * FROM video_enhancement_tasks
+    WHERE status IN ('queued', 'submitted', 'processing', 'downloading') AND next_poll_at <= unixepoch()
+    ORDER BY created_at ASC, id ASC LIMIT 1
+  `).get();
+}
+
+function extractEnhancementOutputUrl(payload) {
+  const candidates = [
+    payload?.result?.video_url, payload?.result?.videoUrl, payload?.result?.url,
+    payload?.output?.video_url, payload?.output?.videoUrl, payload?.output?.url,
+    payload?.data?.video_url, payload?.data?.videoUrl, payload?.data?.url,
+    payload?.video_url, payload?.videoUrl, payload?.url,
+  ];
+  const direct = readValue(...candidates);
+  if (direct) return direct;
+  const queue = [payload?.result, payload?.output, payload?.data].filter(Boolean);
+  const visited = new Set();
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || typeof current !== 'object' || visited.has(current)) continue;
+    visited.add(current);
+    for (const [key, value] of Object.entries(current)) {
+      if (typeof value === 'string' && /^https?:\/\//i.test(value) && /(video|url|output|result)/i.test(key)) return value;
+      if (value && typeof value === 'object' && visited.size < 100) queue.push(value);
+    }
+  }
+  return '';
+}
+
+function normalizeEnhancementRemoteStatus(payload) {
+  return readValue(payload?.status, payload?.data?.status, payload?.result?.status).toLowerCase();
+}
+
+function getEnhancementInputUrl(row) {
+  const baseUrl = String(row?.input_base_url || getConfiguredPublicBaseUrl()).replace(/\/+$/g, '');
+  if (!baseUrl) return '';
+  return `${baseUrl}/media-enhancement-input/${encodeURIComponent(String(row.public_token || ''))}`;
+}
+
+async function queueVideoEnhancementForLibraryItem(item, { enabled = false, req = null } = {}) {
+  if (!item?.id) return { queued: false, reason: 'missing_item' };
+  const raw = getCollectionDb().prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(item.id));
+  if (!raw) return { queued: false, reason: 'missing_item' };
+  const filePath = path.join(VIDEO_LIBRARY_DIR, raw.stored_name);
+  let metadata;
+  try {
+    metadata = await probeVideoMetadata(filePath);
+    item = dbUpdateVideoLibraryMetadata(item.id, metadata);
+  } catch (error) {
+    console.warn('[video enhancement] metadata_probe_failed', { itemId: item.id, message: error?.message || '' });
+    return { queued: false, reason: 'metadata_failed', item };
+  }
+  if (!enabled) return { queued: false, reason: 'disabled', item };
+  if (!isVideo480pOrLower(metadata)) return { queued: false, reason: 'not_480p', item };
+  if (!readValue(SERVER_CONFIG.mediakitApiKey)) return { queued: false, reason: 'not_configured', item };
+  const inputBaseUrl = req ? resolvePublicBaseUrl(req) : getConfiguredPublicBaseUrl();
+  if (!inputBaseUrl) return { queued: false, reason: 'public_base_url_missing', item };
+  const existing = dbGetVideoEnhancementTaskBySource(item.id);
+  if (existing?.status === 'completed') return { queued: false, reason: 'already_completed', task: existing, item };
+  if (existing?.status === 'failed') return { queued: false, reason: 'existing_failed', task: existing, item };
+  const task = existing || dbQueueVideoEnhancement({
+    sourceItemId: item.id,
+    publicToken: randomBytes(24).toString('hex'),
+    inputBaseUrl,
+  });
+  scheduleVideoEnhancementWorker(100);
+  return { queued: true, task, item };
+}
+
+async function handlePublicEnhancementInput(req, res, token) {
+  const row = getCollectionDb().prepare(`
+    SELECT e.status, v.stored_name, v.mime_type, v.file_size
+    FROM video_enhancement_tasks e JOIN video_library_items v ON v.id = e.source_item_id
+    WHERE e.public_token = ? AND e.status NOT IN ('completed', 'failed', 'skipped')
+  `).get(String(token || ''));
+  if (!row) { sendJson(res, 404, { error: '增强任务素材不存在或已失效' }); return; }
+  const filePath = path.join(VIDEO_LIBRARY_DIR, row.stored_name);
+  try {
+    const info = await stat(filePath);
+    const headers = {
+      'Content-Type': row.mime_type || 'video/mp4',
+      'Cache-Control': 'private, max-age=300',
+      'Accept-Ranges': 'bytes',
+    };
+    const range = req.headers.range;
+    if (range) {
+      const parsedRange = parseVideoLibraryByteRange(range, info.size);
+      if (!parsedRange) {
+        res.writeHead(416, { ...headers, 'Content-Range': `bytes */${info.size}` });
+        res.end();
+        return;
+      }
+      const { start, end } = parsedRange;
+      res.writeHead(206, {
+        ...headers,
+        'Content-Range': `bytes ${start}-${end}/${info.size}`,
+        'Content-Length': String(end - start + 1),
+      });
+      if (req.method === 'HEAD') { res.end(); return; }
+      createReadStream(filePath, { start, end, highWaterMark: VIDEO_LIBRARY_STREAM_HIGH_WATER_MARK }).pipe(res);
+      return;
+    }
+    res.writeHead(200, { ...headers, 'Content-Length': info.size });
+    if (req.method === 'HEAD') { res.end(); return; }
+    createReadStream(filePath, { highWaterMark: VIDEO_LIBRARY_STREAM_HIGH_WATER_MARK }).pipe(res);
+  } catch { sendJson(res, 404, { error: '增强任务素材文件不存在' }); }
+}
+
+async function submitVideoEnhancement(row) {
+  const apiKey = readValue(SERVER_CONFIG.mediakitApiKey);
+  const inputUrl = getEnhancementInputUrl(row);
+  if (!apiKey) throw new Error('服务端未配置 MEDIAKIT_API_KEY');
+  if (!inputUrl) throw new Error('服务端未配置 PUBLIC_BASE_URL，增强服务无法读取原视频');
+  const source = getCollectionDb().prepare('SELECT sha256 FROM video_library_items WHERE id = ?').get(Number(row.source_item_id));
+  const response = await fetch(`${MEDIAKIT_API_BASE_URL}/api/v1/tools/enhance-video`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      video_url: inputUrl,
+      scene: 'aigc',
+      tool_version: 'standard',
+      resolution: '1080p',
+      client_token: `kelongai-${String(source?.sha256 || row.id).slice(0, 32)}-standard-1080p`,
+    }),
+    signal: AbortSignal.timeout(60 * 1000),
+  });
+  const text = await response.text();
+  const payload = parseJsonString(text, null);
+  if (!response.ok) throw new Error(readValue(payload?.error?.message, payload?.message) || `画质增强提交失败（HTTP ${response.status}）`);
+  const externalTaskId = readValue(payload?.task_id, payload?.taskId, payload?.data?.task_id);
+  if (!externalTaskId) throw new Error('画质增强服务未返回任务编号');
+  dbUpdateVideoEnhancementTask(row.id, {
+    status: 'submitted', externalTaskId, requestId: readValue(payload?.request_id), errorMessage: '',
+    nextPollAt: Math.floor(Date.now() / 1000) + 10,
+  });
+}
+
+async function downloadEnhancedVideo(row, outputUrl) {
+  dbUpdateVideoEnhancementTask(row.id, { status: 'downloading', nextPollAt: Math.floor(Date.now() / 1000) + 30 });
+  const source = getCollectionDb().prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(row.source_item_id));
+  if (!source) throw new Error('原视频已被删除');
+  const response = await fetch(outputUrl, { signal: AbortSignal.timeout(3 * 60 * 1000) });
+  if (!response.ok) throw new Error(`增强视频下载失败（HTTP ${response.status}）`);
+  const buffer = await readVideoLibraryRemoteBuffer(response);
+  const sha256 = createHash('sha256').update(buffer).digest('hex');
+  let outputItem = dbFindVideoLibraryByHash(sha256);
+  if (!outputItem) {
+    const storedName = `${sha256}.mp4`;
+    const filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
+    await writeFile(filePath, buffer);
+    const metadata = await probeVideoMetadata(filePath);
+    const baseName = String(source.original_name || '视频').replace(/\.[^.]+$/, '');
+    outputItem = dbInsertVideoLibraryItem({
+      folderName: source.folder_name,
+      originalName: `${baseName} 1080P增强.mp4`,
+      storedName,
+      mimeType: 'video/mp4',
+      fileSize: buffer.length,
+      sha256,
+      note: `AI MediaKit 标准版增强至1080P · 原素材ID ${source.id}`,
+      ...metadata,
+      variant: 'enhanced',
+      sourceItemId: source.id,
+    });
+    void ensureVideoLibraryPreview({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
+    void ensureVideoLibraryThumbnail({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
+  }
+  dbUpdateVideoEnhancementTask(row.id, {
+    status: 'completed', outputItemId: outputItem.id, errorMessage: '',
+    nextPollAt: 0, completedAt: Math.floor(Date.now() / 1000),
+  });
+}
+
+async function pollVideoEnhancement(row) {
+  const response = await fetch(`${MEDIAKIT_API_BASE_URL}/api/v1/tasks/${encodeURIComponent(row.external_task_id)}`, {
+    headers: { Authorization: `Bearer ${readValue(SERVER_CONFIG.mediakitApiKey)}` },
+    signal: AbortSignal.timeout(60 * 1000),
+  });
+  const text = await response.text();
+  const payload = parseJsonString(text, null);
+  if (!response.ok) throw new Error(readValue(payload?.error?.message, payload?.message) || `画质增强查询失败（HTTP ${response.status}）`);
+  const status = normalizeEnhancementRemoteStatus(payload);
+  if (['failed', 'error', 'cancelled', 'canceled'].includes(status)) {
+    throw new Error(readValue(payload?.error?.message, payload?.message, payload?.result?.message) || '画质增强任务失败');
+  }
+  if (['completed', 'succeeded', 'success', 'done'].includes(status)) {
+    const outputUrl = extractEnhancementOutputUrl(payload);
+    if (!outputUrl) throw new Error('画质增强完成但未返回视频地址');
+    await downloadEnhancedVideo(row, outputUrl);
+    return;
+  }
+  dbUpdateVideoEnhancementTask(row.id, { status: 'processing', nextPollAt: Math.floor(Date.now() / 1000) + 10 });
+}
+
+async function runVideoEnhancementWorker() {
+  if (videoEnhancementWorkerActive) return;
+  videoEnhancementWorkerActive = true;
+  try {
+    const row = getPendingVideoEnhancementTask();
+    if (!row) return;
+    try {
+      if (!row.external_task_id) await submitVideoEnhancement(row);
+      else await pollVideoEnhancement(row);
+    } catch (error) {
+      const attempts = Number(row.attempt_count || 0) + 1;
+      const terminal = attempts >= MEDIAKIT_ENHANCEMENT_MAX_ATTEMPTS;
+      dbUpdateVideoEnhancementTask(row.id, {
+        status: terminal ? 'failed' : (row.external_task_id ? 'processing' : 'queued'),
+        attemptCount: attempts,
+        errorMessage: error?.message || '画质增强失败',
+        nextPollAt: terminal ? 0 : Math.floor(Date.now() / 1000) + Math.min(60, attempts * 10),
+      });
+      console.error('[video enhancement] worker_failed', { id: row.id, attempts, terminal, message: error?.message || '' });
+    }
+  } finally {
+    videoEnhancementWorkerActive = false;
+    scheduleVideoEnhancementWorker(MEDIAKIT_ENHANCEMENT_POLL_INTERVAL_MS);
+  }
+}
+
+function scheduleVideoEnhancementWorker(delayMs = MEDIAKIT_ENHANCEMENT_POLL_INTERVAL_MS) {
+  if (videoEnhancementWorkerTimer) clearTimeout(videoEnhancementWorkerTimer);
+  videoEnhancementWorkerTimer = setTimeout(() => void runVideoEnhancementWorker(), Math.max(50, delayMs));
+  videoEnhancementWorkerTimer.unref?.();
+}
+
+function retryVideoEnhancementTask(id) {
+  const task = dbGetVideoEnhancementTask(id);
+  if (!task) return null;
+  const updated = dbUpdateVideoEnhancementTask(id, {
+    status: task.externalTaskId ? 'processing' : 'queued', attemptCount: 0, errorMessage: '', nextPollAt: Math.floor(Date.now() / 1000),
+  });
+  scheduleVideoEnhancementWorker(100);
+  return updated;
 }
 
 function dbUpdateVideoLibraryNote(id, note) {
@@ -2303,6 +2731,7 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
     const requestedCreatedAt = Number(body?.createdAt || 0);
     const paintingDirectionNumber = Number(body?.paintingDirectionNumber || 0);
     const paintingVariationRound = Math.max(0, Number(body?.paintingVariationRound || 0));
+    const autoEnhance480p = body?.autoEnhance480p === true;
     if (!taskId) {
       sendJson(res, 400, { error: '缺少视频生成任务 ID' });
       return;
@@ -2336,13 +2765,15 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
     const sha256 = createHash('sha256').update(buffer).digest('hex');
     const existing = dbFindVideoLibraryByHash(sha256);
     if (existing) {
+      const enhancementResult = await queueVideoEnhancementForLibraryItem(existing, { enabled: autoEnhance480p, req });
       sendJson(res, 200, {
         ok: true,
         duplicate: true,
-        item: existing,
+        item: enhancementResult.item || existing,
         sourceBytes: buffer.length,
         savedBytes: existing.fileSize,
         message: `这个视频已经保存在“${existing.folderName}”文件夹`,
+        enhancement: enhancementResult,
       });
       return;
     }
@@ -2361,7 +2792,7 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
     if (savedFile.size !== buffer.length) {
       throw new Error('保存后文件大小校验失败，请重试');
     }
-    const item = dbInsertVideoLibraryItem({
+    let item = dbInsertVideoLibraryItem({
       folderName,
       originalName,
       storedName,
@@ -2380,6 +2811,8 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
         message: thumbnailError?.message || '',
       });
     });
+    const enhancementResult = await queueVideoEnhancementForLibraryItem(item, { enabled: autoEnhance480p, req });
+    item = enhancementResult.item || item;
     sendJson(res, 201, {
       ok: true,
       duplicate: false,
@@ -2387,6 +2820,7 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
       sourceBytes: buffer.length,
       savedBytes: item.fileSize,
       message: `已无损保存到“${folderName}”文件夹`,
+      enhancement: enhancementResult,
     });
   } catch (error) {
     if (filePath) await unlink(filePath).catch(() => {});
@@ -9903,6 +10337,7 @@ async function readMultipartFormBody(req) {
     targetFolderId: readValue(formData.get('targetFolderId')),
     targetFolderName: readValue(formData.get('targetFolderName')),
     onlyUnused: readValue(formData.get('onlyUnused')),
+    autoEnhance480p: readValue(formData.get('autoEnhance480p')),
     creationRequestId: readValue(formData.get('creationRequestId')),
   };
 }
@@ -12987,14 +13422,14 @@ function isPaintingBatchResolutionSupported(model, resolution) {
   return getPaintingBatchSupportedResolutions(model).includes(String(resolution || '').toLowerCase());
 }
 
-// 按秒估算单价（元/秒）。Fast 使用当前控制台活动价折算；实际费用以火山方舟账单为准。
+// 按秒估算单价（元/秒）。Seedance 使用当前控制台价格；实际费用以平台账单为准。
 function getSeedanceRatePerSecond(model, resolution = '720p') {
   const m = String(model || '');
   const res = String(resolution || '720p').toLowerCase();
   if (m === 'doubao-seedance-2-0-mini-260615') return res === '480p' ? 0.1 : res === '720p' ? 0.2 : null;
-  if (m === 'doubao-seedance-2-0-fast-260128') return res === '480p' ? 0.3 : res === '720p' ? 0.6 : null;
+  if (m === 'doubao-seedance-2-0-fast-260128') return res === '480p' ? 0.278 : res === '720p' ? 0.598 : null;
   if (m === 'MiniMax-H3') return res === '768p' ? 0.5 : null;
-  if (m === 'doubao-seedance-2-0-260128') return res === '480p' ? 0.5 : res === '720p' ? 1.0 : null;
+  if (m === 'doubao-seedance-2-0-260128') return res === '480p' ? 0.46 : res === '720p' ? 1.0 : null;
   if (m === 'doubao-seedance-2-5-260628') return res === '720p' ? 1.5 : null;
   if (m === 'wan3.0-video') return res === '480p' ? 0.21 : res === '720p' ? 0.42 : res === '1080p' ? 0.84 : null;
   return null;
@@ -13175,6 +13610,7 @@ async function handleCreatePaintingBatchRun(req, res) {
     const ratio = readValue(body.ratio) || '9:16';
     const variationRound = Math.max(0, Math.min(2, Number(body.variationRound) || 0));
     const onlyUnused = body.onlyUnused === 'true' || body.onlyUnused === true;
+    const autoEnhance480p = body.autoEnhance480p === 'true' || body.autoEnhance480p === true;
     const generateAudio = body.generateAudio !== 'false' && body.generateAudio !== false;
     const watermark = body.watermark === 'true' || body.watermark === true;
     const stylePreset = readValue(body.stylePreset) || plan.stylePreset || 'modern-minimal';
@@ -13227,6 +13663,7 @@ async function handleCreatePaintingBatchRun(req, res) {
       ...(body.options && typeof body.options === 'object' ? body.options : {}),
       startOrder,
       requestedCount,
+      autoEnhance480p,
       costEstimate,
       woodReferences: {
         upper: upperWoodReference,
@@ -14884,7 +15321,8 @@ async function downloadAndSaveSeedanceVideoForBatch(seedanceTaskId, folderName, 
   const sha256 = createHash('sha256').update(buffer).digest('hex');
   const existing = dbFindVideoLibraryByHash(sha256);
   if (existing) {
-    return { item: existing, duplicate: true, sourceBytes: buffer.length, savedBytes: existing.fileSize };
+    const enhancementResult = await queueVideoEnhancementForLibraryItem(existing, { enabled: batchMeta.autoEnhance480p === true });
+    return { item: enhancementResult.item || existing, duplicate: true, sourceBytes: buffer.length, savedBytes: existing.fileSize, enhancement: enhancementResult };
   }
 
   const taskCreatedAt = Number(taskPayload?.created_at || taskPayload?.data?.created_at || 0);
@@ -14902,7 +15340,7 @@ async function downloadAndSaveSeedanceVideoForBatch(seedanceTaskId, folderName, 
   const note = paintingPosition
     ? `来自挂画创意素材·全自动（第${paintingPosition.groupNumber}组第${paintingPosition.itemNumber}个，方向${batchMeta.directionNumber}，第${batchMeta.variationRound + 1}轮）`
     : `来自挂画创意素材·全自动（方向 ${batchMeta.directionNumber}）`;
-  const item = dbInsertVideoLibraryItem({
+  let item = dbInsertVideoLibraryItem({
     folderName,
     originalName: sanitizeVideoLibraryFileName(originalName),
     storedName,
@@ -14919,7 +15357,9 @@ async function downloadAndSaveSeedanceVideoForBatch(seedanceTaskId, folderName, 
       message: thumbnailError?.message || '',
     });
   });
-  return { item, duplicate: false, sourceBytes: buffer.length, savedBytes: item.fileSize };
+  const enhancementResult = await queueVideoEnhancementForLibraryItem(item, { enabled: batchMeta.autoEnhance480p === true });
+  item = enhancementResult.item || item;
+  return { item, duplicate: false, sourceBytes: buffer.length, savedBytes: item.fileSize, enhancement: enhancementResult };
 }
 
 // 提示词多样性提交锁：并发生成后，串行地对“已提交提示词”做相似度复核，避免两个并发任务
@@ -15280,6 +15720,7 @@ async function processBatchTask(taskId) {
         directionNumber: task.directionNumber,
         ideaTitle: task.ideaTitle,
         variationRound: task.variationRound,
+        autoEnhance480p: currentRun.options?.autoEnhance480p === true,
       });
       dbUpdatePaintingBatchTask(task.id, {
         status: 'completed',
@@ -18345,6 +18786,12 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/media-enhancement-input/')) {
+    const token = decodeURIComponent(url.pathname.slice('/media-enhancement-input/'.length));
+    await handlePublicEnhancementInput(req, res, token);
+    return;
+  }
+
   const isDebugDownloadBypass = String(process.env.DOWNLOAD_DEBUG_BYPASS_AUTH || '').trim().toLowerCase() === 'true';
   const isDownloadDebugRoute = url.pathname === '/api/douyin/download-video' || url.pathname === '/api/douyin/video-stream';
 
@@ -18813,6 +19260,14 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname.startsWith('/api/video-library/enhancements/') && url.pathname.endsWith('/retry')) {
+    const id = decodeURIComponent(url.pathname.replace(/^\/api\/video-library\/enhancements\//, '').replace(/\/retry$/, ''));
+    const task = retryVideoEnhancementTask(id);
+    if (!task) sendJson(res, 404, { error: '画质增强任务不存在' });
+    else sendJson(res, 200, { ok: true, task });
+    return;
+  }
+
   if (req.method === 'PATCH' && url.pathname.startsWith('/api/video-library/videos/')) {
     const id = url.pathname.replace(/^\/api\/video-library\/videos\//, '');
     await handleUpdateVideoLibrary(req, res, id);
@@ -18925,6 +19380,8 @@ if (process.env.KELONG_SKIP_LISTEN !== '1') {
         message: error?.message || ''
       });
     });
+    // 画质增强任务持久化在 SQLite；服务重启后继续提交、轮询或下载。
+    scheduleVideoEnhancementWorker(500);
   });
 }
 
@@ -19001,4 +19458,8 @@ export {
   getPaintingContentDetailVariant,
   ensurePaintingContentDetailVariant,
   getPaintingBatchReferenceSpecs,
+  parseFpsFraction,
+  isVideo480pOrLower,
+  extractEnhancementOutputUrl,
+  normalizeEnhancementRemoteStatus,
 };
