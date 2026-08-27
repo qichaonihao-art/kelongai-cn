@@ -664,6 +664,17 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
                   onClick={() => void retryVideoEnhancement(item.enhancement!.id).then(() => refresh()).catch((retryError) => setError(retryError instanceof Error ? retryError.message : '重试失败'))}
                 >重新尝试</button>
               )}
+              {item.enhancement.status === 'skipped' && (
+                <button
+                  type="button"
+                  className="mt-1 rounded-md bg-white px-2 py-1 font-black text-cyan-700 ring-1 ring-cyan-200"
+                  onClick={() => {
+                    void startVideoEnhancement(item.id)
+                      .then(() => refresh())
+                      .catch((enhanceError) => setError(enhanceError instanceof Error ? enhanceError.message : '启动画质增强失败'));
+                  }}
+                >按480P档重新增强</button>
+              )}
             </div>
           )}
           {item.note && <p className="mt-2 line-clamp-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-bold leading-4 text-amber-700">{item.note}</p>}
@@ -678,7 +689,6 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
               <button
                 type="button"
                 onClick={() => {
-                  if (!window.confirm('确定为这条视频启动标准版1080P画质增强吗？该操作会产生AI MediaKit费用，原片会保留。')) return;
                   void startVideoEnhancement(item.id)
                     .then(() => refresh())
                     .catch((enhanceError) => setError(enhanceError instanceof Error ? enhanceError.message : '启动画质增强失败'));

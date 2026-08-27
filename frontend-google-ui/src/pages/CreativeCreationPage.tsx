@@ -152,6 +152,7 @@ interface SeedanceHistoryItem {
 
 interface SeedanceLibrarySaveTarget {
   taskId: string;
+  model: SeedanceModelId;
   createdAt?: number;
   directionNumber?: number;
   variationRound?: number;
@@ -3082,6 +3083,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     try {
       const result = await saveSeedanceVideoToLibrary({
         taskId: target.taskId,
+        model: target.model,
         folderName: selectedVideoLibraryFolder,
         createdAt: target.createdAt,
         paintingDirectionNumber: target.directionNumber,
@@ -6991,6 +6993,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             type="button"
                             onClick={() => void openSeedanceLibrarySave({
                               taskId: seedanceTask.taskId,
+                              model: seedanceHistory.find((item) => item.taskId === seedanceTask.taskId)?.model || seedanceModel,
                               createdAt: seedanceTask.createdAt,
                               directionNumber: seedanceTask.directionNumber,
                               variationRound: seedanceTask.variationRound,
@@ -7216,6 +7219,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                                 type="button"
                                                 onClick={() => void openSeedanceLibrarySave({
                                                   taskId: item.taskId,
+                                                  model: item.model,
                                                   createdAt: item.createdAt,
                                                   directionNumber: item.directionNumber,
                                                   variationRound: item.variationRound,

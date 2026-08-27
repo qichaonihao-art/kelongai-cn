@@ -194,6 +194,7 @@ export async function getVideoLibrarySummary() {
 
 export async function saveSeedanceVideoToLibrary(input: {
   taskId: string;
+  model?: string;
   folderName: string;
   createdAt?: number;
   paintingDirectionNumber?: number;

@@ -12,6 +12,8 @@ const {
 assert.equal(parseFpsFraction('30000/1001'), 29.97);
 assert.equal(parseFpsFraction('25/1'), 25);
 assert.equal(isVideo480pOrLower({ width: 480, height: 854 }), true);
+assert.equal(isVideo480pOrLower({ width: 496, height: 864 }), true);
+assert.equal(isVideo480pOrLower({ width: 540, height: 960 }), false);
 assert.equal(isVideo480pOrLower({ width: 720, height: 1280 }), false);
 assert.equal(normalizeEnhancementRemoteStatus({ data: { status: 'COMPLETED' } }), 'completed');
 assert.equal(

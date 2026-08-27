@@ -58,6 +58,8 @@ const VIDEO_LIBRARY_ACCEL_REDIRECT_PREFIX = String(process.env.VIDEO_LIBRARY_ACC
 const MEDIAKIT_API_BASE_URL = String(process.env.MEDIAKIT_API_BASE_URL || 'https://mediakit.cn-beijing.volces.com').trim().replace(/\/+$/g, '');
 const MEDIAKIT_ENHANCEMENT_POLL_INTERVAL_MS = 10 * 1000;
 const MEDIAKIT_ENHANCEMENT_MAX_ATTEMPTS = 5;
+// 生成平台的“480P”常因编码宏块对齐输出为 496×864 等尺寸；512 可覆盖该档位且不会误收 540P/720P。
+const VIDEO_ENHANCEMENT_480P_MAX_SHORT_EDGE = 512;
 const VIDEO_LIBRARY_MIME_BY_EXTENSION = new Map([
   ['.mp4', 'video/mp4'],
   ['.m4v', 'video/x-m4v'],
@@ -595,7 +597,7 @@ async function probeVideoMetadata(filePath) {
 
 function isVideo480pOrLower(metadata) {
   const shortEdge = Math.min(Number(metadata?.width || 0), Number(metadata?.height || 0));
-  return shortEdge > 0 && shortEdge <= 480;
+  return shortEdge > 0 && shortEdge <= VIDEO_ENHANCEMENT_480P_MAX_SHORT_EDGE;
 }
 
 async function validateDownloadedVideoFile(filePath, timeoutMs = 30000) {
@@ -1735,7 +1737,7 @@ function normalizeVideoLibraryItem(row) {
     mimeType: row.mime_type || 'video/mp4',
     fileSize: Number(row.file_size || 0),
     sha256: row.sha256,
-    note: row.note || '',
+    note: normalizeLegacyVideoLibrarySourceNote(row.note),
     width: Number(row.width || 0),
     height: Number(row.height || 0),
     fps: Number(row.fps || 0),
@@ -2759,15 +2761,49 @@ async function readVideoLibraryRemoteBuffer(response) {
   return Buffer.concat(chunks, totalBytes);
 }
 
+function getVideoLibraryModelLabel(model, provider = '') {
+  const normalizedModel = readValue(model);
+  const normalizedProvider = readValue(provider);
+  if (normalizedProvider === 'minimax-h3' || normalizedModel === 'MiniMax-H3') return 'MiniMax H3';
+  if (normalizedProvider === 'wan3' || normalizedModel === 'wan3.0-video') return '千问 Wan3.0 Video';
+  if (normalizedModel === 'doubao-seedance-2-5-260628') return 'Seedance 2.5';
+  if (normalizedModel === 'doubao-seedance-2-0-mini-260615') return 'Seedance 2.0 Mini';
+  if (normalizedModel === 'doubao-seedance-2-0-fast-260128') return 'Seedance 2.0 Fast';
+  if (normalizedModel === 'doubao-seedance-2-0-260128') return 'Seedance 2.0 稳定版';
+  return normalizedProvider === 'seedance' ? 'Seedance' : '';
+}
+
+function formatVideoLibrarySourceNote({ model, provider, source = 'creative', directionNumber = 0 } = {}) {
+  if (source === 'local') return '本地上传';
+  const parts = [];
+  const modelLabel = getVideoLibraryModelLabel(model, provider);
+  if (modelLabel) parts.push(modelLabel);
+  parts.push('来自创意素材');
+  const normalizedDirection = Number(directionNumber || 0);
+  if (Number.isInteger(normalizedDirection) && normalizedDirection > 0) {
+    parts.push(`方向${normalizedDirection}`);
+  }
+  return parts.join(' · ');
+}
+
+function normalizeLegacyVideoLibrarySourceNote(note) {
+  const normalizedNote = readValue(note);
+  if (!normalizedNote) return '';
+  if (normalizedNote === '来自创意创作') return '来自创意素材';
+  if (!normalizedNote.includes('来自挂画创意素材')) return normalizedNote;
+  const direction = normalizedNote.match(/方向\s*(\d+)/)?.[1];
+  return direction ? `来自创意素材 · 方向${direction}` : '来自创意素材';
+}
+
 async function handleSaveSeedanceVideoToLibrary(req, res) {
   let filePath = '';
   try {
     const body = await readRequestBody(req);
     const taskId = readValue(body?.taskId);
+    const requestedModel = readValue(body?.model);
     const folderName = sanitizeVideoLibraryFolder(body?.folderName);
     const requestedCreatedAt = Number(body?.createdAt || 0);
     const paintingDirectionNumber = Number(body?.paintingDirectionNumber || 0);
-    const paintingVariationRound = Math.max(0, Number(body?.paintingVariationRound || 0));
     const autoEnhance480p = body?.autoEnhance480p === true;
     if (!taskId) {
       sendJson(res, 400, { error: '缺少视频生成任务 ID' });
@@ -2836,9 +2872,11 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
       mimeType: 'video/mp4',
       fileSize: savedFile.size,
       sha256,
-      note: paintingPosition
-        ? `来自挂画创意素材·手动保存（第${paintingPosition.groupNumber}组第${paintingPosition.itemNumber}个，方向${paintingDirectionNumber}，第${paintingVariationRound + 1}轮）`
-        : '来自创意创作',
+      note: formatVideoLibrarySourceNote({
+        model: requestedModel,
+        provider: taskResult.provider,
+        directionNumber: paintingPosition ? paintingDirectionNumber : 0,
+      }),
     });
     void ensureVideoLibraryPreview({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
     void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch((thumbnailError) => {
@@ -2871,7 +2909,7 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
 async function handleUploadVideoLibrary(req, res) {
   let filePath = '';
   try {
-    const { folderName, note, file } = await readVideoLibraryUploadBody(req);
+    const { folderName, file } = await readVideoLibraryUploadBody(req);
     if (!file || file.size <= 0) {
       sendJson(res, 400, { error: '请选择要上传的视频文件' });
       return;
@@ -2906,7 +2944,7 @@ async function handleUploadVideoLibrary(req, res) {
       mimeType,
       fileSize: buffer.length,
       sha256,
-      note,
+      note: formatVideoLibrarySourceNote({ source: 'local' }),
     });
     void ensureVideoLibraryPreview({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
     void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch((thumbnailError) => {
@@ -15374,9 +15412,10 @@ async function downloadAndSaveSeedanceVideoForBatch(seedanceTaskId, folderName, 
     throw new Error('保存后文件大小校验失败');
   }
 
-  const note = paintingPosition
-    ? `来自挂画创意素材·全自动（第${paintingPosition.groupNumber}组第${paintingPosition.itemNumber}个，方向${batchMeta.directionNumber}，第${batchMeta.variationRound + 1}轮）`
-    : `来自挂画创意素材·全自动（方向 ${batchMeta.directionNumber}）`;
+  const note = formatVideoLibrarySourceNote({
+    model: batchMeta.model,
+    directionNumber: batchMeta.directionNumber,
+  });
   let item = dbInsertVideoLibraryItem({
     folderName,
     originalName: sanitizeVideoLibraryFileName(originalName),
@@ -15757,6 +15796,7 @@ async function processBatchTask(taskId) {
         directionNumber: task.directionNumber,
         ideaTitle: task.ideaTitle,
         variationRound: task.variationRound,
+        model: currentRun.model,
         autoEnhance480p: currentRun.options?.autoEnhance480p === true,
       });
       dbUpdatePaintingBatchTask(task.id, {
@@ -19464,6 +19504,9 @@ export {
   encodeWan3TaskId,
   decodeWan3TaskId,
   WAN3_VIDEO_MODEL,
+  getVideoLibraryModelLabel,
+  formatVideoLibrarySourceNote,
+  normalizeLegacyVideoLibrarySourceNote,
   readMultipartFormBody,
   isValidPaintingClientRequestId,
   parsePaintingIdeasWithJsonRetry,
