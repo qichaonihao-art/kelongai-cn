@@ -727,7 +727,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
                     .catch((enhanceError) => setError(enhanceError instanceof Error ? enhanceError.message : '启动画质增强失败'));
                 }}
                 className="inline-flex h-7 items-center justify-center rounded-lg bg-cyan-50 px-2 text-[10px] font-black text-cyan-700 hover:bg-cyan-100"
-                title="保留原片并生成1080P增强版"
+                title="增强完成后用1080P版本替换原片"
               >增强1080P</button>
             )}
             <button type="button" onClick={() => void handleDelete(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500" title="删除视频">

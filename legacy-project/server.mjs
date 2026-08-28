@@ -2134,26 +2134,32 @@ async function downloadEnhancedVideo(row, outputUrl) {
     const filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
     await writeFile(filePath, buffer);
     const metadata = await probeVideoMetadata(filePath);
-    const baseName = String(source.original_name || '视频').replace(/\.[^.]+$/, '');
     outputItem = dbInsertVideoLibraryItem({
       folderName: source.folder_name,
-      originalName: `${baseName} 1080P增强.mp4`,
+      originalName: source.original_name || '视频.mp4',
       storedName,
       mimeType: 'video/mp4',
       fileSize: buffer.length,
       sha256,
-      note: `AI MediaKit 标准版增强至1080P · 原素材ID ${source.id}`,
+      note: source.note || '',
       ...metadata,
       variant: 'enhanced',
-      sourceItemId: source.id,
+      sourceItemId: null,
     });
     void ensureVideoLibraryPreview({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
     void ensureVideoLibraryThumbnail({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
+  }
+  if (readValue(source.note)) {
+    outputItem = dbUpdateVideoLibraryNote(outputItem.id, source.note);
   }
   dbUpdateVideoEnhancementTask(row.id, {
     status: 'completed', outputItemId: outputItem.id, errorMessage: '',
     nextPollAt: 0, completedAt: Math.floor(Date.now() / 1000),
   });
+  if (Number(outputItem.id) !== Number(source.id)) {
+    const deletedSource = dbDeleteVideoLibraryItem(source.id);
+    if (deletedSource) await deleteVideoLibraryItemFiles(deletedSource);
+  }
 }
 
 async function pollVideoEnhancement(row) {
@@ -2248,6 +2254,32 @@ function dbDeleteVideoLibraryItem(id) {
   if (!row) return null;
   db.prepare('DELETE FROM video_library_items WHERE id = ?').run(Number(id));
   return row;
+}
+
+async function deleteVideoLibraryItemFiles(item) {
+  if (!item) return;
+  await Promise.all([
+    unlink(path.join(VIDEO_LIBRARY_DIR, item.stored_name)).catch(() => {}),
+    unlink(path.join(VIDEO_LIBRARY_DIR, getVideoLibraryThumbnailName(item))).catch(() => {}),
+    unlink(path.join(VIDEO_LIBRARY_DIR, getVideoLibraryPreviewName(item))).catch(() => {}),
+    unlink(path.join(VIDEO_LIBRARY_DIR, getLegacyVideoLibraryPreviewName(item))).catch(() => {}),
+  ]);
+}
+
+async function cleanupCompletedVideoEnhancementSources() {
+  const rows = getCollectionDb().prepare(`
+    SELECT s.id, s.stored_name, s.sha256, s.note AS source_note, o.id AS output_id
+    FROM video_enhancement_tasks e
+    JOIN video_library_items s ON s.id = e.source_item_id
+    JOIN video_library_items o ON o.id = e.output_item_id
+    WHERE e.status = 'completed' AND s.id <> o.id
+  `).all();
+  for (const row of rows) {
+    if (readValue(row.source_note)) dbUpdateVideoLibraryNote(row.output_id, row.source_note);
+    const deletedSource = dbDeleteVideoLibraryItem(row.id);
+    if (deletedSource) await deleteVideoLibraryItemFiles(deletedSource);
+  }
+  return rows.length;
 }
 
 function dbGetVideoLibraryFolderId(folderName) {
@@ -3050,12 +3082,7 @@ async function handleDeleteVideoLibrary(req, res, id) {
       sendJson(res, 404, { error: '视频记录不存在' });
       return;
     }
-    await Promise.all([
-      unlink(path.join(VIDEO_LIBRARY_DIR, deleted.stored_name)).catch(() => {}),
-      unlink(path.join(VIDEO_LIBRARY_DIR, getVideoLibraryThumbnailName(deleted))).catch(() => {}),
-      unlink(path.join(VIDEO_LIBRARY_DIR, getVideoLibraryPreviewName(deleted))).catch(() => {}),
-      unlink(path.join(VIDEO_LIBRARY_DIR, getLegacyVideoLibraryPreviewName(deleted))).catch(() => {}),
-    ]);
+    await deleteVideoLibraryItemFiles(deleted);
     sendJson(res, 200, { ok: true });
   } catch (error) {
     sendJson(res, 500, { error: error.message || '删除视频失败' });
@@ -19523,6 +19550,11 @@ if (process.env.KELONG_SKIP_LISTEN !== '1') {
       });
     });
     // 画质增强任务持久化在 SQLite；服务重启后继续提交、轮询或下载。
+    cleanupCompletedVideoEnhancementSources().then((count) => {
+      if (count > 0) console.log(`[video enhancement] 已清理 ${count} 个完成增强后的480P原片`);
+    }).catch((error) => {
+      console.error('[video enhancement] source_cleanup_failed', { message: error?.message || '' });
+    });
     scheduleVideoEnhancementWorker(500);
   });
 }
@@ -19609,4 +19641,5 @@ export {
   normalizeEnhancementRemoteStatus,
   normalizeMediaKitUploadHeaders,
   buildVideoEnhancementRetryUpdates,
+  cleanupCompletedVideoEnhancementSources,
 };
