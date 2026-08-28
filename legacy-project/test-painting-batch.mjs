@@ -91,6 +91,10 @@ const {
   PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION,
   PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION,
   ensurePaintingRollingUnfoldInstruction,
+  PAINTING_PRODUCT_FOCUSED_ENDING_RULE,
+  ensurePaintingProductFocusedEnding,
+  WAN3_CAMERA_MOTION_RULE,
+  ensureWan3CameraMotionLock,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
   getPaintingContentDetailVariant,
@@ -973,7 +977,9 @@ console.log('\n[34] 左右横扫快速揭示');
   assert(/总时长固定5-6秒/.test(leftToRight) && /总时长固定5-6秒/.test(rightToLeft), '左右横扫时长都固定为5-6秒');
   assert(/0-1秒只做极短空间起幅/.test(leftToRight) && /0-1秒只做极短空间起幅/.test(rightToLeft), '开场铺垫压缩到约1秒');
   assert(/最迟在第2秒/.test(leftToRight) && /最迟在第2秒/.test(rightToLeft), '挂画最迟在第2秒开始进入画面');
-  assert(/2秒至结尾让完整挂画持续保留/.test(leftToRight) && /2秒至结尾让完整挂画持续保留/.test(rightToLeft), '后半段持续展示完整挂画');
+  assert(/2-4秒.*完整挂画到达画面视觉中心/.test(leftToRight) && /2-4秒.*完整挂画到达画面视觉中心/.test(rightToLeft), '横扫在中段到达挂画视觉中心');
+  assert(/最后1-2秒.*围绕完整挂画/.test(leftToRight) && /最后1-2秒.*围绕完整挂画/.test(rightToLeft), '最后阶段围绕挂画保持轻微动态');
+  assert(/严禁镜头越过挂画/.test(leftToRight) && /严禁镜头越过挂画/.test(rightToLeft), '明确禁止镜头越过挂画后结束');
   assert(/严禁拖到最后1-2秒才出现挂画/.test(leftToRight) && /严禁拖到最后1-2秒才出现挂画/.test(rightToLeft), '明确禁止结尾才揭示挂画');
   const leftDuration = getPaintingDirectionDuration(PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION, 8, 9);
   const rightDuration = getPaintingDirectionDuration(PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION, 8, 9);
@@ -981,8 +987,28 @@ console.log('\n[34] 左右横扫快速揭示');
   assert(rightDuration.durationMin === 5 && rightDuration.durationMax === 6, '从右到左固定5-6秒');
 }
 
-// ===== T35 两个卷起展开方向固定注入滚动原句 =====
-console.log('\n[35] 卷轴滚动打开固定原句');
+// ===== T35 所有移动镜头最终落在挂画 =====
+console.log('\n[35] 移动镜头最终落在挂画');
+{
+  const locked = ensurePaintingProductFocusedEnding('镜头从客厅左侧向右横移。');
+  assert(locked.includes('【最高优先级·移动镜头最终落在挂画】'), '最终提示词固定加入移动镜头落点锁');
+  assert(locked.includes(PAINTING_PRODUCT_FOCUSED_ENDING_RULE), '落点锁使用统一系统规则');
+  assert(/不得.*越过挂画|不能让镜头越过挂画/.test(locked), '规则禁止镜头越过挂画后继续扫拍');
+  assert(/删短前段环境铺垫/.test(locked) && /采用允许时长的下限/.test(locked), '路线过长时优先删减前段并允许缩短时长');
+  const idempotent = ensurePaintingProductFocusedEnding(locked);
+  assert(idempotent.split('【最高优先级·移动镜头最终落在挂画】').length - 1 === 1, '重复处理不会重复追加落点锁');
+  const sizeLocked = ensurePaintingSizeLock('产品固定约束：40×80厘米。创意内容：镜头横移。');
+  assert(sizeLocked.includes('【最高优先级·移动镜头最终落在挂画】'), '尺寸锁流程同时确定性加入镜头落点锁');
+  const endingIssues = inspectPaintingPromptQuality(
+    '产品固定约束：宽40厘米、高80厘米，画宽约等于人物肩宽。\n创意内容：0-2秒客厅全景拍到沙发和落地灯；2-4秒镜头向右横移经过挂画；4-6秒镜头继续扫向边柜和人物并结束。',
+    6,
+    '空间横移一镜到底',
+  );
+  assert(endingIssues.some((item) => item.includes('最后阶段没有明确以挂画为视觉焦点')), '质量检查会拦截移动镜头越过挂画的结尾');
+}
+
+// ===== T36 两个卷起展开方向固定注入滚动原句 =====
+console.log('\n[36] 卷轴滚动打开固定原句');
 {
   const direction1 = ensurePaintingRollingUnfoldInstruction('原始提示词', 1);
   const direction8 = ensurePaintingRollingUnfoldInstruction('原始提示词', 8);
@@ -1019,6 +1045,7 @@ console.log('\n[35] 卷轴滚动打开固定原句');
     assert(createRes._code === 200, '卷起方向手动提交成功进入无费stub');
     assert(submittedText.includes(PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION), '最终Seedance请求正文包含固定原句');
     assert(submittedText.split(PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION).length - 1 === 1, '最终Seedance请求只包含一次固定原句');
+    assert(submittedText.includes('【最高优先级·移动镜头最终落在挂画】'), '最终Seedance请求正文同时包含移动镜头落点锁');
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -1050,6 +1077,7 @@ console.log('\n[36] Seedance 2.0 Fast 手动单条适配');
     }), createRes);
     assert(createRes._code === 200 && jsonBody(createRes).taskId === 'seedance-fast-test-task', 'Fast手动任务通过服务端白名单');
     assert(submittedPayload?.model === 'doubao-seedance-2-0-fast-260128' && submittedPayload?.resolution === '480p', 'Fast模型ID与480P原样提交上游', JSON.stringify(submittedPayload));
+    assert(!submittedPayload?.content?.[0]?.text?.includes('【千问 Wan3.0 专用·运镜速度强制锁定】'), 'Seedance Fast不会被误加千问专用速度锁');
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -1168,6 +1196,12 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
   assert(decodeWan3TaskId('wan3_task-wan-test') === 'task-wan-test', 'Wan查询前还原原始任务编号');
   assert(getSeedanceRatePerSecond(WAN3_VIDEO_MODEL, '480p') === 0.21, 'Wan 480P活动估算价为0.21元/秒');
   assert(PAINTING_BATCH_MODELS.has(WAN3_VIDEO_MODEL), 'Wan已加入全自动批量模型白名单');
+  const wanMotionLocked = ensureWan3CameraMotionLock('从左向右快速揭示挂画，镜头稳定但不能缓慢拖延，禁止数学式绝对匀速虚拟滑轨感。');
+  assert(wanMotionLocked.includes('【千问 Wan3.0 专用·运镜速度强制锁定】'), 'Wan提示词固定加入专用运镜速度锁');
+  assert(wanMotionLocked.includes(WAN3_CAMERA_MOTION_RULE), 'Wan速度锁使用统一系统规则');
+  assert(!wanMotionLocked.includes('快速揭示') && !wanMotionLocked.includes('数学式绝对匀速'), 'Wan提交前消除容易诱发急加速的冲突表达');
+  assert(wanMotionLocked.includes('内容过多时删减动作而不加速'), 'Wan时长不足时改为删减动作而非加速');
+  assert(ensureWan3CameraMotionLock(wanMotionLocked).split('【千问 Wan3.0 专用·运镜速度强制锁定】').length - 1 === 1, 'Wan速度锁重复处理不会重复追加');
 
   const previousFetch = globalThis.fetch;
   let submittedUrl = '';
@@ -1186,7 +1220,7 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
     const createRes = mockRes();
     await handleSeedanceCreateTask(mockReq('/api/seedance/tasks', {
       model: WAN3_VIDEO_MODEL,
-      prompt: '保持曾国藩家训文字、排版与木条外观，镜头自然横移。',
+      prompt: '保持曾国藩家训文字、排版与木条外观，从左向右快速揭示，禁止数学式绝对匀速虚拟滑轨感。',
       taskMode: 'generate',
       resolution: '480p',
       ratio: '9:16',
@@ -1200,6 +1234,8 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
     assert(submittedHeaders['X-DashScope-Async'] === 'enable', 'Wan请求启用异步任务模式');
     assert(submittedPayload?.model === WAN3_VIDEO_MODEL && submittedPayload?.parameters?.resolution === '480P', 'Wan模型与480P参数正确提交', JSON.stringify(submittedPayload));
     assert(submittedPayload?.parameters?.prompt_extend === false, 'Wan关闭提示词自动扩写，保护产品约束');
+    assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·运镜速度强制锁定】'), 'Wan手动提交实际请求包含专用速度锁');
+    assert(!submittedPayload?.input?.prompt?.includes('快速揭示') && !submittedPayload?.input?.prompt?.includes('数学式绝对匀速'), 'Wan手动提交的实际请求已消除冲突语句');
 
     globalThis.fetch = async (url) => {
       submittedUrl = String(url);
@@ -1250,6 +1286,33 @@ console.log('\n[39] MiniMax H3 全自动批量提交适配');
     assert(submittedUrl === 'https://api.minimaxi.com/v2/video_generation', 'H3全自动任务提交到MiniMax端点', submittedUrl);
     assert(submittedPayload?.model === MINIMAX_H3_MODEL && submittedPayload?.resolution === '768P', 'H3全自动请求使用H3模型与768P', JSON.stringify(submittedPayload));
     assert(result.seedanceTaskId === 'minimax-h3_batch-h3-task', 'H3全自动任务编号带供应商前缀', result.seedanceTaskId);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+}
+
+// ===== T39b Wan3.0 Video 全自动批量速度锁（全程 stub，不产生费用） =====
+console.log('\n[39b] Wan3.0 Video 全自动批量速度锁');
+{
+  const previousFetch = globalThis.fetch;
+  const imagePath = join(stateDir, 'batch-wan-reference.png');
+  writeFileSync(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64'));
+  let submittedPayload = null;
+  try {
+    globalThis.fetch = async (_url, init = {}) => {
+      submittedPayload = init.body ? JSON.parse(String(init.body)) : null;
+      return new Response(JSON.stringify({ output: { task_id: 'batch-wan-task', task_status: 'PENDING' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const result = await submitSeedanceTaskForBatchTask(
+      { id: 3902, directionNumber: 26, prompt: '从左向右快速揭示挂画，禁止数学式绝对匀速虚拟滑轨感。', duration: 6 },
+      { batchRunId: 'batch-wan-route-test', model: WAN3_VIDEO_MODEL, resolution: '480p', ratio: '9:16', imagePath, generateAudio: false, watermark: false, options: {} },
+    );
+    assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·运镜速度强制锁定】'), 'Wan全自动实际请求包含专用速度锁');
+    assert(!submittedPayload?.input?.prompt?.includes('快速揭示') && !submittedPayload?.input?.prompt?.includes('数学式绝对匀速'), 'Wan全自动实际请求已消除冲突语句');
+    assert(result.seedanceTaskId === 'wan3_batch-wan-task', 'Wan全自动任务编号保持供应商前缀', result.seedanceTaskId);
   } finally {
     globalThis.fetch = previousFetch;
   }

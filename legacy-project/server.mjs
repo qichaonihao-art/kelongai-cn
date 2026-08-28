@@ -14436,6 +14436,8 @@ const PAINTING_OBJECT_PERMANENCE_MARKER = '【挂画全程存在与空间连续�
 const PAINTING_ROLLING_UNFOLD_MARKER = '【卷起挂画滚动展开与下方木条强制锁定】';
 const PAINTING_REALISM_MARKER = '【真人实拍质感最高优先级】';
 const PAINTING_DYNAMIC_ENDING_MARKER = '【动态收尾强制规则】';
+const PAINTING_PRODUCT_FOCUSED_ENDING_MARKER = '【最高优先级·移动镜头最终落在挂画】';
+const WAN3_CAMERA_MOTION_MARKER = '【千问 Wan3.0 专用·运镜速度强制锁定】';
 const PAINTING_CONTENT_DETAIL_DIRECTION = 29;
 const PAINTING_WOOD_DETAIL_DIRECTION = 30;
 const PAINTING_CAMERA_EXPLANATION_DIRECTION = 7;
@@ -14465,6 +14467,30 @@ function ensurePaintingRollingUnfoldInstruction(promptText, directionNumber) {
   if (!PAINTING_ROLLING_UNFOLD_DIRECTIONS.has(Number(directionNumber))) return normalized;
   if (normalized.includes(PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION)) return normalized;
   return `【卷轴打开方式固定要求】\n${PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION}\n\n${normalized}`;
+}
+
+function ensurePaintingProductFocusedEnding(promptText) {
+  const normalized = String(promptText || '').trim();
+  if (normalized.includes(PAINTING_PRODUCT_FOCUSED_ENDING_MARKER)) return normalized;
+  return `${normalized}\n\n${PAINTING_PRODUCT_FOCUSED_ENDING_MARKER}\n${PAINTING_PRODUCT_FOCUSED_ENDING_RULE}`;
+}
+
+function ensureWan3CameraMotionLock(promptText) {
+  let normalized = String(promptText || '').trim();
+  if (normalized.includes(WAN3_CAMERA_MOTION_MARKER)) return normalized;
+
+  // Wan 对“快速揭示”和“禁止绝对匀速”这类语义容易执行成速度变化。
+  // 只在提交给 Wan3.0 前消除这些冲突，不影响 Seedance 和 MiniMax H3。
+  normalized = normalized
+    .replace(/(?:禁止|严禁|无)数学式绝对匀速(?:的)?(?:虚拟)?滑轨(?:感|运动)?/g, '禁止忽快忽慢、速度跳变和机械化运镜')
+    .replace(/(?:禁止|严禁|无)机械(?:式)?绝对匀速(?:的)?滑轨(?:感|运动)?/g, '禁止忽快忽慢、速度跳变和机化运镜')
+    .replace(/从左向右快速揭示/g, '从左向右低速平稳揭示')
+    .replace(/从右向左快速揭示/g, '从右向左低速平稳揭示')
+    .replace(/快速揭示/g, '低速平稳揭示')
+    .replace(/迅速完整可见/g, '在保持低速的前提下完整可见')
+    .replace(/镜头稳定但不能缓慢拖延/g, '镜头保持稳定低速，内容过多时删减动作而不加速');
+
+  return `${normalized}\n\n${WAN3_CAMERA_MOTION_MARKER}\n${WAN3_CAMERA_MOTION_RULE}`;
 }
 const PAINTING_CONTENT_DETAIL_VARIANTS = [
   '茶几平放·正上方左到右：挂画完整平坦放在尺寸足够的茶几表面，上下木条与画布保持原样；摄影机接近垂直俯拍，从画面左侧向右侧连续扫过，禁止默认从右侧斜拍',
@@ -14515,6 +14541,8 @@ const PAINTING_OBJECT_PERMANENCE_RULE = '若创意设定挂画已经上墙，挂
 const PAINTING_ROLLING_UNFOLD_RULE = '如果挂画开场处于卷起状态，从卷起到完全展开的全过程中，下方木条/下压杆必须始终存在并严格保持参考图中的原始形状、颜色、材质、长度、粗细、截面和两端轮廓，不得消失、变形、变色、伸长、缩短或变成圆柱形/圆杆。下方木条两端及周围不得新增任何物体、零件或装饰，包括但不限于圆柱、轴头、端帽、圆球、把手、系带或金属件。展开必须由人的双手合理控制，画布只能随着卷筒绕自身轴线旋转而逐圈滚动释放，严禁滑动、平移、平铺、抽拉、弹开或在无人操作时自行展开。';
 const PAINTING_LIVE_ACTION_REALISM_RULE = '整体必须呈现普通真实住宅中的真人实地拍摄质感，而不是三维渲染、AI样板间或过度精修的商业广告。空间允许轻微生活痕迹和自然不对称，沙发织物、窗帘、衣服与皮肤保留真实纹理、褶皱和细微瑕疵；自然光应有合理方向、层次、柔和阴影和轻微明暗差异，禁止全屋无阴影的均匀棚拍光、塑料材质、蜡像皮肤和过度磨皮。镜头保持稳定清楚，但运动应有真人摄影的自然起步、轻微惯性、减速和小幅构图修正，禁止数学式绝对匀速滑轨、虚拟摄像机漂移和明显手持抖动。人物按现实正常速度完成动作，动作之间允许自然衔接，每 1-2 秒持续产生新的有效动作或构图信息即可，禁止慢放、发呆、重复和为赶时间而机械连做过多动作。';
 const PAINTING_DYNAMIC_ENDING_RULE = '结尾不得为了“产品定妆”机械追加一个正对墙面挂画、固定机位、无人无动作的独立静态镜头。前面的主镜头已经完整展示产品时，直接在该镜头的连续动作或运镜中自然结束，不再补切正面挂画。若创意确实需要以挂画收束，最后阶段仍须保留至少一种清晰可见的连续变化：镜头轻微横移/推近/拉远、前景视差、人物尚未完成的自然动作、窗帘或植物的合理微动、或有方向的自然光影变化；镜头可以自然减速，但不得完全定住超过约 0.5 秒，不得让最后 1-2 秒看起来像一张静态图片。挂画自身若已上墙仍必须保持固定，动态只能来自摄影机、人物、前景或真实环境。';
+const PAINTING_PRODUCT_FOCUSED_ENDING_RULE = '凡镜头存在横移、侧移、摇移、升降、推近、拉远、环绕、跟拍或从任意方向扫过场景，视频结束时镜头的最终视觉焦点必须落在挂画上：完整挂画或本条指定的挂画细节必须清晰可见，并位于画面主体区域，不能处在边缘、被人物家具遮挡、离开取景框，也不能让镜头越过挂画后继续扫向空墙、家具、人物或其他景物。镜头路径一旦到达挂画主体就必须及时减速并围绕挂画完成最后构图；如果原路径或内容过长，优先删短前段环境铺垫、缩短移动距离，必要时采用允许时长的下限，绝不能以越过挂画作为结尾。这里的“落在挂画”是锁定最终视觉中心，不等于静态定帧：最后仍保留极轻微的摄影机惯性、前景视差、人物自然微动作或光影变化，但焦点和主体始终是挂画。原画内容或木条移动特写则必须在挂画画面或木条范围内结束，镜头不得扫出产品边界。';
+const WAN3_CAMERA_MOTION_RULE = '本视频所有摄影机运动必须采用稳定、克制、低速的真人云台或滑轨运镜。每个连续镜头只允许一种主要运动方向，不得在推近、拉远、左移、右移、上升和下降之间突然切换。速度曲线固定为：前0.5秒轻柔进入，中段保持近似恒定的低速，最后0.8-1秒平缓减速，全程速度连续且无跳变。严禁速度渐变特效、急加速、快速推近、快速后拉、快速横扫、甩镜、冲镜、突然变焦、速度跳变、先慢后快、中途突然加速以及结尾冲刺。如果原定动作或路径无法在时长内按低速完成，必须删减前段铺垫、减少人物动作或缩短镜头移动距离，绝不得通过加速赶进度。镜头到达挂画后必须平缓减速，视频结束时最终视觉焦点保持在挂画上，不得越过挂画后再加速移向其他景物。';
 
 function ensurePaintingSizeLock(promptText, options = {}) {
   const useStaticWallCompensation = Boolean(options.staticWallSizeCompensation) && !options.contentDetailScan && !options.installationSequence;
@@ -14549,7 +14577,7 @@ function ensurePaintingSizeLock(promptText, options = {}) {
   if (!normalized.includes(PAINTING_DYNAMIC_ENDING_MARKER)) {
     normalized += `\n\n${PAINTING_DYNAMIC_ENDING_MARKER}\n${PAINTING_DYNAMIC_ENDING_RULE}`;
   }
-  return normalized;
+  return ensurePaintingProductFocusedEnding(normalized);
 }
 
 // 4 批只负责分页；底层是一轮 40 个互不重复的创意方向。
@@ -14588,8 +14616,8 @@ const PAINTING_FRAMEWORKS = [
     '成品空间09·办公室会客区：挂画固定在会客区背景墙，两人进入、放下文件、落座交谈；镜头从桌面前景横摇到人物与挂画，人物不需要刻意指画',
     '成品空间10·酒店展陈：挂画固定在精品酒店或艺术展陈墙，人物从远处经过或短暂停留；镜头持续利用沙发、雕塑或灯具前景形成视差，在人物自然经过与产品同框时结束，不追加正面静态产品定妆',
     '其他方向01·软装配色呼应：挂画已经上墙，人物依次调整靠枕、花瓶与小型绿植，使其中两种颜色呼应画面主色，后退观察；镜头从软装近景拉到整体空间',
-    '其他方向02·从左向右快速揭示：总时长固定5-6秒，挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与近期历史不同的合理场景。0-1秒只做极短空间起幅，镜头位于空间左侧，挂画所在位置处于取景框右侧之外，最多快速经过1-2件真实家具或一个简短人物动作，不得长时间铺垫；1-2秒连续向右平稳横扫，挂画必须最迟在第2秒从画面右侧开始进入取景并迅速完整可见；2秒至结尾让完整挂画持续保留在画面中，同时通过剩余家具前景、人物轻微动作和横移视差展示场景搭配。镜头自然减速但始终保持轻微向右横移惯性，不定格、不停成静态图片，严禁拖到最后1-2秒才出现挂画。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
-    '其他方向03·从右向左快速揭示：总时长固定5-6秒，挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与上一条及近期历史不同的合理场景。0-1秒只做极短空间起幅，镜头位于空间右侧，挂画所在位置处于取景框左侧之外，最多快速经过1-2件真实家具或一个简短人物动作，不得长时间铺垫；1-2秒连续向左平稳横扫，挂画必须最迟在第2秒从画面左侧开始进入取景并迅速完整可见；2秒至结尾让完整挂画持续保留在画面中，同时通过剩余家具前景、人物轻微动作和横移视差展示场景搭配。镜头自然减速但始终保持轻微向左横移惯性，不定格、不停成静态图片，严禁拖到最后1-2秒才出现挂画。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
+    '其他方向02·从左向右快速揭示：总时长固定5-6秒，挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与近期历史不同的合理场景。0-1秒只做极短空间起幅，镜头位于空间左侧，挂画所在位置处于取景框右侧之外，最多快速经过1-2件真实家具或一个简短人物动作，不得长时间铺垫；1-2秒连续向右平稳横扫，挂画必须最迟在第2秒从画面右侧开始进入取景并迅速完整可见；2-4秒继续右移直到完整挂画到达画面视觉中心，随即明显减速并停止继续穿越；最后1-2秒只围绕完整挂画保持极小幅向右摄影惯性、前景视差或人物微动作，挂画始终是清晰主体。严禁镜头越过挂画后扫向右侧空墙、家具或人物，严禁拖到最后1-2秒才出现挂画；若路线过长，删短开场或移动距离，不得牺牲以挂画为焦点的结尾。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
+    '其他方向03·从右向左快速揭示：总时长固定5-6秒，挂画从第0秒起已经完整稳固地挂在墙面固定位置；根据本轮风格在客厅、书房、茶室、卧室、餐厅或玄关中选择与上一条及近期历史不同的合理场景。0-1秒只做极短空间起幅，镜头位于空间右侧，挂画所在位置处于取景框左侧之外，最多快速经过1-2件真实家具或一个简短人物动作，不得长时间铺垫；1-2秒连续向左平稳横扫，挂画必须最迟在第2秒从画面左侧开始进入取景并迅速完整可见；2-4秒继续左移直到完整挂画到达画面视觉中心，随即明显减速并停止继续穿越；最后1-2秒只围绕完整挂画保持极小幅向左摄影惯性、前景视差或人物微动作，挂画始终是清晰主体。严禁镜头越过挂画后扫向左侧空墙、家具或人物，严禁拖到最后1-2秒才出现挂画；若路线过长，删短开场或移动距离，不得牺牲以挂画为焦点的结尾。挂画自身全程不动、不淡入、不浮现、不缩放、不凭空生成，不得用推近或变焦冒充横扫',
     '其他方向04·对称构图与人物穿行：挂画位于对称构图中心，人物从画面一侧进入、完成放书或放杯动作后从另一侧离开；主体构图保持稳定，结尾在人物尚未完全离开时轻微推近，不追加无人静态定妆',
     '其他方向05·画面内容移动特写：总时长固定为4-6秒，以挂画原画内容为唯一主体进行一镜到底近距离拍摄。每次复用必须从合理组合中轮换一种：挂画可完整悬挂在墙面、房门或可真实承重且尺寸足够的书架平整外侧板，也可连同上下木条完整平坦放在茶几、书桌、长桌、展示桌或矮柜宽阔台面上；不得倚靠、卡住、悬空或为了特写拆掉木条。机位必须在近乎正面、正上方垂直俯拍、轻微左侧或合理微倾中轮换，不得总是默认从右侧边斜拍。移动路径在上到下、下到上、左到右、右到左、对角线或沿书法笔势/山水路径中轮换，依次展示书法飞白、印章、山水、花鸟或纹理等真实可见内容。单条视频只选一个逻辑成立的摆放场景、一个主机位和一条连续路径，禁止在4-6秒内乱切多场景。镜头按正常速度持续移动并在仍有轻微惯性时结束，不定格，不拉远补拍空间，不强行加入人物或家具全景；严禁改字、补画、让二维画面景物动起来或把平面内容变成三维场景',
     '其他方向06·实木压条工艺移动特写：以上下实木压条为主体，最多两个近景镜头；在“上木条左到右”、“上木条右到左”、“下木条左到右”、“下木条右到左”、“木条端部至画布连接处”中选择与近期不同的路径，清楚展示真实木纹、颜色、粗细、截面、平直两端及与画布的连接。如上下木条都拍，每根各用一个连续移动近景；如只拍一根，可在同一镜头中沿木纹到端部完成展示。不得默认拉远补拍整个房间，不得把平直方木条变成圆柱卷轴，不得新增轴头、端帽、圆球、把手或金属件',
@@ -14724,6 +14752,11 @@ function inspectPaintingPromptQuality(promptText, duration, ideaSummary = '', op
   const hasVisibleEndingMotion = /(横移|侧移|推近|拉远|跟拍|摇移|视差|人物.{0,12}(?:走|退|坐|放|关|翻|抬|转)|窗帘.{0,8}(?:摆动|微动)|植物.{0,8}(?:摆动|微动)|光影.{0,8}(?:移动|变化))/.test(finalTimedSegment);
   if (hasStaticEnding && !hasVisibleEndingMotion) {
     issues.push('最后阶段是正面挂画静态定格；删除这个独立尾镜头，或改为镜头/人物/前景持续运动中的自然结束');
+  }
+  const hasMovingCamera = /(?:镜头|摄影机).{0,40}(?:横移|侧移|摇移|升降|推近|拉远|环绕|跟拍|扫过|扫描)|(?:横移|侧移|摇移|升降|推近|拉远|环绕|跟拍|扫过|扫描).{0,24}(?:镜头|摄影机)/s.test(`${ideaSummary}\n${promptText}`);
+  const endingKeepsPaintingAsFocus = /(?:挂画|挂轴|装饰画|产品|画面|书法|印章|木条|压条|纹理).{0,28}(?:视觉中心|焦点|主体|完整可见|清晰可见|持续保留|保持在画面|构图中心)|(?:视觉中心|焦点|主体|落在|对准|围绕).{0,18}(?:挂画|挂轴|装饰画|产品|画面|书法|印章|木条|压条|纹理)/s.test(finalTimedSegment);
+  if (hasMovingCamera && !endingKeepsPaintingAsFocus) {
+    issues.push('移动镜头的最后阶段没有明确以挂画为视觉焦点；必须删短前段路线，在镜头越过挂画前减速，并以挂画清晰位于主体区域、仍保留轻微动态的构图结束');
   }
   const fixedOnWall = /(已经|开场.*(?:已经|固定)|全程)上墙|全程固定|固定在.{0,12}墙/.test(`${ideaSummary}\n${promptText}`);
   const hasWallMountedPresentation = /(上墙|安装完成|悬挂在.{0,12}墙|挂在.{0,12}墙|固定在.{0,12}墙|墙面.{0,12}(?:挂画|挂轴))/.test(`${ideaSummary}\n${promptText}`);
@@ -15091,7 +15124,7 @@ ${systemSizeRules}
 3. 内容密度：整个视频必须包含连续、不同的有效阶段，阶段数量按目标时长动态要求——4 秒至少 3 个阶段，5-6 秒至少 3 个阶段，7-8 秒至少 4 个阶段，9-10 秒至少 5 个阶段，11-12 秒至少 6 个阶段，13-15 秒至少 7 个阶段；每个阶段必须发生新的、可见的人物动作、空间信息或构图关系变化，禁止把同一动作拆段凑数。内容阶段不等于镜头数量，一镜到底可以在同一个连续镜头中完成全部阶段。人物肢体、行走、坐下、翻书、喝茶和观看都必须按现实正常速度完成，动作之间允许符合人体惯性和真实摄影的自然衔接；每 1-2 秒持续出现新动作或新构图信息即可，禁止慢放、降速、重复、循环、人物发呆和长时间凝视，也禁止为了赶时间而机械连续完成过多动作。
 4. 提示词必须分三部分：产品固定约束、创意内容、负面约束。
 5. 产品固定约束：挂画/卷轴的外观（画面内容、颜色、材质、木条/挂轴/压杆结构、纹理）必须严格按档案复刻，不得重新设计。如画面中的挂画带有木条、挂轴或压杆等边框结构，这些结构必须保持档案中的形状、颜色、材质、粗细、长度、截面和两端轮廓不变；如涉及卷起或展开，全程不得变形、不得把木条变成圆柱形卷轴或圆杆、不得变色，也不得在两端或旁边新增任何圆柱、轴头、端帽、圆球、把手等构件。${finalProductSizeRequirement}。
-6. 创意内容：结合创意方案，写清楚${creativeSubjectRequirements}。非内容移动特写方向的服装不得擅自全部改成米白、浅灰或卡其。必须严格继承创意方案标注的“一镜到底 / 主镜头＋动态收束 / 克制多镜头”结构：一镜到底要在所有时间段明确写“连续镜头、不切镜”，用一条简单稳定且具有自然起停、惯性和小幅构图修正的真人摄影路径串联动作，禁止机械绝对匀速滑轨；主镜头＋动态收束全片最多 2 个镜头，前面已展示挂画时不得为结尾再补切正面挂画；多镜头只在无法自然连续时切换。把视频从 0 秒开始按先后顺序无重叠地铺满到结束，每段写明起止时间及新的动作或空间信息，但不得因为进入新阶段就自动切镜；4 秒至少 3 段、5-6 秒至少 3 段、7-8 秒至少 4 段、9-10 秒至少 5 段、11-12 秒至少 6 段、13-15 秒至少 7 段。${isContentDetailScan ? '本方向是4-6秒原画内容移动特写：不要求远景/全景、人物或家具陈设，不得拉远补拍空间；镜头必须根据参考图真实构图选择一条连贯扫描路径，只拍参考图中确实存在的文字、笔触、印章、山水或花鸟细节，二维画面内容本身绝对静止，不能让山水、飞鸟、流水、植物或书法笔画产生动画。' : isWoodDetailScan ? '本方向是实木压条工艺移动特写：不要求远景/全景、人物或家具陈设，不得默认拉远补拍房间；最多两个近景镜头，每个镜头必须沿一根木条或其端部到画布连接处持续移动，不定格。只展示高清参考图中真实存在的木纹、颜色、平直形状、粗细、截面、两端与连接结构，禁止变成圆柱卷轴或新增任何零件。' : isInstallationSequence ? '本方向是人物安装流程：开场真正全景必须让人物从头到脚完整可见，人物和挂画处于相近景深，挂画宽约等于肩宽、画高约为完整身高一半；这一个镜头只证明尺寸，不兼任文字或纹理特写。挂好后再用全景证明上方至少约1.2个画宽空墙、下方至少约1.2幅画高空间，最后如需展示细节只能另行靠近。' : `整个视频至少有 1 个远景或全景，场景中自然出现 2-3 件符合「${styleProfile.label}」的家具或陈设，不能只有人、墙和画。凡出现上墙成品，这个远景/全景必须同时交代挂钩上方大块空墙和挂画下方空间，并使用完整房门、从头到脚站立成人、完整三人沙发或天花板与地面边界中的一个相近景深参照；这个镜头只证明尺寸，不同时承担纹理特写。`}所有动作按现实正常速度连续完成，镜头稳定但不能缓慢拖延。${isInstallationSequence ? '本条在人物挂好以前不执行第0秒已上墙约束；挂好以后才固定挂点、尺寸和墙面坐标。' : '若方案写明挂画开场已经上墙，则挂画从第 0 秒起就在固定墙面坐标客观存在；内容密度来自人物生活动作、空间揭示、前后景和连续构图变化，不得为了凑动作重新取画或安装，更不得让挂画淡入、浮现或凭空生成。'}结尾必须执行：${PAINTING_DYNAMIC_ENDING_RULE} 全片实拍质感必须执行：${PAINTING_LIVE_ACTION_REALISM_RULE}
+6. 创意内容：结合创意方案，写清楚${creativeSubjectRequirements}。非内容移动特写方向的服装不得擅自全部改成米白、浅灰或卡其。必须严格继承创意方案标注的“一镜到底 / 主镜头＋动态收束 / 克制多镜头”结构：一镜到底要在所有时间段明确写“连续镜头、不切镜”，用一条简单稳定且具有自然起停、惯性和小幅构图修正的真人摄影路径串联动作，禁止机械绝对匀速滑轨；主镜头＋动态收束全片最多 2 个镜头，前面已展示挂画时不得为结尾再补切正面挂画；多镜头只在无法自然连续时切换。把视频从 0 秒开始按先后顺序无重叠地铺满到结束，每段写明起止时间及新的动作或空间信息，但不得因为进入新阶段就自动切镜；4 秒至少 3 段、5-6 秒至少 3 段、7-8 秒至少 4 段、9-10 秒至少 5 段、11-12 秒至少 6 段、13-15 秒至少 7 段。${isContentDetailScan ? '本方向是4-6秒原画内容移动特写：不要求远景/全景、人物或家具陈设，不得拉远补拍空间；镜头必须根据参考图真实构图选择一条连贯扫描路径，只拍参考图中确实存在的文字、笔触、印章、山水或花鸟细节，二维画面内容本身绝对静止，不能让山水、飞鸟、流水、植物或书法笔画产生动画。' : isWoodDetailScan ? '本方向是实木压条工艺移动特写：不要求远景/全景、人物或家具陈设，不得默认拉远补拍房间；最多两个近景镜头，每个镜头必须沿一根木条或其端部到画布连接处持续移动，不定格。只展示高清参考图中真实存在的木纹、颜色、平直形状、粗细、截面、两端与连接结构，禁止变成圆柱卷轴或新增任何零件。' : isInstallationSequence ? '本方向是人物安装流程：开场真正全景必须让人物从头到脚完整可见，人物和挂画处于相近景深，挂画宽约等于肩宽、画高约为完整身高一半；这一个镜头只证明尺寸，不兼任文字或纹理特写。挂好后再用全景证明上方至少约1.2个画宽空墙、下方至少约1.2幅画高空间，最后如需展示细节只能另行靠近。' : `整个视频至少有 1 个远景或全景，场景中自然出现 2-3 件符合「${styleProfile.label}」的家具或陈设，不能只有人、墙和画。凡出现上墙成品，这个远景/全景必须同时交代挂钩上方大块空墙和挂画下方空间，并使用完整房门、从头到脚站立成人、完整三人沙发或天花板与地面边界中的一个相近景深参照；这个镜头只证明尺寸，不同时承担纹理特写。`}所有动作按现实正常速度连续完成，镜头稳定但不能缓慢拖延。${isInstallationSequence ? '本条在人物挂好以前不执行第0秒已上墙约束；挂好以后才固定挂点、尺寸和墙面坐标。' : '若方案写明挂画开场已经上墙，则挂画从第 0 秒起就在固定墙面坐标客观存在；内容密度来自人物生活动作、空间揭示、前后景和连续构图变化，不得为了凑动作重新取画或安装，更不得让挂画淡入、浮现或凭空生成。'}结尾必须执行：${PAINTING_DYNAMIC_ENDING_RULE} 移动镜头还必须执行：${PAINTING_PRODUCT_FOCUSED_ENDING_RULE} 全片实拍质感必须执行：${PAINTING_LIVE_ACTION_REALISM_RULE}
 7. 负面约束：明确列出不得改变的元素（挂画外观、画面内容、木条结构等）、必须避免的物理违背现象（穿模、悬浮、违反重力/光影/透视等）、禁止单一动作慢放/循环凑时长、禁止长时间静止、禁止快速晃动/快速变焦/急推/手持抖动、严禁挂画在无人操作时自行位移；已经上墙的挂画还必须禁止淡入、浮现、透明变实、凭空生成、突然出现、逐渐长出、由小变大和中途贴到墙上；${finalNegativeSizeRequirement}；实拍质感方面禁止三维渲染感、AI样板间、蜡像皮肤、过度磨皮、塑料材质、全屋无阴影的均匀棚拍光、数学式绝对匀速滑轨和虚拟摄像机漂移；一镜到底方向禁止硬切、跳切、瞬间换景和人物位置突变，多镜头方向禁止无意义频繁切镜；如涉及卷轴或木条，还要禁止滑动式展开、木条变成圆柱或变色、两端新增圆柱/轴头/端帽。禁止出现送礼、方形礼盒、礼包盒、开箱和拆包装情节。
 ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之间，请你从该范围内挑选一个最合适的整数秒数；输出视频画布为 ${ratio}，这与挂画${physicalSizeLabel}无关。并在提示词最后单独写一行「总时长：X秒」（X 为你选定的整数，例如「总时长：8秒」）。` : `8. 总时长约 ${fallbackDuration} 秒；输出视频画布为 ${ratio}，这与挂画${physicalSizeLabel}无关。并在提示词最后单独写一行「总时长：${fallbackDuration}秒」。`}
 
@@ -15340,7 +15373,12 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   const referenceGuide = isWoodDetailDirection
     ? `【参考图职责强制区分】\n${referenceSpecs.map((item) => item.label).join('\n')}。木条特写图中的桌面、墙面、手、尺子、包装物或其他背景都不属于产品，严禁复制到生成视频。如细节图与正面主图的作用冲突，整体画面以主图为准，对应木条局部结构以高清细节图为准。\n\n`
     : '';
-  const promptForSubmission = ensurePaintingRollingUnfoldInstruction(task.prompt, task.directionNumber);
+  let promptForSubmission = ensurePaintingProductFocusedEnding(
+    ensurePaintingRollingUnfoldInstruction(task.prompt, task.directionNumber)
+  );
+  if (isWan3) {
+    promptForSubmission = ensureWan3CameraMotionLock(promptForSubmission);
+  }
   const content = [{ type: 'text', text: `${referenceGuide}${promptForSubmission}` }];
   for (const spec of referenceSpecs) {
     const imageFile = await buildPaintingImageFileForSeedance(spec.imagePath, spec.baseName);
@@ -17248,8 +17286,6 @@ async function handleSeedanceCreateTask(req, res) {
     const body = isMultipartFormRequest(req)
       ? await readSeedanceTaskFormBody(req)
       : await readRequestBody(req);
-    const manualDirection = Number(body?.directionNumber) || 0;
-    const prompt = ensurePaintingRollingUnfoldInstruction(readValue(body?.prompt), manualDirection);
     const model = readValue(body?.model) || 'doubao-seedance-2-0-260128';
     const taskMode = readValue(body?.taskMode) || 'generate';
     const resolution = readValue(body?.resolution) || '720p';
@@ -17260,6 +17296,13 @@ async function handleSeedanceCreateTask(req, res) {
     const isSeedanceFast = model === 'doubao-seedance-2-0-fast-260128';
     const isMiniMaxH3 = model === MINIMAX_H3_MODEL;
     const isWan3 = model === WAN3_VIDEO_MODEL;
+    const manualDirection = Number(body?.directionNumber) || 0;
+    let prompt = ensurePaintingProductFocusedEnding(
+      ensurePaintingRollingUnfoldInstruction(readValue(body?.prompt), manualDirection)
+    );
+    if (isWan3) {
+      prompt = ensureWan3CameraMotionLock(prompt);
+    }
     const modelLabel = isMiniMaxH3 ? 'MiniMax H3' : isWan3 ? 'Wan3.0 Video' : isSeedance25 ? 'Seedance 2.5' : isSeedanceMini ? 'Seedance 2.0 mini' : isSeedanceFast ? 'Seedance 2.0 Fast' : 'Seedance 2.0';
     const resolvedApiKey = isMiniMaxH3
       ? readValue(SERVER_CONFIG.minimaxApiKey)
@@ -19630,6 +19673,10 @@ export {
   PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION,
   PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION,
   ensurePaintingRollingUnfoldInstruction,
+  PAINTING_PRODUCT_FOCUSED_ENDING_RULE,
+  ensurePaintingProductFocusedEnding,
+  WAN3_CAMERA_MOTION_RULE,
+  ensureWan3CameraMotionLock,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
   getPaintingContentDetailVariant,

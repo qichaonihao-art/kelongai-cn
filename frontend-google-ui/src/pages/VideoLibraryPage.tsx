@@ -619,6 +619,8 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
 
   function renderVideoCard(item: VideoLibraryItem) {
     const isUnread = unreadVideoIds.has(item.id);
+    const shortEdge = Math.min(Number(item.width || 0), Number(item.height || 0));
+    const canEnhanceTo1080p = item.variant !== 'enhanced' && shortEdge > 0 && shortEdge <= 512;
     const enhancementStatusLabel: Record<string, string> = {
       checking: '正在检测原视频分辨率',
       queued: '已排队，等待提交增强',
@@ -626,7 +628,6 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       processing: 'AI MediaKit 正在增强',
       downloading: '增强完成，正在保存1080P版本',
       failed: '画质增强失败',
-      skipped: '无需增强',
     };
     return (
       <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md">
@@ -682,8 +683,8 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
           {item.variant === 'enhanced' && (
             <div className="mt-2 rounded-lg bg-emerald-50 px-2 py-1.5 text-[10px] font-black text-emerald-700">已完成标准版 1080P 画质增强</div>
           )}
-          {item.enhancement && item.enhancement.status !== 'completed' && (
-            <div className={cn('mt-2 rounded-lg px-2 py-1.5 text-[10px] font-bold', item.enhancement.status === 'failed' ? 'bg-red-50 text-red-600' : item.enhancement.status === 'skipped' ? 'bg-slate-100 text-slate-600' : 'bg-cyan-50 text-cyan-700')}>
+          {item.enhancement && !['completed', 'skipped'].includes(item.enhancement.status) && (
+            <div className={cn('mt-2 rounded-lg px-2 py-1.5 text-[10px] font-bold', item.enhancement.status === 'failed' ? 'bg-red-50 text-red-600' : 'bg-cyan-50 text-cyan-700')}>
               <div>{enhancementStatusLabel[item.enhancement.status] || '正在后台增强至 1080P'}</div>
               {item.enhancement.errorMessage && <div className="mt-0.5 line-clamp-2 font-medium">{item.enhancement.errorMessage}</div>}
               {item.enhancement.status === 'failed' && (
@@ -697,17 +698,6 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
                   {retryingEnhancementId === item.enhancement.id ? '正在重试' : '重新尝试'}
                 </button>
               )}
-              {item.enhancement.status === 'skipped' && (
-                <button
-                  type="button"
-                  className="mt-1 rounded-md bg-white px-2 py-1 font-black text-cyan-700 ring-1 ring-cyan-200"
-                  onClick={() => {
-                    void startVideoEnhancement(item.id)
-                      .then(() => refresh())
-                      .catch((enhanceError) => setError(enhanceError instanceof Error ? enhanceError.message : '启动画质增强失败'));
-                  }}
-                >按480P档重新增强</button>
-              )}
             </div>
           )}
           {item.note && <p className="mt-2 line-clamp-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-bold leading-4 text-amber-700">{item.note}</p>}
@@ -718,7 +708,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             <button type="button" onClick={() => openMoveDialog(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-sky-50 hover:text-sky-600" title="移动到其他文件夹">
               <FolderInput className="size-3.5" />
             </button>
-            {item.variant !== 'enhanced' && !item.enhancement && (
+            {canEnhanceTo1080p && !item.enhancement && (
               <button
                 type="button"
                 onClick={() => {
