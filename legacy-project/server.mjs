@@ -1666,7 +1666,8 @@ function normalizeVideoLibraryMimeType(fileName, mimeType = '') {
 }
 
 function getVideoLibraryDownloadName(row) {
-  const originalName = sanitizeVideoLibraryFileName(row?.original_name);
+  // 素材库可用 10:22 提升时间可读性；真正下载到电脑时改为兼容 Windows 的 10-22。
+  const originalName = sanitizeVideoLibraryFileName(readValue(row?.original_name).replace(/:/g, '-'));
   const originalExtension = path.extname(originalName).toLowerCase();
   const actualExtension = getVideoLibraryExtension(row?.stored_name, row?.mime_type);
   if (originalExtension === actualExtension) return originalName;
@@ -1704,7 +1705,7 @@ function formatSeedanceVideoLibraryName(createdAt) {
     hourCycle: 'h23',
   }).formatToParts(date);
   const readPart = (type) => parts.find((part) => part.type === type)?.value || '00';
-  return `${Number(readPart('month'))}月${Number(readPart('day'))}日 ${readPart('hour')}-${readPart('minute')}.mp4`;
+  return `${Number(readPart('month'))}月${Number(readPart('day'))}日 ${readPart('hour')}:${readPart('minute')}.mp4`;
 }
 
 function getPaintingFrameworkPosition(directionNumber) {
@@ -1716,11 +1717,9 @@ function getPaintingFrameworkPosition(directionNumber) {
   };
 }
 
-function formatPaintingSeedanceVideoLibraryName(createdAt, directionNumber) {
-  const position = getPaintingFrameworkPosition(directionNumber);
-  if (!position) return formatSeedanceVideoLibraryName(createdAt);
-  const baseName = formatSeedanceVideoLibraryName(createdAt).replace(/\.mp4$/i, '');
-  return `${baseName} 第${position.groupNumber}组第${position.itemNumber}个.mp4`;
+function formatPaintingSeedanceVideoLibraryName(createdAt, _directionNumber) {
+  // 方向号已在素材备注中展示，文件名只保留月日和时分，避免重复、过长。
+  return formatSeedanceVideoLibraryName(createdAt);
 }
 
 function normalizeVideoLibraryItem(row) {
@@ -2943,7 +2942,7 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
     }
 
     const taskCreatedAt = Number(taskResult.createdAt || requestedCreatedAt || 0);
-    // 只有挂画创意素材会携带 1-40 的固定方向号；其他创意模块继续沿用原日期命名。
+    // 挂画方向号只写入备注；文件名与其他创意素材一样只保留月日和时分。
     const paintingPosition = getPaintingFrameworkPosition(paintingDirectionNumber);
     const originalName = paintingPosition
       ? formatPaintingSeedanceVideoLibraryName(taskCreatedAt, paintingDirectionNumber)
@@ -15542,7 +15541,7 @@ async function downloadAndSaveSeedanceVideoForBatch(seedanceTaskId, folderName, 
   });
   let item = dbInsertVideoLibraryItem({
     folderName,
-    originalName: sanitizeVideoLibraryFileName(originalName),
+    originalName,
     storedName,
     mimeType: 'video/mp4',
     fileSize: savedFile.size,

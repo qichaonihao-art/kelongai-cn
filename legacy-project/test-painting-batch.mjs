@@ -764,16 +764,14 @@ console.log('\n[25] 创意 JSON 解析失败自动纠正');
   assert(validRetryCalls === 0 && direct.retried === false, '首次 JSON 合法时不产生额外模型调用');
 }
 
-// ===== T26 仅挂画创意素材使用“日期 + 第几组第几个”命名 =====
+// ===== T26 挂画创意素材只使用月日和时分命名 =====
 console.log('\n[26] 挂画创意素材入库命名');
 {
   const createdAt = Date.UTC(2026, 7, 23, 6, 30) / 1000; // 上海时间 2026-08-23 14:30
-  assert(formatSeedanceVideoLibraryName(createdAt) === '8月23日 14-30.mp4', '其他创意模块继续保持原日期命名', formatSeedanceVideoLibraryName(createdAt));
-  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 1) === '8月23日 14-30 第1组第1个.mp4', '方向1对应第1组第1个');
-  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 10) === '8月23日 14-30 第1组第10个.mp4', '方向10对应第1组第10个');
-  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 11) === '8月23日 14-30 第2组第1个.mp4', '方向11对应第2组第1个');
-  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 40) === '8月23日 14-30 第4组第10个.mp4', '方向40对应第4组第10个');
-  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 0) === '8月23日 14-30.mp4', '没有挂画方向号时严格回退原命名');
+  assert(formatSeedanceVideoLibraryName(createdAt) === '8月23日 14:30.mp4', '创意素材的小时与分钟使用冒号分隔', formatSeedanceVideoLibraryName(createdAt));
+  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 1) === '8月23日 14:30.mp4', '挂画素材文件名不再显示组别和序号');
+  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 40) === '8月23日 14:30.mp4', '不同方向统一只保留月日与时分');
+  assert(formatPaintingSeedanceVideoLibraryName(createdAt, 0) === '8月23日 14:30.mp4', '没有方向号时同样使用简化命名');
   assert(JSON.stringify(getPaintingFrameworkPosition(26)) === JSON.stringify({ groupNumber: 3, itemNumber: 6 }), '方向26可反查第3组第6个');
 }
 
