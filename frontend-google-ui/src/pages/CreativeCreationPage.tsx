@@ -4939,15 +4939,31 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     />
                   </div>
 
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
-                    <div className="mb-3 flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-xs font-bold text-slate-700">实木压条高清参考（选传）</div>
-                        <div className="mt-1 text-[11px] leading-5 text-slate-500">只用于木条特写方向；建议每张4-8MB，拍全整根木条、两端和画布连接处。</div>
+                  <details className="group rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
+                    <summary className="flex cursor-pointer list-none items-start justify-between gap-3 rounded-xl outline-none marker:hidden focus-visible:ring-2 focus-visible:ring-amber-300 [&::-webkit-details-marker]:hidden">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="text-xs font-bold text-slate-700">实木压条高清参考（选传）</div>
+                          {(paintingUpperWoodImage || paintingLowerWoodImage) && (
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                              已上传 {Number(Boolean(paintingUpperWoodImage)) + Number(Boolean(paintingLowerWoodImage))} 张
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-[11px] leading-5 text-slate-500">大多数情况无需上传，只用于木条特写方向。</div>
                       </div>
-                      <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-amber-700">不影响常规生成</span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
+                      <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-bold text-amber-700">
+                        <span className="group-open:hidden">展开</span>
+                        <span className="hidden group-open:inline">收起</span>
+                        <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
+                      </span>
+                    </summary>
+                    <div className="mt-3 border-t border-amber-200/80 pt-3">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <span className="text-[11px] leading-5 text-slate-500">建议每张4-8MB，拍全整根木条、两端和画布连接处。</span>
+                        <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-amber-700">不影响常规生成</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
                       <div className="relative overflow-hidden rounded-xl border border-amber-200 bg-white">
                         {paintingUpperWoodImage ? (
                           <div className="p-2">
@@ -4981,8 +4997,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         )}
                         <input ref={paintingLowerWoodFileInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => void handlePaintingWoodReferenceChange('lower', event.target.files?.[0] ?? null)} />
                       </div>
+                      </div>
                     </div>
-                  </div>
+                  </details>
 
                   <div className="flex flex-wrap items-center gap-2">
                     <button
