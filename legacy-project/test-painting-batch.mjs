@@ -93,6 +93,7 @@ const {
   PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION,
   PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION,
   ensurePaintingRollingUnfoldInstruction,
+  PAINTING_CHARACTER_IDENTITY_RULE,
   PAINTING_PRODUCT_FOCUSED_ENDING_RULE,
   ensurePaintingProductFocusedEnding,
   WAN3_CAMERA_MOTION_RULE,
@@ -1413,6 +1414,24 @@ console.log('\n[41] 删除批量生成历史');
 
   dbUpdatePaintingBatchRun('run-delete-active', { status: 'stopped', controlStatus: 'stopped' });
   assert(dbDeletePaintingBatchRun('run-delete-active') === true, '数据库删除原语返回成功');
+}
+
+// ===== T42 人物身份分离与防复制 =====
+console.log('\n[42] 人物身份分离与防复制');
+{
+  const locked = ensurePaintingSizeLock('产品固定约束：测试挂画。\n创意内容：人物在客厅自然观看挂画。');
+  assert(locked.includes('【人物身份分离与防复制强制锁定】'), '最终提交给视频模型的提示词确定性加入人物防复制锁');
+  assert(locked.includes(PAINTING_CHARACTER_IDENTITY_RULE), '人物防复制锁使用统一系统规则');
+  assert(/单人.*只允许这一个人物/.test(PAINTING_CHARACTER_IDENTITY_RULE), '单人场景明确禁止生成第二个相似人物');
+  assert(/不同人物.*脸型与五官.*发型.*服装款式.*服装主色/.test(PAINTING_CHARACTER_IDENTITY_RULE), '多人场景要求人物脸型、发型和着装明显不同');
+  assert(/只表示每个人各自在前后镜头中保持自己/.test(PAINTING_CHARACTER_IDENTITY_RULE), '人物一致性被正确限定为每个人自身的连续性');
+  assert(!PAINTING_CHARACTER_IDENTITY_RULE.includes('所有人物必须长相'), '不再使用会诱导所有人物同脸的错误表述');
+
+  const getFramework = (directionNumber) => PAINTING_FRAMEWORKS[Math.floor((directionNumber - 1) / 10)][(directionNumber - 1) % 10];
+  const multiPersonDirections = [5, 12, 23, 33].map(getFramework);
+  assert(multiPersonDirections.every((framework) => /不同|区分|独立身份/.test(framework)), '四个多人框架分别写明人物彼此可区分');
+  assert(multiPersonDirections.every((framework) => /禁止.*(?:复制|同脸|双胞胎)/.test(framework)), '四个多人框架分别禁止同脸或克隆人物');
+  assert(/人物A与人物B/.test(getFramework(23)) && /人物A与人物B/.test(getFramework(33)), '两个同龄成人高风险方向用人物A、B固定独立身份');
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);
