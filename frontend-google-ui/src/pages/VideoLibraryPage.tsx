@@ -60,6 +60,40 @@ interface LocalDownloadProgress {
 
 const DEFAULT_FOLDER = '通用素材';
 const VIDEO_FILE_EXTENSION_PATTERN = /\.(mp4|m4v|mov|webm|avi|mkv)$/i;
+const FINISHED_VIDEO_ENHANCEMENT_STATUSES = new Set(['completed', 'skipped']);
+
+function isVideoWaitingForEnhancement(item: VideoLibraryItem) {
+  if (item.variant === 'enhanced') return false;
+  const enhancementStatus = String(item.enhancement?.status || '').toLowerCase();
+  if (enhancementStatus) return !FINISHED_VIDEO_ENHANCEMENT_STATUSES.has(enhancementStatus);
+  const shortEdge = Math.min(Number(item.width || 0), Number(item.height || 0));
+  return shortEdge > 0 && shortEdge <= 512;
+}
+
+function confirmSingleUnenhancedDownload(item: VideoLibraryItem) {
+  if (!isVideoWaitingForEnhancement(item)) return true;
+  const status = String(item.enhancement?.status || '').toLowerCase();
+  const stateText = status === 'failed'
+    ? '画质增强尚未成功'
+    : status
+      ? '正在后台增强至1080P'
+      : '尚未完成1080P画质增强';
+  return window.confirm(`“${item.originalName}”${stateText}，现在下载的是未增强原版。\n\n建议等待1080P增强完成后再下载。确定仍要下载未增强版吗？`);
+}
+
+function confirmBatchUnenhancedDownload(items: VideoLibraryItem[]) {
+  const waitingItems = items.filter(isVideoWaitingForEnhancement);
+  if (!waitingItems.length) return true;
+  const failedCount = waitingItems.filter((item) => item.enhancement?.status === 'failed').length;
+  const processingCount = waitingItems.filter((item) => item.enhancement && item.enhancement.status !== 'failed').length;
+  const notStartedCount = waitingItems.length - failedCount - processingCount;
+  const detail = [
+    processingCount ? `正在增强 ${processingCount} 个` : '',
+    failedCount ? `增强失败 ${failedCount} 个` : '',
+    notStartedCount ? `尚未增强 ${notStartedCount} 个` : '',
+  ].filter(Boolean).join('、');
+  return window.confirm(`本次待下载素材中有 ${waitingItems.length} 个480P视频尚未完成1080P增强（${detail}）。\n\n继续将下载这些视频的未增强原版。建议等待增强完成后再下载。\n\n确定仍要继续吗？`);
+}
 
 function getVideoDateKey(timestamp: number) {
   const date = new Date(timestamp * 1000);
@@ -458,6 +492,17 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     setSelectedItem(item);
   }
 
+  function handleSingleVideoDownload(item: VideoLibraryItem) {
+    const latestItem = items.find((current) => current.id === item.id) || item;
+    if (!confirmSingleUnenhancedDownload(latestItem)) return;
+    const link = document.createElement('a');
+    link.href = latestItem.downloadUrl;
+    link.download = latestItem.downloadName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
   function removeLocalUnreadItem(item: VideoLibraryItem) {
     setUnreadVideoIds((previous) => {
       const next = new Set(previous);
@@ -517,6 +562,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
         setNotice(`“${selectedFolder}”没有需要下载的新素材，本地文件夹已经是最新状态。`);
         return;
       }
+      if (!confirmBatchUnenhancedDownload(pendingItems)) return;
 
       localDownloadControlRef.current = 'running';
       let progress: LocalDownloadProgress = {
@@ -702,9 +748,9 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
           )}
           {item.note && <p className="mt-2 line-clamp-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-bold leading-4 text-amber-700">{item.note}</p>}
           <div className="mt-2 flex items-center gap-1.5">
-            <a href={item.downloadUrl} download={item.downloadName} className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-200">
+            <button type="button" onClick={() => handleSingleVideoDownload(item)} className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-200">
               <Download className="size-3" />下载
-            </a>
+            </button>
             <button type="button" onClick={() => openMoveDialog(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-sky-50 hover:text-sky-600" title="移动到其他文件夹">
               <FolderInput className="size-3.5" />
             </button>
@@ -944,7 +990,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
         </div>
       )}
 
-      {selectedItem && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onMouseDown={() => setSelectedItem(null)}><div className="w-full max-w-3xl rounded-3xl bg-white p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-center justify-between gap-3 px-2 pb-3"><div className="min-w-0"><h2 className="truncate text-lg font-black">{selectedItem.originalName}</h2><p className="text-xs font-semibold text-slate-400">{selectedItem.folderName} · {formatVideoLibrarySize(selectedItem.fileSize)}</p></div><button type="button" onClick={() => setSelectedItem(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="size-5" /></button></div><video key={selectedItem.id} src={selectedItem.streamUrl} poster={selectedItem.thumbnailUrl} controls autoPlay playsInline preload="auto" className="max-h-[65vh] w-full rounded-2xl bg-black" /><div className="mt-4 flex gap-2"><input defaultValue={selectedItem.note} onKeyDown={(event) => { if (event.key === 'Enter') void handleSaveNote(selectedItem, event.currentTarget.value); }} placeholder="输入备注后按回车保存" className="h-11 min-w-0 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold outline-none focus:border-sky-300 focus:bg-white" /><a href={selectedItem.downloadUrl} download={selectedItem.downloadName} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-black text-white"><Download className="size-4" />下载</a></div></div></div>}
+      {selectedItem && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onMouseDown={() => setSelectedItem(null)}><div className="w-full max-w-3xl rounded-3xl bg-white p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-center justify-between gap-3 px-2 pb-3"><div className="min-w-0"><h2 className="truncate text-lg font-black">{selectedItem.originalName}</h2><p className="text-xs font-semibold text-slate-400">{selectedItem.folderName} · {formatVideoLibrarySize(selectedItem.fileSize)}</p></div><button type="button" onClick={() => setSelectedItem(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="size-5" /></button></div><video key={selectedItem.id} src={selectedItem.streamUrl} poster={selectedItem.thumbnailUrl} controls autoPlay playsInline preload="auto" className="max-h-[65vh] w-full rounded-2xl bg-black" /><div className="mt-4 flex gap-2"><input defaultValue={selectedItem.note} onKeyDown={(event) => { if (event.key === 'Enter') void handleSaveNote(selectedItem, event.currentTarget.value); }} placeholder="输入备注后按回车保存" className="h-11 min-w-0 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold outline-none focus:border-sky-300 focus:bg-white" /><button type="button" onClick={() => handleSingleVideoDownload(selectedItem)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-black text-white"><Download className="size-4" />下载</button></div></div></div>}
     </main>
   );
 }
