@@ -60,6 +60,8 @@ const {
   encodeWan3TaskId,
   decodeWan3TaskId,
   WAN3_VIDEO_MODEL,
+  normalizeLegacyCreativeVideoLibraryName,
+  migrateLegacyCreativeVideoLibraryNames,
   readMultipartFormBody,
   isValidPaintingClientRequestId,
   parsePaintingIdeasWithJsonRetry,
@@ -773,6 +775,28 @@ console.log('\n[26] 挂画创意素材入库命名');
   assert(formatPaintingSeedanceVideoLibraryName(createdAt, 40) === '8月23日 14:30.mp4', '不同方向统一只保留月日与时分');
   assert(formatPaintingSeedanceVideoLibraryName(createdAt, 0) === '8月23日 14:30.mp4', '没有方向号时同样使用简化命名');
   assert(JSON.stringify(getPaintingFrameworkPosition(26)) === JSON.stringify({ groupNumber: 3, itemNumber: 6 }), '方向26可反查第3组第6个');
+  assert(normalizeLegacyCreativeVideoLibraryName('8月29日 10-22 第2组第8个.mp4', 'Seedance 2.0 Fast · 来自创意素材 · 方向18') === '8月29日 10:22.mp4', '历史挂画名称去掉组别并改用冒号');
+  assert(normalizeLegacyCreativeVideoLibraryName('8月29日 10-22.mp4', '来自创意创作') === '8月29日 10:22.mp4', '历史普通创意素材同步改用冒号');
+  assert(normalizeLegacyCreativeVideoLibraryName('8月29日 10-22 第2组第8个.mp4', '本地上传') === '8月29日 10-22 第2组第8个.mp4', '本地上传素材不参与历史改名');
+
+  const migrationDb = new DatabaseSync(join(stateDir, 'video-name-migration-test.db'));
+  migrationDb.exec(`
+    CREATE TABLE video_library_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      original_name TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      updated_at INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO video_library_items (original_name, note) VALUES
+      ('8月29日 10-22 第2组第8个.mp4', 'Seedance 2.0 Fast · 来自创意素材 · 方向18'),
+      ('8月29日 10-23.mp4', '来自创意创作'),
+      ('同事手动命名.mp4', '本地上传');
+  `);
+  assert(migrateLegacyCreativeVideoLibraryNames(migrationDb) === 2, '启动迁移只更新符合旧规则的创意素材');
+  const migratedNames = migrationDb.prepare('SELECT original_name FROM video_library_items ORDER BY id').all().map((row) => row.original_name);
+  assert(migratedNames.join('|') === '8月29日 10:22.mp4|8月29日 10:23.mp4|同事手动命名.mp4', '历史名称批量迁移结果正确', migratedNames.join('|'));
+  assert(migrateLegacyCreativeVideoLibraryNames(migrationDb) === 0, '历史改名迁移可重复执行且不会反复改名');
+  migrationDb.close();
 }
 
 // ===== T27 全自动最终提示词尺寸锁定 =====

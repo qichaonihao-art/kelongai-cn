@@ -1340,6 +1340,10 @@ function getCollectionDb() {
       }
     }
 
+    const renamedCreativeVideos = migrateLegacyCreativeVideoLibraryNames(collectionDb);
+    if (renamedCreativeVideos > 0) {
+      console.log(`[db] 已简化 ${renamedCreativeVideos} 条历史创意视频素材名称`);
+    }
     ensurePaintingBatchIdempotencyConstraints();
   }
   return collectionDb;
@@ -1644,6 +1648,38 @@ function sanitizeVideoLibraryFolder(value) {
 function sanitizeVideoLibraryFileName(value) {
   const name = path.basename(readValue(value)).replace(/[\\/:*?"<>|]/g, '').trim();
   return (name || '未命名视频').slice(0, 180);
+}
+
+function normalizeLegacyCreativeVideoLibraryName(originalName, note = '') {
+  const name = readValue(originalName);
+  const normalizedNote = normalizeLegacyVideoLibrarySourceNote(note);
+  if (!name || !normalizedNote.includes('来自创意素材')) return name;
+  const match = name.match(/^(\d{1,2})月(\d{1,2})日\s+(\d{1,2})[-:](\d{2})(?:\s+第[1-4]组第(?:10|[1-9])个)?(\.[a-z0-9]{2,5})$/i);
+  if (!match) return name;
+  return `${Number(match[1])}月${Number(match[2])}日 ${match[3].padStart(2, '0')}:${match[4]}${match[5].toLowerCase()}`;
+}
+
+function migrateLegacyCreativeVideoLibraryNames(db = collectionDb) {
+  if (!db) return 0;
+  const rows = db.prepare('SELECT id, original_name, note FROM video_library_items').all();
+  const updates = rows
+    .map((row) => ({
+      id: Number(row.id),
+      before: String(row.original_name || ''),
+      after: normalizeLegacyCreativeVideoLibraryName(row.original_name, row.note),
+    }))
+    .filter((row) => row.after && row.after !== row.before);
+  if (!updates.length) return 0;
+  const update = db.prepare('UPDATE video_library_items SET original_name = ?, updated_at = unixepoch() WHERE id = ?');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const row of updates) update.run(row.after, row.id);
+    db.exec('COMMIT');
+    return updates.length;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 function getVideoLibraryExtension(fileName, mimeType = '') {
@@ -19640,6 +19676,8 @@ export {
   getVideoLibraryModelLabel,
   formatVideoLibrarySourceNote,
   normalizeLegacyVideoLibrarySourceNote,
+  normalizeLegacyCreativeVideoLibraryName,
+  migrateLegacyCreativeVideoLibraryNames,
   readMultipartFormBody,
   isValidPaintingClientRequestId,
   parsePaintingIdeasWithJsonRetry,
