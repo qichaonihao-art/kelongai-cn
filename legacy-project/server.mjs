@@ -14475,6 +14475,8 @@ const PAINTING_PRODUCT_FOCUSED_ENDING_MARKER = '【最高优先级·移动镜头
 const PAINTING_CHARACTER_IDENTITY_MARKER = '【人物身份分离与防复制强制锁定】';
 const PAINTING_CHARACTER_IDENTITY_RULE = '人物数量和每个人的身份必须从第0秒起固定。如果创意设定为单人，全片只允许这一个人物，严禁复制、分身、镜像复制、画面中同时出现第二个长相或穿着相同的人。如果创意明确设定为多人，每个人必须是独立且可明确区分的真实个体：不同人物的脸型与五官、发型、体型特征、服装款式和服装主色必须明显不同，除非创意明确要求双胞胎，否则严禁生成双胞胎、同脸人、克隆人物或同款服装。若两名人物年龄、性别相仿，更必须通过不同脸型、不同发型和不同服装主色一眼区分。“人物保持一致”只表示每个人各自在前后镜头中保持自己的脸、发型、年龄、服装和身份不变，绝不表示不同人物彼此长得一样或穿得一样。全程禁止人物凭空增减、相互换脸、交换服装、身份互换或合并分裂。';
 const WAN3_CAMERA_MOTION_MARKER = '【千问 Wan3.0 专用·运镜速度强制锁定】';
+const WAN3_PAINTING_STRUCTURE_MARKER = '【千问 Wan3.0 专用·挂画结构连续性与禁止二次展开】';
+const WAN3_PAINTING_STRUCTURE_RULE = '挂画的画布、挂绳、上方木条和下方木条是同一个固定实体，数量和相对位置全程不变，任何时刻只能存在参考图中的上、下两根木条，严禁在画面中部或其他位置生成第三根木条、复制木条、白色横杆、滚轴或横向遮挡物。若本条创意没有明确安排人物手动打开卷起挂画，则全片展开动作次数必须为0，已经完整展开或已经上墙的挂画从第0秒到结束始终保持完整平展、固定静止。若创意明确安排人物打开卷起挂画，只允许在时间轴指定阶段由人物双手控制完成唯一1次滚动展开；展开并挂好以后立即锁定，后续展开次数为0，严禁结尾再次展开、重新展开、自动展开、反向卷起、复位或重演安装动作。镜头推近、拉远、横移、扫拍和内容特写只表示摄影机运动，绝不能触发画布、挂绳、上下木条或画面内容发生位移、滚动、滑动、复制、变形、分层或重组。尤其禁止新增横杆从上向下或从下向上扫过画芯，禁止下方木条的复制体沿画面滑动，禁止无人触碰时出现任何类似卷帘、扫描条或二次展开的动画。';
 const PAINTING_CONTENT_DETAIL_DIRECTION = 29;
 const PAINTING_WOOD_DETAIL_DIRECTION = 30;
 const PAINTING_CAMERA_EXPLANATION_DIRECTION = 7;
@@ -14528,6 +14530,14 @@ function ensureWan3CameraMotionLock(promptText) {
     .replace(/镜头稳定但不能缓慢拖延/g, '镜头保持稳定低速，内容过多时删减动作而不加速');
 
   return `${normalized}\n\n${WAN3_CAMERA_MOTION_MARKER}\n${WAN3_CAMERA_MOTION_RULE}`;
+}
+
+function ensureWan3PaintingStructureLock(promptText, directionNumber = 0) {
+  const normalized = String(promptText || '').trim();
+  const isPaintingTask = Number(directionNumber) > 0
+    || /挂画|挂轴|卷轴|压条|下压杆|画布|书法画/.test(normalized);
+  if (!isPaintingTask || normalized.includes(WAN3_PAINTING_STRUCTURE_MARKER)) return normalized;
+  return `${normalized}\n\n${WAN3_PAINTING_STRUCTURE_MARKER}\n${WAN3_PAINTING_STRUCTURE_RULE}`;
 }
 const PAINTING_CONTENT_DETAIL_VARIANTS = [
   '茶几平放·正上方左到右：挂画完整平坦放在尺寸足够的茶几表面，上下木条与画布保持原样；摄影机接近垂直俯拍，从画面左侧向右侧连续扫过，禁止默认从右侧斜拍',
@@ -15418,6 +15428,7 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   );
   if (isWan3) {
     promptForSubmission = ensureWan3CameraMotionLock(promptForSubmission);
+    promptForSubmission = ensureWan3PaintingStructureLock(promptForSubmission, task.directionNumber);
   }
   const content = [{ type: 'text', text: `${referenceGuide}${promptForSubmission}` }];
   for (const spec of referenceSpecs) {
@@ -17337,9 +17348,11 @@ async function handleSeedanceCreateTask(req, res) {
     const isMiniMaxH3 = model === MINIMAX_H3_MODEL;
     const isWan3 = model === WAN3_VIDEO_MODEL;
     const manualDirection = Number(body?.directionNumber) || 0;
-    let prompt = ensurePaintingProductFocusedEnding(
-      ensurePaintingRollingUnfoldInstruction(readValue(body?.prompt), manualDirection)
-    );
+    let prompt = ensurePaintingRollingUnfoldInstruction(readValue(body?.prompt), manualDirection);
+    if (isWan3) {
+      prompt = ensureWan3PaintingStructureLock(prompt, manualDirection);
+    }
+    prompt = ensurePaintingProductFocusedEnding(prompt);
     if (isWan3) {
       prompt = ensureWan3CameraMotionLock(prompt);
     }
@@ -19720,6 +19733,8 @@ export {
   ensurePaintingProductFocusedEnding,
   WAN3_CAMERA_MOTION_RULE,
   ensureWan3CameraMotionLock,
+  WAN3_PAINTING_STRUCTURE_RULE,
+  ensureWan3PaintingStructureLock,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
   getPaintingContentDetailVariant,
