@@ -2937,7 +2937,8 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
     const folderName = sanitizeVideoLibraryFolder(body?.folderName);
     const requestedCreatedAt = Number(body?.createdAt || 0);
     const paintingDirectionNumber = Number(body?.paintingDirectionNumber || 0);
-    const autoEnhance480p = body?.autoEnhance480p === true;
+    // 创意视频入库统一执行480P检测：命中后自动增强至1080P，不再由前端开关决定。
+    const autoEnhance480p = true;
     if (!taskId) {
       sendJson(res, 400, { error: '缺少视频生成任务 ID' });
       return;
@@ -13813,7 +13814,8 @@ async function handleCreatePaintingBatchRun(req, res) {
     const ratio = readValue(body.ratio) || '9:16';
     const variationRound = Math.max(0, Math.min(2, Number(body.variationRound) || 0));
     const onlyUnused = body.onlyUnused === 'true' || body.onlyUnused === true;
-    const autoEnhance480p = body.autoEnhance480p === 'true' || body.autoEnhance480p === true;
+    // 全自动批量入库同样固定检测并增强480P视频。
+    const autoEnhance480p = true;
     const generateAudio = body.generateAudio !== 'false' && body.generateAudio !== false;
     const watermark = body.watermark === 'true' || body.watermark === true;
     const stylePreset = readValue(body.stylePreset) || plan.stylePreset || 'modern-minimal';

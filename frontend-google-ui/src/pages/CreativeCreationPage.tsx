@@ -1734,7 +1734,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [isSavingToVideoLibrary, setIsSavingToVideoLibrary] = useState(false);
   const [videoLibrarySaveError, setVideoLibrarySaveError] = useState('');
   const [videoLibrarySaveNotice, setVideoLibrarySaveNotice] = useState('');
-  const [videoLibraryAutoEnhance480p, setVideoLibraryAutoEnhance480p] = useState(false);
   const [showAtMenu, setShowAtMenu] = useState(false);
   const [atMenuFilter, setAtMenuFilter] = useState("");
   const [atMenuSelectedIndex, setAtMenuSelectedIndex] = useState(0);
@@ -1787,7 +1786,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchPreparing, setPaintingBatchPreparing] = useState(false);
   const [paintingBatchIdeas, setPaintingBatchIdeas] = useState<PaintingIdeaSummary[]>([]);
   const [paintingBatchOnlyUnused, setPaintingBatchOnlyUnused] = useState(true);
-  const [paintingBatchAutoEnhance480p, setPaintingBatchAutoEnhance480p] = useState(false);
   const [paintingBatchFolder, setPaintingBatchFolder] = useState(loadLastVideoLibraryFolder);
   const [paintingBatchFolderId, setPaintingBatchFolderId] = useState<number | null>(null);
   const [paintingBatchFolderChoiceSource, setPaintingBatchFolderChoiceSource] = useState<VideoLibraryFolderChoiceSource>('fallback');
@@ -3297,7 +3295,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         createdAt: target.createdAt,
         paintingDirectionNumber: target.directionNumber,
         paintingVariationRound: target.variationRound,
-        autoEnhance480p: videoLibraryAutoEnhance480p,
+        autoEnhance480p: true,
       });
       if (result.sourceBytes !== result.savedBytes) {
         throw new Error('保存后文件大小校验失败，请重试');
@@ -3320,17 +3318,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
           ? { ...item, libraryFolder: result.item.folderName }
           : item
       )));
-      const enhancementSuffix = videoLibraryAutoEnhance480p
-        ? result.enhancement?.queued
-          ? '；480P画质增强已在后台启动'
-          : result.enhancement?.reason === 'not_480p'
-            ? '；检测到原片并非480P，无需启动增强'
-            : result.enhancement?.reason === 'not_configured'
-              ? '；原片已保存，但服务器尚未配置画质增强密钥'
-              : result.enhancement?.reason === 'public_base_url_missing'
-                ? '；原片已保存，但服务器尚未配置公网地址，画质增强未启动'
-                : '；原片已保存，画质增强暂未启动'
-        : '';
+      const enhancementSuffix = result.enhancement?.queued
+        ? '；480P画质增强已在后台启动'
+        : result.enhancement?.reason === 'not_480p'
+          ? ''
+          : result.enhancement?.reason === 'not_configured'
+            ? '；原片已保存，但服务器尚未配置画质增强密钥'
+            : result.enhancement?.reason === 'public_base_url_missing'
+              ? '；原片已保存，但服务器尚未配置公网地址，画质增强未启动'
+              : '；原片已保存，画质增强暂未启动';
       setVideoLibrarySaveNotice(`${result.message}：${result.item.originalName}${enhancementSuffix}`);
       setSeedanceLibrarySaveTarget(null);
     } catch (error) {
@@ -4155,7 +4151,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       targetFolderId: paintingBatchFolderId,
       targetFolderName: paintingBatchFolder,
       onlyUnused: paintingBatchOnlyUnused,
-      autoEnhance480p: paintingBatchAutoEnhance480p,
+      autoEnhance480p: true,
       creationRequestId,
     };
   }
@@ -7710,20 +7706,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 )}
               </div>
 
-              <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
-                <input
-                  type="checkbox"
-                  checked={videoLibraryAutoEnhance480p}
-                  onChange={(event) => setVideoLibraryAutoEnhance480p(event.target.checked)}
-                  disabled={isSavingToVideoLibrary}
-                  className="mt-0.5 size-4 accent-cyan-600"
-                />
-                <span>
-                  <span className="block text-xs font-black text-cyan-900">480P 保存后自动增强至 1080P</span>
-                  <span className="mt-1 block text-[10px] leading-4 text-cyan-700">按实际文件分辨率检测；原片保留，标准版增强片在后台完成后另存一份，并保持原帧率。此项会产生 AI MediaKit 增强费用。</span>
-                </span>
-              </label>
-
               {videoLibrarySaveError && (
                 <div className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium leading-5 text-red-600">
                   {videoLibrarySaveError}
@@ -7918,20 +7900,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               />
               <span className="text-xs font-bold text-slate-700">仅生成未使用方向</span>
               <span className="text-[10px] text-slate-400">（默认，跳过当前轮次已生成过的方向）</span>
-            </label>
-
-            <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2.5">
-              <input
-                type="checkbox"
-                checked={paintingBatchAutoEnhance480p}
-                onChange={(event) => setPaintingBatchAutoEnhance480p(event.target.checked)}
-                disabled={paintingBatchCreating || paintingBatchConfirming}
-                className="mt-0.5 size-4 accent-cyan-600"
-              />
-              <span>
-                <span className="block text-xs font-bold text-cyan-900">480P 入库后自动增强至 1080P</span>
-                <span className="mt-0.5 block text-[10px] leading-4 text-cyan-700">仅处理实际为480P及以下的视频；后台异步执行，保留原片，增强片另存，并产生 AI MediaKit 增强费用。</span>
-              </span>
             </label>
 
             <div className="mt-4">

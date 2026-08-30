@@ -538,6 +538,7 @@ console.log('\n[17] 创建批次接口：接受 480P/720P，拒绝 1080P/4K');
   assert(!!body720.batchRunId, '返回 batchRunId', JSON.stringify(body720));
   const run720 = dbGetPaintingBatchRun(body720.batchRunId);
   assert(run720.model === PAINTING_BATCH_MODEL && String(run720.resolution).toLowerCase() === '720p', '批次 model=Mini 且 resolution=720p', JSON.stringify({ model: run720.model, resolution: run720.resolution }));
+  assert(run720.options?.autoEnhance480p === true, '批量入库未传增强开关时仍固定启用480P自动增强');
   // 立即停止该批次，避免后台处理器在后续断言期间产生噪声。
   dbUpdatePaintingBatchRun(body720.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
 
