@@ -63,6 +63,7 @@ import {
   SEEDANCE_BATCH_RESOLUTION,
   SEEDANCE_PRICING_NOTE,
   getPaintingFolderBinding,
+  setPaintingFolderBinding,
   getPaintingUsedDirections,
   sha256File,
   type CreativeReverseModel,
@@ -148,6 +149,10 @@ interface SeedanceHistoryItem {
   libraryFolder?: string;
   directionNumber?: number;
   variationRound?: number;
+  paintingImageHash?: string;
+  paintingName?: string;
+  paintingSubject?: string;
+  paintingUploadHistoryId?: number;
 }
 
 interface SeedanceLibrarySaveTarget {
@@ -156,7 +161,13 @@ interface SeedanceLibrarySaveTarget {
   createdAt?: number;
   directionNumber?: number;
   variationRound?: number;
+  paintingImageHash?: string;
+  paintingName?: string;
+  paintingSubject?: string;
+  paintingUploadHistoryId?: number;
 }
+
+type VideoLibraryFolderChoiceSource = 'remembered' | 'matched' | 'fallback' | 'manual';
 
 interface PaintingHistoryItem {
   id: string;
@@ -216,6 +227,7 @@ const SEEDANCE_HISTORY_MAX_AGE_MS = SEEDANCE_HISTORY_MAX_AGE_DAYS * 24 * 60 * 60
 const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
+const SEEDANCE_MANUAL_PREFERENCE_STORAGE_KEY = 'kelongai.seedanceManualPreference';
 const SEEDANCE_COST_KEY = 'kelongai.seedanceCost';
 const PAINTING_HISTORY_STORAGE_KEY = 'kelongai.paintingHistory';
 const PAINTING_HISTORY_MAX_AGE_DAYS = 30;
@@ -297,6 +309,66 @@ function saveLastVideoLibraryFolder(folder: string) {
   } catch {
     // 浏览器禁止本地存储时，仍允许本次保存流程正常进行。
   }
+}
+
+const GENERIC_VIDEO_LIBRARY_FOLDERS = new Set(['通用素材', '待分类', '未分类', '默认文件夹']);
+
+function normalizePaintingFolderMatchText(value: unknown): string {
+  return String(value || '')
+    .toLocaleLowerCase('zh-CN')
+    .replace(/[\s\p{P}\p{S}_]+/gu, '')
+    .replace(/(?:装饰画|挂画|挂轴|卷轴|书法作品|书法|国画|画作|画芯|竖版|竖幅|产品)/g, '');
+}
+
+function scorePaintingFolderText(folderText: string, sourceText: string, baseScore: number): number {
+  if (!folderText || !sourceText || folderText.length < 2) return 0;
+  if (folderText === sourceText) return baseScore + 20;
+  if (sourceText.includes(folderText) || folderText.includes(sourceText)) return baseScore;
+
+  const folderCharacters = Array.from(new Set(folderText));
+  const sourceCharacters = new Set(sourceText);
+  const overlap = folderCharacters.filter((character) => sourceCharacters.has(character)).length;
+  if (overlap >= 2 && overlap / folderCharacters.length >= 0.75) return baseScore - 25;
+  return 0;
+}
+
+function suggestPaintingVideoLibraryFolder(
+  folders: string[],
+  painting?: { name?: string; subject?: string } | null
+): string | null {
+  const normalizedName = normalizePaintingFolderMatchText(painting?.name);
+  const normalizedSubject = normalizePaintingFolderMatchText(painting?.subject);
+  let best: { folder: string; score: number } | null = null;
+
+  for (const folder of folders) {
+    if (GENERIC_VIDEO_LIBRARY_FOLDERS.has(folder.trim())) continue;
+    const normalizedFolder = normalizePaintingFolderMatchText(folder);
+    const score = Math.max(
+      scorePaintingFolderText(normalizedFolder, normalizedName, 100),
+      scorePaintingFolderText(normalizedFolder, normalizedSubject, 85)
+    );
+    if (score < 70) continue;
+    if (!best || score > best.score || (score === best.score && folder.length > best.folder.length)) {
+      best = { folder, score };
+    }
+  }
+
+  return best?.folder || null;
+}
+
+function getFallbackVideoLibraryFolder(folders: string[]): string {
+  if (folders.includes('通用素材')) return '通用素材';
+  if (folders.includes('待分类')) return '待分类';
+  const lastFolder = loadLastVideoLibraryFolder();
+  if (folders.includes(lastFolder)) return lastFolder;
+  return folders[0] || '通用素材';
+}
+
+function getVideoLibraryFolderChoiceLabel(source: VideoLibraryFolderChoiceSource): string {
+  if (source === 'remembered') return '已按这幅画的历史记录选择';
+  if (source === 'matched') return '已根据挂画内容自动匹配';
+  if (source === 'manual') return '已手动更换，保存后会记住';
+  return '暂未找到明确匹配，已放入默认文件夹';
 }
 
 function formatDoubaoMultimodalModelName(modelId: string): string {
@@ -653,6 +725,11 @@ const WAN3_DURATIONS = Array.from({ length: 29 }, (_, index) => index + 2);
 type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-fast-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628' | 'MiniMax-H3' | 'wan3.0-video';
 type SeedanceTaskMode = 'generate' | 'video-edit-painting';
 type SeedanceResolution = '480p' | '720p' | '768p' | '1080p' | '4k';
+
+interface SeedanceManualPreference {
+  model: SeedanceModelId;
+  resolution: SeedanceResolution;
+}
 type ReverseMode = 'direct' | 'replace' | 'image' | 'painting';
 type PaintingBatchStartOrder = 'group1' | 'group2' | 'group3' | 'group4' | 'random';
 
@@ -702,6 +779,54 @@ function getSeedanceResolutions(model: SeedanceModelId) {
   if (model === 'doubao-seedance-2-5-260628') return SEEDANCE_RESOLUTIONS_2_5;
   if (model === 'doubao-seedance-2-0-mini-260615' || model === 'doubao-seedance-2-0-fast-260128') return SEEDANCE_RESOLUTIONS_2_0_MINI;
   return SEEDANCE_RESOLUTIONS_2_0;
+}
+
+function getDefaultSeedanceResolution(model: SeedanceModelId): SeedanceResolution {
+  if (model === 'MiniMax-H3') return '768p';
+  if (model === 'wan3.0-video') return '480p';
+  return '720p';
+}
+
+function isSeedanceModelId(value: unknown): value is SeedanceModelId {
+  return [
+    'doubao-seedance-2-0-260128',
+    'doubao-seedance-2-0-fast-260128',
+    'doubao-seedance-2-0-mini-260615',
+    'doubao-seedance-2-5-260628',
+    'MiniMax-H3',
+    'wan3.0-video',
+  ].includes(String(value));
+}
+
+function loadSeedanceManualPreference(): SeedanceManualPreference {
+  const fallback: SeedanceManualPreference = {
+    model: 'doubao-seedance-2-0-260128',
+    resolution: '720p',
+  };
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SEEDANCE_MANUAL_PREFERENCE_STORAGE_KEY) || '{}');
+    if (!isSeedanceModelId(parsed?.model)) return fallback;
+    const supportedResolutions = getSeedanceResolutions(parsed.model) as readonly string[];
+    const resolution = String(parsed?.resolution || '');
+    return {
+      model: parsed.model,
+      resolution: supportedResolutions.includes(resolution)
+        ? resolution as SeedanceResolution
+        : getDefaultSeedanceResolution(parsed.model),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveSeedanceManualPreference(preference: SeedanceManualPreference) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(SEEDANCE_MANUAL_PREFERENCE_STORAGE_KEY, JSON.stringify(preference));
+  } catch {
+    // 浏览器禁用本地存储时，只保留当前页面内的选择。
+  }
 }
 
 function getSeedanceHistoryModeLabel(item: SeedanceHistoryItem) {
@@ -1019,6 +1144,10 @@ function createSeedanceHistoryItem(
     elapsedSeconds?: number;
     directionNumber?: number;
     variationRound?: number;
+    paintingImageHash?: string;
+    paintingName?: string;
+    paintingSubject?: string;
+    paintingUploadHistoryId?: number;
   }
 ): SeedanceHistoryItem {
   const createdAt = getSeedanceTaskTime(task);
@@ -1043,6 +1172,10 @@ function createSeedanceHistoryItem(
     elapsedSeconds: options.elapsedSeconds,
     directionNumber: options.directionNumber,
     variationRound: options.variationRound,
+    paintingImageHash: options.paintingImageHash,
+    paintingName: options.paintingName,
+    paintingSubject: options.paintingSubject,
+    paintingUploadHistoryId: options.paintingUploadHistoryId,
     isGood: false,
   };
 }
@@ -1569,9 +1702,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [reverseModel, setReverseModel] = useState<CreativeReverseModel>('doubao');
   const [selectedMedia, setSelectedMedia] = useState<SelectedCreativeMedia | null>(null);
   const [seedanceTaskMode, setSeedanceTaskMode] = useState<SeedanceTaskMode>('generate');
-  const [seedanceModel, setSeedanceModel] = useState<SeedanceModelId>('doubao-seedance-2-0-260128');
+  const seedanceManualPreferenceRef = useRef<SeedanceManualPreference>(loadSeedanceManualPreference());
+  const [seedanceModel, setSeedanceModel] = useState<SeedanceModelId>(() => seedanceManualPreferenceRef.current.model);
   const [seedancePrompt, setSeedancePrompt] = useState("");
-  const [seedanceResolution, setSeedanceResolution] = useState<SeedanceResolution>('720p');
+  const [seedanceResolution, setSeedanceResolution] = useState<SeedanceResolution>(() => seedanceManualPreferenceRef.current.resolution);
   const [seedanceRatio, setSeedanceRatio] = useState("9:16");
   const [seedanceDuration, setSeedanceDuration] = useState(5);
   const [seedanceGenerateAudio, setSeedanceGenerateAudio] = useState(false);
@@ -1594,6 +1728,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [seedanceLibrarySaveTarget, setSeedanceLibrarySaveTarget] = useState<SeedanceLibrarySaveTarget | null>(null);
   const [videoLibraryFolders, setVideoLibraryFolders] = useState<string[]>([]);
   const [selectedVideoLibraryFolder, setSelectedVideoLibraryFolder] = useState(loadLastVideoLibraryFolder);
+  const [videoLibraryFolderChoiceSource, setVideoLibraryFolderChoiceSource] = useState<VideoLibraryFolderChoiceSource>('fallback');
+  const [showVideoLibraryFolderChoices, setShowVideoLibraryFolderChoices] = useState(false);
   const [isVideoLibraryFolderLoading, setIsVideoLibraryFolderLoading] = useState(false);
   const [isSavingToVideoLibrary, setIsSavingToVideoLibrary] = useState(false);
   const [videoLibrarySaveError, setVideoLibrarySaveError] = useState('');
@@ -1636,7 +1772,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const paintingFileInputRef = useRef<HTMLInputElement>(null);
   const paintingUpperWoodFileInputRef = useRef<HTMLInputElement>(null);
   const paintingLowerWoodFileInputRef = useRef<HTMLInputElement>(null);
-  const paintingSeedanceSourceRef = useRef<{ prompt: string; directionNumber: number; variationRound: number } | null>(null);
+  const paintingSeedanceSourceRef = useRef<{
+    prompt: string;
+    directionNumber: number;
+    variationRound: number;
+    imageHash?: string;
+    paintingName?: string;
+    paintingSubject?: string;
+    uploadHistoryId?: number;
+  } | null>(null);
 
   // 挂画全自动批量生成状态
   const [paintingBatchConfirmOpen, setPaintingBatchConfirmOpen] = useState(false);
@@ -1646,6 +1790,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchAutoEnhance480p, setPaintingBatchAutoEnhance480p] = useState(false);
   const [paintingBatchFolder, setPaintingBatchFolder] = useState(loadLastVideoLibraryFolder);
   const [paintingBatchFolderId, setPaintingBatchFolderId] = useState<number | null>(null);
+  const [paintingBatchFolderChoiceSource, setPaintingBatchFolderChoiceSource] = useState<VideoLibraryFolderChoiceSource>('fallback');
+  const [showPaintingBatchFolderChoices, setShowPaintingBatchFolderChoices] = useState(false);
   const [paintingBatchModel, setPaintingBatchModel] = useState<string>(SEEDANCE_BATCH_MODEL);
   const [paintingBatchResolution, setPaintingBatchResolution] = useState<string>(SEEDANCE_BATCH_RESOLUTION);
   const [paintingBatchStartOrder, setPaintingBatchStartOrder] = useState<PaintingBatchStartOrder>('group1');
@@ -1743,13 +1889,24 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const autoSyncToSeedanceRef = useRef(false);
   const pendingReverseSeedanceSyncRef = useRef<ReverseSeedanceSyncSnapshot | null>(null);
   const normalSeedanceSettingsRef = useRef({
-    model: 'doubao-seedance-2-0-260128' as SeedanceModelId,
-    resolution: '720p' as SeedanceResolution,
+    model: seedanceManualPreferenceRef.current.model,
+    resolution: seedanceManualPreferenceRef.current.resolution,
     ratio: '9:16',
     duration: 5,
     generateAudio: false,
     watermark: false,
   });
+
+  function rememberManualSeedancePreference(model: SeedanceModelId, resolution: SeedanceResolution) {
+    const preference = { model, resolution };
+    seedanceManualPreferenceRef.current = preference;
+    normalSeedanceSettingsRef.current = {
+      ...normalSeedanceSettingsRef.current,
+      model,
+      resolution,
+    };
+    saveSeedanceManualPreference(preference);
+  }
 
   const filteredAdditionalChangeHistory = useMemo(() => {
     const keyword = additionalHistorySearch.trim().toLowerCase();
@@ -2729,9 +2886,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setSeedanceTaskMode(nextMode);
 
     if (nextMode === 'video-edit-painting') {
+      const preference = seedanceManualPreferenceRef.current;
       normalSeedanceSettingsRef.current = {
-        model: seedanceModel,
-        resolution: seedanceResolution,
+        model: preference.model,
+        resolution: preference.resolution,
         ratio: seedanceRatio,
         duration: seedanceDuration,
         generateAudio: seedanceGenerateAudio,
@@ -2825,8 +2983,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     variationRound?: number;
   }) {
     const isVideoEdit = seedanceTaskMode === 'video-edit-painting';
-    const isMiniMaxH3 = !isVideoEdit && seedanceModel === 'MiniMax-H3';
-    const isWan3 = !isVideoEdit && seedanceModel === 'wan3.0-video';
+    const rememberedPreference = seedanceManualPreferenceRef.current;
+    const generationModel: SeedanceModelId = isVideoEdit ? 'doubao-seedance-2-5-260628' : rememberedPreference.model;
+    const generationResolution: SeedanceResolution = isVideoEdit ? '720p' : rememberedPreference.resolution;
+    const isMiniMaxH3 = !isVideoEdit && generationModel === 'MiniMax-H3';
+    const isWan3 = !isVideoEdit && generationModel === 'wan3.0-video';
     const prompt = isVideoEdit
       ? buildVideoEditPaintingPrompt(videoEditTarget, videoEditAdjustments)
       : (overrides?.prompt ?? seedancePrompt.trim());
@@ -2838,9 +2999,23 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       : null;
     const paintingDirectionNumber = overrides?.directionNumber ?? matchedPaintingSource?.directionNumber;
     const paintingSourceVariationRound = overrides?.variationRound ?? matchedPaintingSource?.variationRound;
+    const paintingSourceImageHash = overrides?.imageHash || matchedPaintingSource?.imageHash;
+    const paintingSourceName = matchedPaintingSource?.paintingName
+      || (paintingDirectionNumber ? String(paintingProfile?.name || '') : '');
+    const paintingSourceSubject = matchedPaintingSource?.paintingSubject
+      || (paintingDirectionNumber ? String(paintingProfile?.subject || '') : '');
+    const paintingSourceUploadHistoryId = matchedPaintingSource?.uploadHistoryId
+      || (paintingDirectionNumber ? paintingUploadHistoryId || undefined : undefined);
 
     const references = overrides?.references ?? seedanceReferences;
-    const duration = overrides?.duration ?? seedanceDuration;
+    const requestedDuration = overrides?.duration ?? seedanceDuration;
+    const maxGenerationDuration = generationModel === 'doubao-seedance-2-5-260628' || generationModel === 'wan3.0-video' ? 30 : 15;
+    const duration = isVideoEdit ? -1 : Math.min(maxGenerationDuration, Math.max(4, Math.round(requestedDuration)));
+
+    if (!isVideoEdit && (seedanceModel !== generationModel || seedanceResolution !== generationResolution)) {
+      setSeedanceModel(generationModel);
+      setSeedanceResolution(generationResolution);
+    }
 
     if (isMiniMaxH3 && !minimaxApiConfigured) {
       setSeedanceError('服务端尚未配置 MINIMAX_API_KEY，暂时不能测试 MiniMax H3。');
@@ -2899,16 +3074,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         response: { id: pendingTaskId, status: 'creating' },
       },
       {
-        model: isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel,
+        model: generationModel,
         taskMode: seedanceTaskMode,
         prompt,
-        resolution: seedanceResolution,
+        resolution: generationResolution,
         ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
-        duration: isVideoEdit ? -1 : duration,
+        duration,
         generateAudio: seedanceGenerateAudio,
         watermark: seedanceWatermark,
         directionNumber: paintingDirectionNumber,
         variationRound: paintingSourceVariationRound,
+        paintingImageHash: paintingSourceImageHash,
+        paintingName: paintingSourceName || undefined,
+        paintingSubject: paintingSourceSubject || undefined,
+        paintingUploadHistoryId: paintingSourceUploadHistoryId,
       }
     );
     const historyWithPendingTask = mergeSeedanceHistoryItem(seedanceHistory, pendingHistoryItem);
@@ -2924,16 +3103,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
     try {
       const task = await createSeedanceTask({
-        model: isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel,
+        model: generationModel,
         taskMode: isVideoEdit ? 'video_edit' : 'generate',
         prompt,
-        resolution: seedanceResolution,
+        resolution: generationResolution,
         ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
-        duration: isVideoEdit ? -1 : duration,
+        duration,
         generateAudio: seedanceGenerateAudio,
         watermark: seedanceWatermark,
         references,
-        imageHash: overrides?.imageHash,
+        imageHash: paintingSourceImageHash,
         directionNumber: paintingDirectionNumber,
         variationRound: paintingSourceVariationRound,
       });
@@ -2954,24 +3133,28 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               createdAt: task.createdAt || Math.floor(Date.now() / 1000),
             },
             {
-              model: isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel,
+              model: generationModel,
               taskMode: seedanceTaskMode,
               prompt,
-              resolution: seedanceResolution,
+              resolution: generationResolution,
               ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
-              duration: isVideoEdit ? -1 : duration,
+              duration,
               generateAudio: seedanceGenerateAudio,
               watermark: seedanceWatermark,
               directionNumber: paintingDirectionNumber,
               variationRound: paintingSourceVariationRound,
+              paintingImageHash: paintingSourceImageHash,
+              paintingName: paintingSourceName || undefined,
+              paintingSubject: paintingSourceSubject || undefined,
+              paintingUploadHistoryId: paintingSourceUploadHistoryId,
             }
           )
         );
       });
       recordSeedanceCost(
         isVideoEdit ? Math.ceil(videoEditSourceDuration || 0) : duration,
-        isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel,
-        seedanceResolution
+        generationModel,
+        generationResolution
       );
     } catch (error) {
       setSeedanceError(error instanceof Error ? error.message : 'Seedance 创建任务失败');
@@ -3055,18 +3238,44 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setSeedanceLibrarySaveTarget(target);
     setVideoLibrarySaveError('');
     setVideoLibrarySaveNotice('');
+    setShowVideoLibraryFolderChoices(false);
     setIsVideoLibraryFolderLoading(true);
     try {
       const folders = await getVideoLibraryFolders();
       const availableFolders = folders.length ? folders : ['通用素材'];
-      const lastFolder = loadLastVideoLibraryFolder();
-      const nextFolder = availableFolders.includes(lastFolder)
-        ? lastFolder
-        : availableFolders.includes('通用素材')
-          ? '通用素材'
-          : availableFolders[0];
+      let nextFolder = '';
+      let nextSource: VideoLibraryFolderChoiceSource = 'fallback';
+
+      if (target.paintingImageHash) {
+        try {
+          const binding = await getPaintingFolderBinding(target.paintingImageHash, target.paintingName);
+          if (binding && availableFolders.includes(binding.folderName)) {
+            nextFolder = binding.folderName;
+            nextSource = 'remembered';
+          }
+        } catch {
+          // 历史绑定暂时不可用时，继续使用内容匹配，不阻断视频入库。
+        }
+      }
+
+      if (!nextFolder) {
+        const matchedFolder = suggestPaintingVideoLibraryFolder(availableFolders, {
+          name: target.paintingName,
+          subject: target.paintingSubject,
+        });
+        if (matchedFolder) {
+          nextFolder = matchedFolder;
+          nextSource = 'matched';
+        }
+      }
+
+      if (!nextFolder) {
+        nextFolder = getFallbackVideoLibraryFolder(availableFolders);
+        nextSource = 'fallback';
+      }
       setVideoLibraryFolders(availableFolders);
       setSelectedVideoLibraryFolder(nextFolder);
+      setVideoLibraryFolderChoiceSource(nextSource);
       saveLastVideoLibraryFolder(nextFolder);
     } catch (error) {
       setVideoLibrarySaveError(error instanceof Error ? error.message : '读取视频素材库文件夹失败');
@@ -3094,6 +3303,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         throw new Error('保存后文件大小校验失败，请重试');
       }
       if (result.item?.id) markVideoLibraryItemsRead([result.item]);
+      if (target.paintingImageHash) {
+        try {
+          await setPaintingFolderBinding({
+            paintingName: target.paintingName,
+            uploadHistoryId: target.paintingUploadHistoryId,
+            imageHash: target.paintingImageHash,
+            folderName: result.item.folderName || selectedVideoLibraryFolder,
+          });
+        } catch {
+          // 视频已经成功保存；偏好记忆失败不应把本次入库显示为失败。
+        }
+      }
       setSeedanceHistory((previous) => previous.map((item) => (
         item.taskId === target.taskId
           ? { ...item, libraryFolder: result.item.folderName }
@@ -3300,7 +3521,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingError('');
     setReverseMode(nextMode);
     if (nextMode === 'painting') {
-      setSeedanceModel('doubao-seedance-2-0-mini-260615');
+      const preference = seedanceManualPreferenceRef.current;
+      setSeedanceModel(preference.model);
+      setSeedanceResolution(preference.resolution);
     }
   }
 
@@ -3624,8 +3847,24 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       });
 
       const directionNumber = Number(idea.directionNumber) || 0;
+      let sourceImageHash: string | undefined;
+      if (paintingImage?.file) {
+        try {
+          sourceImageHash = await sha256File(paintingImage.file);
+        } catch {
+          sourceImageHash = undefined;
+        }
+      }
       paintingSeedanceSourceRef.current = directionNumber > 0
-        ? { prompt: prompt.trim(), directionNumber, variationRound: paintingVariationRound }
+        ? {
+            prompt: prompt.trim(),
+            directionNumber,
+            variationRound: paintingVariationRound,
+            imageHash: sourceImageHash,
+            paintingName: String(paintingProfile.name || ''),
+            paintingSubject: String(paintingProfile.subject || ''),
+            uploadHistoryId: paintingUploadHistoryId || undefined,
+          }
         : null;
       return { prompt: prompt.trim(), duration: durationSeconds, references: nextReferences };
     } catch (error) {
@@ -3836,18 +4075,31 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       const folders = await getVideoLibraryFolders().catch(() => [] as string[]);
       const availableFolders = folders.length ? folders : ['通用素材'];
       setPaintingBatchFolderList(availableFolders);
-      let prefillFolder = loadLastVideoLibraryFolder();
+      let prefillFolder = '';
       let prefillFolderId: number | null = null;
+      let prefillSource: VideoLibraryFolderChoiceSource = 'fallback';
       let imageHash = '';
       try {
         imageHash = await sha256File(paintingImage.file);
-        const binding = await getPaintingFolderBinding(imageHash);
+        const binding = await getPaintingFolderBinding(imageHash, String(paintingProfile.name || ''));
         if (binding && availableFolders.includes(binding.folderName)) {
           prefillFolder = binding.folderName;
           prefillFolderId = binding.folderId;
+          prefillSource = 'remembered';
         }
       } catch {
-        // 图片哈希计算失败或尚未绑定文件夹时，保留默认文件夹。
+        // 图片哈希计算失败或尚未绑定文件夹时，继续按产品内容匹配。
+      }
+      if (!prefillFolder) {
+        const matchedFolder = suggestPaintingVideoLibraryFolder(availableFolders, paintingProfile);
+        if (matchedFolder) {
+          prefillFolder = matchedFolder;
+          prefillSource = 'matched';
+        }
+      }
+      if (!prefillFolder) {
+        prefillFolder = getFallbackVideoLibraryFolder(availableFolders);
+        prefillSource = 'fallback';
       }
       setPaintingBatchPrepareStage('正在读取已使用方向');
       if (imageHash) {
@@ -3862,6 +4114,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       }
       setPaintingBatchFolder(prefillFolder);
       setPaintingBatchFolderId(prefillFolderId);
+      setPaintingBatchFolderChoiceSource(prefillSource);
+      setShowPaintingBatchFolderChoices(false);
       if (paintingBatchStartOrder === 'random') {
         setPaintingBatchRandomOrder(createRandomPaintingDirectionOrder());
       }
@@ -6379,14 +6633,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     value={seedanceModel}
                     onChange={(event) => {
                       const nextModel = event.target.value as SeedanceModelId;
+                      const supportedResolutions = getSeedanceResolutions(nextModel) as readonly string[];
+                      const nextResolution = supportedResolutions.includes(seedanceResolution)
+                        ? seedanceResolution
+                        : getDefaultSeedanceResolution(nextModel);
                       setSeedanceModel(nextModel);
-                      // Each model starts from a predictable profile so switching
-                      // models cannot carry incompatible settings across.
                       setSeedanceRatio('9:16');
-                      setSeedanceResolution(nextModel === 'MiniMax-H3' ? '768p' : nextModel === 'wan3.0-video' ? '480p' : '720p');
+                      setSeedanceResolution(nextResolution);
                       setSeedanceDuration(5);
                       setSeedanceGenerateAudio(nextModel === 'doubao-seedance-2-5-260628');
                       setSeedanceWatermark(false);
+                      rememberManualSeedancePreference(nextModel, nextResolution);
                     }}
                     disabled={isSeedanceLoading || seedanceTaskMode === 'video-edit-painting'}
                     className={cn(
@@ -6773,7 +7030,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                               <button
                                 key={resolution}
                                 type="button"
-                                onClick={() => setSeedanceResolution(resolution)}
+                                onClick={() => {
+                                  setSeedanceResolution(resolution);
+                                  rememberManualSeedancePreference(seedanceModel, resolution);
+                                }}
                                 className={cn(
                                   "rounded-xl border px-2 py-2 text-xs font-black uppercase transition-colors",
                                   seedanceResolution === resolution
@@ -7014,6 +7274,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                               createdAt: seedanceTask.createdAt,
                               directionNumber: seedanceTask.directionNumber,
                               variationRound: seedanceTask.variationRound,
+                              paintingImageHash: activeVideoHistoryItem?.paintingImageHash,
+                              paintingName: activeVideoHistoryItem?.paintingName,
+                              paintingSubject: activeVideoHistoryItem?.paintingSubject,
+                              paintingUploadHistoryId: activeVideoHistoryItem?.paintingUploadHistoryId,
                             })}
                             disabled={!seedanceTask.taskId || !!currentSeedanceLibraryFolder}
                             className="inline-flex h-8 items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 text-[11px] font-bold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-700"
@@ -7240,6 +7504,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                                   createdAt: item.createdAt,
                                                   directionNumber: item.directionNumber,
                                                   variationRound: item.variationRound,
+                                                  paintingImageHash: item.paintingImageHash,
+                                                  paintingName: item.paintingName,
+                                                  paintingSubject: item.paintingSubject,
+                                                  paintingUploadHistoryId: item.paintingUploadHistoryId,
                                                 })}
                                                 disabled={!!item.libraryFolder}
                                                 className="inline-flex h-9 items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-4 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-700"
@@ -7381,34 +7649,59 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               </div>
 
               <div className="mt-5">
-                <div className="mb-2 text-xs font-black text-slate-700">选择保存文件夹</div>
+                <div className="mb-2 text-xs font-black text-slate-700">保存文件夹</div>
                 {isVideoLibraryFolderLoading ? (
                   <div className="flex min-h-28 items-center justify-center rounded-2xl border border-dashed border-slate-200 text-xs font-bold text-slate-400">
                     <Loader2 className="mr-2 size-4 animate-spin" />
-                    正在读取文件夹…
+                    正在自动识别文件夹…
                   </div>
                 ) : videoLibraryFolders.length > 0 ? (
-                  <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
-                    {videoLibraryFolders.map((folder) => (
+                  <div>
+                    <div className="flex items-center justify-between gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 text-sm font-black text-indigo-800">
+                          <FolderOpen className="size-4 shrink-0" />
+                          <span className="truncate">{selectedVideoLibraryFolder}</span>
+                        </div>
+                        <div className="mt-1 text-[10px] leading-4 text-indigo-600">
+                          {getVideoLibraryFolderChoiceLabel(videoLibraryFolderChoiceSource)}
+                        </div>
+                      </div>
                       <button
-                        key={folder}
                         type="button"
-                        onClick={() => {
-                          setSelectedVideoLibraryFolder(folder);
-                          saveLastVideoLibraryFolder(folder);
-                        }}
+                        onClick={() => setShowVideoLibraryFolderChoices((value) => !value)}
                         disabled={isSavingToVideoLibrary}
-                        className={cn(
-                          "flex min-h-16 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-xs font-bold transition-colors disabled:cursor-not-allowed",
-                          selectedVideoLibraryFolder === folder
-                            ? "border-indigo-400 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-100"
-                            : "border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:bg-indigo-50/50"
-                        )}
+                        className="shrink-0 rounded-full border border-indigo-200 bg-white px-3 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed"
                       >
-                        <FolderOpen className="size-4 shrink-0" />
-                        <span className="break-all">{folder}</span>
+                        {showVideoLibraryFolderChoices ? '收起' : '更换'}
                       </button>
-                    ))}
+                    </div>
+                    {showVideoLibraryFolderChoices && (
+                      <div className="mt-3 grid max-h-56 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
+                        {videoLibraryFolders.map((folder) => (
+                          <button
+                            key={folder}
+                            type="button"
+                            onClick={() => {
+                              setSelectedVideoLibraryFolder(folder);
+                              setVideoLibraryFolderChoiceSource('manual');
+                              setShowVideoLibraryFolderChoices(false);
+                              saveLastVideoLibraryFolder(folder);
+                            }}
+                            disabled={isSavingToVideoLibrary}
+                            className={cn(
+                              "flex min-h-16 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-xs font-bold transition-colors disabled:cursor-not-allowed",
+                              selectedVideoLibraryFolder === folder
+                                ? "border-indigo-400 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-100"
+                                : "border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:bg-indigo-50/50"
+                            )}
+                          >
+                            <FolderOpen className="size-4 shrink-0" />
+                            <span className="break-all">{folder}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">
@@ -7644,28 +7937,53 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
             <div className="mt-4">
               <div className="mb-2 text-xs font-black text-slate-700">保存到文件夹</div>
               {paintingBatchFolderList.length > 0 ? (
-                <div className="grid max-h-40 grid-cols-2 gap-2 overflow-y-auto pr-1">
-                  {paintingBatchFolderList.map((folder) => (
+                <div>
+                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-sm font-black text-rose-800">
+                        <FolderOpen className="size-4 shrink-0" />
+                        <span className="truncate">{paintingBatchFolder}</span>
+                      </div>
+                      <div className="mt-1 text-[10px] leading-4 text-rose-600">
+                        {getVideoLibraryFolderChoiceLabel(paintingBatchFolderChoiceSource)}
+                      </div>
+                    </div>
                     <button
-                      key={folder}
                       type="button"
-                      onClick={() => {
-                        setPaintingBatchFolder(folder);
-                        setPaintingBatchFolderId(null);
-                        saveLastVideoLibraryFolder(folder);
-                      }}
+                      onClick={() => setShowPaintingBatchFolderChoices((value) => !value)}
                       disabled={paintingBatchCreating || paintingBatchConfirming}
-                      className={cn(
-                        'flex min-h-14 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-xs font-bold transition-colors disabled:cursor-not-allowed',
-                        paintingBatchFolder === folder
-                          ? 'border-rose-400 bg-rose-50 text-rose-700 ring-2 ring-rose-100'
-                          : 'border-slate-200 bg-white text-slate-600 hover:border-rose-200 hover:bg-rose-50/50'
-                      )}
+                      className="shrink-0 rounded-full border border-rose-200 bg-white px-3 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed"
                     >
-                      <FolderOpen className="size-4 shrink-0" />
-                      <span className="break-all">{folder}</span>
+                      {showPaintingBatchFolderChoices ? '收起' : '更换'}
                     </button>
-                  ))}
+                  </div>
+                  {showPaintingBatchFolderChoices && (
+                    <div className="mt-3 grid max-h-40 grid-cols-2 gap-2 overflow-y-auto pr-1">
+                      {paintingBatchFolderList.map((folder) => (
+                        <button
+                          key={folder}
+                          type="button"
+                          onClick={() => {
+                            setPaintingBatchFolder(folder);
+                            setPaintingBatchFolderId(null);
+                            setPaintingBatchFolderChoiceSource('manual');
+                            setShowPaintingBatchFolderChoices(false);
+                            saveLastVideoLibraryFolder(folder);
+                          }}
+                          disabled={paintingBatchCreating || paintingBatchConfirming}
+                          className={cn(
+                            'flex min-h-14 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-xs font-bold transition-colors disabled:cursor-not-allowed',
+                            paintingBatchFolder === folder
+                              ? 'border-rose-400 bg-rose-50 text-rose-700 ring-2 ring-rose-100'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-rose-200 hover:bg-rose-50/50'
+                          )}
+                        >
+                          <FolderOpen className="size-4 shrink-0" />
+                          <span className="break-all">{folder}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">

@@ -1323,8 +1323,11 @@ export async function sha256File(file: File): Promise<string> {
     .join('');
 }
 
-export async function getPaintingFolderBinding(imageHash: string): Promise<PaintingFolderBinding | null> {
-  const response = await fetch(`/api/painting/folder-binding/${encodeURIComponent(imageHash)}`, {
+export async function getPaintingFolderBinding(imageHash: string, paintingName?: string): Promise<PaintingFolderBinding | null> {
+  const params = new URLSearchParams();
+  if (paintingName?.trim()) params.set('paintingName', paintingName.trim());
+  const query = params.toString();
+  const response = await fetch(`/api/painting/folder-binding/${encodeURIComponent(imageHash)}${query ? `?${query}` : ''}`, {
     credentials: 'include',
   });
   if (response.status === 404) {

@@ -41,6 +41,8 @@ const {
   dbGetPaintingBatchTasks,
   dbMarkPaintingDirectionUsed,
   dbGetPaintingUsedDirections,
+  dbUpsertPaintingFolderBinding,
+  dbGetPaintingFolderBinding,
   handlePaintingIdeas,
   handlePaintingIdeaPrompt,
   handlePaintingTaskStatus,
@@ -1455,6 +1457,27 @@ console.log('\n[42] 人物身份分离与防复制');
   assert(multiPersonDirections.every((framework) => /不同|区分|独立身份/.test(framework)), '四个多人框架分别写明人物彼此可区分');
   assert(multiPersonDirections.every((framework) => /禁止.*(?:复制|同脸|双胞胎)/.test(framework)), '四个多人框架分别禁止同脸或克隆人物');
   assert(/人物A与人物B/.test(getFramework(23)) && /人物A与人物B/.test(getFramework(33)), '两个同龄成人高风险方向用人物A、B固定独立身份');
+}
+
+// ===== T43 挂画文件夹记忆：优先图片，换图后可按已识别画名复用 =====
+console.log('\n[43] 挂画素材库文件夹自动记忆');
+{
+  const db = getCollectionDb();
+  db.prepare('INSERT OR IGNORE INTO video_library_folders (folder_name) VALUES (?)').run('曾国藩家训');
+  const folderRow = db.prepare('SELECT id FROM video_library_folders WHERE folder_name = ?').get('曾国藩家训');
+  dbUpsertPaintingFolderBinding({
+    paintingName: '曾国藩家训书法挂画',
+    uploadHistoryId: 4301,
+    imageHash: 'painting-hash-original',
+    folderId: Number(folderRow.id),
+    folderName: '曾国藩家训',
+  });
+  const exactBinding = dbGetPaintingFolderBinding('painting-hash-original', '曾国藩家训书法挂画');
+  assert(exactBinding?.folderName === '曾国藩家训', '同一张挂画按图片指纹取回已选文件夹');
+  const samePaintingNewImage = dbGetPaintingFolderBinding('painting-hash-reencoded', '曾国藩家训书法挂画');
+  assert(samePaintingNewImage?.folderName === '曾国藩家训', '同一挂画换图后可按识别画名复用文件夹');
+  const unrelatedPainting = dbGetPaintingFolderBinding('unknown-hash', '静心山水挂画');
+  assert(unrelatedPainting === null, '不同挂画不会误用其他产品的文件夹记忆');
 }
 
 console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);

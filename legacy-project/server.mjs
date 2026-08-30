@@ -2365,10 +2365,17 @@ function dbUpsertPaintingFolderBinding({ paintingName, uploadHistoryId, imageHas
   return Number(result.lastInsertRowid);
 }
 
-function dbGetPaintingFolderBinding(imageHash) {
-  const row = getCollectionDb().prepare(`
+function dbGetPaintingFolderBinding(imageHash, paintingName = '') {
+  const db = getCollectionDb();
+  let row = db.prepare(`
     SELECT * FROM painting_folder_bindings WHERE image_hash = ? ORDER BY updated_at DESC LIMIT 1
   `).get(String(imageHash || ''));
+  const normalizedPaintingName = String(paintingName || '').trim().slice(0, 200);
+  if (!row && normalizedPaintingName && normalizedPaintingName !== '未命名挂画') {
+    row = db.prepare(`
+      SELECT * FROM painting_folder_bindings WHERE painting_name = ? ORDER BY updated_at DESC LIMIT 1
+    `).get(normalizedPaintingName);
+  }
   if (!row) return null;
   const currentName = dbGetVideoLibraryFolderNameById(Number(row.folder_id));
   return {
@@ -14269,7 +14276,8 @@ async function handleGetPaintingFolderBinding(req, res) {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const imageHash = decodeURIComponent(url.pathname.replace(/^\/api\/painting\/folder-binding\//, ''));
-    const binding = dbGetPaintingFolderBinding(imageHash);
+    const paintingName = String(url.searchParams.get('paintingName') || '');
+    const binding = dbGetPaintingFolderBinding(imageHash, paintingName);
     if (!binding) {
       sendJson(res, 404, { ok: true, binding: null });
       return;
@@ -19702,6 +19710,8 @@ export {
   dbGetPaintingBatchTasks,
   dbMarkPaintingDirectionUsed,
   dbGetPaintingUsedDirections,
+  dbUpsertPaintingFolderBinding,
+  dbGetPaintingFolderBinding,
   handlePaintingIdeas,
   handlePaintingIdeaPrompt,
   handlePaintingTaskStatus,
