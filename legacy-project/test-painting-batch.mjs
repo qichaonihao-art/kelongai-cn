@@ -103,6 +103,7 @@ const {
   WAN3_STATIC_PAINTING_STRUCTURE_RULE,
   WAN3_UNFOLDING_STRUCTURE_RULE,
   WAN3_INSTALLATION_HOOK_RULE,
+  WAN3_INSTALLATION_ENDING_RULE,
   ensureWan3PaintingStructureLock,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
@@ -1235,6 +1236,9 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
   assert(wanMotionLocked.includes(WAN3_CAMERA_MOTION_RULE), 'Wan速度锁使用统一系统规则');
   assert(!wanMotionLocked.includes('快速揭示') && !wanMotionLocked.includes('数学式绝对匀速'), 'Wan提交前消除容易诱发急加速的冲突表达');
   assert(wanMotionLocked.includes('内容过多时删减动作而不加速'), 'Wan时长不足时改为删减动作而非加速');
+  assert(/划分为4个完全等长的时间段/.test(WAN3_CAMERA_MOTION_RULE) && /约25%/.test(WAN3_CAMERA_MOTION_RULE) && /约50%/.test(WAN3_CAMERA_MOTION_RULE) && /约75%/.test(WAN3_CAMERA_MOTION_RULE), 'Wan全片运镜按四个等长阶段平均完成路径');
+  assert(/0-2秒、2-4秒、4-6秒、6-8秒/.test(WAN3_CAMERA_MOTION_RULE), 'Wan八秒视频具有明确的四等分执行示例');
+  assert(/不得前段几乎静止、后段赶路/.test(WAN3_CAMERA_MOTION_RULE) && /不得统一改写景别/.test(WAN3_CAMERA_MOTION_RULE), 'Wan匀速锁同时禁止后段冲刺并保留框架景别');
   assert(ensureWan3CameraMotionLock(wanMotionLocked).split('【千问 Wan3.0 专用·运镜速度强制锁定】').length - 1 === 1, 'Wan速度锁重复处理不会重复追加');
   const staticPaintingPrompt = ensurePaintingSizeLock('产品固定约束：挂画已经完整上墙。\n创意内容：镜头随后推近展示画面。');
   const wanPaintingLocked = ensureWan3PaintingStructureLock(staticPaintingPrompt, 3);
@@ -1246,12 +1250,18 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
   const wanOpeningLocked = ensureWan3PaintingStructureLock(ensurePaintingRollingUnfoldInstruction('人物双手控制卷起挂画。', 1), 1);
   assert(wanOpeningLocked.includes('【千问 Wan3.0 专用·唯一一次人工打开流程】') && wanOpeningLocked.includes(WAN3_UNFOLDING_STRUCTURE_RULE), '两个人工打开方向保留唯一一次人工流程规则');
   assert(!wanOpeningLocked.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), '人工打开方向不会误套全程静态规则');
-  const wanInstallationLocked = ensureWan3PaintingStructureLock('人物手持挂画走向墙面，把白色挂绳对准墙面挂钩挂好，再双手扶正挂画。', 6);
+  const wanInstallationLocked = ensureWan3PaintingStructureLock('人物手持挂画走向墙面，把白色挂绳对准墙面挂钩挂好，再双手扶正挂画，最后镜头缓慢推近挂画展示细节。', 6);
   assert(wanInstallationLocked.includes('【千问 Wan3.0 专用·预装挂钩物理连续性锁定】'), 'Wan人物上墙安装方向固定加入预装挂钩连续性锁');
   assert(wanInstallationLocked.includes(WAN3_INSTALLATION_HOOK_RULE), 'Wan预装挂钩锁使用统一系统规则');
   assert(/第一次可见的那一帧起已经存在/.test(WAN3_INSTALLATION_HOOK_RULE) && /挂绳靠近或接触墙面时突然出现/.test(WAN3_INSTALLATION_HOOK_RULE), '挂钩必须预先存在且不得因挂绳接触而生成');
   assert(!wanInstallationLocked.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), 'Wan安装方向不会误套首帧已经上墙的静态规则');
+  assert(wanInstallationLocked.includes('【千问 Wan3.0 专用·安装收尾运镜节奏锁定】') && wanInstallationLocked.includes(WAN3_INSTALLATION_ENDING_RULE), 'Wan安装方向固定加入收尾运镜节奏锁');
+  assert(wanInstallationLocked.includes('缓慢推近挂画'), 'Wan安装方向保留框架正文中的特写推进指令');
+  assert(/从视频开头就按最终构图规划整条摄影机路径/.test(WAN3_INSTALLATION_ENDING_RULE) && /全片匀速进度/.test(WAN3_INSTALLATION_ENDING_RULE), 'Wan安装收尾纳入整条视频的均分运镜路径');
+  assert(/不得把所有安装视频统一改成中远景/.test(WAN3_INSTALLATION_ENDING_RULE) && /不得擅自改变终点/.test(WAN3_INSTALLATION_ENDING_RULE), 'Wan收尾规则保留每个框架原有景别');
   assert(ensureWan3PaintingStructureLock(wanInstallationLocked, 6).split('【千问 Wan3.0 专用·预装挂钩物理连续性锁定】').length - 1 === 1, 'Wan挂钩锁重复处理不会重复追加');
+  assert(/双手持续控制/.test(WAN3_UNFOLDING_STRUCTURE_RULE) && /下方木条不能脱离手部控制自行坠落/.test(WAN3_UNFOLDING_STRUCTURE_RULE), 'Wan滚动打开要求双手控制上下结构');
+  assert(/严禁把短横幅向下拉伸/.test(WAN3_UNFOLDING_STRUCTURE_RULE) && /直接使用已经完整展开的成品/.test(WAN3_UNFOLDING_STRUCTURE_RULE), 'Wan不能真实滚动时回退完整成品而非拉伸变形');
   assert(ensureWan3PaintingStructureLock('一辆汽车沿公路正常行驶。', 0) === '一辆汽车沿公路正常行驶。', 'Wan非挂画任务不会被加入挂画结构规则');
 
   const previousFetch = globalThis.fetch;
@@ -1294,7 +1304,7 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
     const installationRes = mockRes();
     await handleSeedanceCreateTask(mockReq('/api/seedance/tasks', {
       model: WAN3_VIDEO_MODEL,
-      prompt: '人物双手拿着完整挂画走向白墙，把白色挂绳对准墙面挂钩挂好，再扶正挂画。',
+      prompt: '人物双手拿着完整挂画走向白墙，把白色挂绳对准墙面挂钩挂好，再扶正挂画，最后镜头缓慢推近挂画展示细节。',
       taskMode: 'generate',
       resolution: '480p',
       ratio: '9:16',
@@ -1305,6 +1315,8 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
     }), installationRes);
     assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·预装挂钩物理连续性锁定】'), 'Wan手动安装任务实际提交预装挂钩连续性锁');
     assert(!submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), 'Wan手动安装任务不误写成首帧已经挂好');
+    assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·安装收尾运镜节奏锁定】'), 'Wan手动安装任务实际提交收尾运镜节奏锁');
+    assert(submittedPayload?.input?.prompt?.includes('缓慢推近挂画'), 'Wan手动安装任务实际请求保留结尾特写推进');
 
     globalThis.fetch = async (url) => {
       submittedUrl = String(url);
@@ -1386,10 +1398,12 @@ console.log('\n[39b] Wan3.0 Video 全自动批量速度锁');
     assert(result.seedanceTaskId === 'wan3_batch-wan-task', 'Wan全自动任务编号保持供应商前缀', result.seedanceTaskId);
 
     await submitSeedanceTaskForBatchTask(
-      { id: 3903, directionNumber: 2, prompt: '人物展示挂画后走向墙面，对准挂点悬挂并双手扶正。', duration: 6 },
+      { id: 3903, directionNumber: 2, prompt: '人物展示挂画后走向墙面，对准挂点悬挂并双手扶正，最后镜头向挂画方向持续轻微推近。', duration: 6 },
       { batchRunId: 'batch-wan-hook-test', model: WAN3_VIDEO_MODEL, resolution: '480p', ratio: '9:16', imagePath, generateAudio: false, watermark: false, options: {} },
     );
     assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·预装挂钩物理连续性锁定】'), 'Wan全自动安装方向实际提交预装挂钩连续性锁');
+    assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·安装收尾运镜节奏锁定】'), 'Wan全自动安装方向实际提交收尾运镜节奏锁');
+    assert(submittedPayload?.input?.prompt?.includes('持续轻微推近'), 'Wan全自动安装方向实际请求保留结尾特写推进');
   } finally {
     globalThis.fetch = previousFetch;
   }

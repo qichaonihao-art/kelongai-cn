@@ -14489,9 +14489,12 @@ const WAN3_LEGACY_PAINTING_STRUCTURE_MARKER = '【千问 Wan3.0 专用·挂画�
 const WAN3_STATIC_PAINTING_STRUCTURE_MARKER = '【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】';
 const WAN3_UNFOLDING_STRUCTURE_MARKER = '【千问 Wan3.0 专用·唯一一次人工打开流程】';
 const WAN3_INSTALLATION_HOOK_MARKER = '【千问 Wan3.0 专用·预装挂钩物理连续性锁定】';
+const WAN3_LEGACY_INSTALLATION_ENDING_MARKER = '【千问 Wan3.0 专用·安装完成后固定中远景收尾】';
+const WAN3_INSTALLATION_ENDING_MARKER = '【千问 Wan3.0 专用·安装收尾运镜节奏锁定】';
 const WAN3_STATIC_PAINTING_STRUCTURE_RULE = '本片中的挂画从首帧起就是完整平展、安装完成的最终成品，把它视为固定在墙上的刚性静态平面。上方木条、画芯、下方木条和挂绳组成一个不可拆分的整体，它们在墙面上的坐标、长度、数量和相对距离从首帧到末帧逐帧保持常数。每一帧始终恰好只有参考图中的上、下两根木条，画芯中间始终没有横杆、滚轴、白色扫描条或其他横向构件；画芯的顶部、主体和底部始终同时属于同一张连续平面。人物活动、镜头推近、拉远、横移、扫拍和内容特写只能改变取景范围，挂画本体保持完全静止，不能发生部件复制、位移、遮盖、压缩、拉伸、分层、消失、重组或画芯局部先后显现。最后一帧的产品结构必须与首帧完全相同。';
-const WAN3_UNFOLDING_STRUCTURE_RULE = '本条创意只允许在时间轴指定阶段，由人物双手控制卷起的挂画完成唯一1次真实滚动打开。人物完成打开并挂好以后，挂画立即成为固定在墙上的刚性静态平面，后续不再发生任何打开、卷起、复位或结构变化。全片任何时刻都只能存在参考图中的上、下两根木条，不能生成第三根木条、复制木条、白色横杆或扫描条；镜头运动不能触发挂画本体移动或重演打开动作。';
+const WAN3_UNFOLDING_STRUCTURE_RULE = '本条创意只允许在时间轴指定阶段完成唯一1次真实滚动打开。打开前，上方木条、卷起的画布、始终可见的下方木条已经是同一件真实产品；上、下木条从第一帧起长度、粗细、颜色、形状和两端轮廓保持不变，挂画宽度全程保持不变。打开时必须由人物双手持续控制：一只手稳定上方木条，另一只手始终托住并控制包含下方木条的卷起部分；卷起部分在这只手的控制下围绕自身轴线逐圈旋转并缓慢向下释放画布，下方木条不能脱离手部控制自行坠落。可见画高只能随着真实画布从卷层中逐圈释放而增加，原有文字、图案和印章保持原始尺寸与相对位置，严禁把短横幅向下拉伸、缩放、变形、裁切揭示或重新生成成完整竖画，严禁下方木条自行下降、挂画无人控制自动展开。人物完成打开并挂好以后，挂画立即成为固定在墙上的刚性静态平面，后续不再发生任何打开、卷起、复位或结构变化。全片任何时刻都只能存在参考图中的上、下两根木条，不能生成第三根木条、复制木条、白色横杆或扫描条；镜头运动不能触发挂画本体移动或重演打开动作。如果模型不能完整执行上述双手控制的真实滚动过程，必须从第一帧直接使用已经完整展开的成品并省略展开动作，绝不得以挂画自行伸长或形变代替。';
 const WAN3_INSTALLATION_HOOK_RULE = '本条是把挂画挂到墙面的安装过程。墙面挂钩是安装开始以前就已经真实固定好的独立五金件，不由挂画、挂绳、人物手部或墙面临时生成。只要最终挂点所在墙面区域进入取景框，挂钩就必须从该区域第一次可见的那一帧起已经存在；如果开场暂时看不到挂钩，只能因为该墙面区域尚在画外，或被人物、挂画等真实不透明物体连续遮挡，遮挡移开后只能露出原本已经存在的同一个挂钩。挂钩的数量始终恰好为1个，位置、大小、形状、颜色、材质、朝向和墙面接触阴影逐帧保持不变，不得淡入、浮现、从墙里长出、由斑点或装饰变成、在挂绳靠近或接触墙面时突然出现，也不得消失、移动、复制或更换。人物的安装动作只能是把挂画抬到这个既有挂钩下方，再把既有白色挂绳真实套到既有挂钩上并扶正挂画；本片不表现打孔、粘贴、安装或生成挂钩。';
+const WAN3_INSTALLATION_ENDING_RULE = '严格保留当前创意框架原本指定的收尾景别和运镜方向，不得把所有安装视频统一改成中远景。如果框架原本要求推近挂画、靠近细节或以产品特写收尾，必须保留该推进和特写；如果原本要求中远景、横移或拉远，也继续执行原框架，不得擅自改变终点。所有安装、跟随和收尾运镜共同服从全片匀速进度：从视频开头就按最终构图规划整条摄影机路径，把总时长平均分配给各段位移，不得等挂画挂好以后才突然启动大幅推进。需要在安装完成后才能进入的最后一段特写路径，也必须预留足够时间并在该段内近似匀速完成；若时间不足，应删短前面的停留和人物冗余动作，而不是压缩最后路径或加速赶到特写。推进过程中挂画的真实宽高、上下木条、画芯内容和墙面挂点保持不变，画面变大只能来自摄影机连续靠近形成的正常透视。';
 const PAINTING_CONTENT_DETAIL_DIRECTION = 29;
 const PAINTING_WOOD_DETAIL_DIRECTION = 30;
 const PAINTING_CAMERA_EXPLANATION_DIRECTION = 7;
@@ -14579,16 +14582,20 @@ function ensureWan3PaintingStructureLock(promptText, directionNumber = 0) {
   normalized = removeMarkedPromptSection(normalized, WAN3_STATIC_PAINTING_STRUCTURE_MARKER);
   normalized = removeMarkedPromptSection(normalized, WAN3_UNFOLDING_STRUCTURE_MARKER);
   normalized = removeMarkedPromptSection(normalized, WAN3_INSTALLATION_HOOK_MARKER);
+  normalized = removeMarkedPromptSection(normalized, WAN3_LEGACY_INSTALLATION_ENDING_MARKER);
+  normalized = removeMarkedPromptSection(normalized, WAN3_INSTALLATION_ENDING_MARKER);
+
+  const appendInstallationLocks = (text) => isInstallationSequence
+    ? `${text}\n\n${WAN3_INSTALLATION_HOOK_MARKER}\n${WAN3_INSTALLATION_HOOK_RULE}\n\n${WAN3_INSTALLATION_ENDING_MARKER}\n${WAN3_INSTALLATION_ENDING_RULE}`
+    : text;
 
   if (explicitlyAllowsOpening) {
     const unfoldingLocked = `${normalized}\n\n${WAN3_UNFOLDING_STRUCTURE_MARKER}\n${WAN3_UNFOLDING_STRUCTURE_RULE}`;
-    return isInstallationSequence
-      ? `${unfoldingLocked}\n\n${WAN3_INSTALLATION_HOOK_MARKER}\n${WAN3_INSTALLATION_HOOK_RULE}`
-      : unfoldingLocked;
+    return appendInstallationLocks(unfoldingLocked);
   }
 
   if (isInstallationSequence) {
-    return `${normalized}\n\n${WAN3_INSTALLATION_HOOK_MARKER}\n${WAN3_INSTALLATION_HOOK_RULE}`;
+    return appendInstallationLocks(normalized);
   }
 
   // Wan 会把条件句中的“卷起/滚动打开”误当成需要执行的动作。
@@ -14646,7 +14653,7 @@ const PAINTING_ROLLING_UNFOLD_RULE = '如果挂画开场处于卷起状态，从
 const PAINTING_LIVE_ACTION_REALISM_RULE = '整体必须呈现普通真实住宅中的真人实地拍摄质感，而不是三维渲染、AI样板间或过度精修的商业广告。空间允许轻微生活痕迹和自然不对称，沙发织物、窗帘、衣服与皮肤保留真实纹理、褶皱和细微瑕疵；自然光应有合理方向、层次、柔和阴影和轻微明暗差异，禁止全屋无阴影的均匀棚拍光、塑料材质、蜡像皮肤和过度磨皮。镜头保持稳定清楚，但运动应有真人摄影的自然起步、轻微惯性、减速和小幅构图修正，禁止数学式绝对匀速滑轨、虚拟摄像机漂移和明显手持抖动。人物按现实正常速度完成动作，动作之间允许自然衔接，每 1-2 秒持续产生新的有效动作或构图信息即可，禁止慢放、发呆、重复和为赶时间而机械连做过多动作。';
 const PAINTING_DYNAMIC_ENDING_RULE = '结尾不得为了“产品定妆”机械追加一个正对墙面挂画、固定机位、无人无动作的独立静态镜头。前面的主镜头已经完整展示产品时，直接在该镜头的连续动作或运镜中自然结束，不再补切正面挂画。若创意确实需要以挂画收束，最后阶段仍须保留至少一种清晰可见的连续变化：镜头轻微横移/推近/拉远、前景视差、人物尚未完成的自然动作、窗帘或植物的合理微动、或有方向的自然光影变化；镜头可以自然减速，但不得完全定住超过约 0.5 秒，不得让最后 1-2 秒看起来像一张静态图片。挂画自身若已上墙仍必须保持固定，动态只能来自摄影机、人物、前景或真实环境。';
 const PAINTING_PRODUCT_FOCUSED_ENDING_RULE = '凡镜头存在横移、侧移、摇移、升降、推近、拉远、环绕、跟拍或从任意方向扫过场景，视频结束时镜头的最终视觉焦点必须落在挂画上：完整挂画或本条指定的挂画细节必须清晰可见，并位于画面主体区域，不能处在边缘、被人物家具遮挡、离开取景框，也不能让镜头越过挂画后继续扫向空墙、家具、人物或其他景物。镜头路径一旦到达挂画主体就必须及时减速并围绕挂画完成最后构图；如果原路径或内容过长，优先删短前段环境铺垫、缩短移动距离，必要时采用允许时长的下限，绝不能以越过挂画作为结尾。这里的“落在挂画”是锁定最终视觉中心，不等于静态定帧：最后仍保留极轻微的摄影机惯性、前景视差、人物自然微动作或光影变化，但焦点和主体始终是挂画。原画内容或木条移动特写则必须在挂画画面或木条范围内结束，镜头不得扫出产品边界。';
-const WAN3_CAMERA_MOTION_RULE = '本视频所有摄影机运动必须采用稳定、克制、低速的真人云台或滑轨运镜。每个连续镜头只允许一种主要运动方向，不得在推近、拉远、左移、右移、上升和下降之间突然切换。速度曲线固定为：前0.5秒轻柔进入，中段保持近似恒定的低速，最后0.8-1秒平缓减速，全程速度连续且无跳变。严禁速度渐变特效、急加速、快速推近、快速后拉、快速横扫、甩镜、冲镜、突然变焦、速度跳变、先慢后快、中途突然加速以及结尾冲刺。如果原定动作或路径无法在时长内按低速完成，必须删减前段铺垫、减少人物动作或缩短镜头移动距离，绝不得通过加速赶进度。镜头到达挂画后必须平缓减速，视频结束时最终视觉焦点保持在挂画上，不得越过挂画后再加速移向其他景物。';
+const WAN3_CAMERA_MOTION_RULE = '只要当前创意包含推近、拉远、横移、摇移、升降、环绕、跟拍或扫拍，必须先确定从第一帧构图到最后一帧构图的完整摄影机路径，再把全部视频时长平均分配给整条路径。将总时长划分为4个完全等长的时间段：第1段结束时完成约25%的计划位移，第2段结束时累计完成约50%，第3段结束时累计完成约75%，第4段结束时完成至最终构图；每个等长时间段的平均位移和主体画面占比变化必须大致相等，不能让任何一个时间段承担大部分路程。8秒视频可直接按0-2秒、2-4秒、4-6秒、6-8秒执行；其他时长按同样四等分比例执行。摄影机从视频开始即以稳定、克制的低速进入计划路径，全程采用近似匀速的真人云台或滑轨运动，只允许极短且幅度很小的自然起步与收尾缓冲，不得长时间停住后再移动，不得前段几乎静止、后段赶路。每个连续镜头只允许一种主要运动方向；如果框架确实包含多段不同方向，各段也必须获得与路径长度相匹配的时间，并在各自时段内近似匀速，转向时平滑衔接。严禁急加速、快速推近、快速后拉、快速横扫、甩镜、冲镜、突然变焦、速度跳变、先慢后快、中途突然加速以及结尾冲刺。如果原定人物动作或镜头路径无法在时长内按上述节奏完成，必须删减停留、前段铺垫和冗余人物动作，或缩短镜头移动距离，绝不得通过加速赶进度。最终视觉焦点仍须服从当前创意框架：要求挂画特写就匀速抵达特写，要求中远景就保持中远景，不得统一改写景别。';
 
 function ensurePaintingSizeLock(promptText, options = {}) {
   const useStaticWallCompensation = Boolean(options.staticWallSizeCompensation) && !options.contentDetailScan && !options.installationSequence;
@@ -19795,6 +19802,7 @@ export {
   WAN3_STATIC_PAINTING_STRUCTURE_RULE,
   WAN3_UNFOLDING_STRUCTURE_RULE,
   WAN3_INSTALLATION_HOOK_RULE,
+  WAN3_INSTALLATION_ENDING_RULE,
   ensureWan3PaintingStructureLock,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
