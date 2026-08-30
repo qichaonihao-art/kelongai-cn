@@ -98,7 +98,8 @@ const {
   ensurePaintingProductFocusedEnding,
   WAN3_CAMERA_MOTION_RULE,
   ensureWan3CameraMotionLock,
-  WAN3_PAINTING_STRUCTURE_RULE,
+  WAN3_STATIC_PAINTING_STRUCTURE_RULE,
+  WAN3_UNFOLDING_STRUCTURE_RULE,
   ensureWan3PaintingStructureLock,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
@@ -1103,7 +1104,8 @@ console.log('\n[36] Seedance 2.0 Fast 手动单条适配');
     assert(createRes._code === 200 && jsonBody(createRes).taskId === 'seedance-fast-test-task', 'Fast手动任务通过服务端白名单');
     assert(submittedPayload?.model === 'doubao-seedance-2-0-fast-260128' && submittedPayload?.resolution === '480p', 'Fast模型ID与480P原样提交上游', JSON.stringify(submittedPayload));
     assert(!submittedPayload?.content?.[0]?.text?.includes('【千问 Wan3.0 专用·运镜速度强制锁定】'), 'Seedance Fast不会被误加千问专用速度锁');
-    assert(!submittedPayload?.content?.[0]?.text?.includes('【千问 Wan3.0 专用·挂画结构连续性与禁止二次展开】'), 'Seedance Fast不会被误加千问专用挂画结构锁');
+    assert(!submittedPayload?.content?.[0]?.text?.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), 'Seedance Fast不会被误加千问专用静态挂画锁');
+    assert(!submittedPayload?.content?.[0]?.text?.includes('【千问 Wan3.0 专用·唯一一次人工打开流程】'), 'Seedance Fast不会被误加千问专用人工打开锁');
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -1143,7 +1145,8 @@ console.log('\n[32] MiniMax H3 手动单条试验适配');
     assert(submittedUrl === 'https://api.minimaxi.com/v2/video_generation', 'H3提交到V2视频生成端点', submittedUrl);
     assert(submittedPayload?.model === MINIMAX_H3_MODEL && submittedPayload?.resolution === '768P' && submittedPayload?.duration === 8 && submittedPayload?.ratio === '9:16', 'H3请求固定768P并保留时长与画幅', JSON.stringify(submittedPayload));
     assert(!Object.hasOwn(submittedPayload || {}, 'generate_audio'), 'H3请求不误传Seedance专用声音参数');
-    assert(!submittedPayload?.prompt?.includes('【千问 Wan3.0 专用·挂画结构连续性与禁止二次展开】'), 'H3不会被误加千问专用挂画结构锁');
+    assert(!submittedPayload?.prompt?.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), 'H3不会被误加千问专用静态挂画锁');
+    assert(!submittedPayload?.prompt?.includes('【千问 Wan3.0 专用·唯一一次人工打开流程】'), 'H3不会被误加千问专用人工打开锁');
 
     globalThis.fetch = async (url) => {
       submittedUrl = String(url);
@@ -1229,12 +1232,16 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
   assert(!wanMotionLocked.includes('快速揭示') && !wanMotionLocked.includes('数学式绝对匀速'), 'Wan提交前消除容易诱发急加速的冲突表达');
   assert(wanMotionLocked.includes('内容过多时删减动作而不加速'), 'Wan时长不足时改为删减动作而非加速');
   assert(ensureWan3CameraMotionLock(wanMotionLocked).split('【千问 Wan3.0 专用·运镜速度强制锁定】').length - 1 === 1, 'Wan速度锁重复处理不会重复追加');
-  const wanPaintingLocked = ensureWan3PaintingStructureLock('挂画已经完整上墙，镜头随后推近展示画面。', 3);
-  assert(wanPaintingLocked.includes('【千问 Wan3.0 专用·挂画结构连续性与禁止二次展开】'), 'Wan挂画任务固定加入结构连续性锁');
-  assert(wanPaintingLocked.includes(WAN3_PAINTING_STRUCTURE_RULE), 'Wan挂画结构锁使用统一系统规则');
-  assert(/展开动作次数必须为0/.test(WAN3_PAINTING_STRUCTURE_RULE) && /唯一1次滚动展开/.test(WAN3_PAINTING_STRUCTURE_RULE), '规则区分零次展开与人物手动唯一一次展开');
-  assert(/第三根木条/.test(WAN3_PAINTING_STRUCTURE_RULE) && /从上向下或从下向上扫过画芯/.test(WAN3_PAINTING_STRUCTURE_RULE), '规则精准禁止视频中出现的新增横杆扫过画芯');
-  assert(ensureWan3PaintingStructureLock(wanPaintingLocked, 3).split('【千问 Wan3.0 专用·挂画结构连续性与禁止二次展开】').length - 1 === 1, 'Wan挂画结构锁重复处理不会重复追加');
+  const staticPaintingPrompt = ensurePaintingSizeLock('产品固定约束：挂画已经完整上墙。\n创意内容：镜头随后推近展示画面。');
+  const wanPaintingLocked = ensureWan3PaintingStructureLock(staticPaintingPrompt, 3);
+  assert(wanPaintingLocked.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), 'Wan静态挂画任务固定加入逐帧拓扑锁');
+  assert(wanPaintingLocked.includes(WAN3_STATIC_PAINTING_STRUCTURE_RULE), 'Wan静态挂画锁使用纯静态正向规则');
+  assert(!wanPaintingLocked.includes('【卷起挂画滚动展开与下方木条强制锁定】'), 'Wan静态方向提交前删除可能触发误动作的条件式滚动说明');
+  assert(/始终恰好只有参考图中的上、下两根木条/.test(WAN3_STATIC_PAINTING_STRUCTURE_RULE) && /画芯中间始终没有横杆/.test(WAN3_STATIC_PAINTING_STRUCTURE_RULE), '静态规则精准禁止新增横杆扫过画芯');
+  assert(ensureWan3PaintingStructureLock(wanPaintingLocked, 3).split('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】').length - 1 === 1, 'Wan静态挂画锁重复处理不会重复追加');
+  const wanOpeningLocked = ensureWan3PaintingStructureLock(ensurePaintingRollingUnfoldInstruction('人物双手控制卷起挂画。', 1), 1);
+  assert(wanOpeningLocked.includes('【千问 Wan3.0 专用·唯一一次人工打开流程】') && wanOpeningLocked.includes(WAN3_UNFOLDING_STRUCTURE_RULE), '两个人工打开方向保留唯一一次人工流程规则');
+  assert(!wanOpeningLocked.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), '人工打开方向不会误套全程静态规则');
   assert(ensureWan3PaintingStructureLock('一辆汽车沿公路正常行驶。', 0) === '一辆汽车沿公路正常行驶。', 'Wan非挂画任务不会被加入挂画结构规则');
 
   const previousFetch = globalThis.fetch;
@@ -1270,7 +1277,8 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
     assert(submittedPayload?.model === WAN3_VIDEO_MODEL && submittedPayload?.parameters?.resolution === '480P', 'Wan模型与480P参数正确提交', JSON.stringify(submittedPayload));
     assert(submittedPayload?.parameters?.prompt_extend === false, 'Wan关闭提示词自动扩写，保护产品约束');
     assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·运镜速度强制锁定】'), 'Wan手动提交实际请求包含专用速度锁');
-    assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·挂画结构连续性与禁止二次展开】'), 'Wan手动挂画任务实际请求包含禁止二次展开结构锁');
+    assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), 'Wan手动静态挂画任务实际请求包含逐帧拓扑锁');
+    assert(!submittedPayload?.input?.prompt?.includes('【卷起挂画滚动展开与下方木条强制锁定】'), 'Wan手动静态挂画实际请求不再携带条件式滚动说明');
     assert(!submittedPayload?.input?.prompt?.includes('快速揭示') && !submittedPayload?.input?.prompt?.includes('数学式绝对匀速'), 'Wan手动提交的实际请求已消除冲突语句');
 
     globalThis.fetch = async (url) => {
@@ -1347,7 +1355,8 @@ console.log('\n[39b] Wan3.0 Video 全自动批量速度锁');
       { batchRunId: 'batch-wan-route-test', model: WAN3_VIDEO_MODEL, resolution: '480p', ratio: '9:16', imagePath, generateAudio: false, watermark: false, options: {} },
     );
     assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·运镜速度强制锁定】'), 'Wan全自动实际请求包含专用速度锁');
-    assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·挂画结构连续性与禁止二次展开】'), 'Wan全自动实际请求包含禁止二次展开结构锁');
+    assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), 'Wan全自动静态方向实际请求包含逐帧拓扑锁');
+    assert(!submittedPayload?.input?.prompt?.includes('【卷起挂画滚动展开与下方木条强制锁定】'), 'Wan全自动静态方向实际请求不再携带条件式滚动说明');
     assert(!submittedPayload?.input?.prompt?.includes('快速揭示') && !submittedPayload?.input?.prompt?.includes('数学式绝对匀速'), 'Wan全自动实际请求已消除冲突语句');
     assert(result.seedanceTaskId === 'wan3_batch-wan-task', 'Wan全自动任务编号保持供应商前缀', result.seedanceTaskId);
   } finally {
