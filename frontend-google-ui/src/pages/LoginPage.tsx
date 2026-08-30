@@ -135,8 +135,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <div className="grid flex-1 lg:grid-cols-2">
+    <div className="h-dvh overflow-hidden bg-background flex flex-col">
+      <div className="grid min-h-0 flex-1 lg:grid-cols-2">
         {/* Left Content Section */}
         <div className="relative hidden lg:flex flex-col justify-between bg-gradient-to-br from-indigo-600 via-indigo-700 to-indigo-800 p-12 text-white overflow-hidden">
         <div className="relative z-20">
@@ -307,16 +307,18 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         </div>
 
         {/* Right Login Section */}
-        <div className="flex items-center justify-center p-8">
-          <div className="w-full max-w-[400px] space-y-8 glass-card p-8 rounded-3xl">
+        <div className="login-tech-right-panel relative flex min-h-0 items-center justify-center overflow-hidden p-8">
+          <div className="login-aurora login-aurora-purple pointer-events-none absolute -right-24 -top-24 size-[360px] rounded-full" aria-hidden="true" />
+          <div className="login-aurora login-aurora-cyan pointer-events-none absolute -bottom-28 -left-16 size-[360px] rounded-full" aria-hidden="true" />
+          <div className="login-panel-card relative w-full max-w-[400px] space-y-8 rounded-3xl border border-white/80 bg-white/68 p-8 backdrop-blur-3xl">
             <div className="text-center">
-              <h1 className="text-2xl font-bold tracking-tight">欢迎回来</h1>
-              <p className="text-muted-foreground text-sm mt-2">请输入密码以访问 AI 工具</p>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-950">欢迎回来</h1>
+              <p className="text-slate-500 text-sm mt-2">AI时代，创新是唯一生产力</p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="space-y-2">
-                <Label htmlFor="password">密码</Label>
+                <Label htmlFor="password" className="text-slate-700">密码</Label>
                 <div className="relative">
                   <Input
                     id="password"
@@ -327,12 +329,12 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     onFocus={() => setIsTyping(true)}
                     onBlur={() => setIsTyping(false)}
                     required
-                    className="h-12 px-10 text-center placeholder:text-center"
+                    className="login-password-input h-12 rounded-xl border-white/80 bg-white/75 px-10 text-center text-slate-900 placeholder:text-center placeholder:text-slate-400 focus-visible:border-indigo-400 focus-visible:ring-4 focus-visible:ring-indigo-500/10"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-indigo-600"
                   >
                     {showPassword ? <EyeOff className="size-5" /> : <Eye className="size-5" />}
                   </button>
@@ -345,7 +347,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 </div>
               )}
 
-              <Button type="submit" className="w-full h-12 text-base" disabled={isLoading}>
+              <Button type="submit" className="h-12 w-full rounded-xl border-0 bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 text-base font-semibold text-white shadow-[0_14px_30px_-16px_rgba(79,70,229,0.8)] transition-all hover:-translate-y-0.5" disabled={isLoading}>
                 {isLoading ? "验证中..." : "登录"}
               </Button>
             </form>

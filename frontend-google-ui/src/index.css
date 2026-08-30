@@ -175,6 +175,65 @@
   100% { background-position: -200% center; }
 }
 
+/* 登录页预览：仅更新右侧配色，左侧布局保持不变 */
+.login-tech-right-panel {
+  background:
+    radial-gradient(circle at 18% 22%, rgba(125, 211, 252, 0.24), transparent 34%),
+    radial-gradient(circle at 72% 74%, rgba(167, 139, 250, 0.2), transparent 36%),
+    linear-gradient(135deg, rgba(234, 242, 255, 0.94), rgba(244, 241, 255, 0.98) 46%, rgba(236, 252, 255, 0.94));
+}
+
+.login-aurora {
+  filter: blur(75px);
+  opacity: 0.52;
+  will-change: transform;
+}
+
+.login-aurora-purple {
+  background: rgba(109, 40, 217, 0.78);
+  animation: login-aurora-one 16s ease-in-out infinite alternate;
+}
+
+.login-aurora-cyan {
+  background: rgba(34, 211, 238, 0.5);
+  animation: login-aurora-two 19s ease-in-out infinite alternate;
+}
+
+.login-panel-card {
+  -webkit-backdrop-filter: blur(28px) saturate(1.15);
+  backdrop-filter: blur(28px) saturate(1.15);
+  box-shadow: 0 32px 90px -32px rgba(39, 50, 120, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.login-password-input {
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.login-password-input:focus {
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1), 0 12px 30px -20px rgba(79, 70, 229, 0.65);
+}
+
+@keyframes login-aurora-one {
+  from { transform: translate3d(-3%, -2%, 0) scale(0.96); }
+  to { transform: translate3d(12%, 8%, 0) scale(1.08); }
+}
+
+@keyframes login-aurora-two {
+  from { transform: translate3d(-8%, 7%, 0) scale(0.9); }
+  to { transform: translate3d(15%, -7%, 0) scale(1.12); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-tech-right-panel *,
+  .login-tech-right-panel *::before,
+  .login-tech-right-panel *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* 全自动批量生成：运行中的科技感动态边框 + 扫描光带 */
 @keyframes batch-border-flow {
   0% { background-position: 0% 50%; }
