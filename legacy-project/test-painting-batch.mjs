@@ -102,6 +102,7 @@ const {
   ensureWan3CameraMotionLock,
   WAN3_STATIC_PAINTING_STRUCTURE_RULE,
   WAN3_UNFOLDING_STRUCTURE_RULE,
+  WAN3_INSTALLATION_HOOK_RULE,
   ensureWan3PaintingStructureLock,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
@@ -1245,6 +1246,12 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
   const wanOpeningLocked = ensureWan3PaintingStructureLock(ensurePaintingRollingUnfoldInstruction('人物双手控制卷起挂画。', 1), 1);
   assert(wanOpeningLocked.includes('【千问 Wan3.0 专用·唯一一次人工打开流程】') && wanOpeningLocked.includes(WAN3_UNFOLDING_STRUCTURE_RULE), '两个人工打开方向保留唯一一次人工流程规则');
   assert(!wanOpeningLocked.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), '人工打开方向不会误套全程静态规则');
+  const wanInstallationLocked = ensureWan3PaintingStructureLock('人物手持挂画走向墙面，把白色挂绳对准墙面挂钩挂好，再双手扶正挂画。', 6);
+  assert(wanInstallationLocked.includes('【千问 Wan3.0 专用·预装挂钩物理连续性锁定】'), 'Wan人物上墙安装方向固定加入预装挂钩连续性锁');
+  assert(wanInstallationLocked.includes(WAN3_INSTALLATION_HOOK_RULE), 'Wan预装挂钩锁使用统一系统规则');
+  assert(/第一次可见的那一帧起已经存在/.test(WAN3_INSTALLATION_HOOK_RULE) && /挂绳靠近或接触墙面时突然出现/.test(WAN3_INSTALLATION_HOOK_RULE), '挂钩必须预先存在且不得因挂绳接触而生成');
+  assert(!wanInstallationLocked.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), 'Wan安装方向不会误套首帧已经上墙的静态规则');
+  assert(ensureWan3PaintingStructureLock(wanInstallationLocked, 6).split('【千问 Wan3.0 专用·预装挂钩物理连续性锁定】').length - 1 === 1, 'Wan挂钩锁重复处理不会重复追加');
   assert(ensureWan3PaintingStructureLock('一辆汽车沿公路正常行驶。', 0) === '一辆汽车沿公路正常行驶。', 'Wan非挂画任务不会被加入挂画结构规则');
 
   const previousFetch = globalThis.fetch;
@@ -1283,6 +1290,21 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
     assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), 'Wan手动静态挂画任务实际请求包含逐帧拓扑锁');
     assert(!submittedPayload?.input?.prompt?.includes('【卷起挂画滚动展开与下方木条强制锁定】'), 'Wan手动静态挂画实际请求不再携带条件式滚动说明');
     assert(!submittedPayload?.input?.prompt?.includes('快速揭示') && !submittedPayload?.input?.prompt?.includes('数学式绝对匀速'), 'Wan手动提交的实际请求已消除冲突语句');
+
+    const installationRes = mockRes();
+    await handleSeedanceCreateTask(mockReq('/api/seedance/tasks', {
+      model: WAN3_VIDEO_MODEL,
+      prompt: '人物双手拿着完整挂画走向白墙，把白色挂绳对准墙面挂钩挂好，再扶正挂画。',
+      taskMode: 'generate',
+      resolution: '480p',
+      ratio: '9:16',
+      duration: 6,
+      generateAudio: false,
+      watermark: false,
+      directionNumber: 2,
+    }), installationRes);
+    assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·预装挂钩物理连续性锁定】'), 'Wan手动安装任务实际提交预装挂钩连续性锁');
+    assert(!submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】'), 'Wan手动安装任务不误写成首帧已经挂好');
 
     globalThis.fetch = async (url) => {
       submittedUrl = String(url);
@@ -1362,6 +1384,12 @@ console.log('\n[39b] Wan3.0 Video 全自动批量速度锁');
     assert(!submittedPayload?.input?.prompt?.includes('【卷起挂画滚动展开与下方木条强制锁定】'), 'Wan全自动静态方向实际请求不再携带条件式滚动说明');
     assert(!submittedPayload?.input?.prompt?.includes('快速揭示') && !submittedPayload?.input?.prompt?.includes('数学式绝对匀速'), 'Wan全自动实际请求已消除冲突语句');
     assert(result.seedanceTaskId === 'wan3_batch-wan-task', 'Wan全自动任务编号保持供应商前缀', result.seedanceTaskId);
+
+    await submitSeedanceTaskForBatchTask(
+      { id: 3903, directionNumber: 2, prompt: '人物展示挂画后走向墙面，对准挂点悬挂并双手扶正。', duration: 6 },
+      { batchRunId: 'batch-wan-hook-test', model: WAN3_VIDEO_MODEL, resolution: '480p', ratio: '9:16', imagePath, generateAudio: false, watermark: false, options: {} },
+    );
+    assert(submittedPayload?.input?.prompt?.includes('【千问 Wan3.0 专用·预装挂钩物理连续性锁定】'), 'Wan全自动安装方向实际提交预装挂钩连续性锁');
   } finally {
     globalThis.fetch = previousFetch;
   }

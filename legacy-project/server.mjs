@@ -14488,14 +14488,17 @@ const WAN3_CAMERA_MOTION_MARKER = '【千问 Wan3.0 专用·运镜速度强制�
 const WAN3_LEGACY_PAINTING_STRUCTURE_MARKER = '【千问 Wan3.0 专用·挂画结构连续性与禁止二次展开】';
 const WAN3_STATIC_PAINTING_STRUCTURE_MARKER = '【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】';
 const WAN3_UNFOLDING_STRUCTURE_MARKER = '【千问 Wan3.0 专用·唯一一次人工打开流程】';
+const WAN3_INSTALLATION_HOOK_MARKER = '【千问 Wan3.0 专用·预装挂钩物理连续性锁定】';
 const WAN3_STATIC_PAINTING_STRUCTURE_RULE = '本片中的挂画从首帧起就是完整平展、安装完成的最终成品，把它视为固定在墙上的刚性静态平面。上方木条、画芯、下方木条和挂绳组成一个不可拆分的整体，它们在墙面上的坐标、长度、数量和相对距离从首帧到末帧逐帧保持常数。每一帧始终恰好只有参考图中的上、下两根木条，画芯中间始终没有横杆、滚轴、白色扫描条或其他横向构件；画芯的顶部、主体和底部始终同时属于同一张连续平面。人物活动、镜头推近、拉远、横移、扫拍和内容特写只能改变取景范围，挂画本体保持完全静止，不能发生部件复制、位移、遮盖、压缩、拉伸、分层、消失、重组或画芯局部先后显现。最后一帧的产品结构必须与首帧完全相同。';
 const WAN3_UNFOLDING_STRUCTURE_RULE = '本条创意只允许在时间轴指定阶段，由人物双手控制卷起的挂画完成唯一1次真实滚动打开。人物完成打开并挂好以后，挂画立即成为固定在墙上的刚性静态平面，后续不再发生任何打开、卷起、复位或结构变化。全片任何时刻都只能存在参考图中的上、下两根木条，不能生成第三根木条、复制木条、白色横杆或扫描条；镜头运动不能触发挂画本体移动或重演打开动作。';
+const WAN3_INSTALLATION_HOOK_RULE = '本条是把挂画挂到墙面的安装过程。墙面挂钩是安装开始以前就已经真实固定好的独立五金件，不由挂画、挂绳、人物手部或墙面临时生成。只要最终挂点所在墙面区域进入取景框，挂钩就必须从该区域第一次可见的那一帧起已经存在；如果开场暂时看不到挂钩，只能因为该墙面区域尚在画外，或被人物、挂画等真实不透明物体连续遮挡，遮挡移开后只能露出原本已经存在的同一个挂钩。挂钩的数量始终恰好为1个，位置、大小、形状、颜色、材质、朝向和墙面接触阴影逐帧保持不变，不得淡入、浮现、从墙里长出、由斑点或装饰变成、在挂绳靠近或接触墙面时突然出现，也不得消失、移动、复制或更换。人物的安装动作只能是把挂画抬到这个既有挂钩下方，再把既有白色挂绳真实套到既有挂钩上并扶正挂画；本片不表现打孔、粘贴、安装或生成挂钩。';
 const PAINTING_CONTENT_DETAIL_DIRECTION = 29;
 const PAINTING_WOOD_DETAIL_DIRECTION = 30;
 const PAINTING_CAMERA_EXPLANATION_DIRECTION = 7;
 const PAINTING_LEFT_TO_RIGHT_SCAN_DIRECTION = 26;
 const PAINTING_RIGHT_TO_LEFT_SCAN_DIRECTION = 27;
 const PAINTING_ROLLING_UNFOLD_DIRECTIONS = new Set([1, 8]);
+const PAINTING_INSTALLATION_DIRECTIONS = new Set([1, 2, 4, 5, 8, 9]);
 const PAINTING_ROLLING_UNFOLD_FIXED_INSTRUCTION = '挂画在打开的时候是滚动打开的，不是滑动打开的，打开的过程中不要改变挂画下方木条的颜色和外观，也不要在木条的边缘增加新的物体。';
 const PAINTING_STATIC_WALL_COMPENSATION_DIRECTIONS = new Set([
   3, 6, PAINTING_CAMERA_EXPLANATION_DIRECTION, 10,
@@ -14567,12 +14570,25 @@ function ensureWan3PaintingStructureLock(promptText, directionNumber = 0) {
 
   const explicitlyAllowsOpening = PAINTING_ROLLING_UNFOLD_DIRECTIONS.has(Number(directionNumber))
     || normalized.includes('【卷轴打开方式固定要求】');
+  // 完整提示词里固定包含“墙面安装”等规则标题，不能仅凭“安装”二字判断，
+  // 否则静态上墙方向也会被误套安装锁。优先使用固定方向号，并为手动提示词
+  // 只识别人物实际执行“对准挂点/把挂绳套上挂钩/挂上墙/扶正”的动作语句。
+  const isInstallationSequence = PAINTING_INSTALLATION_DIRECTIONS.has(Number(directionNumber))
+    || /对准(?:墙面上的?)?(?:挂点|挂钩)|(?:白色)?挂绳.{0,18}(?:套到|套上|挂到|挂上|对准).{0,10}挂钩|(?:人物|女士|女性|男士|男性|女主|男主|成人|双手|手持).{0,45}(?:挂到墙|挂上墙|悬挂|挂好|扶正挂画|扶正挂轴)/s.test(normalized);
   normalized = removeMarkedPromptSection(normalized, WAN3_LEGACY_PAINTING_STRUCTURE_MARKER);
   normalized = removeMarkedPromptSection(normalized, WAN3_STATIC_PAINTING_STRUCTURE_MARKER);
   normalized = removeMarkedPromptSection(normalized, WAN3_UNFOLDING_STRUCTURE_MARKER);
+  normalized = removeMarkedPromptSection(normalized, WAN3_INSTALLATION_HOOK_MARKER);
 
   if (explicitlyAllowsOpening) {
-    return `${normalized}\n\n${WAN3_UNFOLDING_STRUCTURE_MARKER}\n${WAN3_UNFOLDING_STRUCTURE_RULE}`;
+    const unfoldingLocked = `${normalized}\n\n${WAN3_UNFOLDING_STRUCTURE_MARKER}\n${WAN3_UNFOLDING_STRUCTURE_RULE}`;
+    return isInstallationSequence
+      ? `${unfoldingLocked}\n\n${WAN3_INSTALLATION_HOOK_MARKER}\n${WAN3_INSTALLATION_HOOK_RULE}`
+      : unfoldingLocked;
+  }
+
+  if (isInstallationSequence) {
+    return `${normalized}\n\n${WAN3_INSTALLATION_HOOK_MARKER}\n${WAN3_INSTALLATION_HOOK_RULE}`;
   }
 
   // Wan 会把条件句中的“卷起/滚动打开”误当成需要执行的动作。
@@ -19778,6 +19794,7 @@ export {
   ensureWan3CameraMotionLock,
   WAN3_STATIC_PAINTING_STRUCTURE_RULE,
   WAN3_UNFOLDING_STRUCTURE_RULE,
+  WAN3_INSTALLATION_HOOK_RULE,
   ensureWan3PaintingStructureLock,
   getPaintingDirectionDuration,
   isPaintingInstallationSequence,
