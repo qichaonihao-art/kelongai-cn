@@ -2523,6 +2523,25 @@ function dbGetRecentPaintingBatchRuns(limit = 20) {
   return rows.map(normalizeBatchRun).filter(Boolean);
 }
 
+// 供轻剪 Electron 端「从创意创作历史图片选择」只读复用：按 image_hash 去重，
+// 取每个哈希最近一次批次的挂画名与落盘路径（文件内容相同，重复上传不重复存）。
+function dbListPaintingHistoryImages(limit = 100) {
+  const rows = getCollectionDb().prepare(`
+    SELECT image_hash, image_path, painting_name, created_at
+    FROM painting_batch_runs
+    WHERE image_hash <> '' AND image_path <> ''
+    ORDER BY created_at DESC
+  `).all();
+  const seen = new Map();
+  for (const row of rows) {
+    const hash = String(row.image_hash || '');
+    if (!hash || seen.has(hash)) continue;
+    seen.set(hash, row);
+    if (seen.size >= Number(limit)) break;
+  }
+  return Array.from(seen.values());
+}
+
 function dbDeletePaintingBatchRun(batchRunId) {
   const db = getCollectionDb();
   const id = String(batchRunId || '');
@@ -13472,7 +13491,7 @@ async function withRetryOnce(fn) {
       return await fn();
     } catch (retryError) {
       if (isRetriableUpstreamError(retryError)) {
-        throw new Error('豆包连接偶发中断，已自动重试一次但仍未成功。请稍后再试。');
+        throw new Error('AI 模型连接偶发中断，已自动重试一次但仍未成功。请稍后再试。');
       }
       throw retryError;
     }
@@ -13538,6 +13557,51 @@ async function callDoubaoArkText({ apiKey, model, content, timeoutMs }) {
     throw new Error('豆包返回为空，请稍后重试。');
   }
   return answer;
+}
+
+function normalizeCopyProvider(value) {
+  return readValue(value).toLowerCase() === 'qwen' ? 'qwen' : 'doubao';
+}
+
+function copyProviderConfig(value) {
+  const provider = normalizeCopyProvider(value);
+  return provider === 'qwen'
+    ? { provider, label: '千问 Qwen3.8-Max', model: QWEN_CREATIVE_MULTIMODAL_MODEL, apiKey: readValue(SERVER_CONFIG.dashscopeApiKey) }
+    : { provider, label: '豆包 Seed 2.1 Pro', model: DEFAULT_DOUBAO_MULTIMODAL_MODEL, apiKey: readValue(SERVER_CONFIG.arkApiKey) };
+}
+
+async function callQwenCopyText({ apiKey, model, content, timeoutMs }) {
+  const qwenContent = (Array.isArray(content) ? content : []).map((item) => {
+    if (item?.type === 'input_image') return { type: 'image_url', image_url: { url: item.image_url } };
+    return { type: 'text', text: readValue(item?.text) };
+  });
+  const upstreamRes = await fetch(`${DASHSCOPE_API_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: model || QWEN_CREATIVE_MULTIMODAL_MODEL,
+      messages: [{ role: 'user', content: qwenContent }],
+      enable_thinking: false,
+      stream: false
+    }),
+    signal: AbortSignal.timeout(timeoutMs || QWEN_CREATIVE_MULTIMODAL_TIMEOUT_MS)
+  });
+  const responseText = await upstreamRes.text();
+  let json = null;
+  try { json = responseText ? JSON.parse(responseText) : null; } catch {}
+  if (!upstreamRes.ok) {
+    const rawError = json?.error?.message || json?.message || responseText || '';
+    throw new Error(translateUpstreamError(rawError, `千问 API 请求失败（状态码 ${upstreamRes.status}）`));
+  }
+  const answer = extractResponsesText(json);
+  if (!answer) throw new Error('千问返回为空，请稍后重试。');
+  return answer;
+}
+
+async function callCopyModelText({ provider, apiKey, model, content, timeoutMs }) {
+  return normalizeCopyProvider(provider) === 'qwen'
+    ? callQwenCopyText({ apiKey, model, content, timeoutMs })
+    : callDoubaoArkText({ apiKey, model, content, timeoutMs });
 }
 
 // 挂画分析和创意方案都可能超过线上代理的单次请求超时，因此统一使用后台任务。
@@ -14037,6 +14101,83 @@ async function handleListPaintingBatchRuns(req, res) {
     });
   } catch (error) {
     sendJson(res, 500, { error: error?.message || '读取批量任务列表失败' });
+  }
+}
+
+function paintingImageMimeType(filePath) {
+  const ext = path.extname(String(filePath || '')).toLowerCase();
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.avif') return 'image/avif';
+  return 'image/jpeg';
+}
+
+// 只读：列出创意创作历史上传过的挂画图片（服务端已落盘的那批，供轻剪复用，不重新开发图片库）。
+async function handleListPaintingHistoryImages(req, res) {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || 100)));
+    const rows = dbListPaintingHistoryImages(limit);
+    const images = [];
+    for (const row of rows) {
+      const filePath = String(row.image_path || '');
+      if (!filePath || !existsSync(filePath)) continue;
+      let fileSize = 0;
+      try { fileSize = (await stat(filePath)).size; } catch { continue; }
+      const imageHash = String(row.image_hash);
+      const base = `/api/painting/history-images/${encodeURIComponent(imageHash)}/file`;
+      images.push({
+        id: imageHash,
+        imageHash,
+        paintingName: String(row.painting_name || '').slice(0, 200),
+        createdAt: Number(row.created_at || 0),
+        fileSize,
+        mimeType: paintingImageMimeType(filePath),
+        imageUrl: base,
+        downloadUrl: `${base}?download=1`,
+      });
+    }
+    sendJson(res, 200, { ok: true, images });
+  } catch (error) {
+    sendJson(res, 500, { error: error?.message || '读取历史挂画图片失败' });
+  }
+}
+
+async function handleGetPaintingHistoryImageFile(req, res, imageHash, url) {
+  try {
+    const hash = decodeURIComponent(String(imageHash || ''));
+    const row = getCollectionDb().prepare(`
+      SELECT image_hash, image_path FROM painting_batch_runs
+      WHERE image_hash = ? AND image_path <> '' ORDER BY created_at DESC LIMIT 1
+    `).get(hash);
+    if (!row) {
+      sendJson(res, 404, { error: '历史挂画图片不存在' });
+      return;
+    }
+    const filePath = String(row.image_path);
+    if (!filePath || !existsSync(filePath)) {
+      sendJson(res, 404, { error: '历史挂画图片文件不存在或已清理' });
+      return;
+    }
+    const info = await stat(filePath);
+    const asAttachment = url.searchParams.get('download') === '1';
+    const ext = path.extname(filePath).toLowerCase() || '.jpg';
+    const fallbackName = `painting-${String(hash).slice(0, 12)}${ext}`;
+    const encodedName = encodeURIComponent(fallbackName);
+    const headers = {
+      'Content-Type': paintingImageMimeType(filePath),
+      'Content-Length': String(info.size),
+      'Content-Disposition': `${asAttachment ? 'attachment' : 'inline'}; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`,
+      'Cache-Control': 'private, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Encoding': 'identity',
+    };
+    res.writeHead(200, headers);
+    if (req.method === 'HEAD') res.end();
+    else createReadStream(filePath).pipe(res);
+  } catch (error) {
+    sendJson(res, 404, { error: '历史挂画图片读取失败' });
   }
 }
 
@@ -16238,8 +16379,24 @@ async function resumePaintingBatchRunsOnStartup() {
 }
 
 // ===== 文案创作（copywriting）=====
-// 挂画分析 / AI 原创 10 条 / 爆款仿写 3 版，全部复用豆包 Seed 2.1 多模态 + callDoubaoArkText。
+// 挂画分析 / AI 原创文案支持豆包 Seed 2.1 Pro 与千问 Qwen3.8-Max；爆款仿写保持原有链路。
 // 独立文案库存储于 RUNTIME_STATE_DIR/creative-copy-library.json，不动现有任何运行状态文件。
+
+const COPY_PRODUCT_MATERIAL = '上下木条为实木；中间画心为无纺布';
+const COPY_PRODUCT_MATERIAL_RULES = `
+【产品材质事实（最高优先级，所有文案必须遵守）】
+- 这款挂画的上下木条为实木，中间画心为无纺布。
+- 只允许使用“实木木条”“上下实木木条”“无纺布画心”等与上述事实一致的说法。
+- 禁止把画心写成宣纸、绢布、丝绸、油画布、棉麻布、亚克力、PVC或其他材质。
+- 未提供具体木种，因此禁止写红木、胡桃木、松木、榉木、橡木等具体木种，也禁止写进口木材、名贵木材。
+- 禁止虚构手工制作、非遗工艺、收藏级、博物馆级、环保认证、防水防潮、永不褪色等未经确认的材质或工艺卖点。
+- 如果挂画档案、图片推断、用户补充内容或参考原文与本规则冲突，一律以本规则为准。`;
+const COPY_FORBIDDEN_MATERIAL_TERMS = ['宣纸', '绢布', '丝绸', '油画布', '棉麻布', '亚克力', 'PVC', '红木', '胡桃木', '松木', '榉木', '橡木', '进口木材', '名贵木材', '手工制作', '非遗工艺', '收藏级', '博物馆级', '环保认证', '防水防潮', '永不褪色'];
+
+function copyMaterialViolations(text) {
+  const content = String(text || '').toLowerCase();
+  return COPY_FORBIDDEN_MATERIAL_TERMS.filter((term) => content.includes(term.toLowerCase()));
+}
 
 function normalizeCopyItem(item, index) {
   const hook = readValue(item?.hook);
@@ -16250,7 +16407,7 @@ function normalizeCopyItem(item, index) {
     id: readValue(item?.id) || `copy-${index + 1}`,
     mode: readValue(item?.mode) === 'explore' ? 'explore' : 'stable',
     direction: readValue(item?.direction) || (readValue(item?.mode) === 'explore' ? '探索' : '稳定'),
-    targetLength: Number(item?.targetLength) === 250 ? 250 : 350,
+    targetLength: [150, 180, 200, 250, 350, 500].includes(Number(item?.targetLength)) ? Number(item.targetLength) : 350,
     title: readValue(item?.title),
     hook,
     content,
@@ -16287,7 +16444,7 @@ function normalizeCopyProfile(profile) {
     colors: list(source.colors),
     style: text(source.style),
     textCalligraphySeals: text(source.textCalligraphySeals),
-    material: text(source.material),
+    material: COPY_PRODUCT_MATERIAL,
     structure: text(source.structure),
     suitableScenes: list(source.suitableScenes),
     targetAudiences: list(source.targetAudiences),
@@ -16297,15 +16454,34 @@ function normalizeCopyProfile(profile) {
   };
 }
 
-async function generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode, direction, targetLength, excludeTexts }) {
+const COPY_COMPLIANCE_RULES = `
+【合规硬规则】
+- 可以写：象征、表达、寄托愿望、提醒，以及“传统文化中常被理解为”。
+- 禁止写：转运、招财、镇宅、化煞、保证家庭和睦、治疗焦虑、改善健康、一定带来好运，以及任何承诺财富、健康、运势或家庭结果的表述。
+- 寓意只能作为文化理解、情感寄托或生活提醒，不能写成产品具有现实功效。`;
+
+function buildCopyDirectionSpecs(count, uniform) {
+  const lengths = uniform
+    ? Array(10).fill(uniform)
+    : [350, 350, 350, 350, 350, 350, 350, 250, 250, 250];
+  const all = [
+    { mode: 'stable', direction: '寓意·人生状态', brief: '围绕静心、知足、坚持、放下或从容等人生状态，只选择一个核心意思展开。' },
+    { mode: 'stable', direction: '寓意·家庭祝愿', brief: '围绕和睦、珍惜、安稳等家庭愿望，表达情感寄托，不能承诺实际结果。' },
+    { mode: 'stable', direction: '寓意·品格家风', brief: '围绕守信、勤俭、慎独、谦逊、厚道或家风，只选择一个品格主题展开。' },
+    { mode: 'stable', direction: '情绪共鸣', brief: '从中老年人的生活心境、人生经历或当下情绪切入，不重复讲画面细节。' },
+    { mode: 'stable', direction: '传统文化故事', brief: '从传统文化观念或生活哲理切入；不得虚构典故、作者、年代和名人评价。' },
+    { mode: 'stable', direction: '家庭关系', brief: '从夫妻、亲子、代际相处或家庭共同记忆切入，避免与家庭祝愿方向重复。' },
+    { mode: 'explore', direction: '居家氛围', brief: '强调挂在客厅、书房、茶室或玄关后带来的视觉氛围与空间感，不承诺功效。' },
+    { mode: 'explore', direction: '送礼场景', brief: '从送父母、长辈、乔迁或节日心意切入，强调得体与情感表达。' },
+    { mode: 'explore', direction: '视觉审美', brief: '讲构图、色彩、留白、书画气质与搭配，但不要逐项机械复述图片。' },
+    { mode: 'explore', direction: '人群选择与互动转化', brief: '帮助观众判断适不适合自己，并用自然问题引导互动或选择，避免强硬促销。' }
+  ].map((item, index) => ({ ...item, targetLength: lengths[index] }));
+  return count === 5 ? [all[0], all[1], all[3], all[8], all[9]] : all;
+}
+
+async function generateSingleCopy({ provider, apiKey, model, profile, extraInfo, forbidden, mode, direction, directionBrief, targetLength, excludeTexts }) {
   const { min, max } = copyWordCountBoundary(targetLength);
-  // 模型字数浮动较大（实测常写到 350～400 字），放宽到较宽容差直接通过；只有明显偏离档位才触发修正重写。
-  const acceptMin = min - 30;
-  const acceptMax = max + 50;
-  const exploreHint = '反常识或观点冲突、热门生活话题、人物第一视角、家庭关系、传统文化的新解释、情绪治愈、装修审美、送礼场景、由画面文字引发的人生思考';
-  const directionLine = mode === 'explore'
-    ? `- 类型：探索型（mode=explore），请从以下角度挑选一个新角度作为创作方向并填入 direction 字段：${exploreHint}`
-    : `- 类型：稳定型（mode=stable），创作方向固定为「${direction || '稳定'}」，与其他稳定型文案（痛点解决、寓意价值、空间改造、人物共鸣、故事情绪、购买转化）在立意与开头要明显区分、不要趋同。`;
+  const directionLine = `- 创作方向固定为「${direction || '挂画表达'}」：${directionBrief || '围绕指定方向展开。'}\n- direction 字段必须填写「${direction || '挂画表达'}」，不得自行换成其他方向。`;
   const avoidTexts = (Array.isArray(excludeTexts) ? excludeTexts : []).filter((t) => typeof t === 'string' && t.trim());
   const avoidLine = avoidTexts.length
     ? `\n【避免重复】请与以下已生成文案明显区分、不要雷同：\n${avoidTexts.slice(0, 6).map((t, i) => `${i + 1}. ${t.slice(0, 80)}`).join('\n')}`
@@ -16317,21 +16493,25 @@ async function generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode,
 ${JSON.stringify(profile, null, 2)}
 ${extraInfo ? `\n【用户补充信息】\n${extraInfo}` : ''}
 ${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
+${COPY_PRODUCT_MATERIAL_RULES}
+${COPY_COMPLIANCE_RULES}
 
 【本条要求】
 ${directionLine}
-- 字数：${targetLength} 字档（${min}～${max} 字，忽略空白字符计数，不得为凑字数重复；写完后请自行数一遍，超出就删减、不足就补充）
+- 字数硬性要求：全文必须控制在 ${min}～${max} 字（忽略空白字符计数）。这是硬性指标，宁可略短于 ${min} 字，也绝不能超过 ${max} 字；写完后请逐字数一遍，超出就整句删减、不足再补充，禁止为凑字数堆砌或重复。
 ${avoidLine}
-【结构】开头钩子（前 1～3 句）+ 中间展开 + 自然转化；口语化、适合真人口播；不虚构历史出处/销量/功效/名人评价、不夸大风水财富健康。
+【差异化硬规则】同一批文案的开头句式、核心观点、叙述结构和结尾引导必须不同；不要反复用“你看这幅画”“挂在家里”“越看越喜欢”等同类开头；除视觉审美方向外，不要连续罗列画面景物、细节、字体和颜色。
+【结构】开头钩子（前 1～3 句）+ 中间展开 + 自然转化；口语化、适合真人口播；不虚构历史出处/销量/功效/名人评价。
 
 【输出格式】严格只输出一个 JSON 对象：
 {"id":"1","mode":"${mode}","direction":"${mode === 'explore' ? '创作方向' : (direction || '稳定')}","targetLength":${targetLength},"title":"","hook":"","content":"","closing":"","fullText":""}
 不要输出任何解释文字，不要用 markdown 代码块包裹。${correction}`;
 
   const run = async (correction) => {
-    const answer = await callDoubaoArkText({
+    const answer = await callCopyModelText({
+      provider,
       apiKey,
-      model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+      model,
       content: [{ type: 'input_text', text: buildPrompt(correction) }],
       timeoutMs: DOUBAO_COPY_TEXT_TIMEOUT_MS
     });
@@ -16355,22 +16535,53 @@ ${avoidLine}
   // 第一次生成（网络错误自动重试一次）。
   let result = await withRetryOnce(() => run(''));
 
-  // 字数明显偏离目标档位时，带具体字数做一次修正重写。
-  if (result.chars < acceptMin || result.chars > acceptMax) {
-    const correction = `\n\n【字数修正】你上一次输出的文案共 ${result.chars} 字，${result.chars > max ? '超出' : '不足'} ${targetLength} 字档的要求（${min}～${max} 字）。请重写，把字数严格控制在 ${min}～${max} 字之间，不要为凑字数重复。`;
-    result = await withRetryOnce(() => run(correction));
+  // 字数软约束：豆包口播文案容易写长，带具体字数反复修正，取最接近目标字数的一条。
+  let best = result;
+  const charDistance = (r) => Math.abs(r.chars - targetLength);
+  if (result.chars < min || result.chars > max) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const over = result.chars > max;
+      const correction = `\n\n【字数修正】你上一次输出的文案共 ${result.chars} 字，${over ? '超出' : '不足'} ${targetLength} 字档的要求（${min}～${max} 字）。请完整重写，把字数严格控制在 ${min}～${max} 字之间；${over ? '宁可删减到上限以内，也不要多写。' : '适当补充，不要为凑字数重复。'}`;
+      result = await withRetryOnce(() => run(correction));
+      if (charDistance(result) < charDistance(best)) best = result;
+      if (result.chars >= min && result.chars <= max) break;
+    }
+    result = best;
   }
 
-  // 字数只做软约束：明显偏离时已尽力修正一次，不再因字数硬性失败整批（用户可对单条再编辑/重生成）。
-  if (result.chars < acceptMin || result.chars > acceptMax) {
-    console.warn('[doubao copy] word count soft-accept', { targetLength, chars: result.chars, min, max });
+  // 所有后置纠错都可能再次改变字数，因此最后统一同时检查材质与字数。
+  // 最多再完整重写3次；仍不合格则硬拦截，绝不把超范围结果作为成功文案返回。
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const materialViolations = copyMaterialViolations(result.copy.fullText);
+    const lengthInvalid = result.chars < min || result.chars > max;
+    if (!materialViolations.length && !lengthInvalid) break;
+    const corrections = [];
+    if (materialViolations.length) {
+      corrections.push(`上一次文案出现了禁止材质或未经确认的工艺词：${materialViolations.join('、')}。材质只能写“上下木条为实木，中间画心为无纺布”，不得出现其他材质、具体木种或未经确认的工艺。`);
+    }
+    if (lengthInvalid) {
+      corrections.push(`上一次全文实际${result.chars}字，必须完整重写到${min}～${max}字；超过上限就删减整句，不得超出。`);
+    }
+    result = await withRetryOnce(() => run(`\n\n【最终硬性修正】${corrections.join('\n')}`));
+  }
+  const remainingMaterialViolations = copyMaterialViolations(result.copy.fullText);
+  if (remainingMaterialViolations.length) {
+    throw new Error(`文案仍包含不符合产品事实的材质词：${remainingMaterialViolations.join('、')}，已拦截本条结果`);
+  }
+  if (result.chars < min || result.chars > max) {
+    throw new Error(`文案目标${targetLength}字，允许${min}～${max}字，实际${result.chars}字，已拦截本条结果`);
   }
 
   return result.copy;
 }
 
+// 文案字数档位：轻剪端「文案字数」下拉可选这些档；未指定时保持原有的 350/250 混合。
+const COPY_TARGET_LENGTHS = [150, 180, 200, 250, 350, 500];
+
 function copyWordCountBoundary(targetLength) {
-  return targetLength === 250 ? { min: 235, max: 265 } : { min: 330, max: 370 };
+  const length = Number(targetLength);
+  const target = Number.isFinite(length) && length >= 50 ? length : 350;
+  return { min: Math.max(1, target - 50), max: target + 50 };
 }
 
 function validateCopies(copies) {
@@ -16419,15 +16630,14 @@ function normalizeRewriteVersions(versions) {
 async function handleCopyAnalyze(req, res) {
   const requestId = randomBytes(6).toString('hex');
   try {
-    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
-    if (!apiKey) {
-      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
-      return;
-    }
-
     const body = isMultipartFormRequest(req)
       ? await readMultipartFormBody(req)
       : await readRequestBody(req);
+    const providerConfig = copyProviderConfig(body.provider);
+    if (!providerConfig.apiKey) {
+      sendJson(res, 500, { error: providerConfig.provider === 'qwen' ? '服务端未配置 DASHSCOPE_API_KEY' : '服务端未配置 ARK_API_KEY' });
+      return;
+    }
 
     let imageUrl = '';
     if (body.file instanceof File && body.file.size > 0) {
@@ -16452,24 +16662,27 @@ ${name ? `用户提供的挂画名称：${name}\n` : ''}${extraInfo ? `用户补
 要求输出以下字段（能用中文就用中文描述，无法从图片判断的字段用空字符串或空数组，不要臆造）：
 - name：挂画名称
 - visualDescription：画面主体和内容（画了什么、构图、有无人物/山水/花鸟/书法等）
-- colors：主要颜色数组（如 ["墨黑","赭石","宣纸白"]）
+- colors：主要颜色数组（如 ["墨黑","赭石","米白"]）
 - style：视觉风格（如国画、书法、油画、装饰画、现代简约等）
 - textCalligraphySeals：画面中的文字、书法内容、印章（没有则为空字符串）
-- material：材质与形态（宣纸、绢布、油画布、亚克力等）
+- material：必须固定填写“${COPY_PRODUCT_MATERIAL}”，不得根据图片猜测其他材质
 - structure：边框、木条、挂轴和挂绳结构（形状、颜色、材质、粗细）
 - suitableScenes：适合悬挂的空间数组（如 ["客厅","书房","茶室","玄关"]）
 - targetAudiences：适合的人群数组（如 ["中年人","读书人","家庭经营者"]）
 - meanings：核心寓意和情绪价值数组
 - sellingPoints：可以表达的产品卖点数组
-- uncertainClaims：图片无法确定、不可随意编造的信息数组（如具体年代、作者、材质真假、风水功效等）
+- uncertainClaims：图片无法确定、不可随意编造的信息数组（如具体年代、作者、具体木种、工艺认证、风水功效等）
+
+${COPY_PRODUCT_MATERIAL_RULES}
 
 严格只输出一个合法 JSON 对象，不要输出任何解释文字，不要用 markdown 代码块包裹。`;
 
-    console.log('[doubao copy] analyze request start', { requestId, hasFile: body.file instanceof File, fileSize: body.file?.size || 0 });
+    console.log('[copy] analyze request start', { requestId, provider: providerConfig.provider, model: providerConfig.model, hasFile: body.file instanceof File, fileSize: body.file?.size || 0 });
 
-    const answer = await withRetryOnce(() => callDoubaoArkText({
-      apiKey,
-      model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+    const answer = await withRetryOnce(() => callCopyModelText({
+      provider: providerConfig.provider,
+      apiKey: providerConfig.apiKey,
+      model: providerConfig.model,
       content: [
         { type: 'input_image', image_url: imageUrl },
         { type: 'input_text', text: prompt }
@@ -16477,10 +16690,10 @@ ${name ? `用户提供的挂画名称：${name}\n` : ''}${extraInfo ? `用户补
     }));
 
     const profile = normalizeCopyProfile(parseStructuredJson(answer));
-    console.log('[doubao copy] analyze done', { requestId, profileKeys: profile && typeof profile === 'object' ? Object.keys(profile) : [] });
-    sendJson(res, 200, { ok: true, profile });
+    console.log('[copy] analyze done', { requestId, provider: providerConfig.provider, profileKeys: profile && typeof profile === 'object' ? Object.keys(profile) : [] });
+    sendJson(res, 200, { ok: true, provider: providerConfig.provider, model: providerConfig.model, profile });
   } catch (error) {
-    console.error('[doubao copy] analyze failed', { requestId, message: error?.message || '' });
+    console.error('[copy] analyze failed', { requestId, message: error?.message || '' });
     sendJson(res, 500, {
       error: error?.message || '挂画分析失败',
       debug: { stage: 'analyze', rawText: error?.rawText }
@@ -16505,36 +16718,32 @@ function pruneCopyGenerateTasks() {
   }
 }
 
-async function runCopyGenerateTask(task, { apiKey, profile, extraInfo, forbidden }) {
+async function runCopyGenerateTask(task, { provider, apiKey, model, profile, extraInfo, forbidden, count, targetLength }) {
   const requestId = task.id;
   try {
-    const stableSpecs = [
-      { direction: '痛点解决', targetLength: 350 },
-      { direction: '寓意价值', targetLength: 350 },
-      { direction: '空间改造', targetLength: 350 },
-      { direction: '人物共鸣', targetLength: 350 },
-      { direction: '故事情绪', targetLength: 350 },
-      { direction: '购买转化', targetLength: 250 },
-    ];
-    const exploreLengths = [350, 350, 250, 250];
+    // 指定字数档位时统一应用于全部文案；未指定时保持原有的 350/250 混合。
+    const uniform = COPY_TARGET_LENGTHS.includes(Number(targetLength)) ? Number(targetLength) : 0;
+    const specs = buildCopyDirectionSpecs(count, uniform);
+    const firstSpecs = specs.slice(0, count === 5 ? 2 : 3);
+    const remainingSpecs = specs.slice(firstSpecs.length);
 
-    console.log('[doubao copy] generate request start', { requestId });
+    console.log('[copy] generate request start', { requestId, provider, model, count, uniform: uniform || 'mixed', directions: specs.map((item) => item.direction) });
 
     // 拆成单条小请求（并发），避免一次性生成 10 条导致方舟 504 超时。每完成一条更新任务进度。
-    const stableCopies = await mapWithConcurrency(stableSpecs, 3, async (spec) => {
-      const copy = await generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode: 'stable', direction: spec.direction, targetLength: spec.targetLength, excludeTexts: [] });
+    const firstCopies = await mapWithConcurrency(firstSpecs, 3, async (spec) => {
+      const copy = await generateSingleCopy({ provider, apiKey, model, profile, extraInfo, forbidden, mode: spec.mode, direction: spec.direction, directionBrief: spec.brief, targetLength: spec.targetLength, excludeTexts: [] });
       task.progress.completed += 1;
       return copy;
     });
 
-    const stableTexts = stableCopies.map((c) => c.fullText).filter(Boolean);
-    const exploreCopies = await mapWithConcurrency(exploreLengths, 2, async (targetLength) => {
-      const copy = await generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode: 'explore', direction: '', targetLength, excludeTexts: stableTexts });
+    const firstTexts = firstCopies.map((c) => c.fullText).filter(Boolean);
+    const remainingCopies = await mapWithConcurrency(remainingSpecs, 3, async (spec) => {
+      const copy = await generateSingleCopy({ provider, apiKey, model, profile, extraInfo, forbidden, mode: spec.mode, direction: spec.direction, directionBrief: spec.brief, targetLength: spec.targetLength, excludeTexts: firstTexts });
       task.progress.completed += 1;
       return copy;
     });
 
-    const copies = [...stableCopies, ...exploreCopies];
+    const copies = [...firstCopies, ...remainingCopies];
 
     // 去重兜底：若仍有两条高度重复，重写靠后那条一次。
     const duplicatePair = findDuplicatePair(copies);
@@ -16543,7 +16752,8 @@ async function runCopyGenerateTask(task, { apiKey, profile, extraInfo, forbidden
       const target = copies[laterIndex];
       const excludeTexts = copies.filter((_, index) => index !== laterIndex).map((c) => c.fullText).filter(Boolean);
       try {
-        copies[laterIndex] = await generateSingleCopy({ apiKey, profile, extraInfo, forbidden, mode: target.mode, direction: target.direction, targetLength: target.targetLength, excludeTexts });
+        const spec = specs[laterIndex];
+        copies[laterIndex] = await generateSingleCopy({ provider, apiKey, model, profile, extraInfo, forbidden, mode: target.mode, direction: target.direction, directionBrief: spec?.brief, targetLength: target.targetLength, excludeTexts });
       } catch {
         // 保留原结果，宁可用已有文案也不中断整批。
       }
@@ -16555,25 +16765,24 @@ async function runCopyGenerateTask(task, { apiKey, profile, extraInfo, forbidden
     task.error = '';
     task.status = 'done';
     task.doneAt = Date.now();
-    console.log('[doubao copy] generate done', { requestId, count: copies.length });
+    console.log('[copy] generate done', { requestId, provider, count: copies.length });
   } catch (error) {
     task.status = 'failed';
     task.error = error?.message || '原创文案生成失败';
     task.debug = { stage: 'generate', rawText: error?.rawText };
     task.doneAt = Date.now();
-    console.error('[doubao copy] generate failed', { requestId, message: error?.message || '' });
+    console.error('[copy] generate failed', { requestId, provider, message: error?.message || '' });
   }
 }
 
 async function handleCopyGenerate(req, res) {
   try {
-    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
-    if (!apiKey) {
-      sendJson(res, 500, { error: '服务端未配置 ARK_API_KEY' });
+    const body = await readRequestBody(req);
+    const providerConfig = copyProviderConfig(body.provider);
+    if (!providerConfig.apiKey) {
+      sendJson(res, 500, { error: providerConfig.provider === 'qwen' ? '服务端未配置 DASHSCOPE_API_KEY' : '服务端未配置 ARK_API_KEY' });
       return;
     }
-
-    const body = await readRequestBody(req);
     const profile = body.profile && typeof body.profile === 'object' ? body.profile : null;
     if (!profile) {
       sendJson(res, 400, { error: '缺少挂画档案 profile' });
@@ -16581,24 +16790,28 @@ async function handleCopyGenerate(req, res) {
     }
     const extraInfo = readValue(body.extraInfo);
     const forbidden = readValue(body.forbidden);
+    const count = [5, 10].includes(Number(body.count)) ? Number(body.count) : 10;
+    const targetLength = COPY_TARGET_LENGTHS.includes(Number(body.targetLength)) ? Number(body.targetLength) : null;
 
     pruneCopyGenerateTasks();
     const task = {
       id: `copytask-${randomBytes(8).toString('hex')}`,
       status: 'running',
-      progress: { completed: 0, total: 10 },
+      progress: { completed: 0, total: count },
       copies: null,
       error: '',
       debug: null,
       createdAt: Date.now(),
       doneAt: 0
     };
+    task.provider = providerConfig.provider;
+    task.model = providerConfig.model;
     COPY_GENERATE_TASKS.set(task.id, task);
 
     // 后台执行，不被 await；所有异常都在 runCopyGenerateTask 内部消化，不会产生未处理 Promise。
-    runCopyGenerateTask(task, { apiKey, profile, extraInfo, forbidden });
+    runCopyGenerateTask(task, { provider: providerConfig.provider, apiKey: providerConfig.apiKey, model: providerConfig.model, profile, extraInfo, forbidden, count, targetLength });
 
-    sendJson(res, 202, { ok: true, taskId: task.id, status: task.status, progress: task.progress });
+    sendJson(res, 202, { ok: true, taskId: task.id, provider: task.provider, model: task.model, status: task.status, progress: task.progress });
   } catch (error) {
     sendJson(res, 500, { error: error?.message || '原创文案生成失败' });
   }
@@ -16613,6 +16826,8 @@ function handleCopyGenerateTaskStatus(req, res, taskId) {
   sendJson(res, 200, {
     ok: true,
     taskId: task.id,
+    provider: task.provider,
+    model: task.model,
     status: task.status,
     progress: task.progress,
     ...(task.status === 'done' ? { copies: task.copies } : {}),
@@ -16633,6 +16848,7 @@ ${originalText}
 ${JSON.stringify(profile, null, 2)}
 ${extraInfo ? `\n【用户补充信息】\n${extraInfo}` : ''}
 ${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
+${COPY_PRODUCT_MATERIAL_RULES}
 
 【第一步：分析原文】输出以下字段：
 - hookMechanism：开头钩子机制
@@ -16653,6 +16869,7 @@ ${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
 - 保留核心意思、真实卖点和转化逻辑。
 - 文字、句式、段落顺序、视角、场景举例和情绪铺垫都要重新组织，不能只做同义词替换，不得复制原文中的连续长句。
 - 原文存在虚构或夸张内容时，不继续照搬；原文信息与挂画档案冲突时以档案为准。
+- 原文如果出现宣纸、绢布、油画布、亚克力、具体木种或其他冲突材质，必须删除并按产品材质事实改正。
 
 【输出格式】
 严格只输出一个 JSON 对象：
@@ -16660,11 +16877,11 @@ ${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
 - versions 必须恰好 3 个，version 分别为「稳定保守版」「情绪强化版」「结构重组版」。
 - 不要输出任何解释文字，不要用 markdown 代码块包裹。`;
 
-    const build = async () => {
+    const build = async (correction = '') => {
       const answer = await callDoubaoArkText({
         apiKey,
         model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-        content: [{ type: 'input_text', text: prompt }],
+        content: [{ type: 'input_text', text: `${prompt}${correction}` }],
         timeoutMs: DOUBAO_COPY_TEXT_TIMEOUT_MS
       });
       const parsed = parseStructuredJson(answer);
@@ -16695,6 +16912,17 @@ ${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
           return v;
         });
       }
+    }
+
+    const materialViolations = Array.from(new Set(versions.flatMap((version) => copyMaterialViolations(version.content))));
+    if (materialViolations.length) {
+      const retry = await withRetryOnce(() => build(`\n\n【材质修正】上一次版本出现了禁止材质或未经确认的工艺词：${materialViolations.join('、')}。请重新输出全部3版，材质只能写“上下木条为实木，中间画心为无纺布”。`));
+      const retryVersions = normalizeRewriteVersions(retry.versions);
+      if (retryVersions.length) versions = retryVersions;
+    }
+    const remainingMaterialViolations = Array.from(new Set(versions.flatMap((version) => copyMaterialViolations(version.content))));
+    if (remainingMaterialViolations.length) {
+      throw new Error(`仿写结果仍包含不符合产品事实的材质词：${remainingMaterialViolations.join('、')}，已拦截结果`);
     }
 
     console.log('[doubao copy] rewrite done', { requestId, count: versions.length });
@@ -16771,62 +16999,27 @@ async function handleCopyRegenerate(req, res) {
     const target = body.target && typeof body.target === 'object' ? body.target : {};
     const mode = readValue(target.mode) === 'explore' ? 'explore' : 'stable';
     const direction = readValue(target.direction) || (mode === 'explore' ? '探索' : '稳定');
-    const targetLength = Number(target.targetLength) === 250 ? 250 : 350;
+    const targetLength = COPY_TARGET_LENGTHS.includes(Number(target.targetLength)) ? Number(target.targetLength) : 350;
     const extraInfo = readValue(body.extraInfo);
     const forbidden = readValue(body.forbidden);
     const excludeTexts = (Array.isArray(body.excludeTexts) ? body.excludeTexts : [])
       .filter((t) => typeof t === 'string' && t.trim());
 
-    const { min, max } = copyWordCountBoundary(targetLength);
-
-    const prompt = `你是短视频口播文案创作专家。请为下面的挂画重新创作一条口播文案。
-
-【挂画档案（产品事实以此为准，不得虚构）】
-${JSON.stringify(profile, null, 2)}
-${extraInfo ? `\n【用户补充信息】\n${extraInfo}` : ''}
-${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
-
-【本条要求】
-- 类型：${mode === 'explore' ? '探索型' : '稳定型'}
-- 创作方向：${direction}
-- 字数：${targetLength} 字档（${min}～${max} 字，忽略空白字符计数，不得为凑字数重复；写完后请自行数一遍，超出就删减、不足就补充）
-${excludeTexts.length ? `\n【避免重复】请与以下已生成文案明显区分、不要雷同：\n${excludeTexts.map((t, i) => `${i + 1}. ${t}`).join('\n')}` : ''}
-
-【结构】开头钩子（前 1～3 句）+ 中间展开 + 自然转化；口语化、适合真人口播；不虚构历史出处/销量/功效/名人评价、不夸大风水财富健康。
-
-【输出格式】严格只输出一个 JSON 对象：
-{"id":"1","mode":"${mode}","direction":"${direction}","targetLength":${targetLength},"title":"","hook":"","content":"","closing":"","fullText":""}
-不要输出任何解释文字，不要用 markdown 代码块包裹。`;
-
     console.log('[doubao copy] regenerate request start', { requestId, direction, targetLength });
-
-    const answer = await withRetryOnce(() => callDoubaoArkText({
+    const copy = await generateSingleCopy({
+      provider: 'doubao',
       apiKey,
       model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-      content: [{ type: 'input_text', text: prompt }],
-      timeoutMs: DOUBAO_COPY_TEXT_TIMEOUT_MS
-    }));
-
-    const parsed = parseStructuredJson(answer);
-    const copyObj = parsed?.copy && typeof parsed.copy === 'object'
-      ? parsed.copy
-      : (parsed && typeof parsed === 'object' && readValue(parsed.fullText) ? parsed : null);
-    if (!copyObj) {
-      throw Object.assign(new Error('模型未返回有效文案'), { rawText: answer });
-    }
-
-    const copy = normalizeCopyItem(copyObj, 0);
-    copy.mode = mode;
-    copy.direction = direction || copy.direction;
-    copy.targetLength = targetLength;
-    if (!copy.fullText) {
-      throw Object.assign(new Error('模型返回的文案为空'), { rawText: answer });
-    }
+      profile: normalizeCopyProfile(profile),
+      extraInfo,
+      forbidden,
+      mode,
+      direction,
+      directionBrief: `沿用「${direction}」方向重新创作，但与现有文案明显不同。`,
+      targetLength,
+      excludeTexts
+    });
     const chars = countChars(copy.fullText);
-    // 字数软约束：单条重生成不因字数浮动而失败，用户可在结果卡看到实际字数并继续编辑。
-    if (chars < min - 30 || chars > max + 50) {
-      console.warn('[doubao copy] regenerate word count soft-accept', { targetLength, chars, min, max });
-    }
 
     console.log('[doubao copy] regenerate done', { requestId, chars });
     sendJson(res, 200, { ok: true, copy });
@@ -19377,6 +19570,17 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/painting/used-directions') {
     await handleGetPaintingUsedDirections(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/painting/history-images') {
+    await handleListPaintingHistoryImages(req, res);
+    return;
+  }
+
+  if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/api/painting/history-images/') && url.pathname.endsWith('/file')) {
+    const imageHash = url.pathname.replace(/^\/api\/painting\/history-images\//, '').replace(/\/file$/, '');
+    await handleGetPaintingHistoryImageFile(req, res, imageHash, url);
     return;
   }
 
