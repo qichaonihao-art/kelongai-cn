@@ -281,7 +281,6 @@ function ResultCard({
             {index}
           </span>
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold', badgeClass)}>{badge}</span>
-          {direction && <span className="truncate text-xs font-bold text-slate-500">{direction}</span>}
         </div>
         <button
           type="button"
@@ -295,6 +294,13 @@ function ResultCard({
           <Star className={cn('size-4', isLiked && 'fill-current')} />
         </button>
       </div>
+
+      {direction && (
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2">
+          <span className="shrink-0 text-xs font-bold text-violet-500">文案分类</span>
+          <span className="min-w-0 truncate text-sm font-black text-violet-800">{direction}</span>
+        </div>
+      )}
 
       {editing ? (
         <div>
@@ -1235,7 +1241,9 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo }:
             ) : originalItems.length > 0 ? (
               <div className="grid grid-cols-1 gap-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-500">共 {originalItems.length} 条 · 6 稳定型 + 4 探索型</span>
+                  <span className="text-xs font-bold text-slate-500">
+                    共 {originalItems.length} 条 · {originalItems.filter((item) => item.mode === 'stable').length} 稳定型 + {originalItems.filter((item) => item.mode === 'explore').length} 探索型
+                  </span>
                   <button
                     type="button"
                     onClick={handleConfirmRegenerateBatch}
