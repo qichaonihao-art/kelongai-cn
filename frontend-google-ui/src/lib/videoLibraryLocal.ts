@@ -18,6 +18,7 @@ export interface VideoLibraryDirectoryHandle {
   queryPermission(options: { mode: 'readwrite' }): Promise<LocalPermission>;
   requestPermission(options: { mode: 'readwrite' }): Promise<LocalPermission>;
   getFileHandle(name: string, options?: { create?: boolean }): Promise<VideoLibraryWritableFileHandle>;
+  getDirectoryHandle?(name: string, options?: { create?: boolean }): Promise<VideoLibraryDirectoryHandle>;
   removeEntry?(name: string): Promise<void>;
 }
 
@@ -95,6 +96,16 @@ export async function chooseVideoLibraryLocalFolder(folderName: string): Promise
   const binding: StoredFolderBinding = { folderName, handle, updatedAt: Date.now() };
   await runBindingRequest('readwrite', (store) => store.put(binding));
   return binding;
+}
+
+const SHOT_PROJECT_BINDING_PREFIX = 'shot-project:';
+
+export function getVideoLibraryShotProjectBinding(folderName: string) {
+  return getVideoLibraryLocalFolderBinding(`${SHOT_PROJECT_BINDING_PREFIX}${folderName}`);
+}
+
+export function chooseVideoLibraryShotProjectFolder(folderName: string) {
+  return chooseVideoLibraryLocalFolder(`${SHOT_PROJECT_BINDING_PREFIX}${folderName}`);
 }
 
 export async function ensureVideoLibraryLocalFolderPermission(handle: VideoLibraryDirectoryHandle) {
@@ -248,4 +259,75 @@ export async function downloadVideoLibraryItemLocally(input: {
     if (created && !videoComplete && handle.removeEntry) await handle.removeEntry(targetName).catch(() => {});
     throw error;
   }
+}
+
+export interface VideoLibraryShotAssignment {
+  item: VideoLibraryItem;
+  shotNumber: number;
+}
+
+export function planVideoLibraryShotDistribution(
+  items: VideoLibraryItem[],
+  existingAssignments: Record<string, number> = {},
+  shotNumbers: number[] = [2, 3, 4, 5, 6],
+): VideoLibraryShotAssignment[] {
+  const validShots = Array.from(new Set(shotNumbers.map(Number).filter((value) => Number.isInteger(value) && value > 0))).sort((left, right) => left - right);
+  if (!validShots.length) throw new Error('没有可用的目标镜头文件夹');
+
+  const uniqueItems = Array.from(new Map(
+    items
+      .filter((item) => Number.isInteger(Number(item?.id)) && Number(item.id) > 0)
+      .map((item) => [Number(item.id), item]),
+  ).values()).sort((left, right) => Number(left.id) - Number(right.id));
+  const validShotSet = new Set(validShots);
+  const counts = new Map(validShots.map((shotNumber) => [shotNumber, 0]));
+  const assignments = new Map<number, number>();
+
+  for (const item of uniqueItems) {
+    const existingShot = Number(existingAssignments[String(item.id)]);
+    if (!validShotSet.has(existingShot)) continue;
+    assignments.set(item.id, existingShot);
+    counts.set(existingShot, (counts.get(existingShot) || 0) + 1);
+  }
+
+  for (const item of uniqueItems) {
+    if (assignments.has(item.id)) continue;
+    const shotNumber = validShots.reduce((best, current) => {
+      const bestCount = counts.get(best) || 0;
+      const currentCount = counts.get(current) || 0;
+      return currentCount < bestCount ? current : best;
+    }, validShots[0]);
+    assignments.set(item.id, shotNumber);
+    counts.set(shotNumber, (counts.get(shotNumber) || 0) + 1);
+  }
+
+  return uniqueItems.map((item) => ({ item, shotNumber: assignments.get(item.id) || validShots[0] }));
+}
+
+export async function prepareVideoLibraryShotDistribution(input: {
+  rootHandle: VideoLibraryDirectoryHandle;
+  sourceFolderName: string;
+  items: VideoLibraryItem[];
+  shotNumbers?: number[];
+}) {
+  if (!input.rootHandle.getDirectoryHandle) throw new Error('当前浏览器不能创建镜头文件夹，请使用最新版 Chrome 或 Edge。');
+  const shotNumbers = input.shotNumbers || [2, 3, 4, 5, 6];
+  const targets = new Map<number, { handle: VideoLibraryDirectoryHandle; index: VideoLibraryLocalIndex }>();
+  const existingAssignments: Record<string, number> = {};
+
+  for (const shotNumber of shotNumbers) {
+    const handle = await input.rootHandle.getDirectoryHandle(`第${shotNumber}镜头`, { create: true });
+    const index = await loadVideoLibraryLocalIndex(handle, input.sourceFolderName);
+    targets.set(shotNumber, { handle, index });
+    Object.values(index.downloads).forEach((receipt) => {
+      if (receipt.folderName === input.sourceFolderName && existingAssignments[String(receipt.itemId)] === undefined) {
+        existingAssignments[String(receipt.itemId)] = shotNumber;
+      }
+    });
+  }
+
+  const assignments = planVideoLibraryShotDistribution(input.items, existingAssignments, shotNumbers);
+  const plannedCounts = Object.fromEntries(shotNumbers.map((shotNumber) => [shotNumber, 0])) as Record<number, number>;
+  assignments.forEach(({ shotNumber }) => { plannedCounts[shotNumber] = (plannedCounts[shotNumber] || 0) + 1; });
+  return { assignments, targets, plannedCounts };
 }

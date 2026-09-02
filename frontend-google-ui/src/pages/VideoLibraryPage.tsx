@@ -20,10 +20,13 @@ import {
 } from '@/src/lib/videoLibrary';
 import {
   chooseVideoLibraryLocalFolder,
+  chooseVideoLibraryShotProjectFolder,
   downloadVideoLibraryItemLocally,
   ensureVideoLibraryLocalFolderPermission,
   getVideoLibraryLocalFolderBinding,
+  getVideoLibraryShotProjectBinding,
   loadVideoLibraryLocalIndex,
+  prepareVideoLibraryShotDistribution,
   reconcileVideoLibraryLocalIndex,
   supportsVideoLibraryLocalDownload,
   type VideoLibraryDirectoryHandle,
@@ -55,6 +58,21 @@ interface LocalDownloadProgress {
   duplicates: number;
   failed: number;
   currentName: string;
+  errors: string[];
+}
+
+interface ShotDistributionProgress {
+  folderName: string;
+  projectName: string;
+  status: 'running' | 'stopped' | 'completed';
+  total: number;
+  completed: number;
+  downloaded: number;
+  duplicates: number;
+  failed: number;
+  currentName: string;
+  currentShot: number | null;
+  plannedCounts: Record<number, number>;
   errors: string[];
 }
 
@@ -133,6 +151,8 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const previewWarmupRef = useRef<{ id: number; video: HTMLVideoElement } | null>(null);
   const localDownloadControlRef = useRef<'running' | 'paused' | 'stopped'>('running');
   const localDownloadAbortRef = useRef<AbortController | null>(null);
+  const shotDistributionAbortRef = useRef<AbortController | null>(null);
+  const shotDistributionStoppedRef = useRef(false);
   const [items, setItems] = useState<VideoLibraryItem[]>([]);
   const [folders, setFolders] = useState<string[]>([DEFAULT_FOLDER]);
   const [selectedFolder, setSelectedFolder] = useState('');
@@ -157,8 +177,11 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [folderUnreadCounts, setFolderUnreadCounts] = useState<Map<string, number>>(() => new Map());
   const [localFolderHandle, setLocalFolderHandle] = useState<VideoLibraryDirectoryHandle | null>(null);
   const [localFolderName, setLocalFolderName] = useState('');
+  const [shotProjectHandle, setShotProjectHandle] = useState<VideoLibraryDirectoryHandle | null>(null);
+  const [shotProjectName, setShotProjectName] = useState('');
   const [isLocalBindingLoading, setIsLocalBindingLoading] = useState(false);
   const [localDownloadProgress, setLocalDownloadProgress] = useState<LocalDownloadProgress | null>(null);
+  const [shotDistributionProgress, setShotDistributionProgress] = useState<ShotDistributionProgress | null>(null);
 
   function applyUnreadSummary(summary: Awaited<ReturnType<typeof getVideoLibrarySummary>>) {
     const unread = calculateVideoLibraryUnread(summary);
@@ -241,9 +264,33 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     return () => { cancelled = true; };
   }, [selectedFolder]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedFolder) {
+      setShotProjectHandle(null);
+      setShotProjectName('');
+      return;
+    }
+    void getVideoLibraryShotProjectBinding(selectedFolder)
+      .then((binding) => {
+        if (cancelled) return;
+        setShotProjectHandle(binding?.handle || null);
+        setShotProjectName(binding?.handle?.name || '');
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setShotProjectHandle(null);
+          setShotProjectName('');
+        }
+      });
+    return () => { cancelled = true; };
+  }, [selectedFolder]);
+
   useEffect(() => () => {
     localDownloadControlRef.current = 'stopped';
     localDownloadAbortRef.current?.abort();
+    shotDistributionStoppedRef.current = true;
+    shotDistributionAbortRef.current?.abort();
   }, []);
 
   useEffect(() => () => {
@@ -492,15 +539,34 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     setSelectedItem(item);
   }
 
-  function handleSingleVideoDownload(item: VideoLibraryItem) {
+  async function handleSingleVideoDownload(item: VideoLibraryItem) {
     const latestItem = items.find((current) => current.id === item.id) || item;
     if (!confirmSingleUnenhancedDownload(latestItem)) return;
-    const link = document.createElement('a');
-    link.href = latestItem.downloadUrl;
-    link.download = latestItem.downloadName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    if (!supportsVideoLibraryLocalDownload()) {
+      setError('当前浏览器不能把视频直接写入指定文件夹，请使用最新版 Chrome 或 Edge，并通过 HTTPS 打开系统。');
+      return;
+    }
+    setError('');
+    setNotice('');
+    try {
+      let handle = latestItem.folderName === selectedFolder ? localFolderHandle : null;
+      if (!handle) handle = (await getVideoLibraryLocalFolderBinding(latestItem.folderName))?.handle || null;
+      if (!handle) handle = (await chooseVideoLibraryLocalFolder(latestItem.folderName)).handle;
+      if (!await ensureVideoLibraryLocalFolderPermission(handle)) throw new Error('没有获得目标文件夹写入权限，请重新选择并允许访问。');
+      if (latestItem.folderName === selectedFolder) {
+        setLocalFolderHandle(handle);
+        setLocalFolderName(handle.name);
+      }
+      const index = await loadVideoLibraryLocalIndex(handle, latestItem.folderName);
+      const result = await downloadVideoLibraryItemLocally({ item: latestItem, handle, index });
+      removeLocalUnreadItem(latestItem);
+      setNotice(result.status === 'duplicate'
+        ? `文件已存在于“${handle.name}”，没有重复下载。`
+        : `“${latestItem.downloadName || latestItem.originalName}”已保存到“${handle.name}”。`);
+    } catch (downloadError) {
+      if (downloadError instanceof DOMException && downloadError.name === 'AbortError') return;
+      setError(downloadError instanceof Error ? downloadError.message : '下载视频失败');
+    }
   }
 
   function removeLocalUnreadItem(item: VideoLibraryItem) {
@@ -620,6 +686,122 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       if (downloadError instanceof DOMException && downloadError.name === 'AbortError') return;
       setError(downloadError instanceof Error ? downloadError.message : '下载新素材失败');
     }
+  }
+
+  async function handleDistributeToShotFolders(forceChooseProject = false) {
+    if (!selectedFolder || shotDistributionProgress?.status === 'running') return;
+    if (!supportsVideoLibraryLocalDownload()) {
+      setError('当前浏览器不支持自动写入剪辑项目，请使用最新版 Chrome 或 Edge，并通过 HTTPS 打开系统。');
+      return;
+    }
+    if (forceChooseProject && !window.confirm('更换剪辑项目后，本次会把当前款式素材均分到新项目的第2至第6镜头。确定继续吗？')) return;
+
+    setError('');
+    setNotice('');
+    try {
+      let rootHandle = shotProjectHandle;
+      if (!rootHandle || forceChooseProject) {
+        const binding = await chooseVideoLibraryShotProjectFolder(selectedFolder);
+        rootHandle = binding.handle;
+        setShotProjectHandle(rootHandle);
+        setShotProjectName(rootHandle.name);
+      }
+      if (!await ensureVideoLibraryLocalFolderPermission(rootHandle)) {
+        throw new Error('没有获得剪辑项目文件夹写入权限，请重新选择并允许访问。');
+      }
+
+      const { items: folderItems } = await getVideoLibrary({ folder: selectedFolder, query: '' });
+      if (!folderItems.length) throw new Error(`“${selectedFolder}”没有可以分配的视频素材。`);
+      if (!confirmBatchUnenhancedDownload(folderItems)) return;
+      const prepared = await prepareVideoLibraryShotDistribution({
+        rootHandle,
+        sourceFolderName: selectedFolder,
+        items: folderItems,
+      });
+      if (prepared.assignments.length !== folderItems.length) {
+        throw new Error(`素材清单校验失败：读取到 ${folderItems.length} 个，但只有 ${prepared.assignments.length} 个有效素材，已停止以避免遗漏。`);
+      }
+
+      shotDistributionStoppedRef.current = false;
+      let progress: ShotDistributionProgress = {
+        folderName: selectedFolder,
+        projectName: rootHandle.name,
+        status: 'running',
+        total: prepared.assignments.length,
+        completed: 0,
+        downloaded: 0,
+        duplicates: 0,
+        failed: 0,
+        currentName: '',
+        currentShot: null,
+        plannedCounts: prepared.plannedCounts,
+        errors: [],
+      };
+      setShotDistributionProgress(progress);
+
+      for (const assignment of prepared.assignments) {
+        if (shotDistributionStoppedRef.current) break;
+        const target = prepared.targets.get(assignment.shotNumber);
+        if (!target) throw new Error(`第${assignment.shotNumber}镜头准备失败，已停止分配。`);
+        progress = {
+          ...progress,
+          currentName: assignment.item.downloadName || assignment.item.originalName,
+          currentShot: assignment.shotNumber,
+        };
+        setShotDistributionProgress(progress);
+        const controller = new AbortController();
+        shotDistributionAbortRef.current = controller;
+        try {
+          const result = await downloadVideoLibraryItemLocally({
+            item: assignment.item,
+            handle: target.handle,
+            index: target.index,
+            signal: controller.signal,
+          });
+          removeLocalUnreadItem(assignment.item);
+          progress = {
+            ...progress,
+            completed: progress.completed + 1,
+            downloaded: progress.downloaded + (result.status === 'downloaded' ? 1 : 0),
+            duplicates: progress.duplicates + (result.status === 'duplicate' ? 1 : 0),
+          };
+        } catch (distributionError) {
+          if (shotDistributionStoppedRef.current && distributionError instanceof DOMException && distributionError.name === 'AbortError') break;
+          const message = distributionError instanceof Error ? distributionError.message : '保存失败';
+          progress = {
+            ...progress,
+            completed: progress.completed + 1,
+            failed: progress.failed + 1,
+            errors: [...progress.errors, `${assignment.item.originalName} → 第${assignment.shotNumber}镜头：${message}`],
+          };
+        } finally {
+          shotDistributionAbortRef.current = null;
+        }
+        setShotDistributionProgress(progress);
+      }
+
+      const stopped = shotDistributionStoppedRef.current;
+      progress = { ...progress, status: stopped ? 'stopped' : 'completed', currentName: '', currentShot: null };
+      setShotDistributionProgress(progress);
+      await refreshUnreadSummary();
+      const countText = [2, 3, 4, 5, 6].map((shot) => `第${shot}镜头 ${progress.plannedCounts[shot] || 0} 个`).join('、');
+      if (stopped) {
+        setNotice(`均分已终止：已处理 ${progress.completed}/${progress.total}，重新执行会自动跳过已完成素材并继续补齐。`);
+      } else if (progress.failed) {
+        setNotice(`均分完成但有 ${progress.failed} 个失败：成功或已存在 ${progress.completed - progress.failed} 个；再次执行可补齐。计划数量：${countText}。`);
+      } else {
+        setNotice(`均分并校验完成：共 ${progress.total} 个，重复分配 0、遗漏 0；${countText}。`);
+      }
+    } catch (distributionError) {
+      if (distributionError instanceof DOMException && distributionError.name === 'AbortError') return;
+      setError(distributionError instanceof Error ? distributionError.message : '素材均分失败');
+    }
+  }
+
+  function stopShotDistribution() {
+    shotDistributionStoppedRef.current = true;
+    shotDistributionAbortRef.current?.abort();
+    setShotDistributionProgress((previous) => previous ? { ...previous, status: 'stopped', currentName: '', currentShot: null } : previous);
   }
 
   function toggleLocalDownloadPause() {
@@ -748,7 +930,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
           )}
           {item.note && <p className="mt-2 line-clamp-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-bold leading-4 text-amber-700">{item.note}</p>}
           <div className="mt-2 flex items-center gap-1.5">
-            <button type="button" onClick={() => handleSingleVideoDownload(item)} className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-200">
+            <button type="button" onClick={() => void handleSingleVideoDownload(item)} className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-200">
               <Download className="size-3" />下载
             </button>
             <button type="button" onClick={() => openMoveDialog(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-sky-50 hover:text-sky-600" title="移动到其他文件夹">
@@ -826,7 +1008,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
                     <button
                       type="button"
                       onClick={() => void handleDownloadNewMaterials(false)}
-                      disabled={isLocalBindingLoading || localDownloadProgress?.status === 'running' || localDownloadProgress?.status === 'paused'}
+                      disabled={isLocalBindingLoading || localDownloadProgress?.status === 'running' || localDownloadProgress?.status === 'paused' || shotDistributionProgress?.status === 'running'}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-[11px] font-black text-white shadow-sm hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {localDownloadProgress?.folderName === folder && localDownloadProgress.status === 'running' ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
@@ -836,10 +1018,30 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
                       <button
                         type="button"
                         onClick={() => void handleDownloadNewMaterials(true)}
-                        disabled={localDownloadProgress?.status === 'running' || localDownloadProgress?.status === 'paused'}
+                        disabled={localDownloadProgress?.status === 'running' || localDownloadProgress?.status === 'paused' || shotDistributionProgress?.status === 'running'}
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-500 hover:bg-slate-50 disabled:opacity-50"
                         title="更换这个素材库文件夹对应的电脑保存位置"
                       ><FolderCog className="size-3.5" />更换位置</button>
+                    )}
+                    {shotProjectName && <span className="hidden max-w-48 truncate text-[10px] font-bold text-violet-500 md:inline" title={`剪辑项目：${shotProjectName}`}>剪辑项目：{shotProjectName}</span>}
+                    <button
+                      type="button"
+                      onClick={() => void handleDistributeToShotFolders(false)}
+                      disabled={shotDistributionProgress?.status === 'running' || localDownloadProgress?.status === 'running' || localDownloadProgress?.status === 'paused'}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-violet-500 px-3 py-1.5 text-[11px] font-black text-white shadow-sm hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-50"
+                      title="把当前款式的全部素材平均复制到剪辑项目的第2至第6镜头"
+                    >
+                      {shotDistributionProgress?.folderName === folder && shotDistributionProgress.status === 'running' ? <Loader2 className="size-3.5 animate-spin" /> : <FolderInput className="size-3.5" />}
+                      均分到第2-6镜头
+                    </button>
+                    {shotProjectHandle && (
+                      <button
+                        type="button"
+                        onClick={() => void handleDistributeToShotFolders(true)}
+                        disabled={shotDistributionProgress?.status === 'running' || localDownloadProgress?.status === 'running' || localDownloadProgress?.status === 'paused'}
+                        className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-violet-600 hover:bg-violet-50 disabled:opacity-50"
+                        title="更换当前款式对应的本地剪辑项目根目录"
+                      ><FolderCog className="size-3.5" />更换剪辑项目</button>
                     )}
                   </>
                 )}
@@ -873,6 +1075,35 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
                 </div>
                 {localDownloadProgress.currentName && <p className="mt-2 truncate text-[11px] font-semibold text-slate-500">当前：{localDownloadProgress.currentName}</p>}
                 {localDownloadProgress.errors.length > 0 && <div className="mt-3 max-h-24 overflow-y-auto rounded-xl bg-white/80 px-3 py-2 text-[10px] font-bold leading-5 text-red-500">{localDownloadProgress.errors.map((message) => <p key={message}>{message}</p>)}</div>}
+              </div>
+            )}
+            {selectedFolder === folder && shotDistributionProgress?.folderName === folder && (
+              <div className="mb-4 rounded-2xl border border-violet-100 bg-violet-50/70 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-black text-slate-700">
+                      {shotDistributionProgress.status === 'completed' ? <CheckCircle2 className="size-4 text-violet-500" /> : shotDistributionProgress.status === 'running' ? <Loader2 className="size-4 animate-spin text-violet-500" /> : <Square className="size-4 text-violet-500" />}
+                      {shotDistributionProgress.status === 'running' ? '正在均分到第2至第6镜头' : shotDistributionProgress.status === 'stopped' ? '均分已终止' : '本次均分完成'}
+                    </div>
+                    <p className="mt-1 text-[11px] font-bold text-slate-500">
+                      剪辑项目：{shotDistributionProgress.projectName} · 已处理 {shotDistributionProgress.completed}/{shotDistributionProgress.total} · 新复制 {shotDistributionProgress.downloaded} · 已存在 {shotDistributionProgress.duplicates} · 失败 {shotDistributionProgress.failed}
+                    </p>
+                    <p className="mt-1 text-[10px] font-bold text-violet-600">
+                      {[2, 3, 4, 5, 6].map((shot) => `第${shot}镜头 ${shotDistributionProgress.plannedCounts[shot] || 0} 个`).join(' · ')}
+                    </p>
+                  </div>
+                  {shotDistributionProgress.status === 'running' && (
+                    <button type="button" onClick={stopShotDistribution} className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-[11px] font-black text-red-600 hover:bg-red-50"><Square className="size-3" />终止</button>
+                  )}
+                  {(shotDistributionProgress.status === 'completed' || shotDistributionProgress.status === 'stopped') && shotDistributionProgress.failed > 0 && (
+                    <button type="button" onClick={() => void handleDistributeToShotFolders(false)} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-black text-white hover:bg-amber-600"><RefreshCw className="size-3" />补齐失败项</button>
+                  )}
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-violet-100">
+                  <div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${shotDistributionProgress.total ? (shotDistributionProgress.completed / shotDistributionProgress.total) * 100 : 100}%` }} />
+                </div>
+                {shotDistributionProgress.currentName && <p className="mt-2 truncate text-[11px] font-semibold text-slate-500">当前：{shotDistributionProgress.currentName} → 第{shotDistributionProgress.currentShot}镜头</p>}
+                {shotDistributionProgress.errors.length > 0 && <div className="mt-3 max-h-24 overflow-y-auto rounded-xl bg-white/80 px-3 py-2 text-[10px] font-bold leading-5 text-red-500">{shotDistributionProgress.errors.map((message) => <p key={message}>{message}</p>)}</div>}
               </div>
             )}
             <div className="space-y-6">
@@ -990,7 +1221,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
         </div>
       )}
 
-      {selectedItem && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onMouseDown={() => setSelectedItem(null)}><div className="w-full max-w-3xl rounded-3xl bg-white p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-center justify-between gap-3 px-2 pb-3"><div className="min-w-0"><h2 className="truncate text-lg font-black">{selectedItem.originalName}</h2><p className="text-xs font-semibold text-slate-400">{selectedItem.folderName} · {formatVideoLibrarySize(selectedItem.fileSize)}</p></div><button type="button" onClick={() => setSelectedItem(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="size-5" /></button></div><video key={selectedItem.id} src={selectedItem.streamUrl} poster={selectedItem.thumbnailUrl} controls autoPlay playsInline preload="auto" className="max-h-[65vh] w-full rounded-2xl bg-black" /><div className="mt-4 flex gap-2"><input defaultValue={selectedItem.note} onKeyDown={(event) => { if (event.key === 'Enter') void handleSaveNote(selectedItem, event.currentTarget.value); }} placeholder="输入备注后按回车保存" className="h-11 min-w-0 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold outline-none focus:border-sky-300 focus:bg-white" /><button type="button" onClick={() => handleSingleVideoDownload(selectedItem)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-black text-white"><Download className="size-4" />下载</button></div></div></div>}
+      {selectedItem && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onMouseDown={() => setSelectedItem(null)}><div className="w-full max-w-3xl rounded-3xl bg-white p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-center justify-between gap-3 px-2 pb-3"><div className="min-w-0"><h2 className="truncate text-lg font-black">{selectedItem.originalName}</h2><p className="text-xs font-semibold text-slate-400">{selectedItem.folderName} · {formatVideoLibrarySize(selectedItem.fileSize)}</p></div><button type="button" onClick={() => setSelectedItem(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="size-5" /></button></div><video key={selectedItem.id} src={selectedItem.streamUrl} poster={selectedItem.thumbnailUrl} controls autoPlay playsInline preload="auto" className="max-h-[65vh] w-full rounded-2xl bg-black" /><div className="mt-4 flex gap-2"><input defaultValue={selectedItem.note} onKeyDown={(event) => { if (event.key === 'Enter') void handleSaveNote(selectedItem, event.currentTarget.value); }} placeholder="输入备注后按回车保存" className="h-11 min-w-0 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold outline-none focus:border-sky-300 focus:bg-white" /><button type="button" onClick={() => void handleSingleVideoDownload(selectedItem)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-black text-white"><Download className="size-4" />下载</button></div></div></div>}
     </main>
   );
 }
