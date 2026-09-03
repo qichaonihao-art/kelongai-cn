@@ -76,6 +76,9 @@ let videoEnhancementWorkerTimer = null;
 let videoEnhancementWorkerActive = false;
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
 const VOICE_ARCHIVE_FILE = path.join(RUNTIME_STATE_DIR, 'voice-archive.json');
+// 本地批量剪辑软件专用的镜头音色库。它与 AI 工作平台常用音色档案完全隔离，
+// 不得合并到 VOICE_ARCHIVE_FILE，也不得出现在平台的常用音色列表中。
+const LOCAL_EDITOR_SHOT_VOICES_FILE = path.join(RUNTIME_STATE_DIR, 'local-editor-shot-voices.json');
 const HOME_CULTURE_MOTTOS_FILE = path.join(RUNTIME_STATE_DIR, 'home-culture-mottos.json');
 const TEAM_TIMELINE_FILE = path.join(RUNTIME_STATE_DIR, 'team-timeline.json');
 const CREATIVE_FEEDING_SETTINGS_FILE = path.join(RUNTIME_STATE_DIR, 'creative-feeding-settings.json');
@@ -211,6 +214,7 @@ const VOLC_SPEAKER_POOL_FULL_MESSAGE = '火山音色槽位已满，请删除旧�
 let volcSpeakerOwnershipState = null;
 let volcSpeakerOwnershipQueue = Promise.resolve();
 let voiceArchiveQueue = Promise.resolve();
+let localEditorShotVoiceQueue = Promise.resolve();
 let volcSpeakerRemoteStatusCache = {
   key: '',
   expiresAt: 0,
@@ -11716,67 +11720,179 @@ async function handleAliyunTts(req, res) {
   }
 }
 
+async function createAliyunRemoteVoice({ apiKey, targetModel, preferredName, audioData, mockMode = false }) {
+  const resolvedApiKey = readValue(apiKey, SERVER_CONFIG.aliyunApiKey);
+  const normalizedPreferredName = normalizeAliyunPreferredName(preferredName);
+  if (shouldUseVoiceCloneMock({ mockMode })) {
+    return buildMockVoiceClonePayload('aliyun', normalizedPreferredName);
+  }
+  if (!resolvedApiKey) {
+    const error = new Error('阿里云真实模式缺少 API Key，请在 legacy-project/.env 中配置 ALIYUN_API_KEY');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!targetModel || !audioData) {
+    const error = new Error('阿里云音色创建缺少 targetModel 或 audioData');
+    error.statusCode = 400;
+    throw error;
+  }
+  const upstreamRes = await fetch('https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resolvedApiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'qwen-voice-enrollment',
+      input: {
+        action: 'create',
+        target_model: targetModel,
+        preferred_name: normalizedPreferredName,
+        audio: { data: audioData }
+      }
+    })
+  });
+  const json = await upstreamRes.json();
+  if (!upstreamRes.ok) {
+    const error = new Error(json.message || json.code || '阿里云创建音色失败');
+    error.statusCode = upstreamRes.status;
+    error.raw = json;
+    throw error;
+  }
+  return json;
+}
+
 async function handleAliyunVoiceCreate(req, res) {
   try {
     const body = await readRequestBody(req);
-    const { apiKey, targetModel, preferredName, audioData } = body;
-    const resolvedApiKey = readValue(apiKey, SERVER_CONFIG.aliyunApiKey);
-    const normalizedPreferredName = normalizeAliyunPreferredName(preferredName);
-
-    if (shouldUseVoiceCloneMock(body)) {
-      sendJson(res, 200, buildMockVoiceClonePayload('aliyun', normalizedPreferredName));
-      return;
-    }
-
-    if (!resolvedApiKey) {
-      sendJson(res, 400, { error: '阿里云真实模式缺少 API Key，请在前端填写或在 legacy-project/.env 中配置 ALIYUN_API_KEY' });
-      return;
-    }
-
-    if (!targetModel || !audioData) {
-      sendJson(res, 400, { error: '阿里云音色创建缺少 targetModel 或 audioData' });
-      return;
-    }
-
-    const upstreamRes = await fetch('https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${resolvedApiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'qwen-voice-enrollment',
-        input: {
-          action: 'create',
-          target_model: targetModel,
-          preferred_name: normalizedPreferredName,
-          audio: {
-            data: audioData
-          }
-        }
-      })
-    });
-
-    const json = await upstreamRes.json();
-    if (!upstreamRes.ok) {
-      sendJson(res, upstreamRes.status, {
-        error: json.message || json.code || '阿里云创建音色失败',
-        raw: json
-      });
-      return;
-    }
-
+    const { targetModel, preferredName } = body;
+    const json = await createAliyunRemoteVoice(body);
+    const remoteVoiceId = readValue(json?.output?.voice, json?.voiceId);
+    if (!remoteVoiceId) throw new Error('阿里云创建音色成功但没有返回音色ID');
     await addVoiceToArchive({
       name: readValue(preferredName) || '未命名音色',
       provider: 'aliyun',
       providerLabel: '阿里云',
-      remoteVoiceId: json?.output?.voice || json?.voiceId || '',
+      remoteVoiceId,
       engineModel: targetModel,
       createdAt: new Date().toISOString(),
     });
     sendJson(res, 200, json);
   } catch (error) {
-    sendJson(res, 500, { error: error.message || '阿里云创建音色失败' });
+    sendJson(res, Number(error?.statusCode) || 500, {
+      error: error.message || '阿里云创建音色失败',
+      ...(error?.raw ? { raw: error.raw } : {})
+    });
+  }
+}
+
+function createEmptyLocalEditorShotVoiceLibrary() {
+  return { version: 1, records: [] };
+}
+
+function sanitizeLocalEditorShotVoiceLibrary(value) {
+  const records = [];
+  for (const item of Array.isArray(value?.records) ? value.records : []) {
+    const fingerprint = readValue(item?.fingerprint);
+    const remoteVoiceId = readValue(item?.remoteVoiceId);
+    if (!fingerprint || !remoteVoiceId) continue;
+    records.push({
+      id: readValue(item.id) || `shot_voice_${fingerprint.slice(0, 12)}`,
+      name: readValue(item.name) || `镜头音色-${fingerprint.slice(0, 8)}`,
+      fingerprint,
+      sourceName: readValue(item.sourceName),
+      projectName: readValue(item.projectName),
+      provider: 'aliyun',
+      providerLabel: '阿里云·镜头专用',
+      remoteVoiceId,
+      engineModel: readValue(item.engineModel) || 'qwen3-tts-vc-realtime-2026-01-15',
+      status: readValue(item.status) || 'ready',
+      createdAt: readValue(item.createdAt) || new Date().toISOString(),
+      lastUsedAt: readValue(item.lastUsedAt) || readValue(item.createdAt) || new Date().toISOString(),
+      useCount: Math.max(0, Number(item.useCount) || 0)
+    });
+  }
+  return { version: 1, records };
+}
+
+async function loadLocalEditorShotVoiceLibrary() {
+  try {
+    const raw = await readFile(LOCAL_EDITOR_SHOT_VOICES_FILE, 'utf8');
+    return sanitizeLocalEditorShotVoiceLibrary(parseJsonString(raw, createEmptyLocalEditorShotVoiceLibrary()));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.error('[local editor shot voices] load_failed', { message: error?.message || '' });
+    }
+    return createEmptyLocalEditorShotVoiceLibrary();
+  }
+}
+
+async function saveLocalEditorShotVoiceLibrary(library) {
+  await ensureRuntimeStateDir();
+  await writeFile(LOCAL_EDITOR_SHOT_VOICES_FILE, JSON.stringify(library, null, 2), 'utf8');
+}
+
+function withLocalEditorShotVoiceLock(callback) {
+  const next = localEditorShotVoiceQueue.then(callback, callback);
+  localEditorShotVoiceQueue = next.then(() => undefined, () => undefined);
+  return next;
+}
+
+async function handleGetLocalEditorShotVoices(_req, res) {
+  const library = await loadLocalEditorShotVoiceLibrary();
+  sendJson(res, 200, { ok: true, records: library.records });
+}
+
+async function handleResolveLocalEditorShotVoice(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const fingerprint = readValue(body?.fingerprint).toLowerCase();
+    if (!/^[a-f0-9]{32,128}$/.test(fingerprint)) {
+      sendJson(res, 400, { error: '镜头声音指纹不合法' });
+      return;
+    }
+    const result = await withLocalEditorShotVoiceLock(async () => {
+      const library = await loadLocalEditorShotVoiceLibrary();
+      const existing = library.records.find((item) => item.fingerprint === fingerprint && item.status !== 'disabled');
+      const now = new Date().toISOString();
+      if (existing) {
+        existing.lastUsedAt = now;
+        existing.useCount = Math.max(0, Number(existing.useCount) || 0) + 1;
+        await saveLocalEditorShotVoiceLibrary(library);
+        return { voice: existing, reused: true };
+      }
+      const targetModel = readValue(body?.targetModel) || 'qwen3-tts-vc-realtime-2026-01-15';
+      const json = await createAliyunRemoteVoice({
+        targetModel,
+        preferredName: `shot${fingerprint.slice(0, 12)}`,
+        audioData: readValue(body?.audioData),
+        mockMode: body?.mockMode === true
+      });
+      const remoteVoiceId = readValue(json?.output?.voice, json?.voiceId);
+      if (!remoteVoiceId) throw new Error('阿里云创建镜头音色成功但没有返回音色ID');
+      const sourceName = readValue(body?.sourceName).slice(0, 180);
+      const record = {
+        id: `shot_voice_${fingerprint.slice(0, 16)}`,
+        name: sourceName ? `镜头音色-${sourceName.replace(/\.[^.]+$/, '').slice(0, 60)}` : `镜头音色-${fingerprint.slice(0, 8)}`,
+        fingerprint,
+        sourceName,
+        projectName: readValue(body?.projectName).slice(0, 100),
+        provider: 'aliyun',
+        providerLabel: '阿里云·镜头专用',
+        remoteVoiceId,
+        engineModel: targetModel,
+        status: 'ready',
+        createdAt: now,
+        lastUsedAt: now,
+        useCount: 1
+      };
+      library.records.push(record);
+      await saveLocalEditorShotVoiceLibrary(library);
+      return { voice: record, reused: false };
+    });
+    sendJson(res, 200, { ok: true, ...result });
+  } catch (error) {
+    sendJson(res, Number(error?.statusCode) || 500, { error: error.message || '镜头专用音色创建失败' });
   }
 }
 
@@ -19418,6 +19534,21 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/voice/aliyun') {
     await handleAliyunVoiceCreate(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/local-editor/shot-voices') {
+    await handleGetLocalEditorShotVoices(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/local-editor/shot-voices/resolve') {
+    await handleResolveLocalEditorShotVoice(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/local-editor/shot-voices/tts') {
+    await handleAliyunTts(req, res);
     return;
   }
 

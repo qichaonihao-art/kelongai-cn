@@ -140,9 +140,10 @@ http://127.0.0.1:3000
 
 ```text
 /www/wwwroot/kelongai-runtime-state/voice-archive.json
+/www/wwwroot/kelongai-runtime-state/local-editor-shot-voices.json
 ```
 
-这个文件不能删除、不能清空、不能被部署流程覆盖。店铺总览、声音克隆、视频解析等任何模块维护时，都不要动 `/www/wwwroot/kelongai-runtime-state`。
+前者是AI工作平台公共“我的音色”，后者是本地剪辑软件镜头一克隆的专用音色库；两者不能合并或相互覆盖。专用文件在首次使用后自动创建。这些文件都不能删除、不能清空、不能被部署流程覆盖。店铺总览、声音克隆、视频解析等任何模块维护时，都不要动 `/www/wwwroot/kelongai-runtime-state`。
 
 部署前先确认 `.env`：
 

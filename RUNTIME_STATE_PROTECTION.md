@@ -30,9 +30,12 @@ RUNTIME_STATE_DIR=/www/wwwroot/kelongai-runtime-state
 
 ```text
 /www/wwwroot/kelongai-runtime-state/voice-archive.json
+/www/wwwroot/kelongai-runtime-state/local-editor-shot-voices.json
 ```
 
 这是声音克隆“我的音色”的服务器统一档案，多设备同步依赖它。
+
+其中`local-editor-shot-voices.json`是本地批量剪辑软件“镜头一同音色衔接”的独立阿里云音色档案。它与公共`voice-archive.json`用途不同，禁止合并、相互覆盖或把其中音色展示到AI工作平台的“我的音色”。文件在首次使用该功能时自动创建；尚未创建不代表故障。
 
 同时保护：
 
@@ -64,6 +67,7 @@ RUNTIME_STATE_DIR=/www/wwwroot/kelongai-runtime-state
 rm -rf /www/wwwroot/kelongai-runtime-state
 rm -rf /www/wwwroot/kelongai-runtime-state/*
 rm -f /www/wwwroot/kelongai-runtime-state/voice-archive.json
+rm -f /www/wwwroot/kelongai-runtime-state/local-editor-shot-voices.json
 ```
 
 同样不要删除：
@@ -88,6 +92,7 @@ rm -rf /www/wwwroot/kelongai-cn/legacy-project/ai/*
 grep '^RUNTIME_STATE_DIR=' /www/wwwroot/kelongai-cn/legacy-project/.env
 ls -lah /www/wwwroot/kelongai-runtime-state
 test -f /www/wwwroot/kelongai-runtime-state/voice-archive.json && echo "voice archive OK"
+test ! -f /www/wwwroot/kelongai-runtime-state/local-editor-shot-voices.json || echo "local editor shot voices OK"
 ```
 
 如果 `RUNTIME_STATE_DIR` 不是 `/www/wwwroot/kelongai-runtime-state`，先修正 `.env`，再重启服务。
