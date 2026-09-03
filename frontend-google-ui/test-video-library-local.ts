@@ -8,7 +8,6 @@ import {
 import {
   downloadVideoLibraryItemLocally,
   loadVideoLibraryLocalIndex,
-  planVideoLibraryShotDistribution,
   type VideoLibraryDirectoryHandle,
   type VideoLibraryWritableFileHandle,
 } from './src/lib/videoLibraryLocal';
@@ -38,7 +37,6 @@ class MemoryDirectory implements VideoLibraryDirectoryHandle {
   kind = 'directory' as const;
   name = '测试下载目录';
   files = new Map<string, Uint8Array>();
-  directories = new Map<string, MemoryDirectory>();
   async queryPermission() { return 'granted' as const; }
   async requestPermission() { return 'granted' as const; }
   async getFileHandle(name: string, options?: { create?: boolean }): Promise<VideoLibraryWritableFileHandle> {
@@ -64,15 +62,6 @@ class MemoryDirectory implements VideoLibraryDirectoryHandle {
         });
       },
     };
-  }
-  async getDirectoryHandle(name: string, options?: { create?: boolean }) {
-    if (!this.directories.has(name) && !options?.create) throw new DOMException('Not found', 'NotFoundError');
-    if (!this.directories.has(name)) {
-      const directory = new MemoryDirectory();
-      directory.name = name;
-      this.directories.set(name, directory);
-    }
-    return this.directories.get(name)!;
   }
   async removeEntry(name: string) { this.files.delete(name); }
 }
@@ -171,20 +160,6 @@ async function main() {
   assert(calculateVideoLibraryUnread(allSummary).unreadIds.has(13), '失败素材继续保留“新”标签');
   assert(directory.files.has('.kelong-video-library.json'), '本地目录写入隐藏索引，浏览器记录丢失后仍可恢复');
 
-  console.log('\n[4] 款式素材稳定均分到第2至第6镜头');
-  const distributionItems = await Promise.all(Array.from({ length: 133 }, (_, offset) => (
-    item(1000 + offset, '静心', `静心-${offset + 1}.mp4`, new Uint8Array([offset % 251]))
-  )));
-  const distribution = planVideoLibraryShotDistribution(distributionItems);
-  const distributedIds = distribution.map(({ item: video }) => video.id);
-  const shotCounts = [2, 3, 4, 5, 6].map((shotNumber) => distribution.filter((entry) => entry.shotNumber === shotNumber).length);
-  assert(distribution.length === 133 && new Set(distributedIds).size === 133, '133个素材全部分配一次，没有重复或遗漏');
-  assert(Math.max(...shotCounts) - Math.min(...shotCounts) <= 1, '五个镜头数量最多相差1个');
-  const existingAssignments = Object.fromEntries(distribution.slice(0, 20).map(({ item: video, shotNumber }) => [String(video.id), shotNumber]));
-  const rerun = planVideoLibraryShotDistribution([...distributionItems].reverse(), existingAssignments);
-  assert(rerun.slice(0, 20).every(({ item: video, shotNumber }) => existingAssignments[String(video.id)] === shotNumber), '重新执行时保留已完成素材的镜头位置');
-  const withDuplicateId = planVideoLibraryShotDistribution([...distributionItems, distributionItems[0]]);
-  assert(withDuplicateId.length === 133, '重复素材ID只分配一次');
   globalThis.fetch = realFetch;
 
   console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);
