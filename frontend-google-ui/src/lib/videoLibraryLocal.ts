@@ -3,6 +3,16 @@ import { markVideoLibraryItemsRead, type VideoLibraryItem } from './videoLibrary
 const LOCAL_FOLDER_DB_NAME = 'kelongai-video-library-local-v1';
 const LOCAL_FOLDER_STORE = 'folder-bindings';
 const LOCAL_INDEX_FILE = '.kelong-video-library.json';
+const DAILY_DESTINATION_KEY = '__daily-download-destination__';
+
+export function videoLibraryDownloadDay(timestamp = Date.now()) {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+}
+
+export function isVideoLibraryDestinationCurrent(updatedAt: number, now = Date.now()) {
+  return videoLibraryDownloadDay(updatedAt) === videoLibraryDownloadDay(now);
+}
 
 type LocalPermission = 'granted' | 'denied' | 'prompt';
 
@@ -69,9 +79,10 @@ async function runBindingRequest<T>(mode: IDBTransactionMode, action: (store: ID
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(LOCAL_FOLDER_STORE, mode);
     const request = action(transaction.objectStore(LOCAL_FOLDER_STORE));
-    request.onsuccess = () => resolve(request.result);
+    // 写入事务完成后才报告成功，避免界面已经切换但绑定未保存。
     request.onerror = () => reject(request.error || new Error('本地文件夹绑定操作失败'));
-    transaction.oncomplete = () => db.close();
+    transaction.oncomplete = () => { db.close(); resolve(request.result); };
+    transaction.onabort = () => { db.close(); reject(transaction.error || new Error('保存位置未能记住，请重新选择')); };
     transaction.onerror = () => {
       db.close();
       reject(transaction.error || new Error('本地文件夹绑定操作失败'));
@@ -83,16 +94,16 @@ export function supportsVideoLibraryLocalDownload() {
   return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function' && typeof indexedDB !== 'undefined';
 }
 
-export async function getVideoLibraryLocalFolderBinding(folderName: string): Promise<StoredFolderBinding | null> {
+export async function getVideoLibraryLocalFolderBinding(): Promise<StoredFolderBinding | null> {
   if (!supportsVideoLibraryLocalDownload()) return null;
-  const result = await runBindingRequest<StoredFolderBinding | undefined>('readonly', (store) => store.get(folderName));
-  return result || null;
+  const result = await runBindingRequest<StoredFolderBinding | undefined>('readonly', (store) => store.get(DAILY_DESTINATION_KEY));
+  return result && isVideoLibraryDestinationCurrent(result.updatedAt) ? result : null;
 }
 
-export async function chooseVideoLibraryLocalFolder(folderName: string): Promise<StoredFolderBinding> {
+export async function chooseVideoLibraryLocalFolder(): Promise<StoredFolderBinding> {
   if (!window.showDirectoryPicker) throw new Error('当前浏览器不支持直接保存到本地文件夹，请使用最新版 Chrome 或 Edge。');
   const handle = await window.showDirectoryPicker({ mode: 'readwrite', startIn: 'downloads' });
-  const binding: StoredFolderBinding = { folderName, handle, updatedAt: Date.now() };
+  const binding: StoredFolderBinding = { folderName: DAILY_DESTINATION_KEY, handle, updatedAt: Date.now() };
   await runBindingRequest('readwrite', (store) => store.put(binding));
   return binding;
 }
@@ -157,7 +168,7 @@ async function sha256File(file: File) {
 
 async function isSameLocalVideo(file: File, item: VideoLibraryItem) {
   if (Number(file.size) !== Number(item.fileSize)) return false;
-  if (!item.sha256 || !crypto?.subtle) return true;
+  if (!item.sha256 || !crypto?.subtle) return false;
   return (await sha256File(file)).toLowerCase() === String(item.sha256).toLowerCase();
 }
 
@@ -208,6 +219,7 @@ export async function downloadVideoLibraryItemLocally(input: {
   signal?: AbortSignal;
 }): Promise<{ status: 'downloaded' | 'duplicate'; fileName: string }> {
   const { item, handle, index, signal } = input;
+  signal?.throwIfAborted();
   const requestedName = sanitizeLocalVideoName(item.downloadName || item.originalName, item.id);
   const recorded = index.downloads[String(item.id)];
   if (recorded?.folderName === item.folderName) {
@@ -219,28 +231,34 @@ export async function downloadVideoLibraryItemLocally(input: {
   }
 
   let targetName = requestedName;
+  let availableName = false;
   for (let suffix = 1; suffix < 10_000; suffix += 1) {
     const existing = await getExistingFile(handle, targetName);
-    if (!existing) break;
+    if (!existing) { availableName = true; break; }
     if (await isSameLocalVideo(existing.file, item)) {
       await recordCompletedLocalVideo(handle, index, item, targetName, existing.file.size);
       return { status: 'duplicate', fileName: targetName };
     }
     targetName = appendLocalNameSuffix(requestedName, suffix + 1);
   }
+  if (!availableName) throw new Error('同名文件过多，请选择新的保存位置');
 
   let created = false;
   let videoComplete = false;
   try {
     const response = await fetch(item.downloadUrl, { credentials: 'include', signal });
-    if (!response.ok) throw new Error(`下载失败（HTTP ${response.status}）`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(typeof payload?.error === 'string' ? payload.error : `下载失败（HTTP ${response.status}）`);
+    }
+    if (!response.body) throw new Error('下载响应中没有视频内容');
     const fileHandle = await handle.getFileHandle(targetName, { create: true });
     created = true;
     const writable = await fileHandle.createWritable();
-    if (!response.body) throw new Error('下载响应中没有视频内容');
     await response.body.pipeTo(writable, { signal });
     const savedFile = await fileHandle.getFile();
     if (Number(savedFile.size) !== Number(item.fileSize)) throw new Error('文件写入不完整，已保留为未读以便重试');
+    if (!savedFile.size || (item.sha256 && !await isSameLocalVideo(savedFile, item))) throw new Error('文件内容校验失败，请重新下载');
     videoComplete = true;
     await recordCompletedLocalVideo(handle, index, item, targetName, savedFile.size);
     return { status: 'downloaded', fileName: targetName };

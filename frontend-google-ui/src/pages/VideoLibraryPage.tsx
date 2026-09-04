@@ -26,6 +26,7 @@ import {
   loadVideoLibraryLocalIndex,
   reconcileVideoLibraryLocalIndex,
   supportsVideoLibraryLocalDownload,
+  isVideoLibraryDestinationCurrent,
   type VideoLibraryDirectoryHandle,
 } from '@/src/lib/videoLibraryLocal';
 
@@ -133,6 +134,9 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const previewWarmupRef = useRef<{ id: number; video: HTMLVideoElement } | null>(null);
   const localDownloadControlRef = useRef<'running' | 'paused' | 'stopped'>('running');
   const localDownloadAbortRef = useRef<AbortController | null>(null);
+  const downloadBusyRef = useRef(false);
+  const mountedRef = useRef(true);
+  const retryDownloadRef = useRef<{ folder: string; ids: number[] }>({ folder: '', ids: [] });
   const [items, setItems] = useState<VideoLibraryItem[]>([]);
   const [folders, setFolders] = useState<string[]>([DEFAULT_FOLDER]);
   const [selectedFolder, setSelectedFolder] = useState('');
@@ -150,6 +154,8 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [downloadingVideoId, setDownloadingVideoId] = useState<number | null>(null);
+  const [isDownloadBusy, setIsDownloadBusy] = useState(false);
+  const [checkedVideoIds, setCheckedVideoIds] = useState<Set<number>>(new Set());
   const [retryingEnhancementId, setRetryingEnhancementId] = useState<number | null>(null);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [error, setError] = useState('');
@@ -158,6 +164,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [folderUnreadCounts, setFolderUnreadCounts] = useState<Map<string, number>>(() => new Map());
   const [localFolderHandle, setLocalFolderHandle] = useState<VideoLibraryDirectoryHandle | null>(null);
   const [localFolderName, setLocalFolderName] = useState('');
+  const [localFolderUpdatedAt, setLocalFolderUpdatedAt] = useState(0);
   const [isLocalBindingLoading, setIsLocalBindingLoading] = useState(false);
   const [localDownloadProgress, setLocalDownloadProgress] = useState<LocalDownloadProgress | null>(null);
 
@@ -218,17 +225,13 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
 
   useEffect(() => {
     let cancelled = false;
-    if (!selectedFolder) {
-      setLocalFolderHandle(null);
-      setLocalFolderName('');
-      return;
-    }
     setIsLocalBindingLoading(true);
-    void getVideoLibraryLocalFolderBinding(selectedFolder)
+    void getVideoLibraryLocalFolderBinding()
       .then((binding) => {
         if (cancelled) return;
         setLocalFolderHandle(binding?.handle || null);
         setLocalFolderName(binding?.handle?.name || '');
+        setLocalFolderUpdatedAt(binding?.updatedAt || 0);
       })
       .catch(() => {
         if (!cancelled) {
@@ -240,11 +243,21 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
         if (!cancelled) setIsLocalBindingLoading(false);
       });
     return () => { cancelled = true; };
-  }, [selectedFolder]);
+  }, []);
 
-  useEffect(() => () => {
-    localDownloadControlRef.current = 'stopped';
-    localDownloadAbortRef.current?.abort();
+  useEffect(() => { setCheckedVideoIds(new Set()); }, [selectedFolder, search]);
+
+  useEffect(() => {
+    setCheckedVideoIds((previous) => new Set([...previous].filter((id) => items.some((item) => item.id === id))));
+  }, [items]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      localDownloadControlRef.current = 'stopped';
+      localDownloadAbortRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => () => {
@@ -494,44 +507,39 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   }
 
   async function handleSingleVideoDownload(item: VideoLibraryItem) {
-    const latestItem = items.find((current) => current.id === item.id) || item;
-    if (!confirmSingleUnenhancedDownload(latestItem)) return;
-    if (downloadingVideoId !== null) return;
+    if (downloadBusyRef.current) return;
+    setSelectedItem(null);
+    setDownloadingVideoId(item.id);
+    try { await handleDownloadNewMaterials([item.id], item.folderName); }
+    finally { setDownloadingVideoId(null); }
+  }
 
-    const fileName = latestItem.downloadName || latestItem.originalName || `video-${latestItem.id}.mp4`;
-    setError('');
-    setNotice(`正在准备下载“${fileName}”，请稍候…`);
-    setDownloadingVideoId(latestItem.id);
-    try {
-      const response = await fetch(latestItem.downloadUrl, { credentials: 'include' });
-      if (!response.ok) {
-        let message = `下载失败（HTTP ${response.status}）`;
-        try {
-          const payload = await response.json();
-          if (typeof payload?.error === 'string' && payload.error.trim()) message = payload.error;
-        } catch {
-          // 非 JSON 错误响应继续使用状态码提示。
-        }
-        throw new Error(message);
-      }
-      const blob = await response.blob();
-      if (!blob.size) throw new Error('下载失败：服务器返回了空文件');
-
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = objectUrl;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-      setNotice(`“${fileName}”已开始下载，请查看浏览器下载记录。`);
-    } catch (downloadError) {
-      setNotice('');
-      setError(downloadError instanceof Error ? downloadError.message : '下载视频失败，请稍后重试');
-    } finally {
-      setDownloadingVideoId(null);
+  async function resolveDownloadFolder(forceChoose = false) {
+    if (!supportsVideoLibraryLocalDownload()) throw new Error('请选择最新版 Chrome 或 Edge，并通过 HTTPS 打开系统，才能选择电脑保存文件夹。');
+    if (!forceChoose && localFolderHandle && isVideoLibraryDestinationCurrent(localFolderUpdatedAt)) {
+      if (!await ensureVideoLibraryLocalFolderPermission(localFolderHandle)) throw new Error('没有文件夹写入权限，请点击“更换保存位置”重新选择并授权。');
+      return localFolderHandle;
     }
+    // 直接从用户点击调用选择器；不要先请求服务器，以免浏览器拦截文件夹窗口。
+    const binding = await chooseVideoLibraryLocalFolder();
+    setLocalFolderHandle(binding.handle);
+    setLocalFolderName(binding.handle.name);
+    setLocalFolderUpdatedAt(binding.updatedAt);
+    return binding.handle;
+  }
+
+  async function changeDownloadFolder() {
+    if (downloadBusyRef.current) return;
+    downloadBusyRef.current = true;
+    setIsDownloadBusy(true);
+    setError('');
+    try {
+      const handle = await resolveDownloadFolder(true);
+      setNotice(`保存位置已更换为“${handle.name}”，今天所有素材下载都使用这里。已有文件不会移动。`);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') setNotice('已取消更换，原保存位置不变。');
+      else setError(error instanceof Error ? error.message : '更换保存位置失败');
+    } finally { downloadBusyRef.current = false; setIsDownloadBusy(false); }
   }
 
   function removeLocalUnreadItem(item: VideoLibraryItem) {
@@ -559,45 +567,37 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     return localDownloadControlRef.current === 'stopped';
   }
 
-  async function handleDownloadNewMaterials(forceChooseFolder = false) {
-    if (!selectedFolder || localDownloadProgress?.status === 'running' || localDownloadProgress?.status === 'paused') return;
-    if (!supportsVideoLibraryLocalDownload()) {
-      setError('当前浏览器不支持直接保存到本地文件夹，请使用最新版 Chrome 或 Edge，并通过 HTTPS 打开系统。');
-      return;
-    }
-    if (forceChooseFolder && !window.confirm('更换保存位置后，后续未读的新素材将保存到新文件夹；历史素材不会自动重新下载。确定继续吗？')) return;
-
+  async function handleDownloadNewMaterials(requestedIds?: number[], folder = selectedFolder) {
+    if (!folder || downloadBusyRef.current || isLocalBindingLoading) return;
+    if (requestedIds && !requestedIds.length) return;
+    downloadBusyRef.current = true;
+    setIsDownloadBusy(true);
     setError('');
-    setNotice('');
-    let handle = localFolderHandle;
+    setNotice('正在准备下载，请选择或确认今天的保存位置…');
     try {
-      if (!handle || forceChooseFolder) {
-        const binding = await chooseVideoLibraryLocalFolder(selectedFolder);
-        handle = binding.handle;
-        setLocalFolderHandle(handle);
-        setLocalFolderName(handle.name);
-      }
-      if (!await ensureVideoLibraryLocalFolderPermission(handle)) {
-        throw new Error('没有获得本地文件夹写入权限，请重新选择并允许访问。');
-      }
+      const handle = await resolveDownloadFolder();
+      if (!mountedRef.current) return;
 
       const [{ items: folderItems }, index] = await Promise.all([
-        getVideoLibrary({ folder: selectedFolder, query: '' }),
-        loadVideoLibraryLocalIndex(handle, selectedFolder),
+        getVideoLibrary({ folder, query: '' }),
+        loadVideoLibraryLocalIndex(handle, folder),
       ]);
-      await reconcileVideoLibraryLocalIndex(handle, index, folderItems);
+      if (!requestedIds) await reconcileVideoLibraryLocalIndex(handle, index, folderItems);
       const unread = applyUnreadSummary(await getVideoLibrarySummary());
-      const pendingItems = folderItems.filter((item) => unread.unreadIds.has(item.id));
+      if (!mountedRef.current) return;
+      const pendingItems = folderItems.filter((item) => requestedIds ? requestedIds.includes(item.id) : unread.unreadIds.has(item.id));
+      if (requestedIds && pendingItems.length !== new Set(requestedIds).size) throw new Error('部分所选素材已被移动、删除或被增强版替换，请刷新后重新勾选。');
       if (!pendingItems.length) {
-        setLocalDownloadProgress({ folderName: selectedFolder, status: 'completed', total: 0, completed: 0, downloaded: 0, duplicates: 0, failed: 0, currentName: '', errors: [] });
-        setNotice(`“${selectedFolder}”没有需要下载的新素材，本地文件夹已经是最新状态。`);
+        setLocalDownloadProgress({ folderName: folder, status: 'completed', total: 0, completed: 0, downloaded: 0, duplicates: 0, failed: 0, currentName: '', errors: [] });
+        setNotice('没有带“新”标签的待下载素材。要下载历史素材，请勾选后点击“下载所选”。');
         return;
       }
-      if (!confirmBatchUnenhancedDownload(pendingItems)) return;
+      if (!(pendingItems.length === 1 ? confirmSingleUnenhancedDownload(pendingItems[0]) : confirmBatchUnenhancedDownload(pendingItems))) { setNotice('已取消下载。'); return; }
 
+      retryDownloadRef.current = { folder, ids: pendingItems.map((item) => item.id) };
       localDownloadControlRef.current = 'running';
       let progress: LocalDownloadProgress = {
-        folderName: selectedFolder,
+        folderName: folder,
         status: 'running',
         total: pendingItems.length,
         completed: 0,
@@ -608,6 +608,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
         errors: [],
       };
       setLocalDownloadProgress(progress);
+      setNotice(`正在保存到“${handle.name}”，共 ${pendingItems.length} 个视频。`);
 
       for (const item of pendingItems) {
         await waitWhileLocalDownloadPaused();
@@ -618,7 +619,9 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
         localDownloadAbortRef.current = controller;
         try {
           const result = await downloadVideoLibraryItemLocally({ item, handle, index, signal: controller.signal });
-          removeLocalUnreadItem(item);
+          if (unread.unreadIds.has(item.id)) removeLocalUnreadItem(item);
+          retryDownloadRef.current.ids = retryDownloadRef.current.ids.filter((id) => id !== item.id);
+          setCheckedVideoIds((previous) => { const next = new Set(previous); next.delete(item.id); return next; });
           progress = {
             ...progress,
             completed: progress.completed + 1,
@@ -637,6 +640,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
         } finally {
           localDownloadAbortRef.current = null;
         }
+        progress = { ...progress, status: localDownloadControlRef.current };
         setLocalDownloadProgress(progress);
       }
 
@@ -645,11 +649,14 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       setLocalDownloadProgress(progress);
       await refreshUnreadSummary();
       setNotice(stopped
-        ? `下载已终止：已保存 ${progress.downloaded} 个，跳过重复 ${progress.duplicates} 个，未完成素材仍保留“新”标签。`
-        : `下载完成：保存 ${progress.downloaded} 个，跳过重复 ${progress.duplicates} 个，失败 ${progress.failed} 个。`);
+        ? `下载已终止：已保存 ${progress.downloaded} 个，跳过重复 ${progress.duplicates} 个，未完成素材可以点击“重试未完成”。`
+        : `已保存到“${handle.name}”：保存 ${progress.downloaded} 个，跳过重复 ${progress.duplicates} 个，失败 ${progress.failed} 个。`);
     } catch (downloadError) {
-      if (downloadError instanceof DOMException && downloadError.name === 'AbortError') return;
-      setError(downloadError instanceof Error ? downloadError.message : '下载新素材失败');
+      if (downloadError instanceof DOMException && downloadError.name === 'AbortError') setNotice('已取消选择，未开始下载。');
+      else { setNotice(''); setError(downloadError instanceof Error ? downloadError.message : '下载失败'); }
+    } finally {
+      downloadBusyRef.current = false;
+      setIsDownloadBusy(false);
     }
   }
 
@@ -708,6 +715,13 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     };
     return (
       <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md">
+        <label className="flex cursor-pointer items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs font-bold text-slate-600">
+          <input type="checkbox" aria-label={`选择 ${item.originalName}`} checked={checkedVideoIds.has(item.id)} disabled={isDownloadBusy} onChange={(event) => {
+            const checked = event.target.checked;
+            setCheckedVideoIds((previous) => { const next = new Set(previous); if (checked) next.add(item.id); else next.delete(item.id); return next; });
+          }} className="size-4 accent-sky-600" />
+          {checkedVideoIds.has(item.id) ? '已选择' : '选择下载'}
+        </label>
         <button
           type="button"
           onPointerEnter={() => warmVideoPreview(item)}
@@ -782,7 +796,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             <button
               type="button"
               onClick={() => void handleSingleVideoDownload(item)}
-              disabled={downloadingVideoId !== null}
+              disabled={isDownloadBusy || isLocalBindingLoading}
               className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-200 disabled:cursor-wait disabled:opacity-60"
             >
               {downloadingVideoId === item.id ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
@@ -835,7 +849,45 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
           </div>
         </div>
         {(error || notice) && <div className={cn('mt-3 rounded-2xl px-4 py-3 text-sm font-bold', error ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700')}>{error || notice}</div>}
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl bg-sky-50 px-3 py-2 text-xs font-bold text-sky-800">
+          <FolderOpen className="size-4" />
+          <span>今日保存位置：{localFolderName && isVideoLibraryDestinationCurrent(localFolderUpdatedAt) ? localFolderName : '首次下载时选择'}</span>
+          <button type="button" onClick={() => void changeDownloadFolder()} disabled={isDownloadBusy || isLocalBindingLoading} className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-white px-3 py-1.5 disabled:opacity-50"><FolderCog className="size-3.5" />更换保存位置</button>
+          <span className="text-[11px] font-medium text-slate-500">单条和批量共用 · 当天有效 · 直接保存到所选目录，不再均分</span>
+        </div>
       </section>
+
+      <div className="mx-auto mt-4 max-w-7xl">
+        {localDownloadProgress && (
+          <div className="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-black text-slate-700">
+                  {localDownloadProgress.status === 'completed' ? <CheckCircle2 className="size-4 text-emerald-500" /> : localDownloadProgress.status === 'running' ? <Loader2 className="size-4 animate-spin text-emerald-500" /> : <Download className="size-4 text-emerald-500" />}
+                  {localDownloadProgress.status === 'running' ? '正在保存视频' : localDownloadProgress.status === 'paused' ? '下载已暂停' : localDownloadProgress.status === 'stopped' ? '下载已终止' : '本次下载完成'}
+                </div>
+                <p className="mt-1 text-[11px] font-bold text-slate-500">已处理 {localDownloadProgress.completed}/{localDownloadProgress.total} · 新保存 {localDownloadProgress.downloaded} · 跳过重复 {localDownloadProgress.duplicates} · 失败 {localDownloadProgress.failed} · 剩余 {Math.max(0, localDownloadProgress.total - localDownloadProgress.completed)}</p>
+              </div>
+              {(localDownloadProgress.status === 'running' || localDownloadProgress.status === 'paused') && (
+                <div className="flex gap-2">
+                  <button type="button" onClick={toggleLocalDownloadPause} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-[11px] font-black text-emerald-700 hover:bg-emerald-100">
+                    {localDownloadProgress.status === 'paused' ? <Play className="size-3" /> : <Pause className="size-3" />}{localDownloadProgress.status === 'paused' ? '继续' : '暂停'}
+                  </button>
+                  <button type="button" onClick={stopLocalDownload} className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-[11px] font-black text-red-600 hover:bg-red-50"><Square className="size-3" />终止</button>
+                </div>
+              )}
+              {(localDownloadProgress.status === 'completed' || localDownloadProgress.status === 'stopped') && retryDownloadRef.current.ids.length > 0 && (
+                <button type="button" disabled={isDownloadBusy} onClick={() => void handleDownloadNewMaterials([...retryDownloadRef.current.ids], retryDownloadRef.current.folder)} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-black text-white hover:bg-amber-600 disabled:opacity-50"><RefreshCw className="size-3" />重试未完成</button>
+              )}
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-emerald-100">
+              <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${localDownloadProgress.total ? (localDownloadProgress.completed / localDownloadProgress.total) * 100 : 100}%` }} />
+            </div>
+            {localDownloadProgress.currentName && <p className="mt-2 truncate text-[11px] font-semibold text-slate-500">当前：{localDownloadProgress.currentName}</p>}
+            {localDownloadProgress.errors.length > 0 && <div className="mt-3 max-h-24 overflow-y-auto rounded-xl bg-white/80 px-3 py-2 text-[10px] font-bold leading-5 text-red-500">{localDownloadProgress.errors.map((message) => <p key={message}>{message}</p>)}</div>}
+          </div>
+        )}
+      </div>
 
       <section className="mx-auto mt-4 max-w-7xl space-y-5">
         {isLoading ? (
@@ -851,67 +903,31 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
           </div>
         ) : groupedItems.map(([folder, folderItems]) => (
           <div key={folder}>
-            <div className="mb-4 flex items-center gap-2">
+            <div className="mb-4 flex flex-wrap items-center gap-2">
               <FolderOpen className="size-4 text-sky-500" />
               <h2 className="text-base font-black">{folder}</h2>
               <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-black text-slate-500">{folderItems.length}</span>
               {(folderUnreadCounts.get(folder) || 0) > 0 && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-black text-red-500">{folderUnreadCounts.get(folder)} 个未看</span>}
               <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-                {selectedFolder === folder && (
-                  <>
-                    {localFolderName && <span className="hidden max-w-48 truncate text-[10px] font-bold text-slate-400 md:inline" title={`本地保存到：${localFolderName}`}>本地：{localFolderName}</span>}
-                    <button
-                      type="button"
-                      onClick={() => void handleDownloadNewMaterials(false)}
-                      disabled={isLocalBindingLoading || localDownloadProgress?.status === 'running' || localDownloadProgress?.status === 'paused'}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-[11px] font-black text-white shadow-sm hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {localDownloadProgress?.folderName === folder && localDownloadProgress.status === 'running' ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-                      下载新素材（{folderUnreadCounts.get(folder) || 0}）
-                    </button>
-                    {localFolderHandle && (
-                      <button
-                        type="button"
-                        onClick={() => void handleDownloadNewMaterials(true)}
-                        disabled={localDownloadProgress?.status === 'running' || localDownloadProgress?.status === 'paused'}
-                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-500 hover:bg-slate-50 disabled:opacity-50"
-                        title="更换这个素材库文件夹对应的电脑保存位置"
-                      ><FolderCog className="size-3.5" />更换位置</button>
-                    )}
-                  </>
-                )}
+                <label className="flex items-center gap-1 text-xs font-bold text-slate-600">
+                  <input type="checkbox" aria-label="全选当前显示素材" disabled={isDownloadBusy} checked={folderItems.length > 0 && folderItems.every((item) => checkedVideoIds.has(item.id))} onChange={(event) => {
+                    const checked = event.target.checked;
+                    setCheckedVideoIds((previous) => { const next = new Set(previous); folderItems.forEach((item) => checked ? next.add(item.id) : next.delete(item.id)); return next; });
+                  }} />全选当前显示
+                </label>
+                <button type="button" disabled={isDownloadBusy || isLocalBindingLoading || !folderItems.some((item) => checkedVideoIds.has(item.id))} onClick={() => void handleDownloadNewMaterials(folderItems.filter((item) => checkedVideoIds.has(item.id)).map((item) => item.id), folder)} className="inline-flex items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-black text-white disabled:opacity-50"><Download className="size-3.5" />下载所选（{folderItems.filter((item) => checkedVideoIds.has(item.id)).length}）</button>
+                <button
+                  type="button"
+                  onClick={() => void handleDownloadNewMaterials(undefined, folder)}
+                  disabled={isLocalBindingLoading || isDownloadBusy}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-[11px] font-black text-white shadow-sm hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {localDownloadProgress?.folderName === folder && localDownloadProgress.status === 'running' ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                  下载新素材（{folderUnreadCounts.get(folder) || 0}）
+                </button>
                 <button type="button" onClick={() => openUpload(folder)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-600 hover:bg-slate-50"><Plus className="size-3" />上传</button>
               </div>
             </div>
-            {selectedFolder === folder && localDownloadProgress?.folderName === folder && (
-              <div className="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2 text-sm font-black text-slate-700">
-                      {localDownloadProgress.status === 'completed' ? <CheckCircle2 className="size-4 text-emerald-500" /> : localDownloadProgress.status === 'running' ? <Loader2 className="size-4 animate-spin text-emerald-500" /> : <Download className="size-4 text-emerald-500" />}
-                      {localDownloadProgress.status === 'running' ? '正在保存新素材' : localDownloadProgress.status === 'paused' ? '下载已暂停' : localDownloadProgress.status === 'stopped' ? '下载已终止' : '本次下载完成'}
-                    </div>
-                    <p className="mt-1 text-[11px] font-bold text-slate-500">已处理 {localDownloadProgress.completed}/{localDownloadProgress.total} · 新保存 {localDownloadProgress.downloaded} · 跳过重复 {localDownloadProgress.duplicates} · 失败 {localDownloadProgress.failed} · 剩余 {Math.max(0, localDownloadProgress.total - localDownloadProgress.completed)}</p>
-                  </div>
-                  {(localDownloadProgress.status === 'running' || localDownloadProgress.status === 'paused') && (
-                    <div className="flex gap-2">
-                      <button type="button" onClick={toggleLocalDownloadPause} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-[11px] font-black text-emerald-700 hover:bg-emerald-100">
-                        {localDownloadProgress.status === 'paused' ? <Play className="size-3" /> : <Pause className="size-3" />}{localDownloadProgress.status === 'paused' ? '继续' : '暂停'}
-                      </button>
-                      <button type="button" onClick={stopLocalDownload} className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-[11px] font-black text-red-600 hover:bg-red-50"><Square className="size-3" />终止</button>
-                    </div>
-                  )}
-                  {(localDownloadProgress.status === 'completed' || localDownloadProgress.status === 'stopped') && localDownloadProgress.failed > 0 && (
-                    <button type="button" onClick={() => void handleDownloadNewMaterials(false)} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-black text-white hover:bg-amber-600"><RefreshCw className="size-3" />重试未完成</button>
-                  )}
-                </div>
-                <div className="mt-3 h-2 overflow-hidden rounded-full bg-emerald-100">
-                  <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${localDownloadProgress.total ? (localDownloadProgress.completed / localDownloadProgress.total) * 100 : 100}%` }} />
-                </div>
-                {localDownloadProgress.currentName && <p className="mt-2 truncate text-[11px] font-semibold text-slate-500">当前：{localDownloadProgress.currentName}</p>}
-                {localDownloadProgress.errors.length > 0 && <div className="mt-3 max-h-24 overflow-y-auto rounded-xl bg-white/80 px-3 py-2 text-[10px] font-bold leading-5 text-red-500">{localDownloadProgress.errors.map((message) => <p key={message}>{message}</p>)}</div>}
-              </div>
-            )}
             <div className="space-y-6">
               {groupVideosByDate(folderItems).map((dateGroup) => (
                 <section key={dateGroup.key}>
@@ -1027,7 +1043,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
         </div>
       )}
 
-      {selectedItem && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onMouseDown={() => setSelectedItem(null)}><div className="w-full max-w-3xl rounded-3xl bg-white p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-center justify-between gap-3 px-2 pb-3"><div className="min-w-0"><h2 className="truncate text-lg font-black">{selectedItem.originalName}</h2><p className="text-xs font-semibold text-slate-400">{selectedItem.folderName} · {formatVideoLibrarySize(selectedItem.fileSize)}</p></div><button type="button" onClick={() => setSelectedItem(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="size-5" /></button></div><video key={selectedItem.id} src={selectedItem.streamUrl} poster={selectedItem.thumbnailUrl} controls autoPlay playsInline preload="auto" className="max-h-[65vh] w-full rounded-2xl bg-black" /><div className="mt-4 flex gap-2"><input defaultValue={selectedItem.note} onKeyDown={(event) => { if (event.key === 'Enter') void handleSaveNote(selectedItem, event.currentTarget.value); }} placeholder="输入备注后按回车保存" className="h-11 min-w-0 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold outline-none focus:border-sky-300 focus:bg-white" /><button type="button" onClick={() => void handleSingleVideoDownload(selectedItem)} disabled={downloadingVideoId !== null} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-black text-white disabled:cursor-wait disabled:opacity-60">{downloadingVideoId === selectedItem.id ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}{downloadingVideoId === selectedItem.id ? '准备中' : '下载'}</button></div></div></div>}
+      {selectedItem && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onMouseDown={() => setSelectedItem(null)}><div className="w-full max-w-3xl rounded-3xl bg-white p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-center justify-between gap-3 px-2 pb-3"><div className="min-w-0"><h2 className="truncate text-lg font-black">{selectedItem.originalName}</h2><p className="text-xs font-semibold text-slate-400">{selectedItem.folderName} · {formatVideoLibrarySize(selectedItem.fileSize)}</p></div><button type="button" onClick={() => setSelectedItem(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="size-5" /></button></div><video key={selectedItem.id} src={selectedItem.streamUrl} poster={selectedItem.thumbnailUrl} controls autoPlay playsInline preload="auto" className="max-h-[65vh] w-full rounded-2xl bg-black" /><div className="mt-4 flex gap-2"><input defaultValue={selectedItem.note} onKeyDown={(event) => { if (event.key === 'Enter') void handleSaveNote(selectedItem, event.currentTarget.value); }} placeholder="输入备注后按回车保存" className="h-11 min-w-0 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold outline-none focus:border-sky-300 focus:bg-white" /><button type="button" onClick={() => void handleSingleVideoDownload(selectedItem)} disabled={isDownloadBusy || isLocalBindingLoading} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-black text-white disabled:cursor-wait disabled:opacity-60">{downloadingVideoId === selectedItem.id ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}{downloadingVideoId === selectedItem.id ? '准备中' : '下载'}</button></div></div></div>}
     </main>
   );
 }

@@ -8,6 +8,10 @@ import {
 import {
   downloadVideoLibraryItemLocally,
   loadVideoLibraryLocalIndex,
+  chooseVideoLibraryLocalFolder,
+  getVideoLibraryLocalFolderBinding,
+  isVideoLibraryDestinationCurrent,
+  ensureVideoLibraryLocalFolderPermission,
   type VideoLibraryDirectoryHandle,
   type VideoLibraryWritableFileHandle,
 } from './src/lib/videoLibraryLocal';
@@ -159,6 +163,86 @@ async function main() {
   const allSummary = [...moved, { id: 11, folderName: '静心', createdAt: 1 }, { id: 12, folderName: '静心', createdAt: 1 }, { id: 13, folderName: '静心', createdAt: 1 }];
   assert(calculateVideoLibraryUnread(allSummary).unreadIds.has(13), '失败素材继续保留“新”标签');
   assert(directory.files.has('.kelong-video-library.json'), '本地目录写入隐藏索引，浏览器记录丢失后仍可恢复');
+
+  console.log('\n[4] 日保存位置、更换与取消（内存 IndexedDB 模拟）');
+  const morning = new Date(2026, 8, 4, 0, 1).getTime();
+  assert(isVideoLibraryDestinationCurrent(morning, new Date(2026, 8, 4, 23, 59).getTime()), '同一自然日重复使用保存位置');
+  assert(!isVideoLibraryDestinationCurrent(morning, new Date(2026, 8, 5, 0, 1).getTime()), '跨午夜后保存位置失效，不是按24小时计算');
+  assert(!isVideoLibraryDestinationCurrent(morning, new Date(2027, 8, 4).getTime()), '日期判断包含年份');
+  const bindings = new Map<string, any>();
+  let abortWrite = false;
+  const db = {
+    close() {},
+    transaction(_name: string, mode: string) {
+      const transaction: any = {
+        objectStore() {
+          return {
+            get(key: string) { return makeRequest(() => bindings.get(key)); },
+            put(value: any) { return makeRequest(() => { if (!abortWrite) bindings.set(value.folderName, value); return value.folderName; }); },
+          };
+        },
+      };
+      function makeRequest(action: () => unknown) {
+        const request: any = {};
+        setTimeout(() => {
+          request.result = action();
+          request.onsuccess?.();
+          setTimeout(() => {
+            if (mode === 'readwrite' && abortWrite) transaction.onabort?.();
+            else transaction.oncomplete?.();
+          }, 0);
+        }, 0);
+        return request;
+      }
+      return transaction;
+    },
+  };
+  (globalThis as any).indexedDB = { open() { const request: any = {}; setTimeout(() => { request.result = db; request.onsuccess(); }, 0); return request; } };
+  let pickedDirectory = directory;
+  let cancelPicker = false;
+  (globalThis as any).window.showDirectoryPicker = async () => {
+    if (cancelPicker) throw new DOMException('Cancelled', 'AbortError');
+    return pickedDirectory;
+  };
+  assert(await getVideoLibraryLocalFolderBinding() === null, '首次下载没有保存位置');
+  await chooseVideoLibraryLocalFolder();
+  assert((await getVideoLibraryLocalFolderBinding())?.handle === directory, '重新读取恢复当天位置');
+  const secondDirectory = new MemoryDirectory();
+  secondDirectory.name = '新的保存位置';
+  pickedDirectory = secondDirectory;
+  await chooseVideoLibraryLocalFolder();
+  assert((await getVideoLibraryLocalFolderBinding())?.handle === secondDirectory, '手动更换后读取的是新位置');
+  assert(bindings.size === 1, '所有素材文件夹共用唯一的当天保存位置');
+  cancelPicker = true;
+  try { await chooseVideoLibraryLocalFolder(); } catch { /* 用户取消 */ }
+  assert((await getVideoLibraryLocalFolderBinding())?.handle === secondDirectory, '取消更换保留之前的位置');
+  cancelPicker = false;
+  abortWrite = true;
+  let rejectedWrite = false;
+  try { await chooseVideoLibraryLocalFolder(); } catch { rejectedWrite = true; }
+  assert(rejectedWrite, '绑定事务失败不得提前报告已保存');
+  abortWrite = false;
+  bindings.forEach((binding) => { binding.updatedAt = Date.now() - 48 * 60 * 60 * 1000; });
+  assert(await getVideoLibraryLocalFolderBinding() === null, '刷新页面不会恢复过期位置');
+  assert(!await ensureVideoLibraryLocalFolderPermission({ kind: 'directory', name: '拒绝授权', getFileHandle: directory.getFileHandle.bind(directory), queryPermission: async () => 'prompt', requestPermission: async () => 'denied' }), '拒绝授权不允许写入');
+
+  console.log('\n[5] 更换位置后的实际写入和失败重试');
+  globalThis.fetch = (async () => new Response(differentBytes)) as typeof fetch;
+  const newIndex = await loadVideoLibraryLocalIndex(secondDirectory, '静心');
+  await downloadVideoLibraryItemLocally({ item: differentItem, handle: secondDirectory, index: newIndex });
+  assert(secondDirectory.files.get('clip.mp4')?.join(',') === differentBytes.join(','), '已下载过的素材可手动选择并保存到新位置');
+  assert(directory.files.get('clip.mp4')?.join(',') === '1,2,3', '更换位置不移动或覆盖旧目录文件');
+  globalThis.fetch = (async () => new Response(new Uint8Array([0, 0, 0, 0]))) as typeof fetch;
+  let checksumFailed = false;
+  try { await downloadVideoLibraryItemLocally({ item: brokenItem, handle: directory, index }); } catch { checksumFailed = true; }
+  assert(checksumFailed && !directory.files.has('broken.mp4'), '大小相同但内容错误也判失败并清理');
+  globalThis.fetch = (async () => new Response(new Uint8Array([8, 8, 8, 8]))) as typeof fetch;
+  assert((await downloadVideoLibraryItemLocally({ item: brokenItem, handle: directory, index })).status === 'downloaded', '失败文件可重新下载成功');
+  const controller = new AbortController();
+  controller.abort();
+  let aborted = false;
+  try { await downloadVideoLibraryItemLocally({ item: brokenItem, handle: directory, index, signal: controller.signal }); } catch { aborted = true; }
+  assert(aborted, '终止后不继续写入或更新下载记录');
 
   globalThis.fetch = realFetch;
 
