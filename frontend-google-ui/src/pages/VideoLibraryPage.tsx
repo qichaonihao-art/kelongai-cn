@@ -4,7 +4,7 @@ import { cn } from '@/src/lib/utils';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import HomeBackButton from '@/src/components/HomeBackButton';
 import {
-  deleteVideoLibraryVideo,
+  deleteVideoLibrarySelection,
   createVideoLibraryFolder,
   formatVideoLibrarySize,
   formatVideoLibraryTime,
@@ -135,6 +135,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const localDownloadControlRef = useRef<'running' | 'paused' | 'stopped'>('running');
   const localDownloadAbortRef = useRef<AbortController | null>(null);
   const downloadBusyRef = useRef(false);
+  const deleteBusyRef = useRef(false);
   const mountedRef = useRef(true);
   const retryDownloadRef = useRef<{ folder: string; ids: number[] }>({ folder: '', ids: [] });
   const [items, setItems] = useState<VideoLibraryItem[]>([]);
@@ -155,6 +156,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [isUploading, setIsUploading] = useState(false);
   const [downloadingVideoId, setDownloadingVideoId] = useState<number | null>(null);
   const [isDownloadBusy, setIsDownloadBusy] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [checkedVideoIds, setCheckedVideoIds] = useState<Set<number>>(new Set());
   const [retryingEnhancementId, setRetryingEnhancementId] = useState<number | null>(null);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
@@ -431,15 +433,36 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   }
 
   async function handleDelete(item: VideoLibraryItem) {
-    if (!window.confirm(`确定删除“${item.originalName}”吗？删除后所有设备都会消失。`)) return;
+    await handleDeleteSelected([item]);
+  }
+
+  async function handleDeleteSelected(selection: VideoLibraryItem[]) {
+    if (deleteBusyRef.current || downloadBusyRef.current || !selection.length) return;
+    const targets = [...new Map(selection.map((item) => [item.id, item])).values()];
+    const description = targets.length === 1 ? `“${targets[0].originalName}”` : `所选的 ${targets.length} 个视频`;
+    if (!window.confirm(`确定删除${description}吗？\n\n仅删除本次勾选的素材，不删除文件夹。删除后所有设备的素材库都会同步移除，无法在素材库中恢复；已下载到电脑的文件不受影响。`)) return;
+    deleteBusyRef.current = true;
+    setIsDeleting(true);
+    setError('');
+    setNotice(`正在删除：0 / ${targets.length}`);
     try {
-      await deleteVideoLibraryVideo(item.id);
-      setItems((previous) => previous.filter((current) => current.id !== item.id));
-      setSelectedItem(null);
-      void refreshUnreadSummary();
-      setNotice('视频已删除');
+      const { deletedIds, failures } = await deleteVideoLibrarySelection(targets.map((item) => item.id), (completed, total) => {
+        if (mountedRef.current) setNotice(`正在删除：${completed} / ${total}`);
+      });
+      if (!mountedRef.current) return;
+      const deleted = new Set(deletedIds);
+      setItems((previous) => previous.filter((item) => !deleted.has(item.id)));
+      setCheckedVideoIds((previous) => new Set([...previous].filter((id) => !deleted.has(id))));
+      setSelectedItem((previous) => previous && deleted.has(previous.id) ? null : previous);
+      retryDownloadRef.current.ids = retryDownloadRef.current.ids.filter((id) => !deleted.has(id));
+      setNotice(`已删除 ${deletedIds.length} 个视频${failures.length ? `，${failures.length} 个未删除，可重新勾选或保留勾选后重试` : ''}。`);
+      if (failures.length) setError(failures.slice(0, 3).map(({ id, message }) => `${targets.find((item) => item.id === id)?.originalName || id}：${message}`).join('；'));
+      await refreshUnreadSummary();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : '删除视频失败');
+    } finally {
+      deleteBusyRef.current = false;
+      if (mountedRef.current) setIsDeleting(false);
     }
   }
 
@@ -507,7 +530,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   }
 
   async function handleSingleVideoDownload(item: VideoLibraryItem) {
-    if (downloadBusyRef.current) return;
+    if (downloadBusyRef.current || deleteBusyRef.current) return;
     setSelectedItem(null);
     setDownloadingVideoId(item.id);
     try { await handleDownloadNewMaterials([item.id], item.folderName); }
@@ -568,7 +591,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   }
 
   async function handleDownloadNewMaterials(requestedIds?: number[], folder = selectedFolder) {
-    if (!folder || downloadBusyRef.current || isLocalBindingLoading) return;
+    if (!folder || downloadBusyRef.current || deleteBusyRef.current || isLocalBindingLoading) return;
     if (requestedIds && !requestedIds.length) return;
     downloadBusyRef.current = true;
     setIsDownloadBusy(true);
@@ -716,11 +739,11 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     return (
       <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md">
         <label className="flex cursor-pointer items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs font-bold text-slate-600">
-          <input type="checkbox" aria-label={`选择 ${item.originalName}`} checked={checkedVideoIds.has(item.id)} disabled={isDownloadBusy} onChange={(event) => {
+          <input type="checkbox" aria-label={`选择 ${item.originalName}`} checked={checkedVideoIds.has(item.id)} disabled={isDownloadBusy || isDeleting} onChange={(event) => {
             const checked = event.target.checked;
             setCheckedVideoIds((previous) => { const next = new Set(previous); if (checked) next.add(item.id); else next.delete(item.id); return next; });
           }} className="size-4 accent-sky-600" />
-          {checkedVideoIds.has(item.id) ? '已选择' : '选择下载'}
+          {checkedVideoIds.has(item.id) ? '已选择' : '选择素材'}
         </label>
         <button
           type="button"
@@ -817,7 +840,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
                 title="增强完成后用1080P版本替换原片"
               >增强1080P</button>
             )}
-            <button type="button" onClick={() => void handleDelete(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500" title="删除视频">
+            <button type="button" disabled={isDeleting || isDownloadBusy} onClick={() => void handleDelete(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-50" title="删除视频">
               <Trash2 className="size-3.5" />
             </button>
           </div>
@@ -910,12 +933,13 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
               {(folderUnreadCounts.get(folder) || 0) > 0 && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-black text-red-500">{folderUnreadCounts.get(folder)} 个未看</span>}
               <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                 <label className="flex items-center gap-1 text-xs font-bold text-slate-600">
-                  <input type="checkbox" aria-label="全选当前显示素材" disabled={isDownloadBusy} checked={folderItems.length > 0 && folderItems.every((item) => checkedVideoIds.has(item.id))} onChange={(event) => {
+                  <input type="checkbox" aria-label="全选当前显示素材" disabled={isDownloadBusy || isDeleting} checked={folderItems.length > 0 && folderItems.every((item) => checkedVideoIds.has(item.id))} onChange={(event) => {
                     const checked = event.target.checked;
                     setCheckedVideoIds((previous) => { const next = new Set(previous); folderItems.forEach((item) => checked ? next.add(item.id) : next.delete(item.id)); return next; });
                   }} />全选当前显示
                 </label>
-                <button type="button" disabled={isDownloadBusy || isLocalBindingLoading || !folderItems.some((item) => checkedVideoIds.has(item.id))} onClick={() => void handleDownloadNewMaterials(folderItems.filter((item) => checkedVideoIds.has(item.id)).map((item) => item.id), folder)} className="inline-flex items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-black text-white disabled:opacity-50"><Download className="size-3.5" />下载所选（{folderItems.filter((item) => checkedVideoIds.has(item.id)).length}）</button>
+                <button type="button" disabled={isDeleting || isDownloadBusy || isLocalBindingLoading || !folderItems.some((item) => checkedVideoIds.has(item.id))} onClick={() => void handleDownloadNewMaterials(folderItems.filter((item) => checkedVideoIds.has(item.id)).map((item) => item.id), folder)} className="inline-flex items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-black text-white disabled:opacity-50"><Download className="size-3.5" />下载所选（{folderItems.filter((item) => checkedVideoIds.has(item.id)).length}）</button>
+                <button type="button" disabled={isDeleting || isDownloadBusy || !folderItems.some((item) => checkedVideoIds.has(item.id))} onClick={() => void handleDeleteSelected(folderItems.filter((item) => checkedVideoIds.has(item.id)))} className="inline-flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-red-700 disabled:opacity-50">{isDeleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}{isDeleting ? '正在删除' : `删除所选（${folderItems.filter((item) => checkedVideoIds.has(item.id)).length}）`}</button>
                 <button
                   type="button"
                   onClick={() => void handleDownloadNewMaterials(undefined, folder)}

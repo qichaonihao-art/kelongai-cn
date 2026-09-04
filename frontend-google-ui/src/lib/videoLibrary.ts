@@ -258,6 +258,24 @@ export async function deleteVideoLibraryVideo(id: number) {
   if (!response.ok) throw new Error(errorMessage(json, '删除视频失败'));
 }
 
+// Snapshot explicit IDs only; a failed item must not stop the remaining selection.
+export async function deleteVideoLibrarySelection(ids: number[], onProgress?: (completed: number, total: number) => void) {
+  const targets = [...new Set(ids)];
+  if (targets.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw new Error('素材编号无效，请刷新后重新选择');
+  const deletedIds: number[] = [];
+  const failures: { id: number; message: string }[] = [];
+  for (const id of targets) {
+    try {
+      await deleteVideoLibraryVideo(id);
+      deletedIds.push(id);
+    } catch (error) {
+      failures.push({ id, message: error instanceof Error ? error.message : '删除失败' });
+    }
+    onProgress?.(deletedIds.length + failures.length, targets.length);
+  }
+  return { deletedIds, failures };
+}
+
 export function formatVideoLibrarySize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
