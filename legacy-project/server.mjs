@@ -8860,92 +8860,74 @@ async function transcribeAudioWithQwen({ audioPath, requestId, segmentIndex = 0,
   }
 }
 
-// 本地剪辑软件“云端字级字幕对齐”：DashScope 文件存储 + Paraformer 录音文件识别（词级时间戳）。
+// Local-editor subtitle recognition only. Does not touch shared voices or TTS.
 const DASHSCOPE_FILES_BASE_URL = 'https://dashscope.aliyuncs.com/api/v1';
 const SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS = 5 * 60 * 1000;
 const SUBTITLE_ALIGN_POLL_INTERVAL_MS = 2000;
 
-async function uploadAudioToDashScopeFiles({ audioPath, apiKey }) {
-  const form = new FormData();
-  form.append('model', 'paraformer-v2');
-  form.append(
-    'file',
-    new Blob([await readFile(audioPath)], { type: getMimeTypeFromFilePath(audioPath) || 'audio/wav' }),
-    path.basename(audioPath)
-  );
-  const response = await fetch(`${DASHSCOPE_FILES_BASE_URL}/files`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}` },
-    body: form
-  });
-  const json = await response.json().catch(() => null);
-  if (!response.ok || !json?.id) {
-    throw new Error(`上传音频到 DashScope 失败：${json?.message || `HTTP ${response.status}`}`);
-  }
-  return String(json.id);
-}
-
-async function transcribeAudioWithWordTimestamps({ audioPath, requestId, parentDeadlineAt = 0 }) {
+async function transcribeAudioWithWordTimestamps({ audioPath, parentDeadlineAt = 0 }) {
   const apiKey = readValue(SERVER_CONFIG.dashscopeApiKey) || readValue(SERVER_CONFIG.aliyunApiKey);
   if (!apiKey) throw new Error('服务端未配置 DashScope API Key');
-
-  const deadlineAt = parentDeadlineAt || Date.now() + SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS;
-  const fileId = await uploadAudioToDashScopeFiles({ audioPath, apiKey });
-  try {
-    const submitResponse = await fetch(`${DASHSCOPE_FILES_BASE_URL}/services/audio/asr/transcription`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'paraformer-v2',
-        input: { file_urls: [`fileid://${fileId}`] },
-        parameters: { enable_words: true }
-      })
-    });
-    const submitJson = await submitResponse.json().catch(() => null);
-    const taskId = submitJson?.output?.task_id;
-    if (!submitResponse.ok || !taskId) {
-      throw new Error(`提交字幕对齐任务失败：${submitJson?.message || `HTTP ${submitResponse.status}`}`);
-    }
-
-    while (Date.now() < deadlineAt) {
-      await sleep(SUBTITLE_ALIGN_POLL_INTERVAL_MS);
-      const pollResponse = await fetch(`${DASHSCOPE_FILES_BASE_URL}/services/audio/asr/transcription/${encodeURIComponent(taskId)}`, {
-        headers: { 'Authorization': `Bearer ${apiKey}` }
-      });
-      const pollJson = await pollResponse.json().catch(() => null);
-      const status = pollJson?.output?.task_status;
-      if (status === 'SUCCEEDED') {
-        const transcriptionUrl = pollJson?.output?.results?.[0]?.transcription_url;
-        if (!transcriptionUrl) throw new Error('字幕对齐完成但没有返回结果地址');
-        const transcriptResponse = await fetch(transcriptionUrl);
-        const transcriptJson = await transcriptResponse.json().catch(() => null);
-        const sentences = transcriptJson?.transcripts?.[0]?.sentences;
-        if (!Array.isArray(sentences) || !sentences.length) {
-          throw new Error('字幕对齐结果为空');
-        }
-        // begin_time/end_time 单位为毫秒；保留词级时间戳供本地按字映射字幕行。
-        return sentences.map((sentence) => ({
-          text: String(sentence.text || ''),
-          begin_time: Number(sentence.begin_time) || 0,
-          end_time: Number(sentence.end_time) || 0,
-          words: (Array.isArray(sentence.words) ? sentence.words : []).map((word) => ({
-            text: String(word.text || ''),
-            begin_time: Number(word.begin_time) || 0,
-            end_time: Number(word.end_time) || 0
-          }))
-        }));
-      }
-      if (status === 'FAILED') {
-        throw new Error(`字幕对齐失败：${pollJson?.output?.message || '未知原因'}`);
-      }
-    }
-    throw new Error('字幕对齐超时，请稍后重试');
-  } finally {
-    await fetch(`${DASHSCOPE_FILES_BASE_URL}/files/${encodeURIComponent(fileId)}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${apiKey}` }
-    }).catch(() => {});
+  const deadline = parentDeadlineAt || Date.now() + SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS;
+  const request = async (url, options = {}) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('字幕对齐超时');
+    return fetch(url, { ...options, signal: AbortSignal.timeout(remaining) });
+  };
+  const jsonResponse = async (response, stage) => {
+    if (!response.ok) throw new Error(`${stage}失败：HTTP ${response.status}`);
+    return response.json();
+  };
+  // The old /files + fileid:// flow is not the ASR upload protocol.
+  const policyJson = await jsonResponse(await request(`${DASHSCOPE_FILES_BASE_URL}/uploads?action=getPolicy&model=paraformer-v2`, {
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+  }), '获取音频上传凭证');
+  const policy = policyJson.data;
+  if (!policy?.upload_dir || !policy.upload_host || !policy.policy || !policy.signature || !policy.oss_access_key_id) {
+    throw new Error('音频上传凭证不完整');
   }
+  const host = new URL(policy.upload_host);
+  if (host.protocol !== 'https:' || !host.hostname.endsWith('.aliyuncs.com')) throw new Error('音频上传地址无效');
+  const name = path.basename(audioPath);
+  const key = `${policy.upload_dir}/${name}`;
+  const form = new FormData();
+  for (const [field, value] of Object.entries({
+    OSSAccessKeyId: policy.oss_access_key_id, Signature: policy.signature,
+    policy: policy.policy, 'x-oss-object-acl': policy.x_oss_object_acl || 'private',
+    'x-oss-forbid-overwrite': policy.x_oss_forbid_overwrite || 'true', key, success_action_status: '200'
+  })) form.append(field, String(value));
+  form.append('file', new Blob([await readFile(audioPath)]), name);
+  const upload = await request(host.href, { method: 'POST', body: form });
+  if (!upload.ok) throw new Error(`上传音频失败：HTTP ${upload.status}`);
+  // Temporary private OSS objects expire automatically after 48 hours.
+  const submitted = await jsonResponse(await request(`${DASHSCOPE_FILES_BASE_URL}/services/audio/asr/transcription`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json',
+      'X-DashScope-Async': 'enable', 'X-DashScope-OssResourceResolve': 'enable' },
+    body: JSON.stringify({ model: 'paraformer-v2', input: { file_urls: [`oss://${key}`] },
+      parameters: { channel_id: [0], timestamp_alignment_enabled: true } })
+  }), '提交字幕识别');
+  const taskId = submitted.output?.task_id;
+  if (!taskId) throw new Error('字幕识别没有返回任务编号');
+  while (Date.now() < deadline) {
+    await sleep(Math.min(SUBTITLE_ALIGN_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
+    const status = await jsonResponse(await request(`${DASHSCOPE_FILES_BASE_URL}/tasks/${encodeURIComponent(taskId)}`, {
+      headers: { Authorization: `Bearer ${apiKey}` }
+    }), '查询字幕识别');
+    if (status.output?.task_status === 'SUCCEEDED') {
+      const result = status.output.results?.[0];
+      if (result?.subtask_status === 'FAILED' || !result?.transcription_url) throw new Error('字幕识别子任务失败或结果地址缺失');
+      const resultUrl = new URL(result.transcription_url);
+      if (resultUrl.protocol !== 'https:' || !resultUrl.hostname.endsWith('.aliyuncs.com')) throw new Error('字幕结果地址无效');
+      const data = await jsonResponse(await request(resultUrl.href), '下载字幕时间轴');
+      const sentences = data.transcripts?.[0]?.sentences;
+      if (!Array.isArray(sentences) || !sentences.length) throw new Error('字幕识别结果为空');
+      if (sentences.some((sentence) => !sentence.words?.length)) throw new Error('服务未返回词级时间戳');
+      return sentences;
+    }
+    if (!['PENDING', 'RUNNING'].includes(status.output?.task_status)) throw new Error(`字幕识别未完成：${status.output?.task_status || '无效状态'}`);
+  }
+  throw new Error('字幕识别超时，请重试');
 }
 
 async function handleLocalEditorSubtitleAlign(req, res) {
