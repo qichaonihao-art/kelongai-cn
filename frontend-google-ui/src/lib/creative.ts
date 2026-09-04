@@ -516,6 +516,7 @@ export async function sendCreativeMessage(options: {
 }
 
 export async function createSeedanceTask(options: {
+  productType?: PaintingProductType;
   model: 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-fast-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628' | 'MiniMax-H3' | 'wan3.0-video';
   taskMode?: 'generate' | 'video_edit';
   prompt: string;
@@ -537,6 +538,7 @@ export async function createSeedanceTask(options: {
   if (options.references?.length) {
     const formData = new FormData();
     formData.append('prompt', options.prompt);
+    if (options.productType) formData.append('productType', options.productType);
     formData.append('model', options.model);
     formData.append('taskMode', options.taskMode || 'generate');
     formData.append('resolution', options.resolution);
@@ -555,6 +557,7 @@ export async function createSeedanceTask(options: {
   } else {
     body = JSON.stringify({
       prompt: options.prompt,
+      productType: options.productType,
       model: options.model,
       taskMode: options.taskMode || 'generate',
       resolution: options.resolution,
@@ -608,7 +611,14 @@ export async function createSeedanceTask(options: {
   };
 }
 
+export type PaintingProductType = 'hanging' | 'sticker';
+export const getPaintingProductType = (profile?: PaintingProfile | null): PaintingProductType => profile?.productType === 'sticker' ? 'sticker' : 'hanging';
+export const getPaintingProductLabel = (profile?: PaintingProfile | null) => getPaintingProductType(profile) === 'sticker' ? 'PVC背胶贴画' : '挂画／卷轴';
+
 export interface PaintingProfile {
+  productType?: PaintingProductType;
+  widthCm?: number;
+  heightCm?: number;
   name?: string;
   style?: string;
   subject?: string;
@@ -623,6 +633,7 @@ export interface PaintingProfile {
 }
 
 export interface PaintingIdeaSummary {
+  productType?: PaintingProductType;
   id: string;
   title: string;
   summary: string;
@@ -759,9 +770,14 @@ export async function waitForPaintingTask<T>(taskId: string, fallbackError: stri
   throw new Error(`${fallbackError}：后台处理超过 10 分钟，请稍后重试。`);
 }
 
-export async function analyzePainting(file: File): Promise<PaintingProfile> {
+export async function analyzePainting(file: File, productType: PaintingProductType = 'hanging', widthCm = 180, heightCm = 60): Promise<PaintingProfile> {
   const formData = new FormData();
   formData.append('file', file, file.name);
+  formData.append('productType', productType);
+  if (productType === 'sticker') {
+    formData.append('widthCm', String(widthCm));
+    formData.append('heightCm', String(heightCm));
+  }
 
   const response = await fetch('/api/painting/analyze', {
     method: 'POST',
@@ -1132,8 +1148,10 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
 }> {
   const formData = new FormData();
   formData.append('file', options.file, options.file.name);
-  if (options.upperWoodFile) formData.append('upperWoodFile', options.upperWoodFile, options.upperWoodFile.name);
-  if (options.lowerWoodFile) formData.append('lowerWoodFile', options.lowerWoodFile, options.lowerWoodFile.name);
+  if (getPaintingProductType(options.profile) !== 'sticker') {
+    if (options.upperWoodFile) formData.append('upperWoodFile', options.upperWoodFile, options.upperWoodFile.name);
+    if (options.lowerWoodFile) formData.append('lowerWoodFile', options.lowerWoodFile, options.lowerWoodFile.name);
+  }
   formData.append('profile', JSON.stringify(options.profile));
   formData.append('plan', JSON.stringify(options.plan));
   formData.append('ideas', JSON.stringify(options.ideas));
@@ -1301,10 +1319,11 @@ export async function resubmitPaintingBatchTask(taskId: number, options?: { conf
   };
 }
 
-export async function getPaintingUsedDirections(imageHash: string, variationRound: number): Promise<number[]> {
+export async function getPaintingUsedDirections(imageHash: string, variationRound: number, productType: PaintingProductType = 'hanging'): Promise<number[]> {
   const params = new URLSearchParams();
   params.set('imageHash', imageHash);
   params.set('variationRound', String(variationRound));
+  params.set('productType', productType);
   const response = await fetch(`/api/painting/used-directions?${params.toString()}`, {
     credentials: 'include',
   });

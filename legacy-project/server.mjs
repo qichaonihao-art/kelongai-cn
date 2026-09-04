@@ -13,6 +13,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 import { config as loadDotenv } from 'dotenv';
 import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
+import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, stickerProfileFromPrompt } from './sticker-creative.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2632,8 +2633,8 @@ function dbGetPaintingBatchTaskBySeedanceTaskId(seedanceTaskId) {
   return normalizeBatchTask(getCollectionDb().prepare('SELECT * FROM painting_batch_tasks WHERE seedance_task_id = ?').get(taskId));
 }
 
-function dbMarkPaintingDirectionUsed(imageHash, variationRound, directionNumber) {
-  const hash = String(imageHash || '');
+function dbMarkPaintingDirectionUsed(imageHash, variationRound, directionNumber, productType = 'hanging') {
+  const hash = productUsageHash(imageHash, productType);
   const direction = Number(directionNumber) || 0;
   if (!hash || !direction) return;
   getCollectionDb().prepare(`
@@ -2644,8 +2645,8 @@ function dbMarkPaintingDirectionUsed(imageHash, variationRound, directionNumber)
   `).run(hash, Number(variationRound) || 0, direction);
 }
 
-function dbGetPaintingUsedDirections(imageHash, variationRound) {
-  const hash = String(imageHash || '');
+function dbGetPaintingUsedDirections(imageHash, variationRound, productType = 'hanging') {
+  const hash = productUsageHash(imageHash, productType);
   if (!hash) return [];
   const rows = getCollectionDb().prepare(`
     SELECT direction_number FROM painting_direction_usage
@@ -10700,6 +10701,7 @@ async function readSeedanceTaskFormBody(req) {
     // 挂画方向使用标记（手动/换一轮提交时由前端透传，用于“仅生成未使用方向”持久化）。
     imageHash: readValue(formData.get('imageHash')),
     directionNumber: readValue(formData.get('directionNumber')),
+    productType: readValue(formData.get('productType')),
     variationRound: readValue(formData.get('variationRound'))
   };
 }
@@ -14037,7 +14039,7 @@ async function handleCreatePaintingBatchRun(req, res) {
     const upperWoodReference = await storeOptionalWoodReference(body.upperWoodFile, '上方木条参考图');
     const lowerWoodReference = await storeOptionalWoodReference(body.lowerWoodFile, '下方木条参考图');
 
-    const profile = body.profile && typeof body.profile === 'object'
+    let profile = body.profile && typeof body.profile === 'object'
       ? body.profile
       : (typeof body.profile === 'string' ? JSON.parse(body.profile) : null);
     const plan = body.plan && typeof body.plan === 'object'
@@ -14049,6 +14051,16 @@ async function handleCreatePaintingBatchRun(req, res) {
 
     if (!profile || typeof profile !== 'object') {
       sendJson(res, 400, { error: '缺少产品档案 profile' });
+      return;
+    }
+    if (isStickerProduct(profile)) {
+      profile = normalizeStickerProfile(profile);
+      if (ideas.some((idea) => idea.productType !== 'sticker' || !Number.isInteger(Number(idea.directionNumber)) || Number(idea.directionNumber) < 1 || Number(idea.directionNumber) > 40)) {
+        sendJson(res, 400, { error: '贴画方案类型或方向不匹配，请重新生成创意方案' });
+        return;
+      }
+    } else if (ideas.some((idea) => idea.productType === 'sticker')) {
+      sendJson(res, 400, { error: '挂画档案不能使用贴画方案，请重新生成创意方案' });
       return;
     }
     if (!plan || typeof plan !== 'object') {
@@ -14132,7 +14144,7 @@ async function handleCreatePaintingBatchRun(req, res) {
     let selectedIdeas = [...ideas];
     // 服务端重新校验“仅生成未使用方向”：以服务端持久化的方向使用记录为准，避免前端统计不准确导致重复生成。
     if (onlyUnused) {
-      const usedDirections = new Set(dbGetPaintingUsedDirections(imageHash, variationRound));
+      const usedDirections = new Set(dbGetPaintingUsedDirections(imageHash, variationRound, profile.productType));
       selectedIdeas = selectedIdeas.filter((idea) => {
         const directionNumber = Number(idea.directionNumber) > 0 ? Number(idea.directionNumber) : 0;
         return directionNumber > 0 && !usedDirections.has(directionNumber);
@@ -14154,8 +14166,8 @@ async function handleCreatePaintingBatchRun(req, res) {
       autoEnhance480p,
       costEstimate,
       woodReferences: {
-        upper: upperWoodReference,
-        lower: lowerWoodReference,
+        upper: isStickerProduct(profile) ? null : upperWoodReference,
+        lower: isStickerProduct(profile) ? null : lowerWoodReference,
       },
     };
 
@@ -14659,7 +14671,7 @@ async function handleGetPaintingUsedDirections(req, res) {
       sendJson(res, 400, { error: '缺少图片哈希 imageHash' });
       return;
     }
-    sendJson(res, 200, { ok: true, usedDirections: dbGetPaintingUsedDirections(imageHash, variationRound) });
+    sendJson(res, 200, { ok: true, usedDirections: dbGetPaintingUsedDirections(imageHash, variationRound, url.searchParams.get('productType')) });
   } catch (error) {
     sendJson(res, 500, { error: error?.message || '读取已使用方向失败' });
   }
@@ -14697,6 +14709,7 @@ async function handleGetPaintingBatchRunEstimate(req, res) {
 }
 
 async function analyzePaintingCore(body, apiKey, requestId) {
+  const stickerInput = isStickerProduct(body) ? normalizeStickerProfile({ widthCm: body.widthCm, heightCm: body.heightCm }) : null;
   let imageUrl = '';
   if (body.file instanceof File && body.file.size > 0) {
     const compressedFile = await compressMediaForArk(body.file, 'image');
@@ -14708,7 +14721,8 @@ async function analyzePaintingCore(body, apiKey, requestId) {
     throw new Error('请先上传挂画图片。');
   }
 
-  const prompt = `你是专业的挂画/卷轴产品分析专家。请仔细分析下面这张挂画/装饰画图片，输出一个「产品固定档案」JSON 对象。
+  const sticker = isStickerProduct(body);
+  const prompt = sticker ? `请分析参考图片中印刷字画的实际可见内容，仅输出合法JSON对象，字段name、style、subject、colors数组、composition、texture、atmosphere。不清楚的小字标记不可辨认，不补写。用户已确认产品为PVC柔性背胶贴画，白色背面、可揭离背膜、印刷假框，不是真框，没有挂钩、木条或挂绳；不要从图片猜尺寸或把印刷假框识别成硬框。` : `你是专业的挂画/卷轴产品分析专家。请仔细分析下面这张挂画/装饰画图片，输出一个「产品固定档案」JSON 对象。
 
 要求输出以下字段（能用中文就用中文描述）：
 - name：产品名称
@@ -14735,7 +14749,10 @@ async function analyzePaintingCore(body, apiKey, requestId) {
     ]
   });
 
-  const profile = parseStructuredJson(answer);
+  const parsedProfile = parseStructuredJson(answer);
+  const profile = sticker
+    ? normalizeStickerProfile({ ...parsedProfile, widthCm: stickerInput.widthCm, heightCm: stickerInput.heightCm })
+    : { ...parsedProfile, productType: 'hanging' };
   console.log('[doubao painting] analyze done', { requestId, profileKeys: profile && typeof profile === 'object' ? Object.keys(profile) : [] });
   return { profile };
 }
@@ -15279,7 +15296,52 @@ function inspectPaintingPromptQuality(promptText, duration, ideaSummary = '', op
   return issues;
 }
 
+async function generateStickerIdeasCore(body, apiKey) {
+  const profile = normalizeStickerProfile(body.profile);
+  const plan = body.plan || {};
+  const batch = ((Math.trunc(Number(body.batch) || 0) % 4) + 4) % 4;
+  const style = resolvePaintingStyleProfile(plan.stylePreset);
+  const request = buildStickerIdeasRequest(profile, plan, batch, Number(body.variationRound) || 0, body.avoidIdeas, style);
+  const call = (text) => callDoubaoArkText({ apiKey, model: DEFAULT_DOUBAO_MULTIMODAL_MODEL, content: [{ type: 'input_text', text }] });
+  const answer = await call(request);
+  const parsed = await parsePaintingIdeasWithJsonRetry(answer, () => call(`${request}\n只输出完整合法JSON数组，不得截断。`));
+  if (parsed.ideas.length !== 10) throw new Error('贴画方案必须完整生成10条，请重试');
+  return {
+    batch, totalBatches: 4,
+    ideas: parsed.ideas.map((idea, index) => {
+      const framework = STICKER_FRAMEWORKS[batch * 10 + index];
+      return {
+        ...idea, id: `sticker-${framework.directionNumber}`, productType: 'sticker',
+        directionNumber: framework.directionNumber,
+        ...stickerDuration(framework.directionNumber, plan.durationMin, plan.durationMax),
+        summary: `【一镜到底·${framework.title}】${idea.summary}`,
+      };
+    }),
+  };
+}
+
+async function generateStickerIdeaPromptCore(apiKey, profile, idea, context) {
+  if (idea.productType && idea.productType !== 'sticker') throw new Error('请重新生成当前贴画的创意方案');
+  const normalized = normalizeStickerProfile(profile);
+  const range = stickerDuration(idea.directionNumber, idea.durationMin || context.durationMin, idea.durationMax || context.durationMax);
+  const request = buildStickerVideoRequest(normalized, idea, context, resolvePaintingStyleProfile(idea.stylePreset || context.stylePreset));
+  const call = (text) => callDoubaoArkText({ apiKey, model: DEFAULT_DOUBAO_MULTIMODAL_MODEL, content: [{ type: 'input_text', text }] });
+  let prompt = String(await call(request) || '').trim();
+  const validDuration = (text) => {
+    const duration = Number(text.match(/总时长\s*[：:]\s*(\d+)\s*秒/)?.[1]);
+    return Number.isInteger(duration) && duration >= range.durationMin && duration <= range.durationMax ? duration : null;
+  };
+  let duration = validDuration(prompt);
+  if (!prompt || !duration) {
+    prompt = String(await call(`${request}\n上一版为空或时长不合法，请重写完整时间轴并以总时长：X秒结尾。`) || '').trim();
+    duration = validDuration(prompt);
+  }
+  if (!prompt || !duration) throw new Error('贴画提示词时长校验未通过，请重试');
+  return { prompt: ensureStickerPrompt(prompt, normalized, idea.directionNumber), duration };
+}
+
 async function generatePaintingIdeasCore(body, apiKey, requestId) {
+  if (isStickerProduct(body.profile)) return generateStickerIdeasCore(body, apiKey);
   const profile = body.profile;
   const plan = body.plan && typeof body.plan === 'object' ? body.plan : {};
   if (!profile || typeof profile !== 'object') {
@@ -15503,6 +15565,8 @@ async function handlePaintingIdeas(req, res) {
 }
 
 async function generatePaintingIdeaPromptCore(requestId, apiKey, profile, idea, context = {}) {
+  if (isStickerProduct(profile)) return generateStickerIdeaPromptCore(apiKey, profile, idea, context);
+  if (idea?.productType === 'sticker') throw new Error('挂画档案不能使用贴画方案');
   const ideaTitle = readValue(idea?.title);
   const ideaSummary = readValue(idea?.summary);
   if (!ideaTitle && !ideaSummary) {
@@ -15748,7 +15812,9 @@ const paintingBatchSeedanceSubmitSemaphore = new PaintingBatchSemaphore(1);
 const paintingBatchRenderSemaphore = new PaintingBatchSemaphore(PAINTING_BATCH_MAX_RENDERING_TASKS);
 
 function normalizePaintingPromptForCompare(text) {
-  return String(text || '')
+  const source = String(text || '');
+  // 贴画固定物理前缀不属于创意内容，避免所有贴画方向因共享前缀被反复重写。
+  return (source.includes('【贴画创意正文】') ? source.split('【贴画创意正文】').slice(1).join('') : source)
     .toLowerCase()
     .replace(/[\s，。；：、,.!！?？“”"'（）()\-—\d]/g, '');
 }
@@ -15765,7 +15831,8 @@ function paintingPromptSimilarity(a, b) {
 }
 
 function extractPaintingDiversitySummary(promptText) {
-  const text = String(promptText || '');
+  const source = String(promptText || '');
+  const text = source.includes('【贴画创意正文】') ? source.split('【贴画创意正文】').slice(1).join('') : source;
   const sceneMatch = text.match(/场景[：:]?\s*([^\n]{3,80})/);
   const furnitureMatches = text.match(/沙发|茶几|书架|绿植|地毯|落地灯|茶具|博古架|花瓶|文房摆件|餐桌|餐椅|玄关柜|书桌|边柜|床头柜|艺术灯具|电视柜|屏风|雕塑/g) || [];
   const lightMatch = text.match(/光线[：:]?\s*([^\n]{3,60})/);
@@ -15810,6 +15877,7 @@ async function buildPaintingImageFileForSeedance(imagePath, baseName = 'painting
 }
 
 function getPaintingBatchReferenceSpecs(task, batchRun) {
+  if (isStickerProduct(batchRun?.profile)) return [{ imagePath: batchRun.imagePath || '', baseName: 'sticker-main', label: '贴画印刷正面主图，只参考画面内容；边框是平面假框' }];
   const woodReferences = batchRun?.options?.woodReferences || {};
   const isWoodDetailDirection = Number(task?.directionNumber) === PAINTING_WOOD_DETAIL_DIRECTION;
   const specs = [
@@ -15841,18 +15909,19 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
     throw new Error('缺少视频生成提示词 prompt');
   }
 
-  const isWoodDetailDirection = Number(task.directionNumber) === PAINTING_WOOD_DETAIL_DIRECTION;
+  const isSticker = isStickerProduct(batchRun.profile);
+  const isWoodDetailDirection = !isSticker && Number(task.directionNumber) === PAINTING_WOOD_DETAIL_DIRECTION;
   const referenceSpecs = getPaintingBatchReferenceSpecs(task, batchRun);
 
   const referenceGuide = isWoodDetailDirection
     ? `【参考图职责强制区分】\n${referenceSpecs.map((item) => item.label).join('\n')}。木条特写图中的桌面、墙面、手、尺子、包装物或其他背景都不属于产品，严禁复制到生成视频。如细节图与正面主图的作用冲突，整体画面以主图为准，对应木条局部结构以高清细节图为准。\n\n`
     : '';
-  let promptForSubmission = ensurePaintingProductFocusedEnding(
+  let promptForSubmission = isSticker ? ensureStickerPrompt(task.prompt, batchRun.profile, task.directionNumber) : ensurePaintingProductFocusedEnding(
     ensurePaintingRollingUnfoldInstruction(task.prompt, task.directionNumber)
   );
   if (isWan3) {
     promptForSubmission = ensureWan3CameraMotionLock(promptForSubmission);
-    promptForSubmission = ensureWan3PaintingStructureLock(promptForSubmission, task.directionNumber);
+    if (!isSticker) promptForSubmission = ensureWan3PaintingStructureLock(promptForSubmission, task.directionNumber);
   }
   const content = [{ type: 'text', text: `${referenceGuide}${promptForSubmission}` }];
   for (const spec of referenceSpecs) {
@@ -16261,7 +16330,7 @@ async function processBatchTask(taskId) {
           errorMessage: '',
         });
         // 提交到 Seedance 即视为该方向已被使用（“仅生成未使用方向”的服务端持久化依据）。
-        dbMarkPaintingDirectionUsed(currentRun.imageHash, currentRun.variationRound, task.directionNumber);
+        dbMarkPaintingDirectionUsed(currentRun.imageHash, currentRun.variationRound, task.directionNumber, currentRun.profile?.productType);
         await sleepMs(PAINTING_BATCH_SEEDANCE_SUBMIT_INTERVAL_MS);
       } catch (error) {
         const nextRetryCount = (task.retryCount || 0) + 1;
@@ -17824,11 +17893,14 @@ async function handleSeedanceCreateTask(req, res) {
     const isMiniMaxH3 = model === MINIMAX_H3_MODEL;
     const isWan3 = model === WAN3_VIDEO_MODEL;
     const manualDirection = Number(body?.directionNumber) || 0;
-    let prompt = ensurePaintingRollingUnfoldInstruction(readValue(body?.prompt), manualDirection);
-    if (isWan3) {
+    const stickerProfile = stickerProfileFromPrompt(body?.prompt) || (isStickerProduct(body) ? normalizeStickerProfile() : null);
+    let prompt = stickerProfile
+      ? ensureStickerPrompt(readValue(body?.prompt), stickerProfile, manualDirection || Number(String(body?.prompt).match(/框架方向：(\d+)/)?.[1]) || 1)
+      : ensurePaintingRollingUnfoldInstruction(readValue(body?.prompt), manualDirection);
+    if (isWan3 && !stickerProfile) {
       prompt = ensureWan3PaintingStructureLock(prompt, manualDirection);
     }
-    prompt = ensurePaintingProductFocusedEnding(prompt);
+    if (!stickerProfile) prompt = ensurePaintingProductFocusedEnding(prompt);
     if (isWan3) {
       prompt = ensureWan3CameraMotionLock(prompt);
     }
@@ -18164,7 +18236,7 @@ async function handleSeedanceCreateTask(req, res) {
     const manualImageHash = String(body?.imageHash || '');
     const manualVariationRound = Number(body?.variationRound) || 0;
     if (manualImageHash && manualDirection && taskId) {
-      dbMarkPaintingDirectionUsed(manualImageHash, manualVariationRound, manualDirection);
+      dbMarkPaintingDirectionUsed(manualImageHash, manualVariationRound, manualDirection, stickerProfile ? 'sticker' : 'hanging');
     }
 
     sendJson(res, 200, {
@@ -20164,6 +20236,9 @@ if (process.env.KELONG_SKIP_LISTEN !== '1') {
 
 // 供无费测试脚本复用真实逻辑（不调用真实 Seedance / 豆包）。
 export {
+  analyzePaintingCore,
+  generatePaintingIdeasCore,
+  generatePaintingIdeaPromptCore,
   getCollectionDb,
   ensurePaintingBatchIdempotencyConstraints,
   dbInsertPaintingBatchRun,
