@@ -42,14 +42,23 @@ assert.throws(() => normalizeStickerProfile({ heightCm: 'no' }));
 assert.equal(normalizeStickerProfile({ widthCm: 150, heightCm: 50 }).ratio, '150:50');
 for (const f of STICKER_FRAMEWORKS) {
   const rule = stickerPhysicalRules(profile, f.directionNumber);
-  assert.match(rule, /印刷假框/);
+  assert.match(rule, /二维装饰边线/);
+  assert.match(rule, /同一张连续薄片、同一墙面深度/);
+  assert.match(rule, /禁止生成实体木框、匾框/);
   assert.match(rule, /白色画背/);
   assert.ok(!forbidden.test(rule));
-  if (f.state === 'installed') assert.match(rule, /从第0秒就完整压实/);
+  if (f.state === 'installed') {
+    assert.match(rule, /第0秒以前已经完成施工/);
+    assert.match(rule, /禁止人物手持贴画/);
+    if (!f.closeDetail) assert.match(rule, /功能墙面的几何中心/);
+  }
   else assert.ok(!rule.includes('从第0秒就完整压实'));
+  if ([35, 36, 38, 39, 40].includes(f.directionNumber)) assert.match(rule, /功能墙面的几何中心/);
   const result = ensureStickerPrompt('创意正文', profile, f.directionNumber);
   assert.equal(ensureStickerPrompt(result, profile, f.directionNumber), result);
 }
+assert.match(STICKER_FRAMEWORKS[1].action, /沙发背景墙及沙发的水平中心线对齐/);
+assert.match(STICKER_FRAMEWORKS[9].action, /不搬动、不旋转、不重新安装/);
 assert.deepEqual(stickerDuration(1, 8, 9), { durationMin: 5, durationMax: 6 });
 assert.deepEqual(stickerDuration(29, 7, 9), { durationMin: 7, durationMax: 9 });
 
@@ -57,7 +66,7 @@ textReply = JSON.stringify({ name: '字画', material: '木板', frameStructure:
 const analysis = await server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'sticker', widthCm: '150', heightCm: '50' }, 'test', 'analysis');
 assert.equal(analysis.profile.widthCm, 150);
 assert.match(analysis.profile.material, /PVC/);
-assert.match(analysis.profile.frameStructure, /假框/);
+assert.match(analysis.profile.frameStructure, /平面印刷图案/);
 assert.ok(!payloads.at(-1).payload.input[0].content.at(-1).text.includes('挂画/卷轴产品分析专家'));
 
 for (let batch = 0; batch < 4; batch++) {

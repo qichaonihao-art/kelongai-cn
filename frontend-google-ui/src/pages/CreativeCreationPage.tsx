@@ -5237,7 +5237,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <span>×</span>
                         <label className="flex items-center gap-1">高<input aria-label="贴画高度（厘米）" type="number" min={10} max={500} value={stickerHeightCm} disabled={paintingDraftBusy} onChange={(event) => changeStickerDimension('height', Number(event.target.value))} className="w-20 rounded-lg border border-slate-200 px-2 py-1" />厘米</label>
                       </div>
-                      <p className="mt-2 text-[11px] leading-5 text-slate-500">PVC柔性背胶 · 白色画背 · 可揭背膜 · 印刷假框。以茶室、客厅、书房为主，30个成品展示＋10个形态与安装方向。</p>
+                      <p className="mt-2 text-[11px] leading-5 text-slate-500">PVC柔性背胶 · 白色画背 · 可揭背膜 · 二维印刷装饰边线。以茶室、客厅、书房为主，30个成品展示＋10个形态与安装方向。</p>
                     </> : <p className="mt-2 text-[11px] leading-5 text-slate-500">沿用原有40个挂画框架及尺寸补偿规则。</p>}
                     <p className="mt-1 text-[10px] text-slate-400">切换类型或修改尺寸后需要重新分析，已启动的批量任务不受影响。</p>
                   </div>
@@ -5517,7 +5517,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             type="text"
                             value={paintingPlan.extraRequirements}
                             onChange={(event) => setPaintingPlan((previous) => ({ ...previous, extraRequirements: event.target.value }))}
-                            placeholder={isSticker ? '例如：不要出现人物、展示印刷假框细节、以茶室为主' : '例如：不要出现人物、画面必须特写木条工艺'}
+                            placeholder={isSticker ? '例如：不要出现人物、展示二维装饰边线细节、以茶室为主' : '例如：不要出现人物、画面必须特写木条工艺'}
                             className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
                           />
                         </label>

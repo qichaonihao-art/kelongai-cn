@@ -13,6 +13,7 @@ import {
   getVideoLibrarySummary,
   markVideoLibraryItemsRead,
   retryVideoEnhancement,
+  setVideoLibraryShotRole,
   startVideoEnhancement,
   updateVideoLibraryItem,
   uploadVideoLibraryVideo,
@@ -157,6 +158,8 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [downloadingVideoId, setDownloadingVideoId] = useState<number | null>(null);
   const [isDownloadBusy, setIsDownloadBusy] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isChangingShotRole, setIsChangingShotRole] = useState(false);
+  const [shotRoleView, setShotRoleView] = useState<'regular' | 'shot-one'>('regular');
   const [checkedVideoIds, setCheckedVideoIds] = useState<Set<number>>(new Set());
   const [retryingEnhancementId, setRetryingEnhancementId] = useState<number | null>(null);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
@@ -271,13 +274,13 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
 
   const groupedItems = useMemo(() => {
     const groups = new Map<string, VideoLibraryItem[]>();
-    items.forEach((item) => {
+    items.filter((item) => shotRoleView === 'shot-one' ? Number(item.shotRole) === 1 : Number(item.shotRole) !== 1).forEach((item) => {
       const list = groups.get(item.folderName) || [];
       list.push(item);
       groups.set(item.folderName, list);
     });
     return Array.from(groups.entries());
-  }, [items]);
+  }, [items, shotRoleView]);
 
   const folderCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -491,6 +494,32 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       setError(moveError instanceof Error ? moveError.message : '移动视频失败');
     } finally {
       setIsMoving(false);
+    }
+  }
+
+  async function handleSetShotRole(selection: VideoLibraryItem[], shotRole: 0 | 1) {
+    if (!selectedFolder || isChangingShotRole || !selection.length) return;
+    const targets = [...new Map(selection.map((item) => [item.id, item])).values()];
+    setIsChangingShotRole(true);
+    setError('');
+    try {
+      const updated = await setVideoLibraryShotRole(targets.map((item) => item.id), selectedFolder, shotRole);
+      const byId = new Map(updated.map((item) => [item.id, item]));
+      setItems((previous) => previous.map((item) => byId.get(item.id) || item));
+      setCheckedVideoIds((previous) => {
+        const next = new Set(previous);
+        targets.forEach((item) => next.delete(item.id));
+        return next;
+      });
+      setSelectedItem((previous) => previous ? (byId.get(previous.id) || previous) : null);
+      setNotice(shotRole === 1
+        ? `已将 ${updated.length} 个素材移入“${selectedFolder} / 镜头一”，无需重新上传。`
+        : `已将 ${updated.length} 个素材移回“${selectedFolder} / 普通素材”。`);
+      await refreshUnreadSummary();
+    } catch (moveError) {
+      setError(moveError instanceof Error ? moveError.message : '移动镜头素材失败');
+    } finally {
+      setIsChangingShotRole(false);
     }
   }
 
@@ -725,6 +754,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   }
 
   function renderVideoCard(item: VideoLibraryItem) {
+    const isShotOne = Number(item.shotRole) === 1;
     const isUnread = unreadVideoIds.has(item.id);
     const shortEdge = Math.min(Number(item.width || 0), Number(item.height || 0));
     const canEnhanceTo1080p = item.variant !== 'enhanced' && shortEdge > 0 && shortEdge <= 512;
@@ -825,6 +855,9 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
               {downloadingVideoId === item.id ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
               {downloadingVideoId === item.id ? '准备中' : '下载'}
             </button>
+            <button type="button" disabled={isChangingShotRole || isDeleting || isDownloadBusy} onClick={() => void handleSetShotRole([item], isShotOne ? 0 : 1)} className="inline-flex flex-1 items-center justify-center rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-black text-amber-700 hover:bg-amber-100 disabled:opacity-50">
+              {isShotOne ? '移回普通素材' : '移入镜头一'}
+            </button>
             <button type="button" onClick={() => openMoveDialog(item)} className="inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-sky-50 hover:text-sky-600" title="移动到其他文件夹">
               <FolderInput className="size-3.5" />
             </button>
@@ -872,6 +905,16 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
           </div>
         </div>
         {(error || notice) && <div className={cn('mt-3 rounded-2xl px-4 py-3 text-sm font-bold', error ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700')}>{error || notice}</div>}
+        {selectedFolder && (
+          <div className="mt-3 grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-2">
+            <button type="button" onClick={() => setShotRoleView('regular')} className={cn('rounded-xl px-3 py-3 text-sm font-black', shotRoleView === 'regular' ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500')}>
+              普通素材（{items.filter((item) => Number(item.shotRole) !== 1).length}）<span className="mt-1 block text-[10px] font-semibold">轻剪均分到镜头2～6</span>
+            </button>
+            <button type="button" onClick={() => setShotRoleView('shot-one')} className={cn('rounded-xl px-3 py-3 text-sm font-black', shotRoleView === 'shot-one' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500')}>
+              镜头一（{items.filter((item) => Number(item.shotRole) === 1).length}）<span className="mt-1 block text-[10px] font-semibold">轻剪全部放入镜头1</span>
+            </button>
+          </div>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl bg-sky-50 px-3 py-2 text-xs font-bold text-sky-800">
           <FolderOpen className="size-4" />
           <span>今日保存位置：{localFolderName && isVideoLibraryDestinationCurrent(localFolderUpdatedAt) ? localFolderName : '首次下载时选择'}</span>
@@ -938,6 +981,9 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
                     setCheckedVideoIds((previous) => { const next = new Set(previous); folderItems.forEach((item) => checked ? next.add(item.id) : next.delete(item.id)); return next; });
                   }} />全选当前显示
                 </label>
+                <button type="button" disabled={isChangingShotRole || isDeleting || isDownloadBusy || !folderItems.some((item) => checkedVideoIds.has(item.id))} onClick={() => void handleSetShotRole(folderItems.filter((item) => checkedVideoIds.has(item.id)), shotRoleView === 'shot-one' ? 0 : 1)} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-black text-white disabled:opacity-50">
+                  {isChangingShotRole ? '正在移动' : shotRoleView === 'shot-one' ? '批量移回普通素材' : '批量移入镜头一'}
+                </button>
                 <button type="button" disabled={isDeleting || isDownloadBusy || isLocalBindingLoading || !folderItems.some((item) => checkedVideoIds.has(item.id))} onClick={() => void handleDownloadNewMaterials(folderItems.filter((item) => checkedVideoIds.has(item.id)).map((item) => item.id), folder)} className="inline-flex items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-black text-white disabled:opacity-50"><Download className="size-3.5" />下载所选（{folderItems.filter((item) => checkedVideoIds.has(item.id)).length}）</button>
                 <button type="button" disabled={isDeleting || isDownloadBusy || !folderItems.some((item) => checkedVideoIds.has(item.id))} onClick={() => void handleDeleteSelected(folderItems.filter((item) => checkedVideoIds.has(item.id)))} className="inline-flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-red-700 disabled:opacity-50">{isDeleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}{isDeleting ? '正在删除' : `删除所选（${folderItems.filter((item) => checkedVideoIds.has(item.id)).length}）`}</button>
                 <button

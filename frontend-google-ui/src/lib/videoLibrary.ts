@@ -12,6 +12,7 @@ export interface VideoLibraryItem {
   durationSeconds: number;
   variant: 'original' | 'enhanced' | string;
   sourceItemId: number | null;
+  shotRole: 0 | 1;
   enhancement: {
     id: number;
     status: string;
@@ -237,7 +238,7 @@ export async function startVideoEnhancement(id: number) {
   return json?.item as VideoLibraryItem;
 }
 
-export async function updateVideoLibraryItem(id: number, input: { note?: string; originalName?: string; folderName?: string }) {
+export async function updateVideoLibraryItem(id: number, input: { note?: string; originalName?: string; folderName?: string; shotRole?: 0 | 1 }) {
   const response = await fetch(`/api/video-library/videos/${id}`, {
     method: 'PATCH',
     credentials: 'include',
@@ -247,6 +248,18 @@ export async function updateVideoLibraryItem(id: number, input: { note?: string;
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '更新视频信息失败'));
   return json?.item as VideoLibraryItem;
+}
+
+export async function setVideoLibraryShotRole(ids: number[], folderName: string, shotRole: 0 | 1) {
+  const targets = [...new Set(ids.map(Number))];
+  if (!targets.length || targets.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw new Error('请先选择视频素材');
+  const response = await fetch('/api/video-library/videos/shot-role', {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: targets, folderName, shotRole }),
+  });
+  const json = await readJson(response);
+  if (!response.ok) throw new Error(errorMessage(json, '移动镜头素材失败'));
+  return Array.isArray(json?.items) ? json.items as VideoLibraryItem[] : [];
 }
 
 export async function deleteVideoLibraryVideo(id: number) {

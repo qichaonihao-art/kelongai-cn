@@ -14,6 +14,7 @@ import { WebSocket } from 'ws';
 import { config as loadDotenv } from 'dotenv';
 import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
 import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, stickerProfileFromPrompt } from './sticker-creative.mjs';
+import { setVideoLibraryShotRole } from './video-library-shot-role.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1175,6 +1176,7 @@ function getCollectionDb() {
         duration_seconds REAL NOT NULL DEFAULT 0,
         variant TEXT NOT NULL DEFAULT 'original',
         source_item_id INTEGER,
+        shot_role INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
@@ -1318,6 +1320,7 @@ function getCollectionDb() {
       `ALTER TABLE video_library_items ADD COLUMN duration_seconds REAL NOT NULL DEFAULT 0`,
       `ALTER TABLE video_library_items ADD COLUMN variant TEXT NOT NULL DEFAULT 'original'`,
       `ALTER TABLE video_library_items ADD COLUMN source_item_id INTEGER`,
+      `ALTER TABLE video_library_items ADD COLUMN shot_role INTEGER NOT NULL DEFAULT 0`,
     ]) {
       try { collectionDb.exec(statement); } catch {}
     }
@@ -1786,6 +1789,7 @@ function normalizeVideoLibraryItem(row) {
     durationSeconds: Number(row.duration_seconds || 0),
     variant: String(row.variant || 'original'),
     sourceItemId: row.source_item_id ? Number(row.source_item_id) : null,
+    shotRole: Number(row.shot_role) === 1 ? 1 : 0,
     enhancement,
     createdAt: Number(row.created_at || 0),
     updatedAt: Number(row.updated_at || 0),
@@ -1869,12 +1873,12 @@ function dbFindVideoLibraryByHash(sha256) {
   return normalizeVideoLibraryItem(row);
 }
 
-function dbInsertVideoLibraryItem({ folderName, originalName, storedName, mimeType, fileSize, sha256, note, width = 0, height = 0, fps = 0, durationSeconds = 0, variant = 'original', sourceItemId = null }) {
+function dbInsertVideoLibraryItem({ folderName, originalName, storedName, mimeType, fileSize, sha256, note, width = 0, height = 0, fps = 0, durationSeconds = 0, variant = 'original', sourceItemId = null, shotRole = 0 }) {
   const result = getCollectionDb().prepare(`
     INSERT INTO video_library_items
-      (folder_name, original_name, stored_name, mime_type, file_size, sha256, note, width, height, fps, duration_seconds, variant, source_item_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(folderName, originalName, storedName, mimeType, fileSize, sha256, note, Number(width || 0), Number(height || 0), Number(fps || 0), Number(durationSeconds || 0), String(variant || 'original'), sourceItemId ? Number(sourceItemId) : null);
+      (folder_name, original_name, stored_name, mime_type, file_size, sha256, note, width, height, fps, duration_seconds, variant, source_item_id, shot_role)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(folderName, originalName, storedName, mimeType, fileSize, sha256, note, Number(width || 0), Number(height || 0), Number(fps || 0), Number(durationSeconds || 0), String(variant || 'original'), sourceItemId ? Number(sourceItemId) : null, Number(shotRole) === 1 ? 1 : 0);
   return dbGetVideoLibraryItem(Number(result.lastInsertRowid));
 }
 
@@ -2185,6 +2189,7 @@ async function downloadEnhancedVideo(row, outputUrl) {
       ...metadata,
       variant: 'enhanced',
       sourceItemId: null,
+      shotRole: Number(source.shot_role) === 1 ? 1 : 0,
     });
     void ensureVideoLibraryPreview({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
     void ensureVideoLibraryThumbnail({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
@@ -3133,12 +3138,27 @@ async function handleUpdateVideoLibrary(req, res, id) {
     const nextFolder = body?.folderName === undefined
       ? existing.folderName
       : sanitizeVideoLibraryFolder(body.folderName);
+    const nextShotRole = body?.shotRole === undefined ? Number(existing.shotRole || 0) : (Number(body.shotRole) === 1 ? 1 : 0);
     dbCreateVideoLibraryFolder(nextFolder);
-    getCollectionDb().prepare('UPDATE video_library_items SET folder_name = ?, original_name = ?, note = ?, updated_at = unixepoch() WHERE id = ?').run(nextFolder, nextName, nextNote, Number(id));
+    getCollectionDb().prepare('UPDATE video_library_items SET folder_name = ?, original_name = ?, note = ?, shot_role = ?, updated_at = unixepoch() WHERE id = ?').run(nextFolder, nextName, nextNote, nextShotRole, Number(id));
     const item = dbGetVideoLibraryItem(id);
     sendJson(res, 200, { ok: true, item });
   } catch (error) {
     sendJson(res, 500, { error: error.message || '更新视频信息失败' });
+  }
+}
+
+async function handleSetVideoLibraryShotRole(req, res) {
+  try {
+    const body = await readRequestBody(req);
+    const ids = Array.isArray(body?.ids) ? body.ids : [];
+    const folderName = sanitizeVideoLibraryFolder(body?.folderName);
+    const shotRole = Number(body?.shotRole) === 1 ? 1 : 0;
+    const db = getCollectionDb();
+    const result = setVideoLibraryShotRole(db, { ids, folderName, shotRole });
+    sendJson(res, 200, { ok: true, items: result.ids.map((id) => dbGetVideoLibraryItem(id)).filter(Boolean), shotRole: result.shotRole });
+  } catch (error) {
+    sendJson(res, Number(error?.statusCode) || 500, { error: error.message || '移动镜头素材失败' });
   }
 }
 
@@ -14722,7 +14742,7 @@ async function analyzePaintingCore(body, apiKey, requestId) {
   }
 
   const sticker = isStickerProduct(body);
-  const prompt = sticker ? `请分析参考图片中印刷字画的实际可见内容，仅输出合法JSON对象，字段name、style、subject、colors数组、composition、texture、atmosphere。不清楚的小字标记不可辨认，不补写。用户已确认产品为PVC柔性背胶贴画，白色背面、可揭离背膜、印刷假框，不是真框，没有挂钩、木条或挂绳；不要从图片猜尺寸或把印刷假框识别成硬框。` : `你是专业的挂画/卷轴产品分析专家。请仔细分析下面这张挂画/装饰画图片，输出一个「产品固定档案」JSON 对象。
+  const prompt = sticker ? `请分析参考图片中印刷字画的实际可见内容，仅输出合法JSON对象，字段name、style、subject、colors数组、composition、texture、atmosphere。不清楚的小字标记不可辨认，不补写。用户已确认产品为PVC柔性背胶墙贴：白色背面、可揭离背膜、全幅背胶贴墙；正面外围看似装裱的部分仅是与画芯同平面的二维印刷装饰边线，不是独立物体。产品没有挂钩、木条、挂绳、背板、玻璃或任何立体外围构件；不要从图片猜尺寸。` : `你是专业的挂画/卷轴产品分析专家。请仔细分析下面这张挂画/装饰画图片，输出一个「产品固定档案」JSON 对象。
 
 要求输出以下字段（能用中文就用中文描述）：
 - name：产品名称
@@ -15877,7 +15897,7 @@ async function buildPaintingImageFileForSeedance(imagePath, baseName = 'painting
 }
 
 function getPaintingBatchReferenceSpecs(task, batchRun) {
-  if (isStickerProduct(batchRun?.profile)) return [{ imagePath: batchRun.imagePath || '', baseName: 'sticker-main', label: '贴画印刷正面主图，只参考画面内容；边框是平面假框' }];
+  if (isStickerProduct(batchRun?.profile)) return [{ imagePath: batchRun.imagePath || '', baseName: 'sticker-main', label: '贴画印刷正面主图，只参考画面内容；外围装饰边线是画面中的二维油墨图案，不是独立立体物体' }];
   const woodReferences = batchRun?.options?.woodReferences || {};
   const isWoodDetailDirection = Number(task?.directionNumber) === PAINTING_WOOD_DETAIL_DIRECTION;
   const specs = [
@@ -20109,6 +20129,11 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname.startsWith('/api/video-library/videos/') && url.pathname.endsWith('/enhance')) {
     const id = decodeURIComponent(url.pathname.replace(/^\/api\/video-library\/videos\//, '').replace(/\/enhance$/, ''));
     await handleStartVideoEnhancement(req, res, id);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/video-library/videos/shot-role') {
+    await handleSetVideoLibraryShotRole(req, res);
     return;
   }
 
