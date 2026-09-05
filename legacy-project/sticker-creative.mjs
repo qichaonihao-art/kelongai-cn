@@ -1,5 +1,6 @@
 // PVC 贴画与卷轴的规则独立维护；方向编号只在各自产品类型内有意义。
 export const STICKER_MARKER = '【PVC背胶贴画物理锁定】';
+export const STICKER_FINAL_MARKER = '【PVC墙贴最终几何裁决】';
 export const isStickerProduct = (profile) => profile?.productType === 'sticker';
 export const productUsageHash = (hash, type) => type === 'sticker' && hash ? `sticker:${hash}` : String(hash || '');
 
@@ -104,8 +105,36 @@ ${f.closeDetail ? '本方向是局部近景，不强制人物全身或房间全�
 export function ensureStickerPrompt(prompt, profile, direction) {
   // 自己生成的旧规则也替换为本次档案快照，不能在重试时叠加不同尺寸。
   const text = String(prompt || '').trim();
-  const body = text.includes('【贴画创意正文】') ? text.split('【贴画创意正文】').slice(1).join('【贴画创意正文】').trim() : text;
-  return `${stickerPhysicalRules(profile, direction)}\n\n【贴画创意正文】\n${body}`;
+  const extracted = text.includes('【贴画创意正文】') ? text.split('【贴画创意正文】').slice(1).join('【贴画创意正文】').trim() : text;
+  const body = extracted.split(STICKER_FINAL_MARKER)[0].trim();
+  const p = normalizeStickerProfile(profile);
+  const f = getStickerFramework(direction);
+  const positionRule = (f.state === 'installed' || STICKER_WALL_INSTALL_DIRECTIONS.has(f.directionNumber)) && !f.closeDetail
+    ? '墙贴的水平中心对准所在功能背景墙及主家具组合的水平中心，人物只能侧让，不能让产品偏离中心。'
+    : '';
+  const stateRule = f.state === 'installed'
+    ? '本方向从首帧到末帧都只展示同一张早已贴好的成品；产品本体没有任何位移、旋转、展开、揭起或安装过程。'
+    : '只执行框架指定的一个局部形态或安装步骤，不增加卷轴动作。';
+  const finalRule = `唯一允许出现的产品实体是一张宽${p.widthCm}厘米、高${p.heightCm}厘米的横向柔性PVC印刷膜。它的整个背胶面贴在墙面上时与墙面共面，外轮廓是一条贴墙切边；正面外围装饰只是和彩色文字、印章一样的二维印刷像素，所有区域厚度完全相同。斜视时也只能看到膜面直接接触墙面的细线，不能出现独立外围结构、侧面厚度、离墙间隙或围绕外沿的投影。${stateRule}${positionRule}`;
+  return `${stickerPhysicalRules(p, direction)}\n\n【贴画创意正文】\n${body}\n\n${STICKER_FINAL_MARKER}\n${finalRule}`;
+}
+
+export function inspectStickerPromptIssues(prompt, direction) {
+  const f = getStickerFramework(direction);
+  const creative = String(prompt || '').match(/创意内容\s*[：:]?([\s\S]*?)(?:负面约束\s*[：:]?|$)/)?.[1] || String(prompt || '');
+  const positiveClauses = creative.split(/[。；;\n]/).filter((clause) => clause && !/(?:禁止|严禁|不得|不能|不要|避免|不出现|无)/.test(clause));
+  const positive = positiveClauses.join('\n');
+  const issues = [];
+  if (/(?:竖幅|竖版|纵向).{0,8}(?:贴画|墙贴|字画|画面|成品|画框)|(?:贴画|墙贴|字画|画面|成品|画框).{0,8}(?:竖幅|竖版|纵向)/.test(positive)) {
+    issues.push('把180×60厘米横向PVC墙贴写成了竖向产品');
+  }
+  if (/(?:实木|木质|金属).{0,8}(?:边框|画框|框架)|(?:实体|立体).{0,8}(?:边框|画框|框体)|相框|匾额|牌匾|玻璃画框/.test(positive)) {
+    issues.push('把正面的二维印刷装饰边线写成了独立立体构件');
+  }
+  if (f.state === 'installed' && /(?:人物|女士|女性|男士|男性|双手|手部|她|他).{0,30}(?:手持|拿起|托起|托住|搬动|举起|旋转|展开|铺开|贴上墙|安装)|(?:手持|拿起|托起|托住|搬动|举起|旋转|展开|铺开|贴上墙|安装).{0,30}(?:贴画|墙贴|字画|画面|成品)/s.test(positive)) {
+    issues.push('已安装展示方向混入了手持、旋转、展开或再次安装产品的动作');
+  }
+  return issues;
 }
 
 export function stickerProfileFromPrompt(prompt) {

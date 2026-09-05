@@ -13,7 +13,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 import { config as loadDotenv } from 'dotenv';
 import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
-import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, stickerProfileFromPrompt } from './sticker-creative.mjs';
+import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, inspectStickerPromptIssues, stickerProfileFromPrompt } from './sticker-creative.mjs';
 import { setVideoLibraryShotRole } from './video-library-shot-role.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -15352,11 +15352,17 @@ async function generateStickerIdeaPromptCore(apiKey, profile, idea, context) {
     return Number.isInteger(duration) && duration >= range.durationMin && duration <= range.durationMax ? duration : null;
   };
   let duration = validDuration(prompt);
-  if (!prompt || !duration) {
-    prompt = String(await call(`${request}\n上一版为空或时长不合法，请重写完整时间轴并以总时长：X秒结尾。`) || '').trim();
+  let physicalIssues = prompt ? inspectStickerPromptIssues(prompt, idea.directionNumber) : [];
+  if (!prompt || !duration || physicalIssues.length) {
+    const reason = physicalIssues.length
+      ? `上一版存在以下产品物理错误：${physicalIssues.join('；')}。`
+      : '上一版为空或时长不合法。';
+    prompt = String(await call(`${request}\n${reason}请完整重写，已贴好方向只能设计人物、环境和摄影机动作，不得改动产品状态；产品始终是横向、全平面、全幅贴墙的柔性印刷膜。最后以总时长：X秒结尾。`) || '').trim();
     duration = validDuration(prompt);
+    physicalIssues = prompt ? inspectStickerPromptIssues(prompt, idea.directionNumber) : [];
   }
   if (!prompt || !duration) throw new Error('贴画提示词时长校验未通过，请重试');
+  if (physicalIssues.length) throw new Error(`贴画提示词存在产品物理错误，已阻止提交付费视频：${physicalIssues.join('；')}`);
   return { prompt: ensureStickerPrompt(prompt, normalized, idea.directionNumber), duration };
 }
 

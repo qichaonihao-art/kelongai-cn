@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { STICKER_FRAMEWORKS, STICKER_MARKER, normalizeStickerProfile, stickerPhysicalRules, ensureStickerPrompt, stickerDuration } from './sticker-creative.mjs';
+import { STICKER_FRAMEWORKS, STICKER_MARKER, STICKER_FINAL_MARKER, normalizeStickerProfile, stickerPhysicalRules, ensureStickerPrompt, inspectStickerPromptIssues, stickerDuration } from './sticker-creative.mjs';
 
 process.env.RUNTIME_STATE_DIR = mkdtempSync(join(tmpdir(), 'kelong-sticker-test-'));
 process.env.KELONG_SKIP_LISTEN = '1';
@@ -56,9 +56,17 @@ for (const f of STICKER_FRAMEWORKS) {
   if ([35, 36, 38, 39, 40].includes(f.directionNumber)) assert.match(rule, /功能墙面的几何中心/);
   const result = ensureStickerPrompt('创意正文', profile, f.directionNumber);
   assert.equal(ensureStickerPrompt(result, profile, f.directionNumber), result);
+  assert.ok(result.includes(STICKER_FINAL_MARKER));
+  assert.equal(result.split(STICKER_FINAL_MARKER).length, 2);
 }
 assert.match(STICKER_FRAMEWORKS[1].action, /沙发背景墙及沙发的水平中心线对齐/);
 assert.match(STICKER_FRAMEWORKS[9].action, /不搬动、不旋转、不重新安装/);
+assert.deepEqual(inspectStickerPromptIssues('创意内容：0—3秒，人物手持竖幅木质画框旋转并贴上墙。负面约束：禁止变形。总时长：6秒', 2), [
+  '把180×60厘米横向PVC墙贴写成了竖向产品',
+  '把正面的二维印刷装饰边线写成了独立立体构件',
+  '已安装展示方向混入了手持、旋转、展开或再次安装产品的动作',
+]);
+assert.deepEqual(inspectStickerPromptIssues('创意内容：0—3秒，人物坐在沙发上阅读，墙贴始终贴平。负面约束：禁止实体木框，禁止人物手持产品。总时长：6秒', 2), []);
 assert.deepEqual(stickerDuration(1, 8, 9), { durationMin: 5, durationMax: 6 });
 assert.deepEqual(stickerDuration(29, 7, 9), { durationMin: 7, durationMax: 9 });
 
