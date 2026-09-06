@@ -51,14 +51,14 @@ for (const f of STICKER_FRAMEWORKS) {
     assert.match(rule, /人物始终空手并与产品表面保持距离/);
     assert.match(rule, /严禁先出现无边线画芯/);
     assert.ok(!/(?:背膜|揭膜|白色画背|背面白色|背面为白色)/.test(rule));
-    if (!f.closeDetail) assert.match(rule, /功能墙面的几何中心/);
+    if (!f.closeDetail) assert.match(rule, /几何中心布置/);
   }
   else {
     assert.ok(!rule.includes('从第0秒就完整压实'));
     assert.match(rule, /白色画背/);
     assert.match(rule, /可揭离的背膜/);
   }
-  if ([35, 36, 38, 39, 40].includes(f.directionNumber)) assert.match(rule, /功能墙面的几何中心/);
+  if ([35, 36, 38, 39, 40].includes(f.directionNumber)) assert.match(rule, /几何中心布置/);
   const result = ensureStickerPrompt('创意正文', profile, f.directionNumber);
   assert.equal(ensureStickerPrompt(result, profile, f.directionNumber), result);
   assert.ok(result.includes(STICKER_FINAL_MARKER));
@@ -72,12 +72,51 @@ assert.match(STICKER_FRAMEWORKS[5].action, /不使用全屋大远景/);
 assert.match(STICKER_FRAMEWORKS[5].action, /书本始终远离镜头且不翻页、不扬起纸张/);
 assert.match(stickerPhysicalRules(profile, 6), /镜头前方禁止出现白纸、书页、白布、薄膜、幕布/);
 assert.match(STICKER_FRAMEWORKS[9].action, /不搬动、不旋转、不重新安装/);
+for (const direction of [1, 4, 7, 11, 17, 20, 29, 32, 35, 40]) {
+  const rule = stickerPhysicalRules(profile, direction);
+  assert.match(rule, /固定为独立茶室/);
+  assert.match(rule, /茶室内严禁出现三人沙发/);
+}
+for (const direction of [3, 6, 9, 13, 18, 24, 28, 30, 31, 36, 38]) {
+  const rule = stickerPhysicalRules(profile, direction);
+  assert.match(rule, /固定为书房或阅读区/);
+  assert.match(rule, /书房内严禁出现三人沙发/);
+}
+for (const direction of [2, 5, 10, 12, 16, 19, 23, 39]) assert.match(stickerPhysicalRules(profile, direction), /固定为客厅场景/);
+assert.match(stickerPhysicalRules(profile, 2), /贴画宽度应约占沙发总宽的75%—86%/);
+assert.match(stickerPhysicalRules(profile, 1), /贴画宽度应约占这段墙宽的45%—56%/);
+assert.match(stickerPhysicalRules(profile, 3), /贴画宽度应约占这段墙宽的50%—60%/);
+assert.match(stickerPhysicalRules(profile, 14), /贴画宽度应约占主墙宽的40%—50%/);
+assert.match(stickerPhysicalRules(profile, 15), /贴画宽度应约占墙宽的45%—56%/);
+assert.match(stickerPhysicalRules(profile, 21), /贴画宽度应约占墙段宽的43%—60%/);
+assert.match(stickerPhysicalRules(profile, 34), /贴画展开宽度应约占操作台长度的75%—90%/);
+assert.match(stickerPhysicalRules({ ...profile, widthCm: 150, heightCm: 50 }, 2), /贴画宽度应约占沙发总宽的63%—71%/);
+assert.match(stickerPhysicalRules({ ...profile, widthCm: 120, heightCm: 40 }, 1), /贴画宽度应约占这段墙宽的30%—38%/);
+for (const f of STICKER_FRAMEWORKS) assert.match(stickerPhysicalRules(profile, f.directionNumber), /【本方向空间比例锁定】/);
+assert.match(STICKER_FRAMEWORKS[7].title, /办公室访客看画/);
+assert.match(STICKER_FRAMEWORKS[13].title, /办公室会客递杯/);
+assert.match(STICKER_FRAMEWORKS[21].title, /办公室文化墙右向左揭示/);
+assert.match(stickerPhysicalRules(profile, 8), /固定为现代经理办公室/);
+assert.match(stickerPhysicalRules(profile, 14), /固定为小型办公室会客区/);
+assert.match(stickerPhysicalRules(profile, 22), /固定为现代会议室/);
+assert.match(stickerPhysicalRules(profile, 15), /固定为餐厅/);
+assert.match(stickerPhysicalRules(profile, 21), /文化走廊、展陈墙或纯墙面产品近景/);
+assert.match(stickerPhysicalRules(profile, 34), /工作室或铺贴操作区/);
+assert.match(STICKER_FRAMEWORKS[28].action, /场景内不混入客厅家具/);
+assert.match(STICKER_FRAMEWORKS[33].action, /铺贴工作区/);
 assert.deepEqual(inspectStickerPromptIssues('创意内容：0—3秒，人物手持竖幅木质画框旋转并贴上墙。负面约束：禁止变形。总时长：6秒', 2), [
   '把180×60厘米横向PVC墙贴写成了竖向产品',
   '把正面的二维印刷装饰边线写成了独立立体构件',
   '已安装展示方向混入了手持、旋转、展开或再次安装产品的动作',
 ]);
 assert.deepEqual(inspectStickerPromptIssues('创意内容：0—3秒，人物坐在沙发上阅读，墙贴始终贴平。负面约束：禁止实体木框，禁止人物手持产品。总时长：6秒', 2), []);
+assert.deepEqual(inspectStickerPromptIssues('创意内容：茶室中人物坐在三人沙发上讲解贴画。负面约束：禁止改动画面。总时长：6秒', 1), [
+  '本方向不是客厅，却混入了沙发、沙发靠垫或客厅茶几',
+]);
+assert.deepEqual(inspectStickerPromptIssues('创意内容：书房中人物从沙发旁起身看画。负面约束：禁止变形。总时长：6秒', 6), [
+  '本方向不是客厅，却混入了沙发、沙发靠垫或客厅茶几',
+]);
+assert.deepEqual(inspectStickerPromptIssues('创意内容：茶室以实木茶桌、茶椅和茶柜构成空间，人物侧身看画。负面约束：禁止出现沙发。总时长：6秒', 1), []);
 assert.deepEqual(inspectStickerPromptIssues('【挂画生成尺寸补偿锁定】\n创意内容：墙面展示。', 2), [
   '混入了挂画专用尺寸、挂钩、木条或卷轴规则',
 ]);
@@ -99,6 +138,20 @@ for (let batch = 0; batch < 4; batch++) {
   assert.ok(result.ideas.every((idea) => idea.productType === 'sticker'));
   assert.ok(!payloads.at(-1).payload.input[0].content[0].text.includes('40×80'));
 }
+
+textReply = JSON.stringify(Array.from({ length: 10 }, (_, i) => ({ id: String(i), title: `中式方案${i}`, summary: '按固定方向展示贴画。' })));
+await server.generatePaintingIdeasCore({ profile, plan: { ...plan, stylePreset: 'new-chinese' }, batch: 0 }, 'test', 'ideas-style-cn');
+assert.match(payloads.at(-1).payload.input[0].content[0].text, /风格：新中式雅致/);
+assert.match(payloads.at(-1).payload.input[0].content[0].text, /实木家具、简洁东方线条/);
+textReply = JSON.stringify(Array.from({ length: 10 }, (_, i) => ({ id: String(i), title: `自然方案${i}`, summary: '按固定方向展示贴画。' })));
+await server.generatePaintingIdeasCore({ profile, plan: { ...plan, stylePreset: 'natural-wood' }, batch: 0 }, 'test', 'ideas-style-natural');
+assert.match(payloads.at(-1).payload.input[0].content[0].text, /风格：原木自然/);
+assert.match(payloads.at(-1).payload.input[0].content[0].text, /浅木家具、棉麻织物、自然绿植/);
+
+textReply = '产品固定约束：保持平面印刷贴画。创意内容：茶室中人物在茶桌旁自然讲解，镜头轻移落到贴画。负面约束：禁止产品变形。总时长：6秒';
+await server.generatePaintingIdeaPromptCore('sticker-style-prompt', 'test', profile, { directionNumber: 1, title: '讲解', productType: 'sticker' }, { ...plan, productType: 'sticker', stylePreset: 'natural-wood' });
+assert.match(payloads.at(-1).payload.input[0].content[0].text, /风格：原木自然/);
+assert.match(payloads.at(-1).payload.input[0].content[0].text, /浅木家具、棉麻织物、自然绿植/);
 
 for (const direction of [1, 8, 25, 29, 30, 33, 37, 40]) {
   textReply = '产品固定约束：保留印刷画面。创意内容：0—2秒交代产品，2—4秒轻微移动，4—6秒按指定状态展示。负面约束：禁止变形。总时长：6秒';
