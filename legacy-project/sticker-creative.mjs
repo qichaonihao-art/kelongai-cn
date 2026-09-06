@@ -121,10 +121,17 @@ export function ensureStickerPrompt(prompt, profile, direction) {
 
 export function inspectStickerPromptIssues(prompt, direction) {
   const f = getStickerFramework(direction);
-  const creative = String(prompt || '').match(/创意内容\s*[：:]?([\s\S]*?)(?:负面约束\s*[：:]?|$)/)?.[1] || String(prompt || '');
+  const source = String(prompt || '');
+  const stickerBody = source.includes('【贴画创意正文】')
+    ? source.split('【贴画创意正文】').slice(1).join('【贴画创意正文】').split(STICKER_FINAL_MARKER)[0]
+    : source;
+  const creative = stickerBody.match(/创意内容\s*[：:]?([\s\S]*?)(?:负面约束\s*[：:]?|$)/)?.[1] || stickerBody;
   const positiveClauses = creative.split(/[。；;\n]/).filter((clause) => clause && !/(?:禁止|严禁|不得|不能|不要|避免|不出现|无)/.test(clause));
   const positive = positiveClauses.join('\n');
   const issues = [];
+  if (/【(?:挂画生成尺寸补偿锁定|挂画真实尺寸强制锁定|挂画全程存在与空间连续性强制锁定|卷起挂画滚动展开与下方木条强制锁定)】/.test(source)) {
+    issues.push('混入了挂画专用尺寸、挂钩、木条或卷轴规则');
+  }
   if (/(?:竖幅|竖版|纵向).{0,8}(?:贴画|墙贴|字画|画面|成品|画框)|(?:贴画|墙贴|字画|画面|成品|画框).{0,8}(?:竖幅|竖版|纵向)/.test(positive)) {
     issues.push('把180×60厘米横向PVC墙贴写成了竖向产品');
   }

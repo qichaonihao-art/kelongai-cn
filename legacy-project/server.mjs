@@ -14790,7 +14790,7 @@ async function runPaintingAnalyzeTask(task, body, apiKey) {
   task.doneAt = Date.now();
 }
 
-async function handlePaintingAnalyze(req, res) {
+async function handlePaintingAnalyze(req, res, expectedProductType = 'hanging') {
   try {
     const apiKey = readValue(SERVER_CONFIG.arkApiKey);
     if (!apiKey) {
@@ -14800,6 +14800,11 @@ async function handlePaintingAnalyze(req, res) {
     const body = isMultipartFormRequest(req)
       ? await readMultipartFormBody(req)
       : await readRequestBody(req);
+    const requestedProductType = readValue(body.productType) || 'hanging';
+    if (requestedProductType !== expectedProductType) {
+      sendJson(res, 400, { error: expectedProductType === 'sticker' ? 'PVC贴画分析接口拒绝挂画任务' : '挂画分析接口拒绝PVC贴画任务' });
+      return;
+    }
     if (!(body.file instanceof File && body.file.size > 0) && !readValue(body.image)) {
       sendJson(res, 400, { error: '请先上传挂画图片。' });
       return;
@@ -15367,7 +15372,11 @@ async function generateStickerIdeaPromptCore(apiKey, profile, idea, context) {
 }
 
 async function generatePaintingIdeasCore(body, apiKey, requestId) {
-  if (isStickerProduct(body.profile)) return generateStickerIdeasCore(body, apiKey);
+  const requestedProductType = readValue(body?.productType) || (isStickerProduct(body?.profile) ? 'sticker' : 'hanging');
+  if (requestedProductType === 'sticker') {
+    return generateStickerIdeasCore({ ...body, profile: normalizeStickerProfile(body.profile) }, apiKey);
+  }
+  if (isStickerProduct(body.profile)) throw new Error('产品类型参数冲突：PVC贴画不能进入挂画创意链路');
   const profile = body.profile;
   const plan = body.plan && typeof body.plan === 'object' ? body.plan : {};
   if (!profile || typeof profile !== 'object') {
@@ -15535,7 +15544,7 @@ async function runPaintingIdeasTask(task, body, apiKey) {
   task.doneAt = Date.now();
 }
 
-async function handlePaintingIdeas(req, res) {
+async function handlePaintingIdeas(req, res, expectedProductType = 'hanging') {
   try {
     const apiKey = readValue(SERVER_CONFIG.arkApiKey);
     if (!apiKey) {
@@ -15545,6 +15554,15 @@ async function handlePaintingIdeas(req, res) {
     const body = await readRequestBody(req);
     if (!body.profile || typeof body.profile !== 'object') {
       sendJson(res, 400, { error: '缺少产品档案 profile' });
+      return;
+    }
+    const requestedProductType = readValue(body.productType) || (isStickerProduct(body.profile) ? 'sticker' : 'hanging');
+    if (!['hanging', 'sticker'].includes(requestedProductType)) {
+      sendJson(res, 400, { error: 'productType 仅支持 hanging 或 sticker' });
+      return;
+    }
+    if (requestedProductType !== expectedProductType) {
+      sendJson(res, 400, { error: expectedProductType === 'sticker' ? 'PVC贴画创意接口拒绝挂画任务' : '挂画创意接口拒绝PVC贴画任务' });
       return;
     }
     // 幂等请求编号：响应丢失后重试时复用，返回原 taskId，不重复创建豆包任务。
@@ -15557,31 +15575,35 @@ async function handlePaintingIdeas(req, res) {
       prunePaintingIdeaClientRequests();
       const existingEntry = PAINTING_IDEA_CLIENT_REQUESTS.get(clientRequestId);
       if (existingEntry) {
-        const existing = PAINTING_TASKS.get(existingEntry.taskId);
-        if (!existing || (existing.doneAt && Date.now() - existing.doneAt > PAINTING_TASK_TTL_MS)) {
-          // 服务重启或任务已过期：内存任务不存在，明确返回失效，绝不假装原任务仍在执行。
+        if (existingEntry.productType && existingEntry.productType !== requestedProductType) {
           PAINTING_IDEA_CLIENT_REQUESTS.delete(clientRequestId);
-          sendJson(res, 410, { error: '任务已失效，需要重新生成当前批次。', invalidated: true });
-          return;
+        } else {
+          const existing = PAINTING_TASKS.get(existingEntry.taskId);
+          if (!existing || (existing.doneAt && Date.now() - existing.doneAt > PAINTING_TASK_TTL_MS)) {
+            // 服务重启或任务已过期：内存任务不存在，明确返回失效，绝不假装原任务仍在执行。
+            PAINTING_IDEA_CLIENT_REQUESTS.delete(clientRequestId);
+            sendJson(res, 410, { error: '任务已失效，需要重新生成当前批次。', invalidated: true });
+            return;
+          }
+          if (existing.status !== 'failed') {
+            sendJson(res, 202, {
+              ok: true,
+              taskId: existing.id,
+              status: existing.status,
+              deduplicated: true,
+              ...(existing.status === 'done' ? { result: existing.result } : {}),
+            });
+            return;
+          }
+          // 原后台任务已经明确失败，可在用户点击“继续准备”后用同一请求编号创建新任务。
+          // 这里只重跑创意 JSON，不会提交 Seedance 视频任务。
+          PAINTING_IDEA_CLIENT_REQUESTS.delete(clientRequestId);
         }
-        if (existing.status !== 'failed') {
-          sendJson(res, 202, {
-            ok: true,
-            taskId: existing.id,
-            status: existing.status,
-            deduplicated: true,
-            ...(existing.status === 'done' ? { result: existing.result } : {}),
-          });
-          return;
-        }
-        // 原后台任务已经明确失败，可在用户点击“继续准备”后用同一请求编号创建新任务。
-        // 这里只重跑创意 JSON，不会提交 Seedance 视频任务。
-        PAINTING_IDEA_CLIENT_REQUESTS.delete(clientRequestId);
       }
     }
     const task = createPaintingTask('ideas');
     if (clientRequestId) {
-      PAINTING_IDEA_CLIENT_REQUESTS.set(clientRequestId, { taskId: task.id, createdAt: Date.now() });
+      PAINTING_IDEA_CLIENT_REQUESTS.set(clientRequestId, { taskId: task.id, productType: requestedProductType, createdAt: Date.now() });
     }
     runPaintingIdeasTask(task, body, apiKey);
     sendJson(res, 202, { ok: true, taskId: task.id, status: task.status, ...(clientRequestId ? { deduplicated: false } : {}) });
@@ -15591,7 +15613,11 @@ async function handlePaintingIdeas(req, res) {
 }
 
 async function generatePaintingIdeaPromptCore(requestId, apiKey, profile, idea, context = {}) {
-  if (isStickerProduct(profile)) return generateStickerIdeaPromptCore(apiKey, profile, idea, context);
+  const requestedProductType = readValue(context?.productType) || (isStickerProduct(profile) || idea?.productType === 'sticker' ? 'sticker' : 'hanging');
+  if (requestedProductType === 'sticker') {
+    return generateStickerIdeaPromptCore(apiKey, normalizeStickerProfile(profile), { ...idea, productType: 'sticker' }, context);
+  }
+  if (isStickerProduct(profile)) throw new Error('产品类型参数冲突：PVC贴画不能进入挂画提示词链路');
   if (idea?.productType === 'sticker') throw new Error('挂画档案不能使用贴画方案');
   const ideaTitle = readValue(idea?.title);
   const ideaSummary = readValue(idea?.summary);
@@ -15764,7 +15790,7 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
   return { prompt: promptText, duration: resolvedDuration };
 }
 
-async function handlePaintingIdeaPrompt(req, res) {
+async function handlePaintingIdeaPrompt(req, res, expectedProductType = 'hanging') {
   try {
     const apiKey = readValue(SERVER_CONFIG.arkApiKey);
     if (!apiKey) {
@@ -15777,6 +15803,11 @@ async function handlePaintingIdeaPrompt(req, res) {
     const idea = body.idea && typeof body.idea === 'object' ? body.idea : {};
     if (!profile || typeof profile !== 'object') {
       sendJson(res, 400, { error: '缺少产品档案 profile' });
+      return;
+    }
+    const requestedProductType = readValue(body.productType) || (isStickerProduct(profile) || idea?.productType === 'sticker' ? 'sticker' : 'hanging');
+    if (requestedProductType !== expectedProductType) {
+      sendJson(res, 400, { error: expectedProductType === 'sticker' ? 'PVC贴画提示词接口拒绝挂画任务' : '挂画提示词接口拒绝PVC贴画任务' });
       return;
     }
 
@@ -15942,6 +15973,10 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   const referenceGuide = isWoodDetailDirection
     ? `【参考图职责强制区分】\n${referenceSpecs.map((item) => item.label).join('\n')}。木条特写图中的桌面、墙面、手、尺子、包装物或其他背景都不属于产品，严禁复制到生成视频。如细节图与正面主图的作用冲突，整体画面以主图为准，对应木条局部结构以高清细节图为准。\n\n`
     : '';
+  if (isSticker) {
+    const stickerIssues = inspectStickerPromptIssues(task.prompt, task.directionNumber);
+    if (stickerIssues.length) throw new Error(`PVC贴画任务混入错误产品规则，已阻止付费提交：${stickerIssues.join('；')}`);
+  }
   let promptForSubmission = isSticker ? ensureStickerPrompt(task.prompt, batchRun.profile, task.directionNumber) : ensurePaintingProductFocusedEnding(
     ensurePaintingRollingUnfoldInstruction(task.prompt, task.directionNumber)
   );
@@ -17920,6 +17955,14 @@ async function handleSeedanceCreateTask(req, res) {
     const isWan3 = model === WAN3_VIDEO_MODEL;
     const manualDirection = Number(body?.directionNumber) || 0;
     const stickerProfile = stickerProfileFromPrompt(body?.prompt) || (isStickerProduct(body) ? normalizeStickerProfile() : null);
+    if (stickerProfile) {
+      const stickerDirection = manualDirection || Number(String(body?.prompt).match(/框架方向：(\d+)/)?.[1]) || 1;
+      const stickerIssues = inspectStickerPromptIssues(body?.prompt, stickerDirection);
+      if (stickerIssues.length) {
+        sendJson(res, 400, { error: `PVC贴画任务混入错误产品规则，已阻止付费提交：${stickerIssues.join('；')}` });
+        return;
+      }
+    }
     let prompt = stickerProfile
       ? ensureStickerPrompt(readValue(body?.prompt), stickerProfile, manualDirection || Number(String(body?.prompt).match(/框架方向：(\d+)/)?.[1]) || 1)
       : ensurePaintingRollingUnfoldInstruction(readValue(body?.prompt), manualDirection);
@@ -19819,17 +19862,32 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/painting/analyze') {
-    await handlePaintingAnalyze(req, res);
+    await handlePaintingAnalyze(req, res, 'hanging');
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/sticker/analyze') {
+    await handlePaintingAnalyze(req, res, 'sticker');
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/api/painting/ideas') {
-    await handlePaintingIdeas(req, res);
+    await handlePaintingIdeas(req, res, 'hanging');
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/sticker/ideas') {
+    await handlePaintingIdeas(req, res, 'sticker');
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/api/painting/idea-prompt') {
-    await handlePaintingIdeaPrompt(req, res);
+    await handlePaintingIdeaPrompt(req, res, 'hanging');
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/sticker/idea-prompt') {
+    await handlePaintingIdeaPrompt(req, res, 'sticker');
     return;
   }
 

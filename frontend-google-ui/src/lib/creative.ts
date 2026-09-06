@@ -779,7 +779,7 @@ export async function analyzePainting(file: File, productType: PaintingProductTy
     formData.append('heightCm', String(heightCm));
   }
 
-  const response = await fetch('/api/painting/analyze', {
+  const response = await fetch(productType === 'sticker' ? '/api/sticker/analyze' : '/api/painting/analyze', {
     method: 'POST',
     credentials: 'include',
     body: formData,
@@ -814,12 +814,14 @@ export async function generatePaintingIdeas(
   batch = 0,
   options?: { variationRound?: number; avoidIdeas?: string[]; clientRequestId?: string }
 ): Promise<PaintingIdeasResult> {
-  const response = await fetch('/api/painting/ideas', {
+  const productType = getPaintingProductType(profile);
+  const response = await fetch(productType === 'sticker' ? '/api/sticker/ideas' : '/api/painting/ideas', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       profile,
+      productType,
       plan,
       batch,
       variationRound: options?.variationRound || 0,
@@ -876,13 +878,15 @@ export async function generatePaintingIdeaPrompt(
     extraRequirements?: string;
     elementVariationIndex?: number;
     previousPrompt?: string;
+    productType?: PaintingProductType;
   }
 ): Promise<{ prompt: string; duration: number }> {
-  const response = await fetch('/api/painting/idea-prompt', {
+  const productType = context?.productType || getPaintingProductType(profile);
+  const response = await fetch(productType === 'sticker' ? '/api/sticker/idea-prompt' : '/api/painting/idea-prompt', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ profile, idea, ...(context || {}) }),
+    body: JSON.stringify({ profile, idea, productType, ...(context || {}) }),
   });
 
   const json = await response.json().catch(() => null);

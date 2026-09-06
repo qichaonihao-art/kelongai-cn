@@ -67,6 +67,9 @@ assert.deepEqual(inspectStickerPromptIssues('创意内容：0—3秒，人物手
   '已安装展示方向混入了手持、旋转、展开或再次安装产品的动作',
 ]);
 assert.deepEqual(inspectStickerPromptIssues('创意内容：0—3秒，人物坐在沙发上阅读，墙贴始终贴平。负面约束：禁止实体木框，禁止人物手持产品。总时长：6秒', 2), []);
+assert.deepEqual(inspectStickerPromptIssues('【挂画生成尺寸补偿锁定】\n创意内容：墙面展示。', 2), [
+  '混入了挂画专用尺寸、挂钩、木条或卷轴规则',
+]);
 assert.deepEqual(stickerDuration(1, 8, 9), { durationMin: 5, durationMax: 6 });
 assert.deepEqual(stickerDuration(29, 7, 9), { durationMin: 7, durationMax: 9 });
 
@@ -94,7 +97,10 @@ for (const direction of [1, 8, 25, 29, 30, 33, 37, 40]) {
   assert.ok(!forbidden.test(result.prompt));
   assert.ok(!payloads.at(-1).payload.input[0].content[0].text.includes('40×80'));
 }
-await assert.rejects(server.generatePaintingIdeaPromptCore('bad', 'test', { name: '旧挂画' }, { productType: 'sticker' }, plan), /不能使用贴画/);
+textReply = '产品固定约束：保持印刷画面。创意内容：0—6秒，墙贴完整压实在墙上。负面约束：禁止变形。总时长：6秒';
+const explicitlyRoutedSticker = await server.generatePaintingIdeaPromptCore('explicit-sticker', 'test', { name: '旧档案缺少类型' }, { directionNumber: 2, title: '展示' }, { ...plan, productType: 'sticker' });
+assert.ok(explicitlyRoutedSticker.prompt.startsWith(STICKER_MARKER));
+await assert.rejects(server.generatePaintingIdeaPromptCore('bad', 'test', { name: '旧挂画' }, { productType: 'sticker' }, { ...plan, productType: 'hanging' }), /不能使用贴画/);
 
 server.dbMarkPaintingDirectionUsed('same-image', 0, 1);
 server.dbMarkPaintingDirectionUsed('same-image', 0, 33, 'sticker');
@@ -129,6 +135,15 @@ const mixedResponse = res();
 await server.handleCreatePaintingBatchRun(req({ ...batchBody, creationRequestId: 'sticker-wrong-kind', ideas: [{ directionNumber: 1, title: '旧挂画' }] }), mixedResponse);
 assert.equal(mixedResponse.status, 400);
 
+const paintingEndpointRejectsSticker = res();
+await server.handlePaintingIdeas(req({ profile, productType: 'sticker', plan, batch: 0 }), paintingEndpointRejectsSticker);
+assert.equal(paintingEndpointRejectsSticker.status, 400);
+assert.match(paintingEndpointRejectsSticker.body, /挂画创意接口拒绝PVC贴画任务/);
+const paintingPromptEndpointRejectsSticker = res();
+await server.handlePaintingIdeaPrompt(req({ profile, idea: { ...STICKER_FRAMEWORKS[0], productType: 'sticker' }, productType: 'sticker' }), paintingPromptEndpointRejectsSticker);
+assert.equal(paintingPromptEndpointRejectsSticker.status, 400);
+assert.match(paintingPromptEndpointRejectsSticker.body, /挂画提示词接口拒绝PVC贴画任务/);
+
 for (const model of ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fast-260128', 'doubao-seedance-2-0-260128', 'doubao-seedance-2-5-260628', 'MiniMax-H3', 'wan3.0-video']) {
   const prompt = ensureStickerPrompt('产品固定约束：保持字画。创意内容：连续展示。总时长：6秒', profile, 1);
   payloads = [];
@@ -153,5 +168,19 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fas
     if (directionNumber === 37) assert.ok(!submitted.includes('从第0秒就完整压实'));
   }
 }
+
+const contaminatedPrompt = '【挂画生成尺寸补偿锁定】\n产品固定约束：20×40厘米竖幅实木框挂画。创意内容：墙面展示。总时长：6秒';
+payloads = [];
+const blockedManualResponse = res();
+await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', prompt: contaminatedPrompt, productType: 'sticker', directionNumber: 2, duration: 6, resolution: '480p', ratio: '9:16' }), blockedManualResponse);
+assert.equal(blockedManualResponse.status, 400);
+assert.match(blockedManualResponse.body, /已阻止付费提交/);
+assert.equal(payloads.length, 0);
+payloads = [];
+await assert.rejects(
+  server.submitSeedanceTaskForBatchTask({ id: 999, directionNumber: 2, prompt: contaminatedPrompt, duration: 6 }, { ...run, profile: normalizeStickerProfile(), model: 'wan3.0-video', imagePath, resolution: '480p', options: {} }),
+  /已阻止付费提交/
+);
+assert.equal(payloads.length, 0);
 console.log('贴画测试通过：40方向、结构分层、尺寸、分析/文案路由、历史快照、使用记录隔离及6模型手动/批量提交。全部请求均为模拟，无付费调用。');
 process.exit(0);

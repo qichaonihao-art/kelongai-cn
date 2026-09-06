@@ -3760,6 +3760,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     return id;
   }
 
+  function getCurrentPaintingRequestProfile(): PaintingProfile {
+    if (!paintingProfile) return {};
+    return paintingProductType === 'sticker'
+      ? { ...paintingProfile, productType: 'sticker', widthCm: stickerWidthCm, heightCm: stickerHeightCm }
+      : { ...paintingProfile, productType: 'hanging' };
+  }
+
   async function runPaintingIdeas(batch: number, variationRound = paintingVariationRound) {
     if (!paintingProfile) {
       setPaintingError('请先完成产品分析。');
@@ -3779,11 +3786,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingError('');
     setPaintingLoading('ideas');
     try {
-      const result = await generatePaintingIdeas(paintingProfile, paintingPlan, batch, {
+      const result = await generatePaintingIdeas(getCurrentPaintingRequestProfile(), paintingPlan, batch, {
         variationRound,
         avoidIdeas: getRecentPaintingIdeasToAvoid(),
         clientRequestId: getPaintingIdeaClientRequestId(cacheKey),
       });
+      if (result.ideas.some((item) => item.productType && item.productType !== paintingProductType)) {
+        throw new Error('系统拦截了错误方案：后台返回的产品类型与当前选择不一致，请重新生成。');
+      }
+      result.ideas = result.ideas.map((item) => ({ ...item, productType: paintingProductType }));
       setPaintingIdeas(result.ideas);
       cachePaintingIdeaBatch(cacheKey, result.ideas);
       setPaintingFrameworkBatch(result.batch);
@@ -3827,7 +3838,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     options?: { skipSeedanceScroll?: boolean; remixElements?: boolean }
   ) {
     if (!paintingProfile) return;
-    if ((idea.productType || 'hanging') !== getPaintingProductType(paintingProfile)) {
+    if (getPaintingProductType(paintingProfile) !== paintingProductType || (idea.productType && idea.productType !== paintingProductType)) {
       setPaintingError('产品类型与创意方案不匹配，请重新生成方案。');
       return;
     }
@@ -3849,7 +3860,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingFullPrompt('');
     setPaintingLoading('prompt');
     try {
-      const { prompt, duration } = await generatePaintingIdeaPrompt(paintingProfile, idea, {
+      const requestProfile = getCurrentPaintingRequestProfile();
+      const requestIdea = { ...idea, productType: paintingProductType };
+      const { prompt, duration } = await generatePaintingIdeaPrompt(requestProfile, requestIdea, {
+        productType: paintingProductType,
         durationMin: idea.durationMin || paintingPlan.durationMin,
         durationMax: idea.durationMax || paintingPlan.durationMax,
         ratio: paintingPlan.ratio,
@@ -3861,6 +3875,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         elementVariationIndex,
         previousPrompt: shouldAvoidPreviousPrompt ? paintingIdeaLastPrompts[usageKey] || '' : '',
       });
+      const returnedType = prompt.trimStart().startsWith('【PVC背胶贴画物理锁定】') ? 'sticker' : 'hanging';
+      if (returnedType !== paintingProductType) {
+        throw new Error(`系统拦截了错误文案：当前选择的是${paintingProductType === 'sticker' ? 'PVC背胶贴画' : '挂画／卷轴'}，但后台返回了另一类产品规则。请重新分析产品后再生成。`);
+      }
       setPaintingFullPrompt(prompt);
       const nextUsageCounts = {
         ...paintingIdeaUsageCounts,
@@ -4025,11 +4043,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       if (!ideas?.length) {
         const clientRequestId = getPaintingIdeaClientRequestId(cacheKey);
         try {
-          const result = await generatePaintingIdeas(paintingProfile, paintingPlan, batch, {
+          const result = await generatePaintingIdeas(getCurrentPaintingRequestProfile(), paintingPlan, batch, {
             variationRound,
             avoidIdeas,
             clientRequestId,
           });
+          if (result.ideas.some((item) => item.productType && item.productType !== paintingProductType)) {
+            throw new Error('系统拦截了错误方案：后台返回的产品类型与当前选择不一致，请重新生成。');
+          }
+          result.ideas = result.ideas.map((item) => ({ ...item, productType: paintingProductType }));
           ideas = result.ideas;
           cachePaintingIdeaBatch(cacheKey, ideas);
           if (result.totalBatches > 0) setPaintingTotalBatches(result.totalBatches);
