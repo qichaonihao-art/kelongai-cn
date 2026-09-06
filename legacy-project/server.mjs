@@ -14959,8 +14959,14 @@ function ensureWan3CameraMotionLock(promptText) {
 }
 
 function ensureWan3StickerCoplanarLock(promptText) {
-  const normalized = String(promptText || '').trim();
+  let normalized = String(promptText || '').trim();
   if (normalized.includes(WAN3_STICKER_COPLANAR_MARKER)) return normalized;
+  // Wan 在低分辨率远景中容易被正向描述里的“边框/外框”诱导成实体框，
+  // 仅替换仿装裱的正向称呼；负面约束中的“禁止实体边框”继续保留。
+  normalized = normalized
+    .replace(/(?:深棕红|浅棕色?|棕色)?外围印刷仿装裱(?:外框|边框)(?:印刷色)?/g, '外围棕色二维平面印刷色带')
+    .replace(/(?:深棕红|浅棕色?|棕色)仿装裱(?:外框|边框)(?:印刷色)?/g, '棕色二维平面印刷色带')
+    .replace(/仿装裱(?:的)?(?:棕色|深棕红|浅棕色?)?(?:外框|边框)(?:印刷色)?/g, '棕色二维平面印刷色带');
   return `${normalized}\n\n${WAN3_STICKER_COPLANAR_MARKER}\n${WAN3_STICKER_COPLANAR_RULE}`;
 }
 
