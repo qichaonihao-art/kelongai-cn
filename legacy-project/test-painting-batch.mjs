@@ -43,6 +43,7 @@ const {
   dbGetPaintingUsedDirections,
   dbUpsertPaintingFolderBinding,
   dbGetPaintingFolderBinding,
+  handlePaintingAnalyze,
   handlePaintingIdeas,
   handlePaintingIdeaPrompt,
   handlePaintingTaskStatus,
@@ -744,6 +745,9 @@ console.log('\n[24] multipart 透传 creationRequestId');
   formData.append('upperWoodFile', new File([new Uint8Array([2])], 'upper-wood.jpg', { type: 'image/jpeg' }));
   formData.append('lowerWoodFile', new File([new Uint8Array([3])], 'lower-wood.jpg', { type: 'image/jpeg' }));
   formData.append('profile', JSON.stringify({ name: '测试挂画' }));
+  formData.append('productType', 'sticker');
+  formData.append('widthCm', '180');
+  formData.append('heightCm', '60');
   formData.append('creationRequestId', 'batch-multipart-000001');
   const encoded = new Request('http://localhost/upload', { method: 'POST', body: formData });
   const req = Readable.fromWeb(encoded.body);
@@ -751,9 +755,29 @@ console.log('\n[24] multipart 透传 creationRequestId');
   req.headers = Object.fromEntries(encoded.headers.entries());
   const parsed = await readMultipartFormBody(req);
   assert(parsed.creationRequestId === 'batch-multipart-000001', 'multipart 安全编号完整传到批次 handler', parsed.creationRequestId);
+  assert(parsed.productType === 'sticker', 'multipart 正确透传PVC贴画产品类型', parsed.productType);
+  assert(parsed.widthCm === '180' && parsed.heightCm === '60', 'multipart 正确透传PVC贴画真实尺寸', `${parsed.widthCm}×${parsed.heightCm}`);
   assert(parsed.file instanceof File && parsed.file.size === 1, 'multipart 图片仍正常解析');
   assert(parsed.upperWoodFile instanceof File && parsed.upperWoodFile.name === 'upper-wood.jpg', 'multipart 透传上方木条选传图');
   assert(parsed.lowerWoodFile instanceof File && parsed.lowerWoodFile.name === 'lower-wood.jpg', 'multipart 透传下方木条选传图');
+}
+
+// ===== T24b PVC贴画图片分析专用入口必须读到 multipart 产品类型 =====
+console.log('\n[24b] PVC贴画分析入口类型隔离');
+{
+  const formData = new FormData();
+  formData.append('file', new File([new Uint8Array([1])], 'sticker.png', { type: 'image/png' }));
+  formData.append('productType', 'sticker');
+  formData.append('widthCm', '180');
+  formData.append('heightCm', '60');
+  const encoded = new Request('http://localhost/api/sticker/analyze', { method: 'POST', body: formData });
+  const req = Readable.fromWeb(encoded.body);
+  req.method = 'POST';
+  req.url = '/api/sticker/analyze';
+  req.headers = Object.fromEntries(encoded.headers.entries());
+  const res = mockRes();
+  await handlePaintingAnalyze(req, res, 'sticker');
+  assert(res._code === 202, 'PVC贴画multipart分析进入贴画专用通道，不再被误判为挂画', String(res._body));
 }
 
 // ===== T25 模型首次 JSON 非法时自动纠正一次 =====

@@ -10666,6 +10666,9 @@ async function readMultipartFormBody(req) {
     enableThinking: readValue(formData.get('enable_thinking')).toLowerCase() === 'true',
     model: readValue(formData.get('model')),
     mediaKind: readValue(formData.get('media_kind')),
+    productType: readValue(formData.get('productType')),
+    widthCm: readValue(formData.get('widthCm')),
+    heightCm: readValue(formData.get('heightCm')),
     file: file instanceof File ? file : null,
     upperWoodFile: upperWoodFile instanceof File && upperWoodFile.size > 0 ? upperWoodFile : null,
     lowerWoodFile: lowerWoodFile instanceof File && lowerWoodFile.size > 0 ? lowerWoodFile : null,
@@ -20326,6 +20329,7 @@ if (process.env.KELONG_SKIP_LISTEN !== '1') {
 // 供无费测试脚本复用真实逻辑（不调用真实 Seedance / 豆包）。
 export {
   analyzePaintingCore,
+  handlePaintingAnalyze,
   generatePaintingIdeasCore,
   generatePaintingIdeaPromptCore,
   getCollectionDb,
