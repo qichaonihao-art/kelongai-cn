@@ -156,6 +156,7 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fas
   assert.ok(!forbidden.test(submitted), model);
   assert.equal(payload.model, model);
   assert.equal(submitted.includes('【千问 Wan3.0 专用·运镜速度强制锁定】'), model === 'wan3.0-video');
+  assert.equal(submitted.includes('【千问 Wan3.0 专用·PVC贴画共面边缘锁定】'), model === 'wan3.0-video');
   // 批量与重试复用同一提交函数；方向8不能再触发卷轴展开，30不能加载木条图。
   for (const directionNumber of [8, 30, 37]) {
     payloads = [];
@@ -165,6 +166,7 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fas
     assert.ok(submitted.startsWith(STICKER_MARKER));
     assert.ok(!forbidden.test(submitted));
     assert.equal(batchPayload.model, model);
+    assert.equal(submitted.includes('【千问 Wan3.0 专用·PVC贴画共面边缘锁定】'), model === 'wan3.0-video');
     if (directionNumber === 37) assert.ok(!submitted.includes('从第0秒就完整压实'));
   }
 }

@@ -724,9 +724,8 @@ export function generatePaintingRequestId(prefix: string): string {
   return id.length > 128 ? id.slice(0, 128) : id;
 }
 
-export async function waitForPaintingTask<T>(taskId: string, fallbackError: string): Promise<T> {
+export async function waitForPaintingTask<T>(taskId: string, fallbackError: string, timeoutMs = 10 * 60 * 1000): Promise<T> {
   const startedAt = Date.now();
-  const timeoutMs = 10 * 60 * 1000;
   let consecutiveFailures = 0;
   while (Date.now() - startedAt < timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -767,7 +766,8 @@ export async function waitForPaintingTask<T>(taskId: string, fallbackError: stri
     // 400/401/403 等业务/鉴权错误不盲目重试。
     throw new Error(String(json?.error || `${fallbackError}（HTTP ${response.status}）`));
   }
-  throw new Error(`${fallbackError}：后台处理超过 10 分钟，请稍后重试。`);
+  const timeoutMinutes = Math.max(1, Math.round(timeoutMs / 60000));
+  throw new Error(`${fallbackError}：后台处理超过 ${timeoutMinutes} 分钟，已停止等待，请重新点击生成。`);
 }
 
 export async function analyzePainting(file: File, productType: PaintingProductType = 'hanging', widthCm = 180, heightCm = 60): Promise<PaintingProfile> {
@@ -903,7 +903,7 @@ export async function generatePaintingIdeaPrompt(
   if (response.status === 202 || json?.taskId) {
     const taskId = String(json?.taskId || '');
     if (!taskId) throw new Error('完整提示词任务创建失败：服务端未返回任务编号。');
-    const result = await waitForPaintingTask<{ prompt?: string; duration?: number }>(taskId, '完整提示词生成失败');
+    const result = await waitForPaintingTask<{ prompt?: string; duration?: number }>(taskId, '完整提示词生成失败', 3 * 60 * 1000);
     const prompt = String(result?.prompt || '').trim();
     if (!prompt) throw new Error('完整提示词生成失败：后台任务返回内容为空。');
     const parsedDuration = Number(result?.duration);

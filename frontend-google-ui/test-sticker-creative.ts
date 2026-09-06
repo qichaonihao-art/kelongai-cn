@@ -33,6 +33,8 @@ const promptRequest = JSON.parse(String(promptRequestCall.body));
 assert.equal(promptRequest.idea.productType, 'sticker');
 assert.equal(promptRequest.profile.widthCm, 180);
 assert.equal(promptRequest.productType, 'sticker');
+await generatePaintingIdeaPrompt(profile, { ...idea, id: 'sticker-2', directionNumber: 2, title: '第二个方向' }, plan);
+assert.equal(calls.filter((call) => call.url === '/api/sticker/idea-prompt').length, 2);
 await createPaintingBatchRun({ file, upperWoodFile: file, lowerWoodFile: file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: false, watermark: false, stylePreset: 'modern-minimal', creationRequestId: 'ui-batch-create' });
 const batchForm = calls.at(-1)!.body as FormData;
 assert.equal(JSON.parse(String(batchForm.get('profile'))).productType, 'sticker');

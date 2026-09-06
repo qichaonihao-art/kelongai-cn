@@ -231,6 +231,7 @@ const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
 const SEEDANCE_MANUAL_PREFERENCE_STORAGE_KEY = 'kelongai.seedanceManualPreference';
+const STICKER_VIDEO_PREFERENCE_STORAGE_KEY = 'kelongai.stickerVideoPreference';
 const SEEDANCE_COST_KEY = 'kelongai.seedanceCost';
 const PAINTING_HISTORY_STORAGE_KEY = 'kelongai.paintingHistory';
 const PAINTING_HISTORY_MAX_AGE_DAYS = 30;
@@ -827,6 +828,32 @@ function saveSeedanceManualPreference(preference: SeedanceManualPreference) {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(SEEDANCE_MANUAL_PREFERENCE_STORAGE_KEY, JSON.stringify(preference));
+  } catch {
+    // 浏览器禁用本地存储时，只保留当前页面内的选择。
+  }
+}
+
+function loadStickerVideoPreference(): SeedanceManualPreference {
+  const fallback: SeedanceManualPreference = { model: 'wan3.0-video', resolution: '480p' };
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(STICKER_VIDEO_PREFERENCE_STORAGE_KEY) || '{}');
+    if (!isSeedanceModelId(parsed?.model)) return fallback;
+    const supportedResolutions = getSeedanceResolutions(parsed.model) as readonly string[];
+    const resolution = String(parsed?.resolution || '');
+    return {
+      model: parsed.model,
+      resolution: supportedResolutions.includes(resolution) ? resolution as SeedanceResolution : getDefaultSeedanceResolution(parsed.model),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveStickerVideoPreference(preference: SeedanceManualPreference) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(STICKER_VIDEO_PREFERENCE_STORAGE_KEY, JSON.stringify(preference));
   } catch {
     // 浏览器禁用本地存储时，只保留当前页面内的选择。
   }
@@ -1706,6 +1733,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [selectedMedia, setSelectedMedia] = useState<SelectedCreativeMedia | null>(null);
   const [seedanceTaskMode, setSeedanceTaskMode] = useState<SeedanceTaskMode>('generate');
   const seedanceManualPreferenceRef = useRef<SeedanceManualPreference>(loadSeedanceManualPreference());
+  const stickerVideoPreferenceRef = useRef<SeedanceManualPreference>(loadStickerVideoPreference());
   const [seedanceModel, setSeedanceModel] = useState<SeedanceModelId>(() => seedanceManualPreferenceRef.current.model);
   const [seedancePrompt, setSeedancePrompt] = useState("");
   const [seedanceResolution, setSeedanceResolution] = useState<SeedanceResolution>(() => seedanceManualPreferenceRef.current.resolution);
@@ -1801,6 +1829,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [showPaintingBatchFolderChoices, setShowPaintingBatchFolderChoices] = useState(false);
   const [paintingBatchModel, setPaintingBatchModel] = useState<string>(SEEDANCE_BATCH_MODEL);
   const [paintingBatchResolution, setPaintingBatchResolution] = useState<string>(SEEDANCE_BATCH_RESOLUTION);
+  const paintingBatchPreferenceRef = useRef<Record<PaintingProductType, { model: string; resolution: string }>>({
+    hanging: { model: SEEDANCE_BATCH_MODEL, resolution: SEEDANCE_BATCH_RESOLUTION },
+    sticker: { model: 'wan3.0-video', resolution: '480p' },
+  });
   const [paintingBatchStartOrder, setPaintingBatchStartOrder] = useState<PaintingBatchStartOrder>('group1');
   const [paintingBatchRequestedCount, setPaintingBatchRequestedCount] = useState('');
   const [paintingBatchRandomOrder, setPaintingBatchRandomOrder] = useState<number[]>(createRandomPaintingDirectionOrder);
@@ -1906,6 +1938,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
   function rememberManualSeedancePreference(model: SeedanceModelId, resolution: SeedanceResolution) {
     const preference = { model, resolution };
+    if (reverseMode === 'painting' && paintingProductType === 'sticker') {
+      stickerVideoPreferenceRef.current = preference;
+      saveStickerVideoPreference(preference);
+      return;
+    }
     seedanceManualPreferenceRef.current = preference;
     normalSeedanceSettingsRef.current = {
       ...normalSeedanceSettingsRef.current,
@@ -3527,7 +3564,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingError('');
     setReverseMode(nextMode);
     if (nextMode === 'painting') {
-      const preference = seedanceManualPreferenceRef.current;
+      const preference = paintingProductType === 'sticker'
+        ? stickerVideoPreferenceRef.current
+        : seedanceManualPreferenceRef.current;
       setSeedanceModel(preference.model);
       setSeedanceResolution(preference.resolution);
     }
@@ -3567,10 +3606,22 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
   function switchPaintingProduct(type: PaintingProductType) {
     if (paintingDraftBusy || type === paintingProductType) return;
+    paintingBatchPreferenceRef.current[paintingProductType] = {
+      model: paintingBatchModel,
+      resolution: paintingBatchResolution,
+    };
     resetPaintingProductDraft();
     clearPaintingWoodReference('upper');
     clearPaintingWoodReference('lower');
     setPaintingProductType(type);
+    const videoPreference = type === 'sticker'
+      ? stickerVideoPreferenceRef.current
+      : seedanceManualPreferenceRef.current;
+    setSeedanceModel(videoPreference.model);
+    setSeedanceResolution(videoPreference.resolution);
+    const batchPreference = paintingBatchPreferenceRef.current[type];
+    setPaintingBatchModel(batchPreference.model);
+    setPaintingBatchResolution(batchPreference.resolution);
     setPaintingPlan((previous) => ({ ...previous, scene: '', extraRequirements: '' }));
   }
 
@@ -4476,6 +4527,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const restoredType = getPaintingProductType(item.profile);
     resetPaintingProductDraft();
     setPaintingProductType(restoredType);
+    const videoPreference = restoredType === 'sticker'
+      ? stickerVideoPreferenceRef.current
+      : seedanceManualPreferenceRef.current;
+    setSeedanceModel(videoPreference.model);
+    setSeedanceResolution(videoPreference.resolution);
+    const batchPreference = paintingBatchPreferenceRef.current[restoredType];
+    setPaintingBatchModel(batchPreference.model);
+    setPaintingBatchResolution(batchPreference.resolution);
     setStickerWidthCm(Number(item.profile.widthCm) || 180);
     setStickerHeightCm(Number(item.profile.heightCm) || 60);
     let restoredHistoryItem = item.uploadHistoryId
@@ -7929,8 +7988,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   onChange={(event) => {
                     const nextModel = event.target.value;
                     const nextResolutions = getPaintingBatchResolutionOptions(nextModel);
+                    const nextResolution = nextResolutions.includes(paintingBatchResolution)
+                      ? paintingBatchResolution
+                      : nextResolutions[0];
                     setPaintingBatchModel(nextModel);
-                    setPaintingBatchResolution((current) => nextResolutions.includes(current) ? current : nextResolutions[0]);
+                    setPaintingBatchResolution(nextResolution);
+                    paintingBatchPreferenceRef.current[paintingProductType] = {
+                      model: nextModel,
+                      resolution: nextResolution,
+                    };
                     batchCreationRequestIdRef.current = null;
                   }}
                   disabled={paintingBatchCreating || paintingBatchConfirming}
@@ -7946,7 +8012,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 <select
                   value={paintingBatchResolution}
                   onChange={(event) => {
-                    setPaintingBatchResolution(event.target.value);
+                    const nextResolution = event.target.value;
+                    setPaintingBatchResolution(nextResolution);
+                    paintingBatchPreferenceRef.current[paintingProductType] = {
+                      model: paintingBatchModel,
+                      resolution: nextResolution,
+                    };
                     batchCreationRequestIdRef.current = null;
                   }}
                   disabled={paintingBatchCreating || paintingBatchConfirming}

@@ -14890,6 +14890,7 @@ const PAINTING_PRODUCT_FOCUSED_ENDING_MARKER = '【最高优先级·移动镜头
 const PAINTING_CHARACTER_IDENTITY_MARKER = '【人物身份分离与防复制强制锁定】';
 const PAINTING_CHARACTER_IDENTITY_RULE = '人物数量和每个人的身份必须从第0秒起固定。如果创意设定为单人，全片只允许这一个人物，严禁复制、分身、镜像复制、画面中同时出现第二个长相或穿着相同的人。如果创意明确设定为多人，每个人必须是独立且可明确区分的真实个体：不同人物的脸型与五官、发型、体型特征、服装款式和服装主色必须明显不同，除非创意明确要求双胞胎，否则严禁生成双胞胎、同脸人、克隆人物或同款服装。若两名人物年龄、性别相仿，更必须通过不同脸型、不同发型和不同服装主色一眼区分。“人物保持一致”只表示每个人各自在前后镜头中保持自己的脸、发型、年龄、服装和身份不变，绝不表示不同人物彼此长得一样或穿得一样。全程禁止人物凭空增减、相互换脸、交换服装、身份互换或合并分裂。';
 const WAN3_CAMERA_MOTION_MARKER = '【千问 Wan3.0 专用·运镜速度强制锁定】';
+const WAN3_STICKER_COPLANAR_MARKER = '【千问 Wan3.0 专用·PVC贴画共面边缘锁定】';
 const WAN3_LEGACY_PAINTING_STRUCTURE_MARKER = '【千问 Wan3.0 专用·挂画结构连续性与禁止二次展开】';
 const WAN3_STATIC_PAINTING_STRUCTURE_MARKER = '【千问 Wan3.0 专用·静态挂画逐帧拓扑锁定】';
 const WAN3_UNFOLDING_STRUCTURE_MARKER = '【千问 Wan3.0 专用·唯一一次人工打开流程】';
@@ -14900,6 +14901,7 @@ const WAN3_STATIC_PAINTING_STRUCTURE_RULE = '本片中的挂画从首帧起就�
 const WAN3_UNFOLDING_STRUCTURE_RULE = '本条创意只允许在时间轴指定阶段完成唯一1次真实滚动打开。打开前，上方木条、卷起的画布、始终可见的下方木条已经是同一件真实产品；上、下木条从第一帧起长度、粗细、颜色、形状和两端轮廓保持不变，挂画宽度全程保持不变。打开时必须由人物双手持续控制：一只手稳定上方木条，另一只手始终托住并控制包含下方木条的卷起部分；卷起部分在这只手的控制下围绕自身轴线逐圈旋转并缓慢向下释放画布，下方木条不能脱离手部控制自行坠落。可见画高只能随着真实画布从卷层中逐圈释放而增加，原有文字、图案和印章保持原始尺寸与相对位置，严禁把短横幅向下拉伸、缩放、变形、裁切揭示或重新生成成完整竖画，严禁下方木条自行下降、挂画无人控制自动展开。人物完成打开并挂好以后，挂画立即成为固定在墙上的刚性静态平面，后续不再发生任何打开、卷起、复位或结构变化。全片任何时刻都只能存在参考图中的上、下两根木条，不能生成第三根木条、复制木条、白色横杆或扫描条；镜头运动不能触发挂画本体移动或重演打开动作。如果模型不能完整执行上述双手控制的真实滚动过程，必须从第一帧直接使用已经完整展开的成品并省略展开动作，绝不得以挂画自行伸长或形变代替。';
 const WAN3_INSTALLATION_HOOK_RULE = '本条是把挂画挂到墙面的安装过程。墙面挂钩是安装开始以前就已经真实固定好的独立五金件，不由挂画、挂绳、人物手部或墙面临时生成。只要最终挂点所在墙面区域进入取景框，挂钩就必须从该区域第一次可见的那一帧起已经存在；如果开场暂时看不到挂钩，只能因为该墙面区域尚在画外，或被人物、挂画等真实不透明物体连续遮挡，遮挡移开后只能露出原本已经存在的同一个挂钩。挂钩的数量始终恰好为1个，位置、大小、形状、颜色、材质、朝向和墙面接触阴影逐帧保持不变，不得淡入、浮现、从墙里长出、由斑点或装饰变成、在挂绳靠近或接触墙面时突然出现，也不得消失、移动、复制或更换。人物的安装动作只能是把挂画抬到这个既有挂钩下方，再把既有白色挂绳真实套到既有挂钩上并扶正挂画；本片不表现打孔、粘贴、安装或生成挂钩。';
 const WAN3_INSTALLATION_ENDING_RULE = '严格保留当前创意框架原本指定的收尾景别和运镜方向，不得把所有安装视频统一改成中远景。如果框架原本要求推近挂画、靠近细节或以产品特写收尾，必须保留该推进和特写；如果原本要求中远景、横移或拉远，也继续执行原框架，不得擅自改变终点。所有安装、跟随和收尾运镜共同服从全片匀速进度：从视频开头就按最终构图规划整条摄影机路径，把总时长平均分配给各段位移，不得等挂画挂好以后才突然启动大幅推进。需要在安装完成后才能进入的最后一段特写路径，也必须预留足够时间并在该段内近似匀速完成；若时间不足，应删短前面的停留和人物冗余动作，而不是压缩最后路径或加速赶到特写。推进过程中挂画的真实宽高、上下木条、画芯内容和墙面挂点保持不变，画面变大只能来自摄影机连续靠近形成的正常透视。';
+const WAN3_STICKER_COPLANAR_RULE = '整张PVC贴画从首帧到末帧都是与墙面共面的单层印刷膜，尺寸严格沿用本条产品规格。棕色外围线、白色衬线、画芯、文字和印章全部是同一膜面、完全相同深度的二维印刷像素；外轮廓只能表现为印刷颜色在墙面上的平整切边。镜头斜看、横移或推近时，边线与画芯必须作为同一平面按同一透视同步变化，彼此没有相对视差。外沿不得出现厚度、侧壁、倒角、内凹、凸起、框体高光或环绕四边的封闭矩形投影；自然光可以改变整张贴画的整体明暗，但不能在外围形成实体画框式阴影。';
 const PAINTING_CONTENT_DETAIL_DIRECTION = 29;
 const PAINTING_WOOD_DETAIL_DIRECTION = 30;
 const PAINTING_CAMERA_EXPLANATION_DIRECTION = 7;
@@ -14954,6 +14956,12 @@ function ensureWan3CameraMotionLock(promptText) {
     .replace(/镜头稳定但不能缓慢拖延/g, '镜头保持稳定低速，内容过多时删减动作而不加速');
 
   return `${normalized}\n\n${WAN3_CAMERA_MOTION_MARKER}\n${WAN3_CAMERA_MOTION_RULE}`;
+}
+
+function ensureWan3StickerCoplanarLock(promptText) {
+  const normalized = String(promptText || '').trim();
+  if (normalized.includes(WAN3_STICKER_COPLANAR_MARKER)) return normalized;
+  return `${normalized}\n\n${WAN3_STICKER_COPLANAR_MARKER}\n${WAN3_STICKER_COPLANAR_RULE}`;
 }
 
 function removeMarkedPromptSection(promptText, marker) {
@@ -15353,7 +15361,14 @@ async function generateStickerIdeaPromptCore(apiKey, profile, idea, context) {
   const normalized = normalizeStickerProfile(profile);
   const range = stickerDuration(idea.directionNumber, idea.durationMin || context.durationMin, idea.durationMax || context.durationMax);
   const request = buildStickerVideoRequest(normalized, idea, context, resolvePaintingStyleProfile(idea.stylePreset || context.stylePreset));
-  const call = (text) => callDoubaoArkText({ apiKey, model: DEFAULT_DOUBAO_MULTIMODAL_MODEL, content: [{ type: 'input_text', text }] });
+  // 贴画提示词可能因物理校验再生成一次；单次上游请求不能沿用通用8分钟超时，
+  // 否则偶发连接悬挂会让第二次切换方向看起来一直转圈。
+  const call = (text) => callDoubaoArkText({
+    apiKey,
+    model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
+    content: [{ type: 'input_text', text }],
+    timeoutMs: 75 * 1000,
+  });
   let prompt = String(await call(request) || '').trim();
   const validDuration = (text) => {
     const duration = Number(text.match(/总时长\s*[：:]\s*(\d+)\s*秒/)?.[1]);
@@ -15985,7 +16000,9 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   );
   if (isWan3) {
     promptForSubmission = ensureWan3CameraMotionLock(promptForSubmission);
-    if (!isSticker) promptForSubmission = ensureWan3PaintingStructureLock(promptForSubmission, task.directionNumber);
+    promptForSubmission = isSticker
+      ? ensureWan3StickerCoplanarLock(promptForSubmission)
+      : ensureWan3PaintingStructureLock(promptForSubmission, task.directionNumber);
   }
   const content = [{ type: 'text', text: `${referenceGuide}${promptForSubmission}` }];
   for (const spec of referenceSpecs) {
@@ -17975,6 +17992,7 @@ async function handleSeedanceCreateTask(req, res) {
     if (!stickerProfile) prompt = ensurePaintingProductFocusedEnding(prompt);
     if (isWan3) {
       prompt = ensureWan3CameraMotionLock(prompt);
+      if (stickerProfile) prompt = ensureWan3StickerCoplanarLock(prompt);
     }
     const modelLabel = isMiniMaxH3 ? 'MiniMax H3' : isWan3 ? 'Wan3.0 Video' : isSeedance25 ? 'Seedance 2.5' : isSeedanceMini ? 'Seedance 2.0 mini' : isSeedanceFast ? 'Seedance 2.0 Fast' : 'Seedance 2.0';
     const resolvedApiKey = isMiniMaxH3
@@ -20410,6 +20428,8 @@ export {
   ensurePaintingProductFocusedEnding,
   WAN3_CAMERA_MOTION_RULE,
   ensureWan3CameraMotionLock,
+  WAN3_STICKER_COPLANAR_RULE,
+  ensureWan3StickerCoplanarLock,
   WAN3_STATIC_PAINTING_STRUCTURE_RULE,
   WAN3_UNFOLDING_STRUCTURE_RULE,
   WAN3_INSTALLATION_HOOK_RULE,
