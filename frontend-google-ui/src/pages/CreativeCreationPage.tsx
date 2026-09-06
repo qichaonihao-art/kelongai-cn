@@ -231,7 +231,6 @@ const SEEDANCE_POLL_INTERVAL_MS = 15000;
 const CREATIVE_SESSIONS_STORAGE_KEY = 'kelongai.creativeSessions';
 const SEEDANCE_HISTORY_STORAGE_KEY = 'kelongai.seedanceHistory';
 const SEEDANCE_MANUAL_PREFERENCE_STORAGE_KEY = 'kelongai.seedanceManualPreference';
-const STICKER_VIDEO_PREFERENCE_STORAGE_KEY = 'kelongai.stickerVideoPreference';
 const SEEDANCE_COST_KEY = 'kelongai.seedanceCost';
 const PAINTING_HISTORY_STORAGE_KEY = 'kelongai.paintingHistory';
 const PAINTING_HISTORY_MAX_AGE_DAYS = 30;
@@ -733,6 +732,10 @@ type SeedanceResolution = '480p' | '720p' | '768p' | '1080p' | '4k';
 interface SeedanceManualPreference {
   model: SeedanceModelId;
   resolution: SeedanceResolution;
+  ratio: string;
+  duration: number;
+  generateAudio: boolean;
+  watermark: boolean;
 }
 type ReverseMode = 'direct' | 'replace' | 'image' | 'painting';
 type PaintingBatchStartOrder = 'group1' | 'group2' | 'group3' | 'group4' | 'random';
@@ -806,18 +809,29 @@ function loadSeedanceManualPreference(): SeedanceManualPreference {
   const fallback: SeedanceManualPreference = {
     model: 'doubao-seedance-2-0-260128',
     resolution: '720p',
+    ratio: '9:16',
+    duration: 5,
+    generateAudio: false,
+    watermark: false,
   };
   if (typeof window === 'undefined') return fallback;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(SEEDANCE_MANUAL_PREFERENCE_STORAGE_KEY) || '{}');
     if (!isSeedanceModelId(parsed?.model)) return fallback;
-    const supportedResolutions = getSeedanceResolutions(parsed.model) as readonly string[];
     const resolution = String(parsed?.resolution || '');
+    const knownResolutions: readonly string[] = ['480p', '720p', '768p', '1080p', '4k'];
+    const duration = Number(parsed?.duration);
     return {
       model: parsed.model,
-      resolution: supportedResolutions.includes(resolution)
+      // 分辨率独立于模型记忆。即使临时切到不支持它的模型也不偷偷改值，
+      // 提交前再明确提示用户手动选择兼容规格。
+      resolution: knownResolutions.includes(resolution)
         ? resolution as SeedanceResolution
         : getDefaultSeedanceResolution(parsed.model),
+      ratio: SEEDANCE_RATIOS.includes(parsed?.ratio) ? parsed.ratio : fallback.ratio,
+      duration: Number.isInteger(duration) && duration >= 2 && duration <= 30 ? duration : fallback.duration,
+      generateAudio: typeof parsed?.generateAudio === 'boolean' ? parsed.generateAudio : fallback.generateAudio,
+      watermark: typeof parsed?.watermark === 'boolean' ? parsed.watermark : fallback.watermark,
     };
   } catch {
     return fallback;
@@ -828,32 +842,6 @@ function saveSeedanceManualPreference(preference: SeedanceManualPreference) {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(SEEDANCE_MANUAL_PREFERENCE_STORAGE_KEY, JSON.stringify(preference));
-  } catch {
-    // 浏览器禁用本地存储时，只保留当前页面内的选择。
-  }
-}
-
-function loadStickerVideoPreference(): SeedanceManualPreference {
-  const fallback: SeedanceManualPreference = { model: 'wan3.0-video', resolution: '480p' };
-  if (typeof window === 'undefined') return fallback;
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(STICKER_VIDEO_PREFERENCE_STORAGE_KEY) || '{}');
-    if (!isSeedanceModelId(parsed?.model)) return fallback;
-    const supportedResolutions = getSeedanceResolutions(parsed.model) as readonly string[];
-    const resolution = String(parsed?.resolution || '');
-    return {
-      model: parsed.model,
-      resolution: supportedResolutions.includes(resolution) ? resolution as SeedanceResolution : getDefaultSeedanceResolution(parsed.model),
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-function saveStickerVideoPreference(preference: SeedanceManualPreference) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(STICKER_VIDEO_PREFERENCE_STORAGE_KEY, JSON.stringify(preference));
   } catch {
     // 浏览器禁用本地存储时，只保留当前页面内的选择。
   }
@@ -1733,14 +1721,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [selectedMedia, setSelectedMedia] = useState<SelectedCreativeMedia | null>(null);
   const [seedanceTaskMode, setSeedanceTaskMode] = useState<SeedanceTaskMode>('generate');
   const seedanceManualPreferenceRef = useRef<SeedanceManualPreference>(loadSeedanceManualPreference());
-  const stickerVideoPreferenceRef = useRef<SeedanceManualPreference>(loadStickerVideoPreference());
   const [seedanceModel, setSeedanceModel] = useState<SeedanceModelId>(() => seedanceManualPreferenceRef.current.model);
   const [seedancePrompt, setSeedancePrompt] = useState("");
   const [seedanceResolution, setSeedanceResolution] = useState<SeedanceResolution>(() => seedanceManualPreferenceRef.current.resolution);
-  const [seedanceRatio, setSeedanceRatio] = useState("9:16");
-  const [seedanceDuration, setSeedanceDuration] = useState(5);
-  const [seedanceGenerateAudio, setSeedanceGenerateAudio] = useState(false);
-  const [seedanceWatermark, setSeedanceWatermark] = useState(false);
+  const [seedanceRatio, setSeedanceRatio] = useState(() => seedanceManualPreferenceRef.current.ratio);
+  const [seedanceDuration, setSeedanceDuration] = useState(() => seedanceManualPreferenceRef.current.duration);
+  const [seedanceGenerateAudio, setSeedanceGenerateAudio] = useState(() => seedanceManualPreferenceRef.current.generateAudio);
+  const [seedanceWatermark, setSeedanceWatermark] = useState(() => seedanceManualPreferenceRef.current.watermark);
   const [seedanceReferences, setSeedanceReferences] = useState<SeedanceReferenceFile[]>([]);
   const [videoEditTarget, setVideoEditTarget] = useState('人物手中或场景中出现的原挂画/装饰画');
   const [videoEditAdjustments, setVideoEditAdjustments] = useState('');
@@ -1928,27 +1915,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const autoSyncToSeedanceRef = useRef(false);
   const pendingReverseSeedanceSyncRef = useRef<ReverseSeedanceSyncSnapshot | null>(null);
   const normalSeedanceSettingsRef = useRef({
-    model: seedanceManualPreferenceRef.current.model,
-    resolution: seedanceManualPreferenceRef.current.resolution,
-    ratio: '9:16',
-    duration: 5,
-    generateAudio: false,
-    watermark: false,
+    ...seedanceManualPreferenceRef.current,
   });
 
-  function rememberManualSeedancePreference(model: SeedanceModelId, resolution: SeedanceResolution) {
-    const preference = { model, resolution };
-    if (reverseMode === 'painting' && paintingProductType === 'sticker') {
-      stickerVideoPreferenceRef.current = preference;
-      saveStickerVideoPreference(preference);
-      return;
-    }
+  function rememberManualSeedancePreference(patch: Partial<SeedanceManualPreference>) {
+    const preference = { ...seedanceManualPreferenceRef.current, ...patch };
     seedanceManualPreferenceRef.current = preference;
-    normalSeedanceSettingsRef.current = {
-      ...normalSeedanceSettingsRef.current,
-      model,
-      resolution,
-    };
+    normalSeedanceSettingsRef.current = { ...normalSeedanceSettingsRef.current, ...patch };
     saveSeedanceManualPreference(preference);
   }
 
@@ -3027,9 +3000,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     variationRound?: number;
   }) {
     const isVideoEdit = seedanceTaskMode === 'video-edit-painting';
-    const rememberedPreference = seedanceManualPreferenceRef.current;
-    const generationModel: SeedanceModelId = isVideoEdit ? 'doubao-seedance-2-5-260628' : rememberedPreference.model;
-    const generationResolution: SeedanceResolution = isVideoEdit ? '720p' : rememberedPreference.resolution;
+    // 右侧面板当前显示什么，手动和单条自动生成就提交什么；不再回读另一套旧偏好覆盖界面。
+    const generationModel: SeedanceModelId = isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel;
+    const generationResolution: SeedanceResolution = isVideoEdit ? '720p' : seedanceResolution;
     const isMiniMaxH3 = !isVideoEdit && generationModel === 'MiniMax-H3';
     const isWan3 = !isVideoEdit && generationModel === 'wan3.0-video';
     const prompt = isVideoEdit
@@ -3053,12 +3026,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
     const references = overrides?.references ?? seedanceReferences;
     const requestedDuration = overrides?.duration ?? seedanceDuration;
+    const minGenerationDuration = generationModel === 'wan3.0-video' ? 2 : 4;
     const maxGenerationDuration = generationModel === 'doubao-seedance-2-5-260628' || generationModel === 'wan3.0-video' ? 30 : 15;
-    const duration = isVideoEdit ? -1 : Math.min(maxGenerationDuration, Math.max(4, Math.round(requestedDuration)));
+    const duration = isVideoEdit ? -1 : Math.round(requestedDuration);
 
-    if (!isVideoEdit && (seedanceModel !== generationModel || seedanceResolution !== generationResolution)) {
-      setSeedanceModel(generationModel);
-      setSeedanceResolution(generationResolution);
+    if (!isVideoEdit && !(getSeedanceResolutions(generationModel) as readonly string[]).includes(generationResolution)) {
+      setSeedanceError(`${getSeedanceModelLabel(generationModel)} 不支持当前的 ${generationResolution.toUpperCase()}，系统没有自动修改。请在参数设置中手动选择该模型支持的分辨率。`);
+      return;
+    }
+    if (!isVideoEdit && (!Number.isInteger(duration) || duration < minGenerationDuration || duration > maxGenerationDuration)) {
+      setSeedanceError(`${getSeedanceModelLabel(generationModel)} 支持 ${minGenerationDuration}-${maxGenerationDuration} 秒，当前 ${requestedDuration} 秒未被自动修改，请手动选择有效时长。`);
+      return;
     }
 
     if (isMiniMaxH3 && !minimaxApiConfigured) {
@@ -3563,13 +3541,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setRequestError('');
     setPaintingError('');
     setReverseMode(nextMode);
-    if (nextMode === 'painting') {
-      const preference = paintingProductType === 'sticker'
-        ? stickerVideoPreferenceRef.current
-        : seedanceManualPreferenceRef.current;
-      setSeedanceModel(preference.model);
-      setSeedanceResolution(preference.resolution);
-    }
   }
 
   function resetPaintingProductDraft() {
@@ -3614,11 +3585,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     clearPaintingWoodReference('upper');
     clearPaintingWoodReference('lower');
     setPaintingProductType(type);
-    const videoPreference = type === 'sticker'
-      ? stickerVideoPreferenceRef.current
-      : seedanceManualPreferenceRef.current;
-    setSeedanceModel(videoPreference.model);
-    setSeedanceResolution(videoPreference.resolution);
     const batchPreference = paintingBatchPreferenceRef.current[type];
     setPaintingBatchModel(batchPreference.model);
     setPaintingBatchResolution(batchPreference.resolution);
@@ -4527,11 +4493,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const restoredType = getPaintingProductType(item.profile);
     resetPaintingProductDraft();
     setPaintingProductType(restoredType);
-    const videoPreference = restoredType === 'sticker'
-      ? stickerVideoPreferenceRef.current
-      : seedanceManualPreferenceRef.current;
-    setSeedanceModel(videoPreference.model);
-    setSeedanceResolution(videoPreference.resolution);
     const batchPreference = paintingBatchPreferenceRef.current[restoredType];
     setPaintingBatchModel(batchPreference.model);
     setPaintingBatchResolution(batchPreference.resolution);
@@ -6819,17 +6780,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     value={seedanceModel}
                     onChange={(event) => {
                       const nextModel = event.target.value as SeedanceModelId;
-                      const supportedResolutions = getSeedanceResolutions(nextModel) as readonly string[];
-                      const nextResolution = supportedResolutions.includes(seedanceResolution)
-                        ? seedanceResolution
-                        : getDefaultSeedanceResolution(nextModel);
                       setSeedanceModel(nextModel);
-                      setSeedanceRatio('9:16');
-                      setSeedanceResolution(nextResolution);
-                      setSeedanceDuration(5);
-                      setSeedanceGenerateAudio(nextModel === 'doubao-seedance-2-5-260628');
-                      setSeedanceWatermark(false);
-                      rememberManualSeedancePreference(nextModel, nextResolution);
+                      rememberManualSeedancePreference({ model: nextModel });
                     }}
                     disabled={isSeedanceLoading || seedanceTaskMode === 'video-edit-painting'}
                     className={cn(
@@ -7218,7 +7170,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                 type="button"
                                 onClick={() => {
                                   setSeedanceResolution(resolution);
-                                  rememberManualSeedancePreference(seedanceModel, resolution);
+                                  rememberManualSeedancePreference({ resolution });
                                 }}
                                 className={cn(
                                   "rounded-xl border px-2 py-2 text-xs font-black uppercase transition-colors",
@@ -7240,7 +7192,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                               <button
                                 key={ratio}
                                 type="button"
-                                onClick={() => setSeedanceRatio(ratio)}
+                                onClick={() => {
+                                  setSeedanceRatio(ratio);
+                                  rememberManualSeedancePreference({ ratio });
+                                }}
                                 className={cn(
                                   "rounded-xl border px-2 py-2 text-xs font-black transition-colors",
                                   seedanceRatio === ratio
@@ -7261,7 +7216,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                               <button
                                 key={duration}
                                 type="button"
-                                onClick={() => setSeedanceDuration(duration)}
+                                onClick={() => {
+                                  setSeedanceDuration(duration);
+                                  rememberManualSeedancePreference({ duration });
+                                }}
                                 className={cn(
                                   "rounded-xl border px-2 py-2 text-xs font-black transition-colors",
                                   seedanceDuration === duration
@@ -7284,7 +7242,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <div className="mt-4 grid grid-cols-2 gap-2">
                           <button
                             type="button"
-                            onClick={() => setSeedanceGenerateAudio((value) => !value)}
+                            onClick={() => setSeedanceGenerateAudio((value) => {
+                              const nextValue = !value;
+                              rememberManualSeedancePreference({ generateAudio: nextValue });
+                              return nextValue;
+                            })}
                             disabled={seedanceModel === 'MiniMax-H3'}
                             className={cn(
                               "rounded-xl border px-3 py-2 text-xs font-black transition-colors disabled:cursor-not-allowed disabled:opacity-60",
@@ -7297,7 +7259,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           </button>
                           <button
                             type="button"
-                            onClick={() => setSeedanceWatermark((value) => !value)}
+                            onClick={() => setSeedanceWatermark((value) => {
+                              const nextValue = !value;
+                              rememberManualSeedancePreference({ watermark: nextValue });
+                              return nextValue;
+                            })}
                             className={cn(
                               "rounded-xl border px-3 py-2 text-xs font-black transition-colors",
                               seedanceWatermark
