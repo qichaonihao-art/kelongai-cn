@@ -45,20 +45,25 @@ for (const f of STICKER_FRAMEWORKS) {
   assert.match(rule, /二维装饰边线/);
   assert.match(rule, /同一张连续薄片、同一墙面深度/);
   assert.match(rule, /禁止生成实体木框、匾框/);
-  assert.match(rule, /白色画背/);
   assert.ok(!forbidden.test(rule));
   if (f.state === 'installed') {
-    assert.match(rule, /第0秒以前已经完成施工/);
-    assert.match(rule, /禁止人物手持贴画/);
+    assert.match(rule, /第0秒起墙上已经存在最终完成态/);
+    assert.match(rule, /人物始终空手并与产品表面保持距离/);
     assert.match(rule, /严禁先出现无边线画芯/);
+    assert.ok(!/(?:背膜|揭膜|白色画背|背面白色|背面为白色)/.test(rule));
     if (!f.closeDetail) assert.match(rule, /功能墙面的几何中心/);
   }
-  else assert.ok(!rule.includes('从第0秒就完整压实'));
+  else {
+    assert.ok(!rule.includes('从第0秒就完整压实'));
+    assert.match(rule, /白色画背/);
+    assert.match(rule, /可揭离的背膜/);
+  }
   if ([35, 36, 38, 39, 40].includes(f.directionNumber)) assert.match(rule, /功能墙面的几何中心/);
   const result = ensureStickerPrompt('创意正文', profile, f.directionNumber);
   assert.equal(ensureStickerPrompt(result, profile, f.directionNumber), result);
   assert.ok(result.includes(STICKER_FINAL_MARKER));
   assert.equal(result.split(STICKER_FINAL_MARKER).length, 2);
+  if (f.state === 'installed') assert.ok(!/(?:背膜|揭膜|白色画背|背面白色|背面为白色)/.test(result));
 }
 assert.match(STICKER_FRAMEWORKS[1].action, /沙发背景墙及沙发的水平中心线对齐/);
 assert.match(STICKER_FRAMEWORKS[5].action, /开场直接采用正面中景，无遮挡/);
