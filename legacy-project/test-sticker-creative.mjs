@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { STICKER_FRAMEWORKS, STICKER_MARKER, STICKER_FINAL_MARKER, normalizeStickerProfile, stickerPhysicalRules, ensureStickerPrompt, inspectStickerPromptIssues, stickerDuration } from './sticker-creative.mjs';
+import { STICKER_FRAMEWORKS, STICKER_MARKER, STICKER_FINAL_MARKER, STICKER_RASTER_MARKER, normalizeStickerProfile, stickerPhysicalRules, ensureStickerPrompt, inspectStickerPromptIssues, stickerDuration } from './sticker-creative.mjs';
 
 process.env.RUNTIME_STATE_DIR = mkdtempSync(join(tmpdir(), 'kelong-sticker-test-'));
 process.env.KELONG_SKIP_LISTEN = '1';
@@ -42,14 +42,15 @@ assert.throws(() => normalizeStickerProfile({ heightCm: 'no' }));
 assert.equal(normalizeStickerProfile({ widthCm: 150, heightCm: 50 }).ratio, '150:50');
 for (const f of STICKER_FRAMEWORKS) {
   const rule = stickerPhysicalRules(profile, f.directionNumber);
-  assert.match(rule, /二维装饰边线/);
-  assert.match(rule, /同一张连续薄片、同一墙面深度/);
+  assert.ok(rule.includes(STICKER_RASTER_MARKER));
+  assert.match(rule, /不可拆分的一张平面位图纹理/);
+  assert.match(rule, /裁切线之外必须立刻、连续地接普通墙面/);
   assert.match(rule, /禁止生成实体木框、匾框/);
   assert.ok(!forbidden.test(rule));
   if (f.state === 'installed') {
     assert.match(rule, /第0秒起墙上已经存在最终完成态/);
     assert.match(rule, /人物始终空手并与产品表面保持距离/);
-    assert.match(rule, /严禁先出现无边线画芯/);
+    assert.match(rule, /完整正面位图从第0帧起一次性、完整、清晰存在/);
     assert.ok(!/(?:背膜|揭膜|白色画背|背面白色|背面为白色)/.test(rule));
     if (!f.closeDetail) assert.match(rule, /几何中心布置/);
   }
@@ -69,8 +70,9 @@ assert.match(STICKER_FRAMEWORKS[1].action, /沙发背景墙及沙发的水平中
 assert.match(STICKER_FRAMEWORKS[5].action, /开场直接采用正面中景，无遮挡/);
 assert.match(STICKER_FRAMEWORKS[5].action, /画面宽度约55%—65%/);
 assert.match(STICKER_FRAMEWORKS[5].action, /不使用全屋大远景/);
-assert.match(STICKER_FRAMEWORKS[5].action, /书本始终远离镜头且不翻页、不扬起纸张/);
-assert.match(stickerPhysicalRules(profile, 6), /镜头前方禁止出现白纸、书页、白布、薄膜、幕布/);
+assert.match(STICKER_FRAMEWORKS[5].action, /人物双手空置/);
+assert.match(STICKER_FRAMEWORKS[5].action, /桌面不放书本、散页、白纸或薄膜/);
+assert.match(stickerPhysicalRules(profile, 6), /全片不使用书本、散页、白纸、白布、薄膜、幕布/);
 assert.match(STICKER_FRAMEWORKS[9].action, /不搬动、不旋转、不重新安装/);
 for (const direction of [1, 4, 7, 11, 17, 20, 29, 32, 35, 40]) {
   const rule = stickerPhysicalRules(profile, direction);
@@ -104,6 +106,10 @@ assert.match(stickerPhysicalRules(profile, 21), /文化走廊、展陈墙或纯�
 assert.match(stickerPhysicalRules(profile, 34), /工作室或铺贴操作区/);
 assert.match(STICKER_FRAMEWORKS[28].action, /场景内不混入客厅家具/);
 assert.match(STICKER_FRAMEWORKS[33].action, /铺贴工作区/);
+assert.match(STICKER_FRAMEWORKS[26].title, /正面印刷纹理巡游/);
+assert.match(STICKER_FRAMEWORKS[26].action, /不得靠近、追踪或突出产品四周外沿/);
+assert.match(STICKER_FRAMEWORKS[27].title, /贴墙平面质感/);
+assert.match(STICKER_FRAMEWORKS[27].action, /不拍产品侧面，不沿四周外沿移动/);
 assert.deepEqual(inspectStickerPromptIssues('创意内容：0—3秒，人物手持竖幅木质画框旋转并贴上墙。负面约束：禁止变形。总时长：6秒', 2), [
   '把180×60厘米横向PVC墙贴写成了竖向产品',
   '把正面的二维印刷装饰边线写成了独立立体构件',
@@ -117,6 +123,9 @@ assert.deepEqual(inspectStickerPromptIssues('创意内容：书房中人物从�
   '本方向不是客厅，却混入了沙发、沙发靠垫或客厅茶几',
 ]);
 assert.deepEqual(inspectStickerPromptIssues('创意内容：茶室以实木茶桌、茶椅和茶柜构成空间，人物侧身看画。负面约束：禁止出现沙发。总时长：6秒', 1), []);
+assert.deepEqual(inspectStickerPromptIssues('创意内容：镜头推近后清晰看到浅褐色装饰边线，再聚焦印章。负面约束：禁止变形。总时长：6秒', 6), [
+  '镜头把产品四周外沿单独作为展示对象，容易诱发后生成或立体化',
+]);
 assert.deepEqual(inspectStickerPromptIssues('【挂画生成尺寸补偿锁定】\n创意内容：墙面展示。', 2), [
   '混入了挂画专用尺寸、挂钩、木条或卷轴规则',
 ]);
@@ -127,7 +136,7 @@ textReply = JSON.stringify({ name: '字画', material: '木板', frameStructure:
 const analysis = await server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'sticker', widthCm: '150', heightCm: '50' }, 'test', 'analysis');
 assert.equal(analysis.profile.widthCm, 150);
 assert.match(analysis.profile.material, /PVC/);
-assert.match(analysis.profile.frameStructure, /平面印刷图案/);
+assert.match(analysis.profile.frameStructure, /不可拆分的一张平面彩色图层/);
 assert.ok(!payloads.at(-1).payload.input[0].content.at(-1).text.includes('挂画/卷轴产品分析专家'));
 
 for (let batch = 0; batch < 4; batch++) {
@@ -221,7 +230,8 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fas
   assert.equal(payload.model, model);
   assert.equal(submitted.includes('【千问 Wan3.0 专用·运镜速度强制锁定】'), model === 'wan3.0-video');
   assert.equal(submitted.includes('【千问 Wan3.0 专用·PVC贴画共面边缘锁定】'), model === 'wan3.0-video');
-  if (model === 'wan3.0-video') assert.match(submitted, /严禁先显示无边线画芯/);
+  if (model === 'wan3.0-video') assert.match(submitted, /第0帧必须直接显示与参考图一致的完整最终纹理/);
+  if (model === 'wan3.0-video') assert.match(submitted, /不得在裁切线外生成第二个矩形/);
   if (model === 'wan3.0-video') assert.ok(!submitted.includes('外围印刷仿装裱边框'));
   // 批量与重试复用同一提交函数；方向8不能再触发卷轴展开，30不能加载木条图。
   for (const directionNumber of [8, 30, 37]) {
@@ -236,6 +246,16 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fas
     if (directionNumber === 37) assert.ok(!submitted.includes('从第0秒就完整压实'));
   }
 }
+
+payloads = [];
+const legacyBorderWording = ensureStickerPrompt('产品固定约束：正面带浅褐色仿装裱二维印刷装饰边线。创意内容：书房中人物侧身看向贴画，镜头聚焦文字和印章。负面约束：禁止变形。总时长：6秒', profile, 6);
+const legacyBorderResponse = res();
+await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', prompt: legacyBorderWording, productType: 'sticker', directionNumber: 6, duration: 6, resolution: '480p', ratio: '9:16', generateAudio: false }), legacyBorderResponse);
+assert.equal(legacyBorderResponse.status, 200, legacyBorderResponse.body);
+const legacyBorderSubmitted = payloads.at(-1).payload.input.prompt;
+assert.ok(!legacyBorderSubmitted.includes('浅褐色仿装裱二维印刷装饰边线'));
+assert.match(legacyBorderSubmitted, /参考图内既有的平面印刷颜色区域/);
+assert.match(legacyBorderSubmitted, /方向6的收尾只能聚焦文字、印章或画芯内部纹理/);
 
 const contaminatedPrompt = '【挂画生成尺寸补偿锁定】\n产品固定约束：20×40厘米竖幅实木框挂画。创意内容：墙面展示。总时长：6秒';
 payloads = [];
