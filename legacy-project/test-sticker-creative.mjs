@@ -50,6 +50,7 @@ for (const f of STICKER_FRAMEWORKS) {
   if (f.state === 'installed') {
     assert.match(rule, /第0秒以前已经完成施工/);
     assert.match(rule, /禁止人物手持贴画/);
+    assert.match(rule, /严禁先出现无边线画芯/);
     if (!f.closeDetail) assert.match(rule, /功能墙面的几何中心/);
   }
   else assert.ok(!rule.includes('从第0秒就完整压实'));
@@ -60,6 +61,9 @@ for (const f of STICKER_FRAMEWORKS) {
   assert.equal(result.split(STICKER_FINAL_MARKER).length, 2);
 }
 assert.match(STICKER_FRAMEWORKS[1].action, /沙发背景墙及沙发的水平中心线对齐/);
+assert.match(STICKER_FRAMEWORKS[5].action, /开场直接无遮挡/);
+assert.match(STICKER_FRAMEWORKS[5].action, /书本始终远离镜头且不翻页、不扬起纸张/);
+assert.match(stickerPhysicalRules(profile, 6), /镜头前方禁止出现白纸、书页、白布、薄膜、幕布/);
 assert.match(STICKER_FRAMEWORKS[9].action, /不搬动、不旋转、不重新安装/);
 assert.deepEqual(inspectStickerPromptIssues('创意内容：0—3秒，人物手持竖幅木质画框旋转并贴上墙。负面约束：禁止变形。总时长：6秒', 2), [
   '把180×60厘米横向PVC墙贴写成了竖向产品',
@@ -157,6 +161,7 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fas
   assert.equal(payload.model, model);
   assert.equal(submitted.includes('【千问 Wan3.0 专用·运镜速度强制锁定】'), model === 'wan3.0-video');
   assert.equal(submitted.includes('【千问 Wan3.0 专用·PVC贴画共面边缘锁定】'), model === 'wan3.0-video');
+  if (model === 'wan3.0-video') assert.match(submitted, /严禁先显示无边线画芯/);
   // 批量与重试复用同一提交函数；方向8不能再触发卷轴展开，30不能加载木条图。
   for (const directionNumber of [8, 30, 37]) {
     payloads = [];
