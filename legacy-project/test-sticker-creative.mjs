@@ -46,6 +46,8 @@ for (const f of STICKER_FRAMEWORKS) {
   assert.ok(rule.includes(STICKER_COLOR_MARKER));
   assert.match(rule, /不可拆分的一张平面位图纹理/);
   assert.match(rule, /裁切线之外必须立刻、连续地接普通墙面/);
+  assert.match(rule, /外围印刷颜色区域属于原图不可删除的有效内容/);
+  assert.match(rule, /绝不允许因此删除裁切线以内的原有印刷颜色/);
   assert.match(rule, /上传参考图是产品全部视觉信息的唯一依据/);
   assert.match(rule, /环境风格、色温、白平衡和调色只能作用于墙面、家具、人物与整体氛围/);
   assert.match(rule, /产品是贴墙的哑光柔性PVC印刷薄片/);
@@ -159,6 +161,16 @@ assert.ok(!/(?:亮面PVC|玻璃般反光)/.test(glossyProductSections[0]));
 assert.match(glossyProductSections[0], /哑光柔性PVC印刷表面/);
 assert.match(glossyProductSections[1], /玻璃花瓶/);
 
+const legacyCorruptedGlossPrompt = ensureStickerPrompt(
+  '产品固定约束：产品为哑光表面，仅呈现柔和漫反射，不呈现哑光柔性PVC印刷表面、哑光柔性PVC印刷表面、哑光柔性PVC印刷表面、玻璃质感，无哑光柔性PVC印刷表面高光。创意内容：人物在茶桌旁讲解。负面约束：禁止变形。总时长：6秒',
+  { ...profile, widthCm: 120, heightCm: 40 },
+  1,
+);
+const legacyCorruptedGlossBody = legacyCorruptedGlossPrompt.split('【贴画创意正文】')[1].split(STICKER_FINAL_MARKER)[0];
+assert.ok(!legacyCorruptedGlossBody.includes('不呈现哑光柔性PVC印刷表面'));
+assert.match(legacyCorruptedGlossBody, /不呈现亮面、光面、镜面、玻璃质感/);
+assert.match(legacyCorruptedGlossBody, /无镜面高光/);
+
 textReply = JSON.stringify({ name: '字画', material: '木板', frameStructure: '实木框', widthCm: 40 });
 const analysis = await server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'sticker', widthCm: '150', heightCm: '50' }, 'test', 'analysis');
 assert.equal(analysis.profile.widthCm, 150);
@@ -265,6 +277,8 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fas
   if (model === 'wan3.0-video') assert.match(submitted, /曝光以产品不过曝、不发白、不反光为准/);
   if (model === 'wan3.0-video') assert.match(submitted, /产品表面固定为哑光柔性PVC印刷观感/);
   if (model === 'wan3.0-video') assert.match(submitted, /侧移不能产生移动高光/);
+  if (model === 'wan3.0-video') assert.match(submitted, /外围印刷颜色区域属于产品正面不可删除的有效像素/);
+  if (model === 'wan3.0-video') assert.match(submitted, /绝不允许删除裁切线以内的原有印刷颜色/);
   if (model === 'wan3.0-video') assert.ok(!submitted.includes('外围印刷仿装裱边框'));
   // 批量与重试复用同一提交函数；方向8不能再触发卷轴展开，30不能加载木条图。
   for (const directionNumber of [8, 30, 37]) {
