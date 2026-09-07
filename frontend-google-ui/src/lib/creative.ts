@@ -623,6 +623,7 @@ export interface PaintingProfile {
   style?: string;
   subject?: string;
   colors?: string[];
+  borderColor?: string;
   composition?: string;
   material?: string;
   frameStructure?: string;

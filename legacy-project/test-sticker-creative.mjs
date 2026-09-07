@@ -44,20 +44,20 @@ for (const f of STICKER_FRAMEWORKS) {
   const rule = stickerPhysicalRules(profile, f.directionNumber);
   assert.ok(rule.includes(STICKER_RASTER_MARKER));
   assert.ok(rule.includes(STICKER_COLOR_MARKER));
-  assert.match(rule, /印在同一张PVC膜面上的平面位图/);
   assert.match(rule, /贴画的外边缘就是参考图最外层印刷内容的外沿/);
-  assert.match(rule, /这圈留白不属于贴画/);
+  assert.match(rule, /白色留白不属于贴画/);
   assert.match(rule, /贴画外沿之外直接就是墙面/);
-  assert.match(rule, /外围的印刷色带属于画面本身的有效内容/);
+  assert.match(rule, /最外围的印刷边框都是这张图上的内容/);
   assert.match(rule, /四边连续完整、四角自然相接/);
-  assert.match(rule, /不删除、不淡化/);
+  assert.match(rule, /不逐边生长、不中途补色或淡出/);
   assert.match(rule, /上传参考图是产品全部视觉信息的唯一依据/);
-  assert.match(rule, /相对深浅关系始终服从参考图/);
+  assert.match(rule, /与底色形成和参考图一样清楚的明暗对比/);
+  assert.match(rule, /保持参考图原本的颜色和浓度/);
   assert.match(rule, /哑光柔性PVC印刷薄片/);
   assert.match(rule, /不是画框，也不是浅色装裱边/);
   assert.match(rule, /没有反光、高光和倒影/);
   assert.match(rule, /镜头推近、拉远、侧移期间，贴画的颜色和内容逐帧稳定/);
-  assert.match(rule, /不生成实体木框、画框、背板或玻璃面/);
+  assert.match(rule, /没有木条、挂绳、挂钩或任何实体框体/);
   assert.ok(!forbidden.test(rule));
   if (f.state === 'installed') {
     assert.match(rule, /第0秒起墙上已经存在最终完成态/);
@@ -153,9 +153,19 @@ const paleProductColorPrompt = ensureStickerPrompt(
 );
 const paleProductColorSections = paleProductColorPrompt.split(/创意内容\s*[：:]/);
 assert.ok(!paleProductColorSections[0].includes('浅棕褐色'));
-assert.match(paleProductColorSections[0], /上传参考图是产品全部视觉信息的唯一依据/);
+assert.match(paleProductColorPrompt, /上传参考图是产品全部视觉信息的唯一依据/);
 assert.match(paleProductColorSections[1], /浅棕色边几/);
 assert.ok(paleProductColorPrompt.includes(STICKER_COLOR_MARKER));
+
+const borderColorPrompt = ensureStickerPrompt(
+  '创意内容：茶室中人物在茶桌旁讲解。总时长：6秒',
+  { ...profile, widthCm: 120, heightCm: 40, colors: ['米色', '深红棕', '黑色'], borderColor: '深红棕色' },
+  1,
+);
+assert.match(borderColorPrompt, /一圈印刷边框就是参考图上的深红棕色/);
+assert.match(borderColorPrompt, /画面主色为米色、深红棕、黑色，全部以参考图为准/);
+assert.match(borderColorPrompt, /【贴画创意正文】\n创意内容：茶室中人物在茶桌旁讲解/);
+assert.ok(borderColorPrompt.indexOf('【贴画创意正文】') < borderColorPrompt.indexOf(STICKER_COLOR_MARKER));
 
 const glossyProductPrompt = ensureStickerPrompt(
   '产品固定约束：产品呈亮面PVC材质，带玻璃般反光。创意内容：客厅中玻璃花瓶位于浅棕色边几上。负面约束：禁止变形。总时长：8秒',
@@ -164,7 +174,7 @@ const glossyProductPrompt = ensureStickerPrompt(
 );
 const glossyProductSections = glossyProductPrompt.split(/创意内容\s*[：:]/);
 assert.ok(!/(?:亮面PVC|玻璃般反光)/.test(glossyProductSections[0]));
-assert.match(glossyProductSections[0], /哑光柔性PVC印刷薄片/);
+assert.match(glossyProductPrompt, /哑光柔性PVC印刷薄片/);
 assert.match(glossyProductSections[1], /玻璃花瓶/);
 
 const legacyCorruptedGlossPrompt = ensureStickerPrompt(
@@ -333,7 +343,7 @@ const paleColorSubmitted = payloads.at(-1).payload.input.prompt;
 assert.ok(!paleColorSubmitted.split(/创意内容\s*[：:]/)[0].includes('浅棕褐色'));
 assert.match(paleColorSubmitted, /上传参考图是产品全部视觉信息的唯一依据/);
 assert.match(paleColorSubmitted, /浅棕色边几/);
-assert.match(paleColorSubmitted, /相对深浅关系始终服从参考图/);
+assert.match(paleColorSubmitted, /与底色形成和参考图一样清楚的明暗对比/);
 assert.match(paleColorSubmitted, /没有反光、高光和倒影/);
 
 const contaminatedPrompt = '【挂画生成尺寸补偿锁定】\n产品固定约束：20×40厘米竖幅实木框挂画。创意内容：墙面展示。总时长：6秒';

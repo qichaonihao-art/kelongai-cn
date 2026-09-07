@@ -159,11 +159,20 @@ function stickerRasterIdentityRule(framework) {
   const visibleState = framework.state === 'installed'
     ? '第0帧直接显示参考图对应的完整印刷画面，第一帧与最后一帧的产品画面完全相同'
     : '正面任何已经进入取景框的区域，都直接显示参考图在该区域对应的最终印刷画面，并在后续帧保持不变';
-  return `${STICKER_RASTER_MARKER}${visibleState}。这张贴画就是上传参考图这张印刷品本身：贴画的外边缘就是参考图最外层印刷内容的外沿，参考图四周如带有白色留白，这圈留白不属于贴画、不出现在画面上，贴画外沿之外直接就是墙面。参考图整体是一张印在同一张PVC膜面上的平面位图，文字、印章、底色和最外围的印刷色带都是这张图上的内容，作为一个整体随镜头同步运动，内部零相对位移、零层次视差。参考图外围的印刷色带属于画面本身的有效内容：若是一圈闭合矩形，则上边、下边、左边、右边四边连续完整、四角自然相接，宽度和位置与参考图一致，从第一次可见起保持到最后一帧。整张印刷画面一次成型，不逐边生长、不中途补色或淡出；裁切线以内的原有印刷颜色全程保留，不删除、不淡化。`;
+  return `${STICKER_RASTER_MARKER}${visibleState}。这张贴画就是上传参考图这张印刷品本身：贴画的外边缘就是参考图最外层印刷内容的外沿，参考图四周的白色留白不属于贴画、不出现在画面上，贴画外沿之外直接就是墙面。文字、印章、底色和最外围的印刷边框都是这张图上的内容，随镜头作为一个整体运动，内部零相对位移、零层次视差；若外围是一圈闭合矩形，四边连续完整、四角自然相接，宽度和位置与参考图一致。整张印刷画面一次成型，不逐边生长、不中途补色或淡出。`;
 }
 
-function stickerColorFidelityRule() {
-  return `${STICKER_COLOR_MARKER}上传参考图是产品全部视觉信息的唯一依据：贴画的颜色就是参考图的颜色。参考图外围的印刷色带保持参考图原本的颜色、浓度和宽度，与底色形成和参考图一样清楚的明暗对比，从首帧到末帧不变；文字、印章和底色都保持参考图中的样子。这圈外围色带是印在膜面上的平面图案，属于贴画画面本身，不是画框，也不是浅色装裱边。画面整体可以有温暖的场景色调和柔和光线，但贴画上各颜色之间的相对深浅关系始终服从参考图，深色区域不被提亮，浅色底不被染色。贴画是贴在墙上的哑光柔性PVC印刷薄片，表面没有反光、高光和倒影。镜头推近、拉远、侧移期间，贴画的颜色和内容逐帧稳定。`;
+function stickerColorAnchorRule(profile) {
+  const palette = (Array.isArray(profile?.colors) ? profile.colors : [])
+    .map((color) => String(color || '').trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  const borderColor = String(profile?.borderColor || '').trim();
+  const borderSentence = borderColor
+    ? `贴画最外沿的一圈印刷边框就是参考图上的${borderColor}，视频全程保持这个颜色和浓度，与底色形成和参考图一样清楚的明暗对比，不随光线、镜头或场景色调变化。`
+    : '贴画最外沿的印刷边框保持参考图原本的颜色和浓度，与底色形成和参考图一样清楚的明暗对比，全程不变。';
+  const paletteSentence = palette.length ? `画面主色为${palette.join('、')}，全部以参考图为准。` : '';
+  return `${STICKER_COLOR_MARKER}上传参考图是产品全部视觉信息的唯一依据：贴画的颜色就是参考图的颜色。${borderSentence}${paletteSentence}文字、印章和底色都保持参考图中的样子。这圈外围边框是印在膜面上的平面图案，属于贴画画面本身，不是画框，也不是浅色装裱边。贴画是平贴在墙上的哑光柔性PVC印刷薄片，表面没有反光、高光和倒影；镜头推近、拉远、侧移期间，贴画的颜色和内容逐帧稳定。`;
 }
 
 function sanitizeStickerProductColorLabels(promptText) {
@@ -215,29 +224,30 @@ export function stickerDuration(direction, min = 5, max = 10) {
   return { durationMin, durationMax: Math.min(15, Math.max(durationMin, Number(max) || 10)) };
 }
 
-export function stickerPhysicalRules(profile, direction) {
-  const p = normalizeStickerProfile(profile);
-  const f = getStickerFramework(direction);
-  const sceneLayoutRule = stickerSceneLayoutRule(f.directionNumber);
-  const sceneScaleRule = stickerSceneScaleRule(p, f.directionNumber);
-  const rasterIdentityRule = stickerRasterIdentityRule(f);
-  const colorFidelityRule = stickerColorFidelityRule();
+function stickerHeaderRule(p, f) {
   return `${STICKER_MARKER}
 框架方向：${f.directionNumber}。
-产品类型：PVC背胶贴画。尺寸：宽${p.widthCm}厘米、高${p.heightCm}厘米，实体宽高比${p.widthCm}:${p.heightCm}，与视频画幅比例无关。保持该真实尺寸，不使用卷轴的小尺寸补偿，不缩小人物或家具。
-${f.state === 'installed'
-    ? '材质为已经完成施工并永久贴实的单层柔性PVC印刷薄片，本片只展示正面完成态：参考图的整个正面是一张平面彩色印刷图层，全部区域位于同一张连续薄片、同一墙面深度。墙上只有这张印刷薄片本身，没有木条、挂绳、挂钩、轴头或任何施工材料，不生成实体木框、画框、背板或玻璃面。二维文字、印章和印刷图层不变成三维物体，文字笔画保持不变。'
-    : '材质为柔性PVC薄片，正面为参考图对应的完整平面印刷图层，背面白色，有可揭离的背膜。正面全部颜色区域位于同一张连续薄片、同一深度；没有木条、挂绳、挂钩或实体框，不使用小胶带定位，不生成实体木框、画框、背板或玻璃面。白色画背和印刷正面属于同一张PVC主体，背膜才是另一个被揭离的物体，不得把白色画背撕成第二张画；被揭下的膜由手持有或放到明确可见的台面，不能凭空消失。二维文字、印章和印刷图层不变成三维物体，文字笔画保持不变。'}
-${rasterIdentityRule}
-${colorFidelityRule}
-${f.state === 'installed' ? `本方向为已安装成品展示，以下状态高于创意正文：第0秒起墙上已经存在最终完成态的整张横画，整个表面与墙面全幅无缝贴合，四角及四边全部压实，二者之间没有空气层或可见间距。参考图对应的完整正面位图从第0帧起一次性、完整、清晰存在，所有像素的颜色和相对位置逐帧不变。人物始终空手并与产品表面保持距离，产品全片都是同一个贴墙静态平面；唯一变化来自镜头、人物和合理环境微动。贴画主体逐帧保持同一${p.widthCm}:${p.heightCm}横向外形和同一墙面坐标，首帧状态就是末帧状态。` : `本方向只执行以下初始状态和动作：${f.action} 未粘区域允许在手支撑下自然弯曲和下垂，不得拉伸或橡胶变形；已粘区域保持固定。贴合只能随手揭膜与压贴逐段推进，已完成后不能再次展开或揭起。演员站地面，不站床、柜子或沙发。`}
+产品：PVC背胶贴画，宽${p.widthCm}厘米、高${p.heightCm}厘米，实体宽高比${p.widthCm}:${p.heightCm}，与视频画幅比例无关；保持真实尺寸，不缩小人物或家具。${f.state === 'installed' ? '已经完整贴实在墙面，本片只展示正面完成态。' : '背面白色、带可揭离的背膜，本片只展示本方向指定的形态或安装片段；白色画背和印刷正面属于同一张PVC主体，背膜才是另一个被揭离的物体。'}墙上只有这张印刷薄片本身，没有木条、挂绳、挂钩或任何实体框体；文字、印章和印刷图层保持平面，不变成三维物体。`;
+}
+
+function stickerCompositionRule(p, f, sceneLayoutRule, sceneScaleRule) {
+  return `${f.state === 'installed' ? `本方向为已安装成品展示，以下状态高于创意正文：第0秒起墙上已经存在最终完成态的整张横画，整个表面与墙面全幅无缝贴合，四角及四边全部压实，二者之间没有空气层或可见间距。参考图对应的完整正面位图从第0帧起一次性、完整、清晰存在，所有像素的颜色和相对位置逐帧不变。人物始终空手并与产品表面保持距离，产品全片都是同一个贴墙静态平面；唯一变化来自镜头、人物和合理环境微动。贴画主体逐帧保持同一${p.widthCm}:${p.heightCm}横向外形和同一墙面坐标，首帧状态就是末帧状态。` : `本方向只执行以下初始状态和动作：${f.action} 未粘区域允许在手支撑下自然弯曲和下垂，不得拉伸或橡胶变形；已粘区域保持固定。贴合只能随手揭膜与压贴逐段推进，已完成后不能再次展开或揭起。演员站地面，不站床、柜子或沙发。`}
 ${f.directionNumber === 6 ? '方向6开场连续性强制要求：第0秒直接采用无遮挡的正面中景，空手人物、墙面和完整贴画立即处于正常空间关系中；完整横向贴画从首帧起占9:16视频画面宽度约55%—65%，参考图对应的整张正面位图在首帧已经一次性完整清楚，严禁随着推近补充或加深任何外围颜色区域。禁止全屋大远景，禁止把贴画缩在画面远处后再依靠推近补全产品。方向6全片不使用书本、散页、白纸、白布、薄膜、幕布或任何大面积白色物体，不设计放书或翻页动作，镜头前方始终无遮挡；禁止用掀开、翻开、抽走、滑走、擦镜、遮挡后移开的方式揭示场景或贴画。方向6的收尾只能聚焦文字、印章或画芯内部纹理，不得同时展示、靠近或强化产品四周外沿。' : ''}
 ${(f.state === 'installed' || STICKER_WALL_INSTALL_DIRECTIONS.has(f.directionNumber)) && !f.closeDetail ? `成品位置或预定安装位置必须按本方向功能空间和主家具组合的几何中心布置，不得偏贴在家具一端、门边、墙角或狭窄墙柱上。构图需要人物时让人物站到侧边，不得把贴画挪离中心给人物让位。${sceneLayoutRule}` : sceneLayoutRule}
-【本方向空间比例锁定】${sceneScaleRule}${f.state === 'installed' && !f.closeDetail ? '贴画在视频画面中的宽度占比始终不低于40%，人物同框的中景里也不低于此值，保证外围印刷色带清晰可辨。' : ''}
+【本方向空间比例锁定】${sceneScaleRule}${f.state === 'installed' && !f.closeDetail ? '贴画在视频画面中的宽度占比始终不低于40%，人物同框的中景里也不低于此值，保证外围印刷边框清晰可辨。' : ''}
 ${f.state === 'installed' ? '人物动作只服务于生活化展示或讲解，人物与产品始终分离；产品区域内没有任何自主运动或形态变化。' : '所有物体运动必须由明确手部接触带动。一个动作不能同时既揭膜又凭空压平整幅长画；时长不足时只拍可真实完成的局部步骤，禁止加速赶施工。'}
 ${f.closeDetail ? '本方向是局部近景，不强制人物全身或房间全景；只因相机靠近呈现细节，产品物理尺寸不变。' : '空间展示用宽阔连续墙面与同景深家具交代尺寸，横幅完整可见且不拉伸；人物不要遮住字画主体。场景严格服从本方向指定的唯一功能空间，不跨场景混搭家具，不默认床头场景。'}
 人物数量全程一致；多人必须脸型、发型和服装明显不同，不得复制同一个人。人物正常速度，镜头一条短而明确的路径均匀分配到整个时长，无急加速、急推急拉、甩镜或末尾冲刺。摄影机移动不得导致贴画形态变化。
 最后视觉焦点必须落在贴画整体或本方向指定的画内细节，不能扫过贴画继续拍空墙或天花板。保留需要的推进特写，不统一改为中远景收尾。结尾可以自然减速，并保留人物或前景微动，不追加独立静态定妆镜头。`;
+}
+
+export function stickerPhysicalRules(profile, direction) {
+  const p = normalizeStickerProfile(profile);
+  const f = getStickerFramework(direction);
+  return `${stickerHeaderRule(p, f)}
+${stickerRasterIdentityRule(f)}
+${stickerColorAnchorRule(p)}
+${stickerCompositionRule(p, f, stickerSceneLayoutRule(f.directionNumber), stickerSceneScaleRule(p, f.directionNumber))}`;
 }
 
 function sanitizeInstalledStickerCreativeBody(promptText) {
@@ -257,9 +267,12 @@ export function ensureStickerPrompt(prompt, profile, direction) {
   // 自己生成的旧规则也替换为本次档案快照，不能在重试时叠加不同尺寸。
   const text = String(prompt || '').trim();
   const extracted = text.includes('【贴画创意正文】') ? text.split('【贴画创意正文】').slice(1).join('【贴画创意正文】').trim() : text;
+  // 创意正文和锚定段之间没有专属结束标记，按“创意内容…总时长”隔离正文，否则二次 ensure 会把锚定段当成正文叠加。
+  const bodyMatch = extracted.match(/创意内容\s*[：:]\s*[\s\S]*?(?:\n\s*总时长\s*[：:]\s*\d+\s*秒)/m)
+    || extracted.match(/创意内容\s*[：:]\s*[\s\S]*?(?=\n\s*【|$)/m);
   const p = normalizeStickerProfile(profile);
   const f = getStickerFramework(direction);
-  const rawBody = extracted.split(STICKER_FINAL_MARKER)[0].trim();
+  const rawBody = (bodyMatch ? bodyMatch[0] : extracted.split(STICKER_FINAL_MARKER)[0].split(/\n[ \t]*【/)[0]).trim();
   const bodyWithoutConstruction = f.state === 'installed' ? sanitizeInstalledStickerCreativeBody(rawBody) : rawBody;
   const body = compactStickerCreativeBody(sanitizeStickerProductColorLabels(bodyWithoutConstruction));
   const positionRule = (f.state === 'installed' || STICKER_WALL_INSTALL_DIRECTIONS.has(f.directionNumber)) && !f.closeDetail
@@ -268,17 +281,24 @@ export function ensureStickerPrompt(prompt, profile, direction) {
   const stateRule = f.state === 'installed'
     ? '本方向从首帧到末帧都只展示同一张早已贴好的正面成品；产品本体逐帧保持同一个贴墙静态平面，首帧状态与末帧状态完全相同。'
     : '只执行框架指定的一个局部形态或安装步骤，不增加卷轴动作。';
-  const finalRule = `唯一允许出现的产品实体是一张宽${p.widthCm}厘米、高${p.heightCm}厘米的横向哑光柔性PVC印刷膜，就是上传参考图这张印刷品本身：整个正面一次性完整呈现参考图的印刷画面，外围印刷色带四边连续、颜色与参考图一致，是平面印刷图案，不是画框或浅色装裱边。产品裁切线以外直接是普通墙面，没有第二个矩形或任何外围结构。${stateRule}${positionRule}`;
-  return `${stickerPhysicalRules(p, direction)}\n\n【贴画创意正文】\n${body}\n\n${STICKER_FINAL_MARKER}\n${finalRule}`;
+  const finalRule = `唯一允许出现的产品实体是一张宽${p.widthCm}厘米、高${p.heightCm}厘米的横向哑光柔性PVC印刷膜，就是上传参考图这张印刷品本身：整个正面一次性完整呈现参考图的印刷画面，外围印刷边框四边连续、颜色与参考图一致，是平面印刷图案，不是画框或浅色装裱边。产品裁切线以外直接是普通墙面，没有第二个矩形或任何外围结构。${stateRule}${positionRule}`;
+  // 成品顺序固定为：产品身份 → 创意正文（场景）→ 画面锚定 → 场景构图 → 收尾裁决。
+  // 场景在前、产品锚定紧随其后，是边框颜色保真实测有效的写法，不要把规则块整体挪回正文之前。
+  return `${stickerHeaderRule(p, f)}\n\n【贴画创意正文】\n${body}\n\n${stickerRasterIdentityRule(f)}\n${stickerColorAnchorRule(p)}\n\n${stickerCompositionRule(p, f, stickerSceneLayoutRule(f.directionNumber), stickerSceneScaleRule(p, f.directionNumber))}\n\n${STICKER_FINAL_MARKER}\n${finalRule}`;
 }
 
 export function inspectStickerPromptIssues(prompt, direction) {
   const f = getStickerFramework(direction);
   const source = String(prompt || '');
-  const stickerBody = source.includes('【贴画创意正文】')
-    ? source.split('【贴画创意正文】').slice(1).join('【贴画创意正文】').split(STICKER_FINAL_MARKER)[0]
+  const afterBodyMarker = source.includes('【贴画创意正文】')
+    ? source.split('【贴画创意正文】').slice(1).join('【贴画创意正文】')
     : source;
-  const creative = stickerBody.match(/创意内容\s*[：:]?([\s\S]*?)(?:负面约束\s*[：:]?|$)/)?.[1] || stickerBody;
+  // 只隔离“创意内容…总时长”正文段，避免把正文之后的画面锚定段误判成创意内容。
+  const stickerBody = (afterBodyMarker.match(/创意内容\s*[：:]\s*[\s\S]*?(?:\n\s*总时长\s*[：:]\s*\d+\s*秒)/m)
+    || afterBodyMarker.match(/创意内容\s*[：:]\s*[\s\S]*?(?=\n\s*【|$)/m)
+    || [afterBodyMarker.split(STICKER_FINAL_MARKER)[0]])[0];
+  const creativeMatch = stickerBody.match(/(?:创意内容\s*[：:])?([\s\S]*?)(?:负面约束\s*[：:]?|总时长\s*[：:]?|$)/);
+  const creative = creativeMatch && creativeMatch[1] !== undefined ? creativeMatch[1] : stickerBody;
   const positiveClauses = creative.split(/[。；;\n]/).filter((clause) => clause && !/(?:禁止|严禁|不得|不能|不要|避免|不出现|无)/.test(clause));
   const positive = positiveClauses.join('\n');
   const issues = [];
@@ -333,6 +353,6 @@ ${stickerPhysicalRules(profile, f.directionNumber)}
 本轮具体创意：${idea.title}；${idea.summary}
 风格：${style.label}，${style.direction}。用户偏好：${JSON.stringify(context)}
 上次提示词和avoidElements只是避重资料，不能覆盖当前物理状态。换元素保留本方向动作结构，可更换同类房间布置、人物服装、光线和陈设，不改变产品。视频画幅为${context.ratio || '9:16'}，不是产品实体比例。
-一个连续镜头，不切镜。时间轴从0秒无重叠连续到结束；按时长每1—2秒交代实际动作或取景变化，但不为了凑节点给贴好的画增加施工动作。镜头路径长度按整段时间均匀分配；保留近景特写方向。全景看不清小字时不重写小字，不放大实物，不强制远景识别笔画。
+按场景陈设、人物动作、镜头路径的顺序写，一个连续镜头，不切镜。时间轴从0秒无重叠连续到结束；按时长每1—2秒交代实际动作或取景变化，但不为了凑节点给贴好的画增加施工动作。镜头路径长度按整段时间均匀分配；保留近景特写方向。全景看不清小字时不重写小字，不放大实物，不强制远景识别笔画。
 真实住宅自然光、柔和阴影、生活纹理和自然人物，不做卡通、三维渲染或塑料皮肤。声音服从偏好，静音时讲解可只有口型。不添加包装、定位胶带、挂钩、木杆或硬框；不要在产品颜色、外围色带、材质观感上做任何发挥——产品始终是参考图那张平面印刷品本身，颜色与对比以参考图为准。场景风格只改变环境和人物。禁止二次展开、横竖旋转、变形、画面漂移、人物克隆和无操作的物体移动。${f.state === 'installed' ? '这是纯成品展示，输出文本中完全不要描述产品背侧、施工材料或任何剥离过程，只描述已经贴实的正面成品。' : ''}已安装方向的最终提示词若出现“手持画、搬画、展开画、旋转画、把画贴上墙”等动作，必须在输出前删除这些动作。`;
 }
