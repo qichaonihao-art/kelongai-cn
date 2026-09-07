@@ -159,7 +159,7 @@ function stickerRasterIdentityRule(framework) {
   const visibleState = framework.state === 'installed'
     ? '第0帧直接显示参考图对应的完整最终印刷纹理，第一帧与最后一帧的产品像素结构完全相同'
     : '正面任何已经进入取景框的区域，都直接显示参考图在该区域对应的最终印刷纹理，并在后续帧保持不变';
-  return `${STICKER_RASTER_MARKER}${visibleState}。必须把参考图整体理解为已经烘焙完成、不可拆分的一张平面位图纹理，并一次性贴在同一张PVC膜面上；文字、印章、米黄底、深浅色区域及参考图最外围的颜色都只是这张位图中的像素，不能被模型拆成多个物体或分阶段绘制。参考图内部已经存在的外围印刷颜色区域属于原图不可删除的有效内容，必须从第一次可见起四边完整、连续、清晰保留，其原始颜色、宽度、深浅和位置均不得淡化、擦除、变窄、断开或与墙面融合；禁止的只是产品裁切线外新增的第二圈结构，绝不允许因此删除裁切线以内的原有印刷颜色。严禁任何颜色区域在视频过程中补上、描出、变深、扩散、淡入、逐边生长或形成第二个矩形；严禁先显示不完整版本，再随着人物起身、镜头推近或光线变化补成完整版本。产品四周的裁切线之外必须立刻、连续地接普通墙面或当前真实背景，不允许在裁切线外增加第二圈色带、描边、包边、接缝、光晕、阴影或任何外围结构。摄影机移动只能改变整张固定纹理的取景大小和透视，纹理内部各区域必须同步运动、零相对位移、零层次视差。镜头只展示整体、文字、印章或画芯内部纹理，不把产品四周外沿作为特写主体。`;
+  return `${STICKER_RASTER_MARKER}${visibleState}。必须把参考图整体理解为已经烘焙完成、不可拆分的一张平面位图纹理，并一次性贴在同一张PVC膜面上；文字、印章、米黄底、深浅色区域及参考图最外围的颜色都只是这张位图中的像素，不能被模型拆成多个物体或分阶段绘制。参考图内部已经存在的外围印刷颜色区域属于原图不可删除的有效内容，必须从第一次可见起四边完整、连续、清晰保留，其原始颜色、宽度、深浅和位置均不得淡化、擦除、变窄、断开或与墙面融合。若参考图的外围印刷图案是一圈闭合矩形，则必须完整保留连续的上边、下边、左边和右边，四条印刷边在四角自然连续相接；不得删掉四条边而只剩四个L形角标、短线角、断角或悬空角块，也不得把闭合矩形改成开放式角花。禁止的只是产品裁切线外新增的第二圈结构，绝不允许因此删除裁切线以内的原有印刷颜色。严禁任何颜色区域在视频过程中补上、描出、变深、扩散、淡入、逐边生长或形成第二个矩形；严禁先显示不完整版本，再随着人物起身、镜头推近或光线变化补成完整版本。产品四周的裁切线之外必须立刻、连续地接普通墙面或当前真实背景，不允许在裁切线外增加第二圈色带、描边、包边、接缝、光晕、阴影或任何外围结构。摄影机移动只能改变整张固定纹理的取景大小和透视，纹理内部各区域必须同步运动、零相对位移、零层次视差。镜头只展示整体、文字、印章或画芯内部纹理，不把产品四周外沿作为特写主体。`;
 }
 
 function stickerColorFidelityRule() {
@@ -192,6 +192,16 @@ function sanitizeStickerProductColorLabels(promptText) {
     })
     .join('');
   return `${source.slice(0, productStart)}${productSection}${source.slice(creativeIndex)}`;
+}
+
+function compactStickerCreativeBody(promptText) {
+  const source = String(promptText || '').trim();
+  const creative = source.match(/创意内容\s*[：:]\s*([\s\S]*?)(?=\n?\s*负面约束\s*[：:]|\n?\s*总时长\s*[：:]|$)/)?.[1]?.trim();
+  if (!creative) return source;
+  const duration = source.match(/总时长\s*[：:]\s*(\d+)\s*秒/)?.[1];
+  // 产品结构、颜色、表面与负面约束全部由确定性系统规则提供。
+  // 文本模型只保留场景和镜头创意，避免把同一套“禁止边框”重复数次后反向压掉参考图原有印刷边线。
+  return `创意内容：${creative}${duration ? `\n总时长：${duration}秒` : ''}`;
 }
 export function getStickerFramework(direction) {
   const framework = STICKER_FRAMEWORKS[Number(direction) - 1];
@@ -251,14 +261,14 @@ export function ensureStickerPrompt(prompt, profile, direction) {
   const f = getStickerFramework(direction);
   const rawBody = extracted.split(STICKER_FINAL_MARKER)[0].trim();
   const bodyWithoutConstruction = f.state === 'installed' ? sanitizeInstalledStickerCreativeBody(rawBody) : rawBody;
-  const body = sanitizeStickerProductColorLabels(bodyWithoutConstruction);
+  const body = compactStickerCreativeBody(sanitizeStickerProductColorLabels(bodyWithoutConstruction));
   const positionRule = (f.state === 'installed' || STICKER_WALL_INSTALL_DIRECTIONS.has(f.directionNumber)) && !f.closeDetail
     ? '墙贴的水平中心对准所在功能背景墙及主家具组合的水平中心，人物只能侧让，不能让产品偏离中心。'
     : '';
   const stateRule = f.state === 'installed'
     ? '本方向从首帧到末帧都只展示同一张早已贴好的正面成品；产品本体逐帧保持同一个贴墙静态平面，首帧状态与末帧状态完全相同。'
     : '只执行框架指定的一个局部形态或安装步骤，不增加卷轴动作。';
-  const finalRule = `唯一允许出现的产品实体是一张宽${p.widthCm}厘米、高${p.heightCm}厘米的横向哑光柔性PVC印刷膜。上传参考图是产品内容、文字、图案、颜色、外观、纹理和表面效果的唯一依据，不得调色或重新材质化。参考图的整个正面必须作为一张已经完成、不可拆分的平面位图纹理，一次性映射在同一膜面上；全部颜色区域厚度和墙面深度完全相同，不能把其中任何区域拆成独立物体或分阶段生成。参考图裁切线以内原本存在的外围印刷颜色区域必须完整保留，四边颜色、宽度、深浅和位置与参考图一致，不得淡化、擦除、断开或融入墙面；只禁止裁切线以外新增第二圈结构。产品表面只允许柔和漫反射，禁止亮面、镜面、玻璃感、倒影、反光斑、镜面高光和移动亮带。产品裁切线以外立即是普通墙面，不得增加第二个矩形、外围部件、侧面厚度、离墙间隙或环绕投影。${stateRule}${positionRule}`;
+  const finalRule = `唯一允许出现的产品实体是一张宽${p.widthCm}厘米、高${p.heightCm}厘米的横向哑光柔性PVC印刷膜。上传参考图是产品内容、文字、图案、颜色、外观、纹理和表面效果的唯一依据，不得调色或重新材质化。参考图的整个正面必须作为一张已经完成、不可拆分的平面位图纹理，一次性映射在同一膜面上；全部颜色区域厚度和墙面深度完全相同，不能把其中任何区域拆成独立物体或分阶段生成。参考图裁切线以内原本存在的外围印刷颜色区域必须完整保留，四边颜色、宽度、深浅和位置与参考图一致，不得淡化、擦除、断开或融入墙面。参考图若为闭合矩形印刷色带，上、下、左、右四条边必须连续闭合，严禁简化为四个L形角标、断角或开放式角花；只禁止裁切线以外新增第二圈结构。产品表面只允许柔和漫反射，禁止亮面、镜面、玻璃感、倒影、反光斑、镜面高光和移动亮带。产品裁切线以外立即是普通墙面，不得增加第二个矩形、外围部件、侧面厚度、离墙间隙或环绕投影。${stateRule}${positionRule}`;
   return `${stickerPhysicalRules(p, direction)}\n\n【贴画创意正文】\n${body}\n\n${STICKER_FINAL_MARKER}\n${finalRule}`;
 }
 
@@ -316,7 +326,7 @@ export function buildStickerVideoRequest(profile, idea, context, style) {
     ? { ...normalizedProfile, material: '已经贴实在墙面的单层柔性PVC正面印刷薄片' }
     : normalizedProfile;
   const range = stickerDuration(f.directionNumber, idea.durationMin || context.durationMin, idea.durationMax || context.durationMax);
-  return `你是PVC背胶贴画短视频导演。输出可直接提交视频模型的中文提示词，不要解释或Markdown。分为产品固定约束、创意内容、负面约束；最后写总时长：X秒，X须为${range.durationMin}至${range.durationMax}内整数。
+  return `你是PVC背胶贴画短视频导演。只输出“创意内容”和“总时长”，不要重复产品固定约束，不要另写负面约束，不要解释或Markdown；产品物理规则会由系统在输出后统一添加。最后写总时长：X秒，X须为${range.durationMin}至${range.durationMax}内整数。
 ${stickerPhysicalRules(profile, f.directionNumber)}
 固定档案：${JSON.stringify(promptProfile)}
 方向${f.directionNumber}：${f.title}。${f.action}

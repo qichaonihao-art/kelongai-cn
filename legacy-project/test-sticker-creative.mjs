@@ -48,6 +48,7 @@ for (const f of STICKER_FRAMEWORKS) {
   assert.match(rule, /裁切线之外必须立刻、连续地接普通墙面/);
   assert.match(rule, /外围印刷颜色区域属于原图不可删除的有效内容/);
   assert.match(rule, /绝不允许因此删除裁切线以内的原有印刷颜色/);
+  assert.match(rule, /不得删掉四条边而只剩四个L形角标/);
   assert.match(rule, /上传参考图是产品全部视觉信息的唯一依据/);
   assert.match(rule, /环境风格、色温、白平衡和调色只能作用于墙面、家具、人物与整体氛围/);
   assert.match(rule, /产品是贴墙的哑光柔性PVC印刷薄片/);
@@ -147,7 +148,7 @@ const paleProductColorPrompt = ensureStickerPrompt(
 );
 const paleProductColorSections = paleProductColorPrompt.split(/创意内容\s*[：:]/);
 assert.ok(!paleProductColorSections[0].includes('浅棕褐色'));
-assert.match(paleProductColorSections[0], /参考图对应区域的原始印刷颜色/);
+assert.match(paleProductColorSections[0], /上传参考图是产品全部视觉信息的唯一依据/);
 assert.match(paleProductColorSections[1], /浅棕色边几/);
 assert.ok(paleProductColorPrompt.includes(STICKER_COLOR_MARKER));
 
@@ -158,7 +159,7 @@ const glossyProductPrompt = ensureStickerPrompt(
 );
 const glossyProductSections = glossyProductPrompt.split(/创意内容\s*[：:]/);
 assert.ok(!/(?:亮面PVC|玻璃般反光)/.test(glossyProductSections[0]));
-assert.match(glossyProductSections[0], /哑光柔性PVC印刷表面/);
+assert.match(glossyProductSections[0], /哑光柔性PVC印刷薄片/);
 assert.match(glossyProductSections[1], /玻璃花瓶/);
 
 const legacyCorruptedGlossPrompt = ensureStickerPrompt(
@@ -168,8 +169,19 @@ const legacyCorruptedGlossPrompt = ensureStickerPrompt(
 );
 const legacyCorruptedGlossBody = legacyCorruptedGlossPrompt.split('【贴画创意正文】')[1].split(STICKER_FINAL_MARKER)[0];
 assert.ok(!legacyCorruptedGlossBody.includes('不呈现哑光柔性PVC印刷表面'));
-assert.match(legacyCorruptedGlossBody, /不呈现亮面、光面、镜面、玻璃质感/);
-assert.match(legacyCorruptedGlossBody, /无镜面高光/);
+assert.ok(!legacyCorruptedGlossBody.includes('产品固定约束'));
+assert.ok(!legacyCorruptedGlossBody.includes('负面约束'));
+assert.match(legacyCorruptedGlossBody, /创意内容：人物在茶桌旁讲解/);
+
+const duplicatedRulesPrompt = ensureStickerPrompt(
+  '产品固定约束：重复描述产品并禁止一切边框。创意内容：人物在茶室中从侧面讲解。负面约束：禁止画框、第二圈色带、描边和外围结构。总时长：6秒',
+  { ...profile, widthCm: 120, heightCm: 40 },
+  1,
+);
+const duplicatedRulesBody = duplicatedRulesPrompt.split('【贴画创意正文】')[1].split(STICKER_FINAL_MARKER)[0];
+assert.equal((duplicatedRulesBody.match(/产品固定约束/g) || []).length, 0);
+assert.equal((duplicatedRulesBody.match(/负面约束/g) || []).length, 0);
+assert.match(duplicatedRulesBody, /创意内容：人物在茶室中从侧面讲解/);
 
 textReply = JSON.stringify({ name: '字画', material: '木板', frameStructure: '实木框', widthCm: 40 });
 const analysis = await server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'sticker', widthCm: '150', heightCm: '50' }, 'test', 'analysis');
@@ -279,6 +291,7 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fas
   if (model === 'wan3.0-video') assert.match(submitted, /侧移不能产生移动高光/);
   if (model === 'wan3.0-video') assert.match(submitted, /外围印刷颜色区域属于产品正面不可删除的有效像素/);
   if (model === 'wan3.0-video') assert.match(submitted, /绝不允许删除裁切线以内的原有印刷颜色/);
+  if (model === 'wan3.0-video') assert.match(submitted, /严禁删除四条边后只保留四个L形角标/);
   if (model === 'wan3.0-video') assert.ok(!submitted.includes('外围印刷仿装裱边框'));
   // 批量与重试复用同一提交函数；方向8不能再触发卷轴展开，30不能加载木条图。
   for (const directionNumber of [8, 30, 37]) {
@@ -301,7 +314,8 @@ await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', prompt: legac
 assert.equal(legacyBorderResponse.status, 200, legacyBorderResponse.body);
 const legacyBorderSubmitted = payloads.at(-1).payload.input.prompt;
 assert.ok(!legacyBorderSubmitted.includes('浅褐色仿装裱二维印刷装饰边线'));
-assert.match(legacyBorderSubmitted, /参考图内既有的平面印刷颜色区域/);
+assert.match(legacyBorderSubmitted, /外围印刷颜色区域属于原图不可删除的有效内容/);
+assert.match(legacyBorderSubmitted, /不得删掉四条边而只剩四个L形角标/);
 assert.match(legacyBorderSubmitted, /方向6的收尾只能聚焦文字、印章或画芯内部纹理/);
 
 payloads = [];
@@ -311,7 +325,7 @@ await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', prompt: paleC
 assert.equal(paleColorResponse.status, 200, paleColorResponse.body);
 const paleColorSubmitted = payloads.at(-1).payload.input.prompt;
 assert.ok(!paleColorSubmitted.split(/创意内容\s*[：:]/)[0].includes('浅棕褐色'));
-assert.match(paleColorSubmitted, /参考图对应区域的原始印刷颜色/);
+assert.match(paleColorSubmitted, /上传参考图是产品全部视觉信息的唯一依据/);
 assert.match(paleColorSubmitted, /浅棕色边几/);
 assert.match(paleColorSubmitted, /不得作用于产品本身/);
 assert.match(paleColorSubmitted, /严禁白色反光斑、镜面高光、玻璃眩光/);
