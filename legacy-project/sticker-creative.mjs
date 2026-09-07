@@ -2,6 +2,7 @@
 export const STICKER_MARKER = '【PVC背胶贴画物理锁定】';
 export const STICKER_FINAL_MARKER = '【PVC墙贴最终几何裁决】';
 export const STICKER_RASTER_MARKER = '【PVC正面不可拆分纹理锁定】';
+export const STICKER_COLOR_MARKER = '【PVC产品视觉与哑光表面绝对保真锁定】';
 export const isStickerProduct = (profile) => profile?.productType === 'sticker';
 export const productUsageHash = (hash, type) => type === 'sticker' && hash ? `sticker:${hash}` : String(hash || '');
 
@@ -160,6 +161,27 @@ function stickerRasterIdentityRule(framework) {
     : '正面任何已经进入取景框的区域，都直接显示参考图在该区域对应的最终印刷纹理，并在后续帧保持不变';
   return `${STICKER_RASTER_MARKER}${visibleState}。必须把参考图整体理解为已经烘焙完成、不可拆分的一张平面位图纹理，并一次性贴在同一张PVC膜面上；文字、印章、米黄底、深浅色区域及参考图最外围的颜色都只是这张位图中的像素，不能被模型拆成多个物体或分阶段绘制。严禁任何颜色区域在视频过程中补上、描出、变深、扩散、淡入、逐边生长或形成第二个矩形；严禁先显示不完整版本，再随着人物起身、镜头推近或光线变化补成完整版本。产品四周的裁切线之外必须立刻、连续地接普通墙面或当前真实背景，不允许在裁切线外增加第二圈色带、描边、包边、接缝、光晕、阴影或任何外围结构。摄影机移动只能改变整张固定纹理的取景大小和透视，纹理内部各区域必须同步运动、零相对位移、零层次视差。镜头只展示整体、文字、印章或画芯内部纹理，不把产品四周外沿作为特写主体。`;
 }
+
+function stickerColorFidelityRule() {
+  return `${STICKER_COLOR_MARKER}上传参考图是产品全部视觉信息的唯一依据：正面内容、文字笔画、图案、印章、装饰边线、外轮廓、色相、明度、饱和度、对比度、纹理和材质观感均须保持参考图原样，不能重新设计、重绘、调色、提亮、磨皮、锐化、补色或改变表面效果。文字模型不得根据“新中式、自然、奶油、暖光”等场景风格重新命名、推测或改写产品颜色。参考图中四周既有的深色印刷像素必须保持参考图原有色相、颜色深度、饱和度和清晰对比，不得漂成浅米色、浅棕色、粉色、灰色或接近墙面的颜色；如果当前参考图呈现其他颜色，则严格保持该参考图的实际颜色。产品是贴墙的哑光柔性PVC印刷薄片，只呈现柔和漫反射，不得被重新材质化成亮面、光面、镜面、玻璃、亚克力、覆膜相纸、瓷面或烤漆表面；产品上不得出现窗户、灯具、人物或房间的倒影，不得出现白色反光斑、镜面高光、玻璃眩光、沿镜头移动的亮带或局部发亮。环境风格、色温、白平衡和调色只能作用于墙面、家具、人物与整体氛围，不得作用于产品本身。曝光必须以产品不过曝为前提，米黄色区域保留层次，深色区域保持足够密度；自然光只能在产品上形成极轻微、均匀、稳定的漫反射明暗变化，不能产生可辨认倒影，也不能让产品相对参考图明显变浅、发白、褪色或降低对比度。镜头远近和角度变化期间，产品颜色、内容、轮廓、纹理与哑光程度逐帧稳定，推近不能补色或增亮，拉远不能褪色，侧移不能产生移动高光。`;
+}
+
+function sanitizeStickerProductColorLabels(promptText) {
+  const source = String(promptText || '');
+  const creativeBodyMarker = '【贴画创意正文】';
+  const markerIndex = source.lastIndexOf(creativeBodyMarker);
+  const productStart = markerIndex >= 0 ? markerIndex + creativeBodyMarker.length : 0;
+  const creativeMatch = source.slice(productStart).search(/创意内容\s*[：:]/);
+  if (creativeMatch < 0) return source;
+  const creativeIndex = productStart + creativeMatch;
+  const productSection = source.slice(productStart, creativeIndex)
+    // 产品外围色名经常由文本模型臆测为浅色；改回“参考图原色”比硬编码某一种商品颜色安全。
+    .replace(/浅棕褐色|浅棕色|浅褐色|淡棕褐色|淡棕色|淡褐色/g, '参考图对应区域的原始印刷颜色')
+    // 删除模型臆造的亮面材质；环境中的玻璃、灯具等位于创意内容之后，不会被误改。
+    .replace(/(?:高亮|亮面|光面|镜面)(?:的)?(?:PVC)?(?:印刷)?(?:表面|材质|质感|光泽)?/g, '哑光柔性PVC印刷表面')
+    .replace(/(?:玻璃般|玻璃式|玻璃质感的?)(?:反光|光泽|高光|表面|质感)?/g, '哑光柔性PVC印刷表面');
+  return `${source.slice(0, productStart)}${productSection}${source.slice(creativeIndex)}`;
+}
 export function getStickerFramework(direction) {
   const framework = STICKER_FRAMEWORKS[Number(direction) - 1];
   if (!framework) throw new Error('贴画方向编号必须为1至40');
@@ -178,6 +200,7 @@ export function stickerPhysicalRules(profile, direction) {
   const sceneLayoutRule = stickerSceneLayoutRule(f.directionNumber);
   const sceneScaleRule = stickerSceneScaleRule(p, f.directionNumber);
   const rasterIdentityRule = stickerRasterIdentityRule(f);
+  const colorFidelityRule = stickerColorFidelityRule();
   return `${STICKER_MARKER}
 框架方向：${f.directionNumber}。
 产品类型：PVC背胶贴画。尺寸：宽${p.widthCm}厘米、高${p.heightCm}厘米，实体宽高比${p.widthCm}:${p.heightCm}，与视频画幅比例无关。保持该真实尺寸，不使用卷轴的小尺寸补偿，不缩小人物或家具。
@@ -185,6 +208,7 @@ ${f.state === 'installed'
     ? '材质为已经完成施工并永久贴实的单层柔性PVC印刷薄片，本片只展示正面完成态。参考图的整个正面是一张不可拆分的平面彩色印刷图层，全部区域位于同一张连续薄片、同一墙面深度，不存在独立外围部件。禁止生成实体木框、匾框、画框侧壁、背板、内凹画芯、凸起包边、四角拼缝、金属框、玻璃面、框体高光或围绕产品四周的立体阴影。没有木条、挂绳、挂钩、轴头、实体框或任何施工材料。二维文字、印章和印刷图层不能变成真实三维物体，禁止改字、增减笔画、纹理流动。'
     : '材质为柔性PVC薄片，正面为参考图对应的一张不可拆分的完整平面印刷图层，背面白色，有可揭离的背膜。正面全部颜色区域位于同一张连续薄片、同一深度，不存在独立外围部件。禁止生成实体木框、匾框、画框侧壁、背板、内凹画芯、凸起包边、四角拼缝、金属框、玻璃面、框体高光或围绕产品四周的立体阴影。没有木条、挂绳、挂钩、轴头或实体框，不使用小胶带定位。\n白色画背和印刷正面属于同一张PVC主体；背膜才是另一个被揭离的物体，不得把白色画背撕成第二张画。背膜按参考素材表现，不确定透明度时不要虚构多层；被揭下的膜由手持有或放到明确可见台面，不能凭空消失。二维文字、印章和完整印刷图层不能变成真实三维物体，禁止改字、增减笔画、纹理流动。'}
 ${rasterIdentityRule}
+${colorFidelityRule}
 ${f.state === 'installed' ? `本方向为已安装成品展示，以下状态高于创意正文：第0秒起墙上已经存在最终完成态的整张横画，整个表面与墙面全幅无缝贴合，四角及四边全部压实，二者之间没有空气层或可见间距。参考图对应的完整正面位图从第0帧起一次性、完整、清晰存在，所有像素的颜色和相对位置逐帧不变。人物始终空手并与产品表面保持距离，产品全片都是同一个贴墙静态平面；唯一变化来自镜头、人物和合理环境微动。贴画主体逐帧保持同一${p.widthCm}:${p.heightCm}横向外形和同一墙面坐标，首帧状态就是末帧状态。` : `本方向只执行以下初始状态和动作：${f.action} 未粘区域允许在手支撑下自然弯曲和下垂，不得拉伸或橡胶变形；已粘区域保持固定。贴合只能随手揭膜与压贴逐段推进，已完成后不能再次展开或揭起。演员站地面，不站床、柜子或沙发。`}
 ${f.directionNumber === 6 ? '方向6开场连续性强制要求：第0秒直接采用无遮挡的正面中景，空手人物、墙面和完整贴画立即处于正常空间关系中；完整横向贴画从首帧起占9:16视频画面宽度约55%—65%，参考图对应的整张正面位图在首帧已经一次性完整清楚，严禁随着推近补充或加深任何外围颜色区域。禁止全屋大远景，禁止把贴画缩在画面远处后再依靠推近补全产品。方向6全片不使用书本、散页、白纸、白布、薄膜、幕布或任何大面积白色物体，不设计放书或翻页动作，镜头前方始终无遮挡；禁止用掀开、翻开、抽走、滑走、擦镜、遮挡后移开的方式揭示场景或贴画。方向6的收尾只能聚焦文字、印章或画芯内部纹理，不得同时展示、靠近或强化产品四周外沿。' : ''}
 ${(f.state === 'installed' || STICKER_WALL_INSTALL_DIRECTIONS.has(f.directionNumber)) && !f.closeDetail ? `成品位置或预定安装位置必须按本方向功能空间和主家具组合的几何中心布置，不得偏贴在家具一端、门边、墙角或狭窄墙柱上。构图需要人物时让人物站到侧边，不得把贴画挪离中心给人物让位。${sceneLayoutRule}` : sceneLayoutRule}
@@ -215,14 +239,15 @@ export function ensureStickerPrompt(prompt, profile, direction) {
   const p = normalizeStickerProfile(profile);
   const f = getStickerFramework(direction);
   const rawBody = extracted.split(STICKER_FINAL_MARKER)[0].trim();
-  const body = f.state === 'installed' ? sanitizeInstalledStickerCreativeBody(rawBody) : rawBody;
+  const bodyWithoutConstruction = f.state === 'installed' ? sanitizeInstalledStickerCreativeBody(rawBody) : rawBody;
+  const body = sanitizeStickerProductColorLabels(bodyWithoutConstruction);
   const positionRule = (f.state === 'installed' || STICKER_WALL_INSTALL_DIRECTIONS.has(f.directionNumber)) && !f.closeDetail
     ? '墙贴的水平中心对准所在功能背景墙及主家具组合的水平中心，人物只能侧让，不能让产品偏离中心。'
     : '';
   const stateRule = f.state === 'installed'
     ? '本方向从首帧到末帧都只展示同一张早已贴好的正面成品；产品本体逐帧保持同一个贴墙静态平面，首帧状态与末帧状态完全相同。'
     : '只执行框架指定的一个局部形态或安装步骤，不增加卷轴动作。';
-  const finalRule = `唯一允许出现的产品实体是一张宽${p.widthCm}厘米、高${p.heightCm}厘米的横向柔性PVC印刷膜。参考图的整个正面必须作为一张已经完成、不可拆分的平面位图纹理，一次性映射在同一膜面上；全部颜色区域厚度和墙面深度完全相同，不能把其中任何区域拆成独立物体或分阶段生成。产品裁切线以外立即是普通墙面，不得增加第二个矩形、外围部件、侧面厚度、离墙间隙或环绕投影。${stateRule}${positionRule}`;
+  const finalRule = `唯一允许出现的产品实体是一张宽${p.widthCm}厘米、高${p.heightCm}厘米的横向哑光柔性PVC印刷膜。上传参考图是产品内容、文字、图案、颜色、外观、纹理和表面效果的唯一依据，不得调色或重新材质化。参考图的整个正面必须作为一张已经完成、不可拆分的平面位图纹理，一次性映射在同一膜面上；全部颜色区域厚度和墙面深度完全相同，不能把其中任何区域拆成独立物体或分阶段生成。产品表面只允许柔和漫反射，禁止亮面、镜面、玻璃感、倒影、反光斑、镜面高光和移动亮带。产品裁切线以外立即是普通墙面，不得增加第二个矩形、外围部件、侧面厚度、离墙间隙或环绕投影。${stateRule}${positionRule}`;
   return `${stickerPhysicalRules(p, direction)}\n\n【贴画创意正文】\n${body}\n\n${STICKER_FINAL_MARKER}\n${finalRule}`;
 }
 
@@ -268,7 +293,7 @@ export function buildStickerIdeasRequest(profile, plan, batch, variationRound, a
   return `你为PVC背胶贴画设计短视频。只输出10个对象的合法JSON数组：[{"id":"1","title":"标题","summary":"具体创意"}]，严格按下面10个方向一一对应，不改变初始状态、安装/成品分类、运镜方向或结尾目标。
 档案：${JSON.stringify(normalizeStickerProfile(profile))}
 偏好：${JSON.stringify(plan)}；风格：${style.label}，${style.direction}。第${variationRound + 1}轮；避免复述这些旧创意：${JSON.stringify(avoidIdeas || [])}。
-40个方向中前30个是已安装展示，后10个才涉及柔性形态和安装。前30个方向的贴画必须在第0秒以前已经贴好，创意不得给它增加手持、搬运、展开、旋转或贴墙动作。每个方向必须服从该方向指定的唯一功能空间及家具，不跨场景混搭；茶室、书房、餐厅、办公室、走廊和工作区不得自动补入住宅沙发或成排靠垫，只有明确标为客厅的方向才允许使用该方向指定的沙发。每条明确地点和2件符合该空间用途的陈设，局部特写例外。产品无挂钩木条挂绳，不使用定位胶带，不套用卷轴尺寸补偿。参考图整个正面只能描述为一张不可拆分的平面印刷位图，不得把任何颜色区域命名或描述成独立框体、相框、匾或外围部件，也不得设计专门拍摄产品四周外沿的镜头。成品与本方向主家具组合对应的功能墙几何中心对齐。白色画背属于主体，背膜另行揭离。已贴好不能二次展开。人物正常速度，镜头全程平稳均匀推进，结束焦点在画，允许文字、印章和画芯内部纹理特写结尾。只拍时长内真实可完成的动作。
+40个方向中前30个是已安装展示，后10个才涉及柔性形态和安装。前30个方向的贴画必须在第0秒以前已经贴好，创意不得给它增加手持、搬运、展开、旋转或贴墙动作。每个方向必须服从该方向指定的唯一功能空间及家具，不跨场景混搭；茶室、书房、餐厅、办公室、走廊和工作区不得自动补入住宅沙发或成排靠垫，只有明确标为客厅的方向才允许使用该方向指定的沙发。每条明确地点和2件符合该空间用途的陈设，局部特写例外。产品无挂钩木条挂绳，不使用定位胶带，不套用卷轴尺寸补偿。参考图整个正面只能描述为一张不可拆分的平面印刷位图，不得把任何颜色区域命名或描述成独立框体、相框、匾或外围部件，也不得设计专门拍摄产品四周外沿的镜头。上传参考图是产品内容、颜色、外观、纹理和表面效果的唯一依据；产品只能描述为哑光柔性PVC印刷薄片，禁止根据场景风格把产品描述成浅棕、淡褐、低饱和、褪色、暖色调、亮面、光面、镜面、玻璃感、反光或高光材质；所选风格只改变环境、人物、家具、服装和光线，不改变产品本身。成品与本方向主家具组合对应的功能墙几何中心对齐。白色画背属于主体，背膜另行揭离。已贴好不能二次展开。人物正常速度，镜头全程平稳均匀推进，结束焦点在画，允许文字、印章和画芯内部纹理特写结尾。只拍时长内真实可完成的动作。
 ${frameworks.map((f, index) => `${index + 1}. 方向${f.directionNumber}：${f.title}。${f.action}。${stickerSceneLayoutRule(f.directionNumber)}${stickerSceneScaleRule(profile, f.directionNumber)}一镜到底。人物如出现，主色${style.wardrobe[(batch * 10 + index + variationRound * 3) % style.wardrobe.length]}。`).join('\n')}
 每条一句具体创意，写明连续动作和镜头路径；同一条只一个场景，人物、布置不得中途变化。不要写完整提示词。`;
 }
@@ -288,5 +313,5 @@ ${stickerPhysicalRules(profile, f.directionNumber)}
 风格：${style.label}，${style.direction}。用户偏好：${JSON.stringify(context)}
 上次提示词和avoidElements只是避重资料，不能覆盖当前物理状态。换元素保留本方向动作结构，可更换同类房间布置、人物服装、光线和陈设，不改变产品。视频画幅为${context.ratio || '9:16'}，不是产品实体比例。
 一个连续镜头，不切镜。时间轴从0秒无重叠连续到结束；按时长每1—2秒交代实际动作或取景变化，但不为了凑节点给贴好的画增加施工动作。镜头路径长度按整段时间均匀分配；保留近景特写方向。全景看不清小字时不重写小字，不放大实物，不强制远景识别笔画。
-真实住宅自然光、柔和阴影、生活纹理和自然人物，不做卡通、三维渲染或塑料皮肤。声音服从偏好，静音时讲解可只有口型。不添加包装、定位胶带、挂钩、木杆、硬框、背板或玻璃；参考图正面必须始终作为一个不可拆分的平面纹理整体，不得分阶段补充任何区域，不得把产品四周外沿作为镜头展示目标。禁止二次展开、横竖旋转、变形、画面漂移、人物克隆和无操作的物体移动。${f.state === 'installed' ? '这是纯成品展示，输出文本中完全不要描述产品背侧、施工材料或任何剥离过程，只描述已经贴实的正面成品。' : ''}已安装方向的最终提示词若出现“手持画、搬画、展开画、旋转画、把画贴上墙”等动作，必须在输出前删除这些动作。`;
+真实住宅自然光、柔和阴影、生活纹理和自然人物，不做卡通、三维渲染或塑料皮肤。声音服从偏好，静音时讲解可只有口型。不添加包装、定位胶带、挂钩、木杆、硬框、背板或玻璃；参考图正面必须始终作为一个不可拆分的平面纹理整体，不得分阶段补充任何区域，不得把产品四周外沿作为镜头展示目标。上传参考图是产品颜色、内容、外观、纹理与表面效果的唯一依据，禁止任何调色或重新材质化；产品保持哑光柔性PVC印刷观感，禁止亮面、光面、镜面、玻璃感、亚克力感、倒影、反光斑、镜面高光和移动亮带。场景风格只能改变环境和人物；自然光不得造成产品过曝发白、褪色、深色印刷区域变浅或表面发亮。禁止二次展开、横竖旋转、变形、画面漂移、人物克隆和无操作的物体移动。${f.state === 'installed' ? '这是纯成品展示，输出文本中完全不要描述产品背侧、施工材料或任何剥离过程，只描述已经贴实的正面成品。' : ''}已安装方向的最终提示词若出现“手持画、搬画、展开画、旋转画、把画贴上墙”等动作，必须在输出前删除这些动作。`;
 }

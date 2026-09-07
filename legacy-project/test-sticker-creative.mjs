@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { STICKER_FRAMEWORKS, STICKER_MARKER, STICKER_FINAL_MARKER, STICKER_RASTER_MARKER, normalizeStickerProfile, stickerPhysicalRules, ensureStickerPrompt, inspectStickerPromptIssues, stickerDuration } from './sticker-creative.mjs';
+import { STICKER_FRAMEWORKS, STICKER_MARKER, STICKER_FINAL_MARKER, STICKER_RASTER_MARKER, STICKER_COLOR_MARKER, normalizeStickerProfile, stickerPhysicalRules, ensureStickerPrompt, inspectStickerPromptIssues, stickerDuration } from './sticker-creative.mjs';
 
 process.env.RUNTIME_STATE_DIR = mkdtempSync(join(tmpdir(), 'kelong-sticker-test-'));
 process.env.KELONG_SKIP_LISTEN = '1';
@@ -43,8 +43,14 @@ assert.equal(normalizeStickerProfile({ widthCm: 150, heightCm: 50 }).ratio, '150
 for (const f of STICKER_FRAMEWORKS) {
   const rule = stickerPhysicalRules(profile, f.directionNumber);
   assert.ok(rule.includes(STICKER_RASTER_MARKER));
+  assert.ok(rule.includes(STICKER_COLOR_MARKER));
   assert.match(rule, /不可拆分的一张平面位图纹理/);
   assert.match(rule, /裁切线之外必须立刻、连续地接普通墙面/);
+  assert.match(rule, /上传参考图是产品全部视觉信息的唯一依据/);
+  assert.match(rule, /环境风格、色温、白平衡和调色只能作用于墙面、家具、人物与整体氛围/);
+  assert.match(rule, /产品是贴墙的哑光柔性PVC印刷薄片/);
+  assert.match(rule, /不得出现白色反光斑、镜面高光、玻璃眩光、沿镜头移动的亮带或局部发亮/);
+  assert.match(rule, /侧移不能产生移动高光/);
   assert.match(rule, /禁止生成实体木框、匾框/);
   assert.ok(!forbidden.test(rule));
   if (f.state === 'installed') {
@@ -132,12 +138,35 @@ assert.deepEqual(inspectStickerPromptIssues('【挂画生成尺寸补偿锁定�
 assert.deepEqual(stickerDuration(1, 8, 9), { durationMin: 5, durationMax: 6 });
 assert.deepEqual(stickerDuration(29, 7, 9), { durationMin: 7, durationMax: 9 });
 
+const paleProductColorPrompt = ensureStickerPrompt(
+  '产品固定约束：含米黄底、黑色文字、浅棕褐色、朱砂红印章。创意内容：新中式客厅使用浅棕色边几，人物侧身看画。负面约束：禁止变形。总时长：8秒',
+  { ...profile, widthCm: 120, heightCm: 40 },
+  2,
+);
+const paleProductColorSections = paleProductColorPrompt.split(/创意内容\s*[：:]/);
+assert.ok(!paleProductColorSections[0].includes('浅棕褐色'));
+assert.match(paleProductColorSections[0], /参考图对应区域的原始印刷颜色/);
+assert.match(paleProductColorSections[1], /浅棕色边几/);
+assert.ok(paleProductColorPrompt.includes(STICKER_COLOR_MARKER));
+
+const glossyProductPrompt = ensureStickerPrompt(
+  '产品固定约束：产品呈亮面PVC材质，带玻璃般反光。创意内容：客厅中玻璃花瓶位于浅棕色边几上。负面约束：禁止变形。总时长：8秒',
+  { ...profile, widthCm: 120, heightCm: 40 },
+  2,
+);
+const glossyProductSections = glossyProductPrompt.split(/创意内容\s*[：:]/);
+assert.ok(!/(?:亮面PVC|玻璃般反光)/.test(glossyProductSections[0]));
+assert.match(glossyProductSections[0], /哑光柔性PVC印刷表面/);
+assert.match(glossyProductSections[1], /玻璃花瓶/);
+
 textReply = JSON.stringify({ name: '字画', material: '木板', frameStructure: '实木框', widthCm: 40 });
 const analysis = await server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'sticker', widthCm: '150', heightCm: '50' }, 'test', 'analysis');
 assert.equal(analysis.profile.widthCm, 150);
 assert.match(analysis.profile.material, /PVC/);
 assert.match(analysis.profile.frameStructure, /不可拆分的一张平面彩色图层/);
 assert.ok(!payloads.at(-1).payload.input[0].content.at(-1).text.includes('挂画/卷轴产品分析专家'));
+assert.match(payloads.at(-1).payload.input[0].content.at(-1).text, /正面为哑光柔性PVC印刷观感/);
+assert.match(payloads.at(-1).payload.input[0].content.at(-1).text, /不得虚构倒影、反光斑或镜面高光/);
 
 for (let batch = 0; batch < 4; batch++) {
   textReply = JSON.stringify(Array.from({ length: 10 }, (_, i) => ({ id: String(i), title: `方案${i}`, summary: '茶室全景，茶桌与椅子旁自然展示，镜头轻移落在字画。' })));
@@ -232,6 +261,10 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fas
   assert.equal(submitted.includes('【千问 Wan3.0 专用·PVC贴画共面边缘锁定】'), model === 'wan3.0-video');
   if (model === 'wan3.0-video') assert.match(submitted, /第0帧必须直接显示与参考图一致的完整最终纹理/);
   if (model === 'wan3.0-video') assert.match(submitted, /不得在裁切线外生成第二个矩形/);
+  if (model === 'wan3.0-video') assert.match(submitted, /上传参考图是产品全部视觉信息的唯一依据/);
+  if (model === 'wan3.0-video') assert.match(submitted, /曝光以产品不过曝、不发白、不反光为准/);
+  if (model === 'wan3.0-video') assert.match(submitted, /产品表面固定为哑光柔性PVC印刷观感/);
+  if (model === 'wan3.0-video') assert.match(submitted, /侧移不能产生移动高光/);
   if (model === 'wan3.0-video') assert.ok(!submitted.includes('外围印刷仿装裱边框'));
   // 批量与重试复用同一提交函数；方向8不能再触发卷轴展开，30不能加载木条图。
   for (const directionNumber of [8, 30, 37]) {
@@ -256,6 +289,18 @@ const legacyBorderSubmitted = payloads.at(-1).payload.input.prompt;
 assert.ok(!legacyBorderSubmitted.includes('浅褐色仿装裱二维印刷装饰边线'));
 assert.match(legacyBorderSubmitted, /参考图内既有的平面印刷颜色区域/);
 assert.match(legacyBorderSubmitted, /方向6的收尾只能聚焦文字、印章或画芯内部纹理/);
+
+payloads = [];
+const paleColorWording = ensureStickerPrompt('产品固定约束：含米黄底、黑色文字、浅棕褐色、朱砂红印章。创意内容：新中式客厅使用浅棕色边几。负面约束：禁止变形。总时长：8秒', { ...profile, widthCm: 120, heightCm: 40 }, 2);
+const paleColorResponse = res();
+await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', prompt: paleColorWording, productType: 'sticker', directionNumber: 2, duration: 8, resolution: '480p', ratio: '9:16', generateAudio: false }), paleColorResponse);
+assert.equal(paleColorResponse.status, 200, paleColorResponse.body);
+const paleColorSubmitted = payloads.at(-1).payload.input.prompt;
+assert.ok(!paleColorSubmitted.split(/创意内容\s*[：:]/)[0].includes('浅棕褐色'));
+assert.match(paleColorSubmitted, /参考图对应区域的原始印刷颜色/);
+assert.match(paleColorSubmitted, /浅棕色边几/);
+assert.match(paleColorSubmitted, /不得作用于产品本身/);
+assert.match(paleColorSubmitted, /严禁白色反光斑、镜面高光、玻璃眩光/);
 
 const contaminatedPrompt = '【挂画生成尺寸补偿锁定】\n产品固定约束：20×40厘米竖幅实木框挂画。创意内容：墙面展示。总时长：6秒';
 payloads = [];
