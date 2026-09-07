@@ -44,22 +44,27 @@ for (const f of STICKER_FRAMEWORKS) {
   const rule = stickerPhysicalRules(profile, f.directionNumber);
   assert.ok(rule.includes(STICKER_RASTER_MARKER));
   assert.ok(rule.includes(STICKER_COLOR_MARKER));
-  assert.match(rule, /不可拆分的一张平面位图纹理/);
-  assert.match(rule, /裁切线之外必须立刻、连续地接普通墙面/);
-  assert.match(rule, /外围印刷颜色区域属于原图不可删除的有效内容/);
-  assert.match(rule, /绝不允许因此删除裁切线以内的原有印刷颜色/);
-  assert.match(rule, /不得删掉四条边而只剩四个L形角标/);
+  assert.match(rule, /印在同一张PVC膜面上的平面位图/);
+  assert.match(rule, /贴画的外边缘就是参考图最外层印刷内容的外沿/);
+  assert.match(rule, /这圈留白不属于贴画/);
+  assert.match(rule, /贴画外沿之外直接就是墙面/);
+  assert.match(rule, /外围的印刷色带属于画面本身的有效内容/);
+  assert.match(rule, /四边连续完整、四角自然相接/);
+  assert.match(rule, /不删除、不淡化/);
   assert.match(rule, /上传参考图是产品全部视觉信息的唯一依据/);
-  assert.match(rule, /环境风格、色温、白平衡和调色只能作用于墙面、家具、人物与整体氛围/);
-  assert.match(rule, /产品是贴墙的哑光柔性PVC印刷薄片/);
-  assert.match(rule, /不得出现白色反光斑、镜面高光、玻璃眩光、沿镜头移动的亮带或局部发亮/);
-  assert.match(rule, /侧移不能产生移动高光/);
-  assert.match(rule, /禁止生成实体木框、匾框/);
+  assert.match(rule, /相对深浅关系始终服从参考图/);
+  assert.match(rule, /哑光柔性PVC印刷薄片/);
+  assert.match(rule, /不是画框，也不是浅色装裱边/);
+  assert.match(rule, /没有反光、高光和倒影/);
+  assert.match(rule, /镜头推近、拉远、侧移期间，贴画的颜色和内容逐帧稳定/);
+  assert.match(rule, /不生成实体木框、画框、背板或玻璃面/);
   assert.ok(!forbidden.test(rule));
   if (f.state === 'installed') {
     assert.match(rule, /第0秒起墙上已经存在最终完成态/);
     assert.match(rule, /人物始终空手并与产品表面保持距离/);
     assert.match(rule, /完整正面位图从第0帧起一次性、完整、清晰存在/);
+    if (!f.closeDetail) assert.match(rule, /宽度占比始终不低于40%/);
+    else assert.ok(!rule.includes('宽度占比始终不低于40%'));
     assert.ok(!/(?:背膜|揭膜|白色画背|背面白色|背面为白色)/.test(rule));
     if (!f.closeDetail) assert.match(rule, /几何中心布置/);
   }
@@ -289,9 +294,10 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fas
   if (model === 'wan3.0-video') assert.match(submitted, /曝光以产品不过曝、不发白、不反光为准/);
   if (model === 'wan3.0-video') assert.match(submitted, /产品表面固定为哑光柔性PVC印刷观感/);
   if (model === 'wan3.0-video') assert.match(submitted, /侧移不能产生移动高光/);
-  if (model === 'wan3.0-video') assert.match(submitted, /外围印刷颜色区域属于产品正面不可删除的有效像素/);
+  if (model === 'wan3.0-video') assert.match(submitted, /外围印刷颜色区域属于产品正面不可删除的有效内容/);
   if (model === 'wan3.0-video') assert.match(submitted, /绝不允许删除裁切线以内的原有印刷颜色/);
   if (model === 'wan3.0-video') assert.match(submitted, /严禁删除四条边后只保留四个L形角标/);
+  if (model === 'wan3.0-video') assert.match(submitted, /深色保持深色，与底色保持参考图原有的明暗对比/);
   if (model === 'wan3.0-video') assert.ok(!submitted.includes('外围印刷仿装裱边框'));
   // 批量与重试复用同一提交函数；方向8不能再触发卷轴展开，30不能加载木条图。
   for (const directionNumber of [8, 30, 37]) {
@@ -314,8 +320,8 @@ await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', prompt: legac
 assert.equal(legacyBorderResponse.status, 200, legacyBorderResponse.body);
 const legacyBorderSubmitted = payloads.at(-1).payload.input.prompt;
 assert.ok(!legacyBorderSubmitted.includes('浅褐色仿装裱二维印刷装饰边线'));
-assert.match(legacyBorderSubmitted, /外围印刷颜色区域属于原图不可删除的有效内容/);
-assert.match(legacyBorderSubmitted, /不得删掉四条边而只剩四个L形角标/);
+assert.match(legacyBorderSubmitted, /外围印刷颜色区域属于产品正面不可删除的有效内容/);
+assert.match(legacyBorderSubmitted, /严禁删除四条边后只保留四个L形角标/);
 assert.match(legacyBorderSubmitted, /方向6的收尾只能聚焦文字、印章或画芯内部纹理/);
 
 payloads = [];
@@ -327,8 +333,8 @@ const paleColorSubmitted = payloads.at(-1).payload.input.prompt;
 assert.ok(!paleColorSubmitted.split(/创意内容\s*[：:]/)[0].includes('浅棕褐色'));
 assert.match(paleColorSubmitted, /上传参考图是产品全部视觉信息的唯一依据/);
 assert.match(paleColorSubmitted, /浅棕色边几/);
-assert.match(paleColorSubmitted, /不得作用于产品本身/);
-assert.match(paleColorSubmitted, /严禁白色反光斑、镜面高光、玻璃眩光/);
+assert.match(paleColorSubmitted, /相对深浅关系始终服从参考图/);
+assert.match(paleColorSubmitted, /没有反光、高光和倒影/);
 
 const contaminatedPrompt = '【挂画生成尺寸补偿锁定】\n产品固定约束：20×40厘米竖幅实木框挂画。创意内容：墙面展示。总时长：6秒';
 payloads = [];
