@@ -16757,10 +16757,11 @@ async function resumePaintingBatchRunsOnStartup() {
 }
 
 // ===== 文案创作（copywriting）=====
-// 挂画分析 / AI 原创文案支持豆包 Seed 2.1 Pro 与千问 Qwen3.8-Max；爆款仿写保持原有链路。
+// 挂画/PVC背胶贴画分析与 AI 原创文案支持豆包 Seed 2.1 Pro 与千问 Qwen3.8-Max；爆款仿写保持原有链路。
 // 独立文案库存储于 RUNTIME_STATE_DIR/creative-copy-library.json，不动现有任何运行状态文件。
 
 const COPY_PRODUCT_MATERIAL = '上下木条为实木；中间画心为无纺布';
+const COPY_STICKER_MATERIAL = '柔性PVC背胶薄片；正面为二维印刷画面；背面带可揭离背膜';
 const COPY_PRODUCT_MATERIAL_RULES = `
 【产品材质事实（最高优先级，所有文案必须遵守）】
 - 这款挂画的上下木条为实木，中间画心为无纺布。
@@ -16770,10 +16771,34 @@ const COPY_PRODUCT_MATERIAL_RULES = `
 - 禁止虚构手工制作、非遗工艺、收藏级、博物馆级、环保认证、防水防潮、永不褪色等未经确认的材质或工艺卖点。
 - 如果挂画档案、图片推断、用户补充内容或参考原文与本规则冲突，一律以本规则为准。`;
 const COPY_FORBIDDEN_MATERIAL_TERMS = ['宣纸', '绢布', '丝绸', '油画布', '棉麻布', '亚克力', 'PVC', '红木', '胡桃木', '松木', '榉木', '橡木', '进口木材', '名贵木材', '手工制作', '非遗工艺', '收藏级', '博物馆级', '环保认证', '防水防潮', '永不褪色'];
+const COPY_STICKER_MATERIAL_RULES = `
+【PVC背胶贴画产品事实（最高优先级，所有文案必须遵守）】
+- 产品是同一张柔性PVC背胶薄片，正面画面、文字、印章和装饰边线都是同一平面的二维印刷内容，背面带可揭离背膜。
+- 只能把它写成贴画、墙贴或PVC背胶贴画；不得写成挂画、卷轴、无纺布画心、宣纸画、画布或其他材质。
+- 图片中看似边框的部分只是印刷装饰边线，不得写成实体木框、金属框、玻璃面、背板、凸起包边或立体框。
+- 产品没有木条、挂绳、挂钩、轴头，不得描述悬挂、挂轴或装框动作。
+- 可以写贴合墙面、平整展示和空间焕新；不得虚构防水防潮、永不褪色、环保认证、无痕移除、反复粘贴等未经确认的功能。
+- 如果产品档案、图片推断、用户补充内容或参考原文与本规则冲突，一律以本规则为准。`;
+const COPY_STICKER_FORBIDDEN_MATERIAL_TERMS = ['挂画', '实木', '木条', '无纺布画心', '宣纸', '绢布', '丝绸', '油画布', '棉麻布', '亚克力', '画框', '相框', '木质边框', '金属框', '玻璃面', '背板', '卷轴', '挂轴', '轴头', '挂绳', '挂钩', '手工制作', '非遗工艺', '收藏级', '博物馆级', '环保认证', '防水防潮', '永不褪色', '无痕移除', '反复粘贴'];
 
-function copyMaterialViolations(text) {
+function normalizeCopyProductType(value) {
+  return readValue(value) === 'sticker' ? 'sticker' : 'hanging';
+}
+
+function copyProductMaterial(productType) {
+  return normalizeCopyProductType(productType) === 'sticker' ? COPY_STICKER_MATERIAL : COPY_PRODUCT_MATERIAL;
+}
+
+function copyProductMaterialRules(productType) {
+  return normalizeCopyProductType(productType) === 'sticker' ? COPY_STICKER_MATERIAL_RULES : COPY_PRODUCT_MATERIAL_RULES;
+}
+
+function copyMaterialViolations(text, productType = 'hanging') {
   const content = String(text || '').toLowerCase();
-  return COPY_FORBIDDEN_MATERIAL_TERMS.filter((term) => content.includes(term.toLowerCase()));
+  const terms = normalizeCopyProductType(productType) === 'sticker'
+    ? COPY_STICKER_FORBIDDEN_MATERIAL_TERMS
+    : COPY_FORBIDDEN_MATERIAL_TERMS;
+  return terms.filter((term) => content.includes(term.toLowerCase()));
 }
 
 function normalizeCopyItem(item, index) {
@@ -16801,7 +16826,7 @@ function normalizeCopyItems(copies) {
     .filter((item) => item.fullText);
 }
 
-function normalizeCopyProfile(profile) {
+function normalizeCopyProfile(profile, requestedProductType) {
   const source = profile && typeof profile === 'object' && !Array.isArray(profile) ? profile : {};
   const text = (value) => {
     if (typeof value === 'string') return value.trim();
@@ -16816,13 +16841,15 @@ function normalizeCopyProfile(profile) {
     return valueText ? valueText.split(/[\n,，；;]+/).map((item) => item.trim()).filter(Boolean) : [];
   };
 
+  const productType = normalizeCopyProductType(requestedProductType || source.productType);
   return {
+    productType,
     name: text(source.name),
     visualDescription: text(source.visualDescription),
     colors: list(source.colors),
     style: text(source.style),
     textCalligraphySeals: text(source.textCalligraphySeals),
-    material: COPY_PRODUCT_MATERIAL,
+    material: copyProductMaterial(productType),
     structure: text(source.structure),
     suitableScenes: list(source.suitableScenes),
     targetAudiences: list(source.targetAudiences),
@@ -16838,11 +16865,11 @@ const COPY_COMPLIANCE_RULES = `
 - 禁止写：转运、招财、镇宅、化煞、保证家庭和睦、治疗焦虑、改善健康、一定带来好运，以及任何承诺财富、健康、运势或家庭结果的表述。
 - 寓意只能作为文化理解、情感寄托或生活提醒，不能写成产品具有现实功效。`;
 
-function buildCopyDirectionSpecs(count, uniform) {
+function buildCopyDirectionSpecs(count, uniform, productType = 'hanging') {
   const lengths = uniform
     ? Array(10).fill(uniform)
     : [350, 350, 350, 350, 350, 350, 350, 250, 250, 250];
-  const all = [
+  const hangingDirections = [
     { mode: 'stable', direction: '寓意·人生状态', brief: '围绕静心、知足、坚持、放下或从容等人生状态，只选择一个核心意思展开。' },
     { mode: 'stable', direction: '寓意·家庭祝愿', brief: '围绕和睦、珍惜、安稳等家庭愿望，表达情感寄托，不能承诺实际结果。' },
     { mode: 'stable', direction: '寓意·品格家风', brief: '围绕守信、勤俭、慎独、谦逊、厚道或家风，只选择一个品格主题展开。' },
@@ -16853,25 +16880,43 @@ function buildCopyDirectionSpecs(count, uniform) {
     { mode: 'explore', direction: '送礼场景', brief: '从送父母、长辈、乔迁或节日心意切入，强调得体与情感表达。' },
     { mode: 'explore', direction: '视觉审美', brief: '讲构图、色彩、留白、书画气质与搭配，但不要逐项机械复述图片。' },
     { mode: 'explore', direction: '人群选择与互动转化', brief: '帮助观众判断适不适合自己，并用自然问题引导互动或选择，避免强硬促销。' }
-  ].map((item, index) => ({ ...item, targetLength: lengths[index] }));
+  ];
+  // 借鉴平台现有40个PVC贴画视频框架的核心思路，把贴画文案从“悬挂装饰”改成
+  // “寓意表达 + 墙面焕新 + 平面印刷 + 贴合场景 + 选择判断”，但不虚构施工性能。
+  const stickerDirections = [
+    { mode: 'stable', direction: '寓意·人生状态', brief: '围绕静心、知足、坚持、放下或从容等人生状态，只选择一个核心意思展开；寓意只能作为文化理解或生活提醒。' },
+    { mode: 'stable', direction: '寓意·家庭祝愿', brief: '围绕和睦、珍惜、安稳等家庭愿望，表达情感寄托，不能承诺实际结果。' },
+    { mode: 'stable', direction: '寓意·品格家风', brief: '围绕守信、勤俭、慎独、谦逊、厚道或家风，只选择一个品格主题展开。' },
+    { mode: 'stable', direction: '墙面焕新', brief: '从空墙单调、空间缺少视觉重点切入，讲贴画平整贴合后带来的墙面氛围变化；不描述夸张施工功效。' },
+    { mode: 'stable', direction: '情绪共鸣', brief: '从中老年人的生活心境、人生经历或当下情绪切入，不重复讲画面细节。' },
+    { mode: 'stable', direction: '传统文化与家庭关系', brief: '从传统文化观念、夫妻亲子或代际相处切入；不得虚构典故、作者、年代和名人评价。' },
+    { mode: 'explore', direction: '空间适配', brief: '围绕客厅、书房、茶室或会客区的完整功能墙面，讲横向构图、主家具居中搭配与空间尺度，不写悬挂动作。' },
+    { mode: 'explore', direction: 'PVC贴画形态', brief: '准确说明它是柔性PVC背胶薄片，正面内容与装饰边线均为二维印刷，贴墙后平整共面；不虚构防水、无痕或重复粘贴。' },
+    { mode: 'explore', direction: '视觉审美', brief: '讲构图、色彩、留白、书画气质与印刷装饰边线，但不要把二维边线写成实体框，也不要逐项机械复述图片。' },
+    { mode: 'explore', direction: '人群选择与互动转化', brief: '帮助观众判断这类PVC贴画是否适合自己的墙面和审美，并用自然问题引导互动，避免强硬促销。' }
+  ];
+  const all = (normalizeCopyProductType(productType) === 'sticker' ? stickerDirections : hangingDirections)
+    .map((item, index) => ({ ...item, targetLength: lengths[index] }));
   return count === 5 ? [all[0], all[1], all[3], all[8], all[9]] : all;
 }
 
-async function generateSingleCopy({ provider, apiKey, model, profile, extraInfo, forbidden, mode, direction, directionBrief, targetLength, excludeTexts }) {
+async function generateSingleCopy({ provider, apiKey, model, profile, productType, extraInfo, forbidden, mode, direction, directionBrief, targetLength, excludeTexts }) {
+  const normalizedProductType = normalizeCopyProductType(productType || profile?.productType);
+  const productLabel = normalizedProductType === 'sticker' ? 'PVC背胶贴画' : '挂画';
   const { min, max } = copyWordCountBoundary(targetLength);
-  const directionLine = `- 创作方向固定为「${direction || '挂画表达'}」：${directionBrief || '围绕指定方向展开。'}\n- direction 字段必须填写「${direction || '挂画表达'}」，不得自行换成其他方向。`;
+  const directionLine = `- 创作方向固定为「${direction || `${productLabel}表达`}」：${directionBrief || '围绕指定方向展开。'}\n- direction 字段必须填写「${direction || `${productLabel}表达`}」，不得自行换成其他方向。`;
   const avoidTexts = (Array.isArray(excludeTexts) ? excludeTexts : []).filter((t) => typeof t === 'string' && t.trim());
   const avoidLine = avoidTexts.length
     ? `\n【避免重复】请与以下已生成文案明显区分、不要雷同：\n${avoidTexts.slice(0, 6).map((t, i) => `${i + 1}. ${t.slice(0, 80)}`).join('\n')}`
     : '';
 
-  const buildPrompt = (correction) => `你是短视频口播文案创作专家。请为下面的挂画创作一条口播文案。
+  const buildPrompt = (correction) => `你是短视频口播文案创作专家。请为下面的${productLabel}创作一条口播文案。
 
-【挂画档案（产品事实以此为准，不得虚构）】
+【${productLabel}档案（产品事实以此为准，不得虚构）】
 ${JSON.stringify(profile, null, 2)}
 ${extraInfo ? `\n【用户补充信息】\n${extraInfo}` : ''}
 ${forbidden ? `\n【禁止出现的内容】\n${forbidden}` : ''}
-${COPY_PRODUCT_MATERIAL_RULES}
+${copyProductMaterialRules(normalizedProductType)}
 ${COPY_COMPLIANCE_RULES}
 
 【本条要求】
@@ -16930,19 +16975,19 @@ ${avoidLine}
   // 所有后置纠错都可能再次改变字数，因此最后统一同时检查材质与字数。
   // 最多再完整重写3次；仍不合格则硬拦截，绝不把超范围结果作为成功文案返回。
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const materialViolations = copyMaterialViolations(result.copy.fullText);
+    const materialViolations = copyMaterialViolations(result.copy.fullText, normalizedProductType);
     const lengthInvalid = result.chars < min || result.chars > max;
     if (!materialViolations.length && !lengthInvalid) break;
     const corrections = [];
     if (materialViolations.length) {
-      corrections.push(`上一次文案出现了禁止材质或未经确认的工艺词：${materialViolations.join('、')}。材质只能写“上下木条为实木，中间画心为无纺布”，不得出现其他材质、具体木种或未经确认的工艺。`);
+      corrections.push(`上一次文案出现了禁止材质或未经确认的工艺词：${materialViolations.join('、')}。产品材质只能按“${copyProductMaterial(normalizedProductType)}”表达，不得写成另一种产品或虚构工艺。`);
     }
     if (lengthInvalid) {
       corrections.push(`上一次全文实际${result.chars}字，必须完整重写到${min}～${max}字；超过上限就删减整句，不得超出。`);
     }
     result = await withRetryOnce(() => run(`\n\n【最终硬性修正】${corrections.join('\n')}`));
   }
-  const remainingMaterialViolations = copyMaterialViolations(result.copy.fullText);
+  const remainingMaterialViolations = copyMaterialViolations(result.copy.fullText, normalizedProductType);
   if (remainingMaterialViolations.length) {
     throw new Error(`文案仍包含不符合产品事实的材质词：${remainingMaterialViolations.join('、')}，已拦截本条结果`);
   }
@@ -17012,6 +17057,8 @@ async function handleCopyAnalyze(req, res) {
       ? await readMultipartFormBody(req)
       : await readRequestBody(req);
     const providerConfig = copyProviderConfig(body.provider);
+    const productType = normalizeCopyProductType(body.productType);
+    const productLabel = productType === 'sticker' ? 'PVC背胶贴画' : '挂画/卷轴';
     if (!providerConfig.apiKey) {
       sendJson(res, 500, { error: providerConfig.provider === 'qwen' ? '服务端未配置 DASHSCOPE_API_KEY' : '服务端未配置 ARK_API_KEY' });
       return;
@@ -17025,7 +17072,7 @@ async function handleCopyAnalyze(req, res) {
     } else if (readValue(body.image)) {
       imageUrl = normalizeBase64ImageInput(body.image, body.imageMimeType).imageUrl;
     } else {
-      sendJson(res, 400, { error: '请先上传挂画图片。' });
+      sendJson(res, 400, { error: `请先上传${productType === 'sticker' ? '贴画' : '挂画'}图片。` });
       return;
     }
 
@@ -17034,24 +17081,25 @@ async function handleCopyAnalyze(req, res) {
     const sellingPoints = readValue(body.sellingPoints);
     const forbidden = readValue(body.forbidden);
 
-    const prompt = `你是专业的挂画/卷轴产品分析专家。请仔细分析下面这张挂画/装饰画图片，输出一个「挂画档案」JSON 对象。
+    const prompt = `你是专业的${productLabel}产品分析专家。请仔细分析下面这张产品图片，输出一个「${productType === 'sticker' ? '贴画' : '挂画'}档案」JSON 对象。
 
-${name ? `用户提供的挂画名称：${name}\n` : ''}${extraInfo ? `用户补充的产品信息：${extraInfo}\n` : ''}${sellingPoints ? `用户提供的核心寓意或卖点：${sellingPoints}\n` : ''}${forbidden ? `用户明确禁止出现、不可编造的内容：${forbidden}\n` : ''}
+${name ? `用户提供的产品名称：${name}\n` : ''}${extraInfo ? `用户补充的产品信息：${extraInfo}\n` : ''}${sellingPoints ? `用户提供的核心寓意或卖点：${sellingPoints}\n` : ''}${forbidden ? `用户明确禁止出现、不可编造的内容：${forbidden}\n` : ''}
 要求输出以下字段（能用中文就用中文描述，无法从图片判断的字段用空字符串或空数组，不要臆造）：
-- name：挂画名称
+- productType：必须固定填写“${productType}”
+- name：产品名称
 - visualDescription：画面主体和内容（画了什么、构图、有无人物/山水/花鸟/书法等）
 - colors：主要颜色数组（如 ["墨黑","赭石","米白"]）
 - style：视觉风格（如国画、书法、油画、装饰画、现代简约等）
 - textCalligraphySeals：画面中的文字、书法内容、印章（没有则为空字符串）
-- material：必须固定填写“${COPY_PRODUCT_MATERIAL}”，不得根据图片猜测其他材质
-- structure：边框、木条、挂轴和挂绳结构（形状、颜色、材质、粗细）
-- suitableScenes：适合悬挂的空间数组（如 ["客厅","书房","茶室","玄关"]）
+- material：必须固定填写“${copyProductMaterial(productType)}”，不得根据图片猜测其他材质
+- structure：${productType === 'sticker' ? '描述二维印刷装饰边线、画面布局与贴墙形态；不得写实体框、木条、挂绳、挂钩、轴头' : '边框、木条、挂轴和挂绳结构（形状、颜色、材质、粗细）'}
+- suitableScenes：适合${productType === 'sticker' ? '贴于功能墙面' : '悬挂'}的空间数组（如 ["客厅","书房","茶室","玄关"]）
 - targetAudiences：适合的人群数组（如 ["中年人","读书人","家庭经营者"]）
 - meanings：核心寓意和情绪价值数组
 - sellingPoints：可以表达的产品卖点数组
 - uncertainClaims：图片无法确定、不可随意编造的信息数组（如具体年代、作者、具体木种、工艺认证、风水功效等）
 
-${COPY_PRODUCT_MATERIAL_RULES}
+${copyProductMaterialRules(productType)}
 
 严格只输出一个合法 JSON 对象，不要输出任何解释文字，不要用 markdown 代码块包裹。`;
 
@@ -17067,13 +17115,13 @@ ${COPY_PRODUCT_MATERIAL_RULES}
       ]
     }));
 
-    const profile = normalizeCopyProfile(parseStructuredJson(answer));
+    const profile = normalizeCopyProfile(parseStructuredJson(answer), productType);
     console.log('[copy] analyze done', { requestId, provider: providerConfig.provider, profileKeys: profile && typeof profile === 'object' ? Object.keys(profile) : [] });
     sendJson(res, 200, { ok: true, provider: providerConfig.provider, model: providerConfig.model, profile });
   } catch (error) {
     console.error('[copy] analyze failed', { requestId, message: error?.message || '' });
     sendJson(res, 500, {
-      error: error?.message || '挂画分析失败',
+      error: error?.message || '产品图片分析失败',
       debug: { stage: 'analyze', rawText: error?.rawText }
     });
   }
@@ -17096,12 +17144,12 @@ function pruneCopyGenerateTasks() {
   }
 }
 
-async function runCopyGenerateTask(task, { provider, apiKey, model, profile, extraInfo, forbidden, count, targetLength }) {
+async function runCopyGenerateTask(task, { provider, apiKey, model, profile, productType, extraInfo, forbidden, count, targetLength }) {
   const requestId = task.id;
   try {
     // 指定字数档位时统一应用于全部文案；未指定时保持原有的 350/250 混合。
     const uniform = COPY_TARGET_LENGTHS.includes(Number(targetLength)) ? Number(targetLength) : 0;
-    const specs = buildCopyDirectionSpecs(count, uniform);
+    const specs = buildCopyDirectionSpecs(count, uniform, productType);
     const firstSpecs = specs.slice(0, count === 5 ? 2 : 3);
     const remainingSpecs = specs.slice(firstSpecs.length);
 
@@ -17109,14 +17157,14 @@ async function runCopyGenerateTask(task, { provider, apiKey, model, profile, ext
 
     // 拆成单条小请求（并发），避免一次性生成 10 条导致方舟 504 超时。每完成一条更新任务进度。
     const firstCopies = await mapWithConcurrency(firstSpecs, 3, async (spec) => {
-      const copy = await generateSingleCopy({ provider, apiKey, model, profile, extraInfo, forbidden, mode: spec.mode, direction: spec.direction, directionBrief: spec.brief, targetLength: spec.targetLength, excludeTexts: [] });
+      const copy = await generateSingleCopy({ provider, apiKey, model, profile, productType, extraInfo, forbidden, mode: spec.mode, direction: spec.direction, directionBrief: spec.brief, targetLength: spec.targetLength, excludeTexts: [] });
       task.progress.completed += 1;
       return copy;
     });
 
     const firstTexts = firstCopies.map((c) => c.fullText).filter(Boolean);
     const remainingCopies = await mapWithConcurrency(remainingSpecs, 3, async (spec) => {
-      const copy = await generateSingleCopy({ provider, apiKey, model, profile, extraInfo, forbidden, mode: spec.mode, direction: spec.direction, directionBrief: spec.brief, targetLength: spec.targetLength, excludeTexts: firstTexts });
+      const copy = await generateSingleCopy({ provider, apiKey, model, profile, productType, extraInfo, forbidden, mode: spec.mode, direction: spec.direction, directionBrief: spec.brief, targetLength: spec.targetLength, excludeTexts: firstTexts });
       task.progress.completed += 1;
       return copy;
     });
@@ -17131,7 +17179,7 @@ async function runCopyGenerateTask(task, { provider, apiKey, model, profile, ext
       const excludeTexts = copies.filter((_, index) => index !== laterIndex).map((c) => c.fullText).filter(Boolean);
       try {
         const spec = specs[laterIndex];
-        copies[laterIndex] = await generateSingleCopy({ provider, apiKey, model, profile, extraInfo, forbidden, mode: target.mode, direction: target.direction, directionBrief: spec?.brief, targetLength: target.targetLength, excludeTexts });
+        copies[laterIndex] = await generateSingleCopy({ provider, apiKey, model, profile, productType, extraInfo, forbidden, mode: target.mode, direction: target.direction, directionBrief: spec?.brief, targetLength: target.targetLength, excludeTexts });
       } catch {
         // 保留原结果，宁可用已有文案也不中断整批。
       }
@@ -17161,9 +17209,11 @@ async function handleCopyGenerate(req, res) {
       sendJson(res, 500, { error: providerConfig.provider === 'qwen' ? '服务端未配置 DASHSCOPE_API_KEY' : '服务端未配置 ARK_API_KEY' });
       return;
     }
-    const profile = body.profile && typeof body.profile === 'object' ? body.profile : null;
+    const rawProfile = body.profile && typeof body.profile === 'object' ? body.profile : null;
+    const productType = normalizeCopyProductType(body.productType || rawProfile?.productType);
+    const profile = rawProfile ? normalizeCopyProfile(rawProfile, productType) : null;
     if (!profile) {
-      sendJson(res, 400, { error: '缺少挂画档案 profile' });
+      sendJson(res, 400, { error: `缺少${productType === 'sticker' ? '贴画' : '挂画'}档案 profile` });
       return;
     }
     const extraInfo = readValue(body.extraInfo);
@@ -17184,10 +17234,11 @@ async function handleCopyGenerate(req, res) {
     };
     task.provider = providerConfig.provider;
     task.model = providerConfig.model;
+    task.productType = productType;
     COPY_GENERATE_TASKS.set(task.id, task);
 
     // 后台执行，不被 await；所有异常都在 runCopyGenerateTask 内部消化，不会产生未处理 Promise。
-    runCopyGenerateTask(task, { provider: providerConfig.provider, apiKey: providerConfig.apiKey, model: providerConfig.model, profile, extraInfo, forbidden, count, targetLength });
+    runCopyGenerateTask(task, { provider: providerConfig.provider, apiKey: providerConfig.apiKey, model: providerConfig.model, profile, productType, extraInfo, forbidden, count, targetLength });
 
     sendJson(res, 202, { ok: true, taskId: task.id, provider: task.provider, model: task.model, status: task.status, progress: task.progress });
   } catch (error) {
@@ -17206,6 +17257,7 @@ function handleCopyGenerateTaskStatus(req, res, taskId) {
     taskId: task.id,
     provider: task.provider,
     model: task.model,
+    productType: task.productType || 'hanging',
     status: task.status,
     progress: task.progress,
     ...(task.status === 'done' ? { copies: task.copies } : {}),
