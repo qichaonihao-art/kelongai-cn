@@ -14130,7 +14130,9 @@ async function handleCreatePaintingBatchRun(req, res) {
       return;
     }
     const ratio = readValue(body.ratio) || '9:16';
-    const variationRound = Math.max(0, Math.min(2, Number(body.variationRound) || 0));
+    // 创意轮次允许持续递增。前端会在四组方向循环完后进入下一轮，不能把第4轮及以后
+    // 强行折算为第3轮，否则同一产品反复测试时会错误命中旧轮次的“已使用方向”。
+    const variationRound = Math.max(0, Math.min(9999, Math.trunc(Number(body.variationRound) || 0)));
     const onlyUnused = body.onlyUnused === 'true' || body.onlyUnused === true;
     // 全自动批量入库同样固定检测并增强480P视频。
     const autoEnhance480p = true;
@@ -14689,7 +14691,7 @@ async function handleGetPaintingUsedDirections(req, res) {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const imageHash = String(url.searchParams.get('imageHash') || '');
-    const variationRound = Math.max(0, Math.min(2, Number(url.searchParams.get('variationRound')) || 0));
+    const variationRound = Math.max(0, Math.min(9999, Math.trunc(Number(url.searchParams.get('variationRound')) || 0)));
     if (!imageHash) {
       sendJson(res, 400, { error: '缺少图片哈希 imageHash' });
       return;
@@ -20436,6 +20438,7 @@ export {
   handleGetPaintingBatchRun,
   handleGetPaintingBatchRunByRequest,
   handleGetPaintingBatchRunEstimate,
+  handleGetPaintingUsedDirections,
   handleDeletePaintingBatchRun,
   handleSeedanceCreateTask,
   handleSeedanceGetTask,

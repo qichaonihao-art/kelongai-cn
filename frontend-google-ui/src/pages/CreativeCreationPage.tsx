@@ -4158,7 +4158,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
-  async function handlePaintingOpenBatchConfirm() {
+  async function handlePaintingOpenBatchConfirm(variationRoundOverride?: number) {
     if (!paintingProfile) {
       setPaintingError('请先完成产品分析。');
       return;
@@ -4173,7 +4173,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingBatchPreparing(true);
     setPaintingBatchPrepareStage('正在检查已有创意方向');
     try {
-      const variationRound = paintingVariationRound;
+      const variationRound = variationRoundOverride ?? paintingVariationRound;
       const ideas = await collectPaintingBatchIdeas(variationRound);
       if (ideas.length < 40) {
         throw new Error(`创意方向数量不足，已获取 ${ideas.length} 条，需要 40 条。请先分批生成创意方案。`);
@@ -4240,6 +4240,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingBatchPreparing(false);
       setPaintingBatchPrepareStage('');
     }
+  }
+
+  async function handlePaintingStartNextBatchRound() {
+    if (paintingBatchPreparing || paintingBatchCreating || paintingBatchConfirming) return;
+    const nextRound = paintingVariationRound + 1;
+    setPaintingBatchConfirmOpen(false);
+    setPaintingVariationRound(nextRound);
+    setPaintingUsedDirections([]);
+    setPaintingBatchIdeas([]);
+    batchCreationRequestIdRef.current = null;
+    await handlePaintingOpenBatchConfirm(nextRound);
   }
 
   function buildPaintingBatchCreateOptions(ideas: PaintingIdeaSummary[], creationRequestId: string) {
@@ -8046,6 +8057,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 ['清晰度', paintingBatchResolution.toUpperCase()],
                 ['生成顺序', PAINTING_BATCH_START_OPTIONS.find((option) => option.value === paintingBatchStartOrder)?.label || '从第1组开始'],
                 ['计划数量', `${parsePaintingBatchRequestedCount(paintingBatchRequestedCount) ?? '输入有误'} 条`],
+                ['创意轮次', `第 ${paintingVariationRound + 1} 轮`],
                 ['计费单价', `${getSeedanceRatePerSecond(paintingBatchModel, paintingBatchResolution) ?? '暂无法估算'}元/秒`],
                 ['画面比例', paintingPlan.ratio || seedanceRatio],
                 ['单条时长', `${paintingPlan.durationMin}-${paintingPlan.durationMax} 秒`],
@@ -8214,15 +8226,27 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   >
                     取消
                   </button>
-                  <button
-                    type="button"
-                    disabled={paintingBatchCreating || paintingBatchConfirming || parsePaintingBatchRequestedCount(paintingBatchRequestedCount) === null || selectPaintingBatchIdeas(paintingBatchIdeas).length === 0}
-                    onClick={() => void handlePaintingConfirmBatch()}
-                    className="inline-flex h-10 items-center gap-2 rounded-full bg-rose-600 px-5 text-xs font-bold text-white shadow-sm shadow-rose-200 hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-                  >
-                    {paintingBatchCreating || paintingBatchConfirming ? <Loader2 className="size-4 animate-spin" /> : <Film className="size-4" />}
-                    {paintingBatchCreating ? '正在创建任务…' : paintingBatchConfirming ? '正在确认批次…' : '确认生成'}
-                  </button>
+                  {paintingBatchOnlyUnused && selectPaintingBatchIdeas(paintingBatchIdeas).length === 0 ? (
+                    <button
+                      type="button"
+                      disabled={paintingBatchPreparing || paintingBatchCreating || paintingBatchConfirming}
+                      onClick={() => void handlePaintingStartNextBatchRound()}
+                      className="inline-flex h-10 items-center gap-2 rounded-full bg-amber-600 px-5 text-xs font-bold text-white shadow-sm hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {paintingBatchPreparing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                      开始第 {paintingVariationRound + 2} 轮
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={paintingBatchCreating || paintingBatchConfirming || parsePaintingBatchRequestedCount(paintingBatchRequestedCount) === null || selectPaintingBatchIdeas(paintingBatchIdeas).length === 0}
+                      onClick={() => void handlePaintingConfirmBatch()}
+                      className="inline-flex h-10 items-center gap-2 rounded-full bg-rose-600 px-5 text-xs font-bold text-white shadow-sm shadow-rose-200 hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                    >
+                      {paintingBatchCreating || paintingBatchConfirming ? <Loader2 className="size-4 animate-spin" /> : <Film className="size-4" />}
+                      {paintingBatchCreating ? '正在创建任务…' : paintingBatchConfirming ? '正在确认批次…' : '确认生成'}
+                    </button>
+                  )}
                 </>
               )}
             </div>

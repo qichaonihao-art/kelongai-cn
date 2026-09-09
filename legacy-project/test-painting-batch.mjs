@@ -53,6 +53,7 @@ const {
   handleGetPaintingBatchRun,
   handleGetPaintingBatchRunByRequest,
   handleGetPaintingBatchRunEstimate,
+  handleGetPaintingUsedDirections,
   handleDeletePaintingBatchRun,
   handleSeedanceCreateTask,
   handleSeedanceGetTask,
@@ -322,6 +323,17 @@ console.log('\n[4] 手动 / 换元素提交成功后写入方向使用记录');
   dbMarkPaintingDirectionUsed('hash-t4', 0, 0);   // direction 0 忽略
   assert(dbGetPaintingUsedDirections('', 0).length === 0, '空 hash 不写入');
   assert(dbGetPaintingUsedDirections('hash-t4', 0).length === 1, 'direction 0 不写入');
+
+  dbMarkPaintingDirectionUsed('hash-t4', 5, 12);
+  const highRoundResponse = mockRes();
+  await handleGetPaintingUsedDirections(
+    mockReq('/api/painting/used-directions?imageHash=hash-t4&variationRound=5&productType=hanging'),
+    highRoundResponse,
+  );
+  const highRoundBody = JSON.parse(highRoundResponse._body);
+  assert(highRoundResponse._code === 200, '第4轮以后仍可读取独立方向记录');
+  assert(highRoundBody.usedDirections.includes(12), '第6轮不会再被错误折算成第3轮', JSON.stringify(highRoundBody));
+  assert(!highRoundBody.usedDirections.includes(3) && !highRoundBody.usedDirections.includes(7), '高轮次不会串入旧轮次方向');
 }
 
 // ===== T5 stopping 批次刷新后仍被视为活动批次 =====
