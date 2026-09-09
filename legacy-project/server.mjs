@@ -10965,9 +10965,10 @@ async function compressMediaForArk(file, mediaKind) {
   if (file.size <= maxOriginalBytes) return file;
 
   await ensureVideoCompressionTools();
-  const tempDir = await mkdtemp(join(tmpdir(), 'cp-ark-'));
-  const inputPath = join(tempDir, `input_${mediaKind}`);
-  const outputPath = join(tempDir, `output_${mediaKind}`);
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'cp-ark-'));
+  const inputPath = path.join(tempDir, `input_${mediaKind}`);
+  // ffmpeg 需要从输出扩展名判断编码格式；大图统一压成 JPEG，大视频流程会另行生成 MP4。
+  const outputPath = path.join(tempDir, mediaKind === 'image' ? 'output_image.jpg' : 'output_video.mp4');
 
   try {
     const arrayBuffer = await file.arrayBuffer();
@@ -20642,6 +20643,7 @@ export {
   getPaintingContentDetailVariant,
   ensurePaintingContentDetailVariant,
   getPaintingBatchReferenceSpecs,
+  compressMediaForArk,
   parseFpsFraction,
   isVideo480pOrLower,
   extractEnhancementOutputUrl,
