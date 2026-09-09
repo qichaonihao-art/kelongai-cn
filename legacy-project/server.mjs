@@ -8891,12 +8891,16 @@ const VOLC_ASR_QUERY_URL = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel
 const VOLC_ASR_RESOURCE_ID = 'volc.seedasr.auc';
 const VOLC_ASR_ATTEMPT_TIMEOUT_MS = 2 * 60 * 1000;
 
-function buildVolcAsrContext(text) {
-  const knownText = String(text || '').normalize('NFKC').trim().slice(0, 400);
-  if (!knownText) return undefined;
+function buildVolcAsrContext(text, contextText = '') {
+  const glossary = String(contextText || '').normalize('NFKC').trim().slice(0, 240);
+  const remaining = Math.max(0, 400 - glossary.length - (glossary ? 8 : 0));
+  const knownText = String(text || '').normalize('NFKC').trim().slice(0, remaining);
+  const combined = [glossary ? `标准词句：${glossary}` : '', knownText ? `当前文案：${knownText}` : '']
+    .filter(Boolean).join('\n').slice(0, 400);
+  if (!combined) return undefined;
   return JSON.stringify({
     context_type: 'dialog_ctx',
-    context_data: [{ speaker: 'assistant', text: knownText }]
+    context_data: [{ speaker: 'assistant', text: combined }]
   });
 }
 
@@ -8930,7 +8934,7 @@ function normalizeVolcAsrSentences(payload) {
   return sentences;
 }
 
-async function transcribeAudioWithVolcWordTimestamps({ audioUrl, text = '', parentDeadlineAt = 0 }) {
+async function transcribeAudioWithVolcWordTimestamps({ audioUrl, text = '', contextText = '', parentDeadlineAt = 0 }) {
   const apiKey = readValue(SERVER_CONFIG.volcAsrApiKey);
   if (!apiKey) throw new Error('服务端未配置 VOLC_ASR_API_KEY');
   if (!audioUrl) throw new Error('当前环境没有可供火山识别访问的音频地址');
@@ -8956,7 +8960,7 @@ async function transcribeAudioWithVolcWordTimestamps({ audioUrl, text = '', pare
     if (!response.ok) throw new Error(`${stage}失败：${message || `HTTP ${response.status}`}`);
     return { statusCode, message, payload };
   };
-  const context = buildVolcAsrContext(text);
+  const context = buildVolcAsrContext(text, contextText);
   const requestConfig = {
     model_name: 'bigmodel',
     enable_itn: false,
@@ -9073,6 +9077,7 @@ async function handleLocalEditorSubtitleAlign(req, res) {
     await writeFile(audioPath, Buffer.from(await file.arrayBuffer()));
     try {
       const knownText = readValue(form.text);
+      const contextText = readValue(form.contextText).slice(0, 4000);
       const deadline = Date.now() + SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS;
       const publicBaseUrl = resolvePublicBaseUrl(req);
       const audioUrl = publicBaseUrl ? `${publicBaseUrl}/uploads/${encodeURIComponent(path.basename(audioPath))}` : '';
@@ -9084,6 +9089,7 @@ async function handleLocalEditorSubtitleAlign(req, res) {
           sentences = await transcribeAudioWithVolcWordTimestamps({
             audioUrl,
             text: knownText,
+            contextText,
             parentDeadlineAt: Math.min(deadline, Date.now() + VOLC_ASR_ATTEMPT_TIMEOUT_MS)
           });
           asrEngine = 'volc';

@@ -9,6 +9,9 @@ const { buildVolcAsrContext, normalizeVolcAsrSentences, transcribeAudioWithVolcW
 const context = JSON.parse(buildVolcAsrContext('静心 PVC 背胶贴画 无纺布 实木木条'));
 assert.equal(context.context_type, 'dialog_ctx');
 assert.match(context.context_data[0].text, /PVC/);
+const glossaryContext = JSON.parse(buildVolcAsrContext('当前文案', '晨不起万事荒，幼不学一生茫'));
+assert.match(glossaryContext.context_data[0].text, /标准词句：晨不起万事荒[,，]幼不学一生茫/);
+assert.match(glossaryContext.context_data[0].text, /当前文案：当前文案/);
 assert.ok(JSON.parse(buildVolcAsrContext('文'.repeat(800))).context_data[0].text.length <= 400);
 assert.equal(buildVolcAsrContext(''), undefined);
 
@@ -54,6 +57,7 @@ globalThis.fetch = async (url, init = {}) => {
 const recognized = await transcribeAudioWithVolcWordTimestamps({
   audioUrl: 'https://example.test/private-random-audio.wav',
   text: '静心挂画',
+  contextText: '晨不起万事荒，幼不学一生茫',
   parentDeadlineAt: Date.now() + 10_000
 });
 assert.equal(recognized[0].words[0].begin_time, 100);
@@ -66,5 +70,6 @@ assert.equal(submitBody.request.show_utterances, true);
 assert.equal(submitBody.request.enable_itn, false);
 assert.equal(submitBody.request.enable_punc, false);
 assert.match(submitBody.request.corpus.context, /静心挂画/);
+assert.match(submitBody.request.corpus.context, /一生茫/);
 
 console.log('volc asr tests passed');
