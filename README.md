@@ -172,6 +172,10 @@ cp legacy-project/.env.example legacy-project/.env
   - 火山引擎真实链路必填
 - `VOLCENGINE_ACCESS_KEY`
   - 火山引擎真实链路必填
+- `VOLC_ASR_API_KEY`
+  - 豆包录音文件识别 2.0 的新控制台 API Key，仅用于轻剪精确字幕识别
+  - 与声音克隆使用的 `VOLCENGINE_ACCESS_KEY`、方舟使用的 `ARK_API_KEY` 不通用
+  - 配置后轻剪优先使用火山词级时间戳；失败或时间轴无效时自动回退阿里云 Paraformer
 - `VOLCENGINE_SPEAKER_ID`
   - 火山引擎常用默认 speaker_id
   - 兼容单槽位场景；如果只配置这一个值，系统最多只能自动分配一个火山音色槽位

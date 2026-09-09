@@ -3,7 +3,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createReadStream, existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -119,6 +119,7 @@ const SERVER_CONFIG = {
   minimaxApiKey: process.env.MINIMAX_API_KEY || '',
   volcAppKey: process.env.VOLCENGINE_APP_KEY || '',
   volcAccessKey: process.env.VOLCENGINE_ACCESS_KEY || '',
+  volcAsrApiKey: process.env.VOLC_ASR_API_KEY || '',
   volcSpeakerId: process.env.VOLCENGINE_SPEAKER_ID || '',
   volcSpeakerIdPool: process.env.VOLCENGINE_SPEAKER_ID_POOL || '',
   volcEngineGroups: buildVolcEngineGroups(),
@@ -8885,8 +8886,114 @@ async function transcribeAudioWithQwen({ audioPath, requestId, segmentIndex = 0,
 const DASHSCOPE_FILES_BASE_URL = 'https://dashscope.aliyuncs.com/api/v1';
 const SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS = 5 * 60 * 1000;
 const SUBTITLE_ALIGN_POLL_INTERVAL_MS = 2000;
+const VOLC_ASR_SUBMIT_URL = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit';
+const VOLC_ASR_QUERY_URL = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/query';
+const VOLC_ASR_RESOURCE_ID = 'volc.seedasr.auc';
+const VOLC_ASR_ATTEMPT_TIMEOUT_MS = 2 * 60 * 1000;
 
-async function transcribeAudioWithWordTimestamps({ audioPath, parentDeadlineAt = 0 }) {
+function buildVolcAsrContext(text) {
+  const knownText = String(text || '').normalize('NFKC').trim().slice(0, 400);
+  if (!knownText) return undefined;
+  return JSON.stringify({
+    context_type: 'dialog_ctx',
+    context_data: [{ speaker: 'assistant', text: knownText }]
+  });
+}
+
+function normalizeVolcAsrSentences(payload) {
+  const utterances = payload?.result?.utterances;
+  if (!Array.isArray(utterances) || !utterances.length) throw new Error('火山字幕识别结果为空');
+  const sentences = utterances.map((utterance) => ({
+    text: String(utterance?.text || ''),
+    begin_time: Number(utterance?.start_time),
+    end_time: Number(utterance?.end_time),
+    words: Array.isArray(utterance?.words) ? utterance.words.map((word) => ({
+      text: String(word?.text || ''),
+      begin_time: Number(word?.start_time),
+      end_time: Number(word?.end_time)
+    })).filter((word) => word.text) : []
+  })).filter((sentence) => sentence.text);
+  if (!sentences.length || sentences.some((sentence) => !sentence.words.length)) {
+    throw new Error('火山服务未返回完整的词级时间戳');
+  }
+  let previousEnd = -1;
+  for (const sentence of sentences) {
+    for (const word of sentence.words) {
+      if (!Number.isFinite(word.begin_time) || !Number.isFinite(word.end_time)
+        || word.begin_time < 0 || word.end_time <= word.begin_time
+        || word.begin_time < previousEnd) {
+        throw new Error('火山服务返回的词级时间戳无效');
+      }
+      previousEnd = word.end_time;
+    }
+  }
+  return sentences;
+}
+
+async function transcribeAudioWithVolcWordTimestamps({ audioUrl, text = '', parentDeadlineAt = 0 }) {
+  const apiKey = readValue(SERVER_CONFIG.volcAsrApiKey);
+  if (!apiKey) throw new Error('服务端未配置 VOLC_ASR_API_KEY');
+  if (!audioUrl) throw new Error('当前环境没有可供火山识别访问的音频地址');
+  const deadline = parentDeadlineAt || Date.now() + SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS;
+  const taskId = randomUUID();
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Api-Key': apiKey,
+    'X-Api-Resource-Id': VOLC_ASR_RESOURCE_ID,
+    'X-Api-Request-Id': taskId
+  };
+  const request = async (url, options = {}) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('火山字幕对齐超时');
+    return fetch(url, { ...options, signal: AbortSignal.timeout(remaining) });
+  };
+  const readResponse = async (response, stage) => {
+    const raw = await response.text();
+    let payload = {};
+    try { payload = raw ? JSON.parse(raw) : {}; } catch {}
+    const statusCode = String(response.headers.get('x-api-status-code') || payload?.header?.code || '');
+    const message = response.headers.get('x-api-message') || payload?.header?.message || '';
+    if (!response.ok) throw new Error(`${stage}失败：${message || `HTTP ${response.status}`}`);
+    return { statusCode, message, payload };
+  };
+  const context = buildVolcAsrContext(text);
+  const requestConfig = {
+    model_name: 'bigmodel',
+    enable_itn: false,
+    enable_punc: false,
+    enable_ddc: false,
+    show_utterances: true,
+    enable_speaker_info: false,
+    vad_segment: false
+  };
+  if (context) requestConfig.corpus = { context };
+  const submitted = await readResponse(await request(VOLC_ASR_SUBMIT_URL, {
+    method: 'POST',
+    headers: { ...headers, 'X-Api-Sequence': '-1' },
+    body: JSON.stringify({
+      user: { uid: 'qingjian-local-editor' },
+      audio: { url: audioUrl, format: 'wav', language: 'zh-CN', rate: 16000, bits: 16, channel: 1 },
+      request: requestConfig
+    })
+  }), '提交火山字幕识别');
+  if (submitted.statusCode !== '20000000') {
+    throw new Error(`提交火山字幕识别失败：${submitted.message || submitted.statusCode || '未知错误'}`);
+  }
+  while (Date.now() < deadline) {
+    await sleep(Math.min(SUBTITLE_ALIGN_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
+    const queried = await readResponse(await request(VOLC_ASR_QUERY_URL, {
+      method: 'POST', headers, body: '{}'
+    }), '查询火山字幕识别');
+    if (queried.statusCode === '20000000') return normalizeVolcAsrSentences(queried.payload);
+    if (queried.statusCode === '20000003') throw new Error('火山字幕识别未检测到人声');
+    if (!['20000001', '20000002'].includes(queried.statusCode)) {
+      throw new Error(`火山字幕识别失败：${queried.message || queried.statusCode || '未知错误'}`);
+    }
+  }
+  throw new Error('火山字幕识别超时，请重试');
+}
+
+async function transcribeAudioWithAliyunWordTimestamps({ audioPath, parentDeadlineAt = 0 }) {
   const apiKey = readValue(SERVER_CONFIG.dashscopeApiKey) || readValue(SERVER_CONFIG.aliyunApiKey);
   if (!apiKey) throw new Error('服务端未配置 DashScope API Key');
   const deadline = parentDeadlineAt || Date.now() + SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS;
@@ -8965,17 +9072,39 @@ async function handleLocalEditorSubtitleAlign(req, res) {
     const audioPath = path.join(UPLOAD_TEMP_DIR, `${requestId}_align${ext}`);
     await writeFile(audioPath, Buffer.from(await file.arrayBuffer()));
     try {
-      const sentences = await transcribeAudioWithWordTimestamps({
-        audioPath,
-        requestId,
-        parentDeadlineAt: Date.now() + SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS
-      });
+      const knownText = readValue(form.text);
+      const deadline = Date.now() + SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS;
+      const publicBaseUrl = resolvePublicBaseUrl(req);
+      const audioUrl = publicBaseUrl ? `${publicBaseUrl}/uploads/${encodeURIComponent(path.basename(audioPath))}` : '';
+      let sentences;
+      let asrEngine = 'aliyun';
+      let volcFallbackReason = '';
+      if (readValue(SERVER_CONFIG.volcAsrApiKey) && audioUrl) {
+        try {
+          sentences = await transcribeAudioWithVolcWordTimestamps({
+            audioUrl,
+            text: knownText,
+            parentDeadlineAt: Math.min(deadline, Date.now() + VOLC_ASR_ATTEMPT_TIMEOUT_MS)
+          });
+          asrEngine = 'volc';
+        } catch (error) {
+          volcFallbackReason = error?.message || '火山字幕识别失败';
+          console.warn('[subtitle align] volc_failed_falling_back', { requestId, reason: volcFallbackReason });
+        }
+      }
+      if (!sentences) {
+        sentences = await transcribeAudioWithAliyunWordTimestamps({
+          audioPath,
+          requestId,
+          parentDeadlineAt: deadline
+        });
+      }
       const transcript = sentences.map((sentence) => sentence.text).join('').trim();
       if (!transcript) {
         sendJson(res, 502, { ok: false, error: '字幕对齐没有识别到有效文本' });
         return;
       }
-      sendJson(res, 200, { ok: true, transcript, sentences });
+      sendJson(res, 200, { ok: true, transcript, sentences, asrEngine, volcFallbackReason });
     } finally {
       await unlink(audioPath).catch(() => {});
     }
@@ -20409,6 +20538,9 @@ if (process.env.KELONG_SKIP_LISTEN !== '1') {
 
 // 供无费测试脚本复用真实逻辑（不调用真实 Seedance / 豆包）。
 export {
+  buildVolcAsrContext,
+  normalizeVolcAsrSentences,
+  transcribeAudioWithVolcWordTimestamps,
   analyzePaintingCore,
   handlePaintingAnalyze,
   generatePaintingIdeasCore,
