@@ -1235,6 +1235,7 @@ function getCollectionDb() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         batch_run_id TEXT NOT NULL UNIQUE,
         creation_request_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
         painting_name TEXT NOT NULL DEFAULT '',
         profile_json TEXT NOT NULL DEFAULT '{}',
         plan_json TEXT NOT NULL DEFAULT '{}',
@@ -1389,6 +1390,12 @@ function ensurePaintingBatchIdempotencyConstraints(db = collectionDb) {
     if (hasPaintingBatchRuns) {
       try {
         db.exec(`ALTER TABLE painting_batch_runs ADD COLUMN creation_request_id TEXT NOT NULL DEFAULT ''`);
+      } catch {
+        // 列已存在，忽略。
+      }
+      // 批量生成历史按设备隔离：存量行 device_id 为空，对所有设备可见；新行只归属创建它的设备。
+      try {
+        db.exec(`ALTER TABLE painting_batch_runs ADD COLUMN device_id TEXT NOT NULL DEFAULT ''`);
       } catch {
         // 列已存在，忽略。
       }
@@ -2462,13 +2469,14 @@ function dbInsertPaintingBatchRun(data) {
   const db = getCollectionDb();
   const result = db.prepare(`
     INSERT INTO painting_batch_runs
-      (batch_run_id, creation_request_id, painting_name, profile_json, plan_json, image_path, image_hash, upload_history_id,
+      (batch_run_id, creation_request_id, device_id, painting_name, profile_json, plan_json, image_path, image_hash, upload_history_id,
        style_preset, model, resolution, ratio, generate_audio, watermark, variation_round, total_directions,
        target_folder_id, target_folder_name, status, control_status, options_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
   `).run(
     data.batchRunId,
     String(data.creationRequestId || '').slice(0, 128),
+    String(data.deviceId || '').slice(0, 64),
     String(data.paintingName || '').slice(0, 200),
     JSON.stringify(data.profile || {}),
     JSON.stringify(data.plan || {}),
@@ -2527,11 +2535,25 @@ function dbGetActivePaintingBatchRuns() {
   return rows.map(normalizeBatchRun).filter(Boolean);
 }
 
-function dbGetRecentPaintingBatchRuns(limit = 20) {
-  const rows = getCollectionDb().prepare(`
-    SELECT * FROM painting_batch_runs ORDER BY created_at DESC LIMIT ?
-  `).all(Number(limit));
+function dbGetRecentPaintingBatchRuns(limit = 20, deviceId = '') {
+  const rows = deviceId
+    ? getCollectionDb().prepare(`
+        SELECT * FROM painting_batch_runs
+        WHERE device_id = ? OR device_id = ''
+        ORDER BY created_at DESC LIMIT ?
+      `).all(String(deviceId), Number(limit))
+    : getCollectionDb().prepare(`
+        SELECT * FROM painting_batch_runs ORDER BY created_at DESC LIMIT ?
+      `).all(Number(limit));
   return rows.map(normalizeBatchRun).filter(Boolean);
+}
+
+// 批量生成历史按设备隔离：前端每台设备生成稳定编号（localStorage 保存），
+// 通过 X-Device-Id 头或 deviceId 字段传递；非法编号按空处理（只见到历史存量数据）。
+function readPaintingDeviceId(req, body) {
+  const raw = readValue(req?.headers?.['x-device-id']) || readValue(body?.deviceId);
+  const id = String(raw || '').trim();
+  return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : '';
 }
 
 // 供轻剪 Electron 端「从创意创作历史图片选择」只读复用：按 image_hash 去重，
@@ -14340,6 +14362,7 @@ async function handleCreatePaintingBatchRun(req, res) {
       run = dbInsertPaintingBatchRun({
         batchRunId,
         creationRequestId,
+        deviceId: readPaintingDeviceId(req, body),
         paintingName: profile.name || '未命名挂画',
         profile,
         plan,
@@ -14486,7 +14509,9 @@ async function handleGetPaintingBatchRunByRequest(req, res) {
 
 async function handleListPaintingBatchRuns(req, res) {
   try {
-    const runs = dbGetRecentPaintingBatchRuns(50);
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const deviceId = readPaintingDeviceId(req, { deviceId: url.searchParams.get('deviceId') });
+    const runs = dbGetRecentPaintingBatchRuns(50, deviceId);
     sendJson(res, 200, {
       ok: true,
       runs: runs.map((run) => ({ ...run, imagePath: undefined })),

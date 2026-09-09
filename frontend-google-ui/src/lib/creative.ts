@@ -1141,6 +1141,24 @@ export async function getPaintingBatchRunEstimate(options: {
   return (json?.estimate || {}) as PaintingBatchRunEstimate;
 }
 
+// 批量生成历史按设备隔离：每台设备（浏览器）生成一次稳定编号，存在 localStorage，
+// 随创建/列表请求带给服务端，服务端只返回本设备的批次。编号只含字母数字与 _-，与服务端校验一致。
+const KELONG_DEVICE_ID_STORAGE_KEY = 'kelong-device-id';
+
+export function getKelongDeviceId(): string {
+  try {
+    const existing = window.localStorage.getItem(KELONG_DEVICE_ID_STORAGE_KEY);
+    if (existing && /^[A-Za-z0-9_-]{1,64}$/.test(existing)) return existing;
+    const generated = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID().replace(/-/g, '').slice(0, 24)
+      : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+    window.localStorage.setItem(KELONG_DEVICE_ID_STORAGE_KEY, generated);
+    return generated;
+  } catch {
+    return '';
+  }
+}
+
 export async function createPaintingBatchRun(options: CreatePaintingBatchRunOptions): Promise<{
   batchRunId: string;
   status: string;
@@ -1186,6 +1204,7 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
   const response = await fetch('/api/painting/batch-runs', {
     method: 'POST',
     credentials: 'include',
+    headers: { 'X-Device-Id': getKelongDeviceId() },
     body: formData,
   });
 
@@ -1252,6 +1271,7 @@ export async function getPaintingBatchRunByRequest(requestId: string): Promise<{
 export async function listPaintingBatchRuns(): Promise<PaintingBatchRun[]> {
   const response = await fetch('/api/painting/batch-runs', {
     credentials: 'include',
+    headers: { 'X-Device-Id': getKelongDeviceId() },
   });
   const json = await response.json().catch(() => null);
   if (!response.ok) {
