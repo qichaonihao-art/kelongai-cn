@@ -61,6 +61,7 @@ import {
   isPaintingCreationOutcomeUnknown,
   getSeedanceRatePerSecond,
   getPaintingBatchResolutionOptions,
+  getPaintingBatchDefaultResolution,
   SEEDANCE_BATCH_MODEL,
   SEEDANCE_BATCH_MODEL_OPTIONS,
   SEEDANCE_BATCH_RESOLUTION,
@@ -7964,10 +7965,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   value={paintingBatchModel}
                   onChange={(event) => {
                     const nextModel = event.target.value;
-                    const nextResolutions = getPaintingBatchResolutionOptions(nextModel);
-                    const nextResolution = nextResolutions.includes(paintingBatchResolution)
-                      ? paintingBatchResolution
-                      : nextResolutions[0];
+                    // 全自动批量使用固定的推荐组合；用户仍可在下一项手动切换另一个分辨率。
+                    const nextResolution = getPaintingBatchDefaultResolution(nextModel);
                     setPaintingBatchModel(nextModel);
                     setPaintingBatchResolution(nextResolution);
                     paintingBatchPreferenceRef.current[paintingProductType] = {

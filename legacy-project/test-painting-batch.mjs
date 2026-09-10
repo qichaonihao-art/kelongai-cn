@@ -423,8 +423,8 @@ console.log('\n[11] 未知模型：无 0.5 兜底 → 费用估算为 null（前
   assert(est.estimatedCostMin === null && est.estimatedCostMax === null, '费用估算为 null（无 0.5 兜底）', JSON.stringify(est));
 }
 
-// ===== T12 批量估算接口：只接受四个低成本模型 =====
-console.log('\n[12] 批量估算接口：接受 Mini/Fast/H3/Wan，拒绝稳定版和2.5');
+// ===== T12 批量估算接口：只接受 Mini 与 Wan =====
+console.log('\n[12] 批量估算接口：只接受 Mini 与 Wan，拒绝其他模型');
 {
   const res20 = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-260128&resolution=480p'), res20);
@@ -432,7 +432,7 @@ console.log('\n[12] 批量估算接口：接受 Mini/Fast/H3/Wan，拒绝稳定�
 
   const resFast = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-fast-260128&resolution=720p'), resFast);
-  assert(resFast._code === 200 && jsonBody(resFast).estimate?.ratePerSecond === 0.598, 'Fast 720P返回0.598元/秒', JSON.stringify(jsonBody(resFast)));
+  assert(resFast._code === 400, 'Fast不进入全自动批量模型白名单', JSON.stringify(jsonBody(resFast)));
 
   const resReject25 = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-5-260628'), resReject25);
@@ -440,11 +440,11 @@ console.log('\n[12] 批量估算接口：接受 Mini/Fast/H3/Wan，拒绝稳定�
 
   const resH3 = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=MiniMax-H3&resolution=768p'), resH3);
-  assert(resH3._code === 200 && jsonBody(resH3).estimate?.ratePerSecond === 0.5, 'H3 768P进入批量白名单并返回费用', JSON.stringify(jsonBody(resH3)));
+  assert(resH3._code === 400, 'H3不进入全自动批量模型白名单', JSON.stringify(jsonBody(resH3)));
 
-  const resH3WrongResolution = mockRes();
-  await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=MiniMax-H3&resolution=720p'), resH3WrongResolution);
-  assert(resH3WrongResolution._code === 400, 'H3批量任务拒绝720P，只允许768P');
+  const resWan = mockRes();
+  await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=wan3.0-video'), resWan);
+  assert(resWan._code === 200 && jsonBody(resWan).estimate?.resolution === '480p' && jsonBody(resWan).estimate?.ratePerSecond === 0.21, '千问 Wan默认使用480P并进入批量白名单', JSON.stringify(jsonBody(resWan)));
 
   const resMini = mockRes();
   await handleGetPaintingBatchRunEstimate(mockReq('/api/painting/batch-runs/estimate?model=doubao-seedance-2-0-mini-260615'), resMini);
@@ -557,21 +557,28 @@ console.log('\n[17] 创建批次接口：接受 480P/720P，拒绝 1080P/4K');
   // 立即停止该批次，避免后台处理器在后续断言期间产生噪声。
   dbUpdatePaintingBatchRun(body720.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
 
-  const res480 = mockRes();
-  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, model: 'doubao-seedance-2-0-fast-260128', resolution: '480p', creationRequestId: 'batch-resolution-fast-480' }), res480);
-  const body480 = jsonBody(res480);
-  assert(res480._code === 202, 'Fast + 480p 返回 202', `code=${res480._code}`);
-  const run480 = dbGetPaintingBatchRun(body480.batchRunId);
-  assert(run480.model === 'doubao-seedance-2-0-fast-260128' && run480.resolution === '480p', '批次保存Fast与480p选择', JSON.stringify({ model: run480.model, resolution: run480.resolution }));
-  dbUpdatePaintingBatchRun(body480.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+  const resFast = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, model: 'doubao-seedance-2-0-fast-260128', resolution: '480p', creationRequestId: 'batch-resolution-fast-480' }), resFast);
+  assert(resFast._code === 400, 'Fast全自动批量创建被拒绝', JSON.stringify(jsonBody(resFast)));
 
   const resH3 = mockRes();
   await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, model: 'MiniMax-H3', resolution: '768p', creationRequestId: 'batch-resolution-h3-768' }), resH3);
-  const bodyH3 = jsonBody(resH3);
-  assert(resH3._code === 202, 'H3 + 768p 返回 202', JSON.stringify(bodyH3));
-  const runH3 = dbGetPaintingBatchRun(bodyH3.batchRunId);
-  assert(runH3.model === 'MiniMax-H3' && runH3.resolution === '768p', '批次保存H3与768p选择', JSON.stringify({ model: runH3.model, resolution: runH3.resolution }));
-  dbUpdatePaintingBatchRun(bodyH3.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+  assert(resH3._code === 400, 'H3全自动批量创建被拒绝', JSON.stringify(jsonBody(resH3)));
+
+  const resWan480 = mockRes();
+  const { resolution: _unusedResolution, ...baseBodyWithoutResolution } = baseBody;
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBodyWithoutResolution, model: 'wan3.0-video', creationRequestId: 'batch-resolution-wan-480' }), resWan480);
+  const bodyWan480 = jsonBody(resWan480);
+  assert(resWan480._code === 202, '千问 Wan未传分辨率时按默认480P创建', JSON.stringify(bodyWan480));
+  const runWan480 = dbGetPaintingBatchRun(bodyWan480.batchRunId);
+  assert(runWan480.model === 'wan3.0-video' && runWan480.resolution === '480p', '批次保存千问Wan与480P选择', JSON.stringify({ model: runWan480.model, resolution: runWan480.resolution }));
+  dbUpdatePaintingBatchRun(bodyWan480.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+
+  const resWan720 = mockRes();
+  await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', { ...baseBody, model: 'wan3.0-video', resolution: '720p', creationRequestId: 'batch-resolution-wan-720' }), resWan720);
+  const bodyWan720 = jsonBody(resWan720);
+  assert(resWan720._code === 202, '千问 Wan手动调整为720P后仍可创建批次', JSON.stringify(bodyWan720));
+  dbUpdatePaintingBatchRun(bodyWan720.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
 }
 
 // ===== T18 历史非 720P 批次：有 taskId 可查询，无 taskId 禁止重提 =====
@@ -1379,8 +1386,8 @@ console.log('\n[38] Wan3.0 Video 手动任务适配');
   }
 }
 
-// ===== T39 MiniMax H3 全自动批量提交适配（全程 stub，不产生费用） =====
-console.log('\n[39] MiniMax H3 全自动批量提交适配');
+// ===== T39 MiniMax H3 历史批次底层适配（新建入口已关闭，全程 stub） =====
+console.log('\n[39] MiniMax H3 历史批次底层适配');
 {
   const previousFetch = globalThis.fetch;
   const imagePath = join(stateDir, 'batch-h3-reference.png');

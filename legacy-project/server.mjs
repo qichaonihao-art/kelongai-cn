@@ -14073,19 +14073,21 @@ function handlePaintingTaskStatus(req, res, taskId) {
 }
 
 // ===== 挂画全自动批量：模型与费用 =====
-// 全自动批量只开放成本较低的四个模型；稳定版与 2.5 不进入批量付费入口。
+// 全自动批量只开放日常使用的两个模型；其他模型仍保留在手动视频生成入口。
 const PAINTING_BATCH_MODEL = 'doubao-seedance-2-0-mini-260615';
 const PAINTING_BATCH_MODELS = new Set([
   'doubao-seedance-2-0-mini-260615',
-  'doubao-seedance-2-0-fast-260128',
-  'MiniMax-H3',
   'wan3.0-video',
 ]);
-const PAINTING_BATCH_RESOLUTIONS = new Set(['480p', '720p', '768p']);
-const PAINTING_BATCH_MODEL_REJECT_MESSAGE = '全自动批量生成仅支持 Seedance 2.0 Mini、Fast、MiniMax H3 或 Wan3.0 Video。';
+const PAINTING_BATCH_RESOLUTIONS = new Set(['480p', '720p']);
+const PAINTING_BATCH_MODEL_REJECT_MESSAGE = '全自动批量生成仅支持 Seedance 2.0 Mini 或千问 Wan3.0 Video。';
 
 function getPaintingBatchSupportedResolutions(model) {
-  return String(model || '') === 'MiniMax-H3' ? ['768p'] : ['480p', '720p'];
+  return ['480p', '720p'];
+}
+
+function getPaintingBatchDefaultResolution(model) {
+  return String(model || '') === 'wan3.0-video' ? '480p' : '720p';
 }
 
 function isPaintingBatchResolutionSupported(model, resolution) {
@@ -14282,7 +14284,7 @@ async function handleCreatePaintingBatchRun(req, res) {
       sendJson(res, 500, { error: `服务端未配置 ${model === 'MiniMax-H3' ? 'MINIMAX_API_KEY' : model === 'wan3.0-video' ? 'DASHSCOPE_API_KEY' : 'SEEDANCE_API_KEY'}` });
       return;
     }
-    const resolution = String(readValue(body.resolution) || '720p').toLowerCase();
+    const resolution = String(readValue(body.resolution) || getPaintingBatchDefaultResolution(model)).toLowerCase();
     if (!isPaintingBatchResolutionSupported(model, resolution)) {
       sendJson(res, 400, { error: `${model === 'MiniMax-H3' ? 'MiniMax H3' : '所选模型'}仅支持${getPaintingBatchSupportedResolutions(model).map((item) => item.toUpperCase()).join('或')}。` });
       return;
@@ -14873,7 +14875,7 @@ async function handleGetPaintingBatchRunEstimate(req, res) {
       return;
     }
     const model = requestedModel;
-    const resolution = String(readValue(params.get('resolution')) || '720p').toLowerCase();
+    const resolution = String(readValue(params.get('resolution')) || getPaintingBatchDefaultResolution(model)).toLowerCase();
     if (!isPaintingBatchResolutionSupported(model, resolution)) {
       sendJson(res, 400, { error: `${model === 'MiniMax-H3' ? 'MiniMax H3' : '所选模型'}仅支持${getPaintingBatchSupportedResolutions(model).map((item) => item.toUpperCase()).join('或')}。` });
       return;

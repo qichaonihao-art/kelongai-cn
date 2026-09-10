@@ -1060,17 +1060,18 @@ export interface PaintingBatchRunEstimate {
   pricingNote: string;
 }
 
-// 全自动批量只开放成本较低的四个模型；稳定版与 2.5 不进入批量付费入口。
+// 全自动批量只开放日常使用的两个模型；其他模型仍保留在手动视频生成入口。
 export const SEEDANCE_BATCH_MODEL = 'doubao-seedance-2-0-mini-260615';
 export const SEEDANCE_BATCH_RESOLUTION = '720p';
 export const SEEDANCE_BATCH_MODEL_OPTIONS = [
-  { value: 'doubao-seedance-2-0-mini-260615', label: 'Seedance 2.0 Mini' },
-  { value: 'doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast' },
-  { value: 'MiniMax-H3', label: 'MiniMax H3' },
   { value: 'wan3.0-video', label: '千问 Wan3.0 Video' },
+  { value: 'doubao-seedance-2-0-mini-260615', label: 'Seedance 2.0 Mini' },
 ] as const;
-export function getPaintingBatchResolutionOptions(model: string): readonly string[] {
-  return model === 'MiniMax-H3' ? ['768p'] : ['480p', '720p'];
+export function getPaintingBatchResolutionOptions(_model: string): readonly string[] {
+  return ['480p', '720p'];
+}
+export function getPaintingBatchDefaultResolution(model: string): '480p' | '720p' {
+  return model === 'wan3.0-video' ? '480p' : '720p';
 }
 export const SEEDANCE_PRICING_NOTE = '费用按所选模型、分辨率与时长估算，实际以平台账单为准。';
 
