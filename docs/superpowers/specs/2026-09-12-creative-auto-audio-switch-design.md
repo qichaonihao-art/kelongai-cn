@@ -76,7 +76,7 @@ const HUMAN_SPEECH_CRITERION_IMAGE = '只要图片中的人物处于说话状态
 | 模板 | 插入位置 | 对应子模块 | 判定标准 |
 |---|---|---|---|
 | `VIDEO_REVERSE_PROMPT` | 开头指令句之后、`VIDEO_CONTEXT_ISOLATION_RULE` 之前 | 直接反推 | `_VIDEO` |
-| `VIDEO_REPLACE_PROMPT` | 开头四步任务说明之后、`buildReverseDurationRule` 之前 | 元素替换 | `_VIDEO` |
+| `VIDEO_REPLACE_PROMPT` | `buildReverseDurationRule` 之后、`VIDEO_CONTEXT_ISOLATION_RULE` 之前 | 元素替换 | `_VIDEO` |
 | `IMAGE_TO_VIDEO_PROMPT` | 开头指令句之后、`${imageIsolationRule}` 之前 | 图片生视频 | `_IMAGE` |
 
 图片模式引用用户要求时用的是**实际渲染出来的措辞**「其他调整要求」，不是「附加要求」——后者在页面里只出现在这条判定标准自己身上，模型看不到那个标签。用户的文本由 `IMAGE_TO_VIDEO_PROMPT` 渲染成「其他调整要求：…」（在「本次可选调整」里），与判定标准同属一条消息，模型能直接看到。写成「（如有）」是为了在该段因未填附加要求而整体缺席时仍读得通。
@@ -175,7 +175,7 @@ if (nextGenerateAudio !== null) {
 
 6. `syncReverseMediaToSeedance(snapshot);` —— 现有调用，保持在最后，并把**同一个快照**传进去。
 
-**为什么快照只读一次。** 最初的实现是调用方读一次、被调方自己再读一次，两者靠一句注释维持一致——而 `syncReverseMediaToSeedance()` 当时一进来就清空 ref，使调用方的读取顺序成为隐式约束：任何一次调换两条相邻语句，都会静默判错模块，正是本功能设计上要避免的失效类型。改成传快照后，ref 只有一处读、一处写，顺序依赖**从结构上消失**。被调方因此接收 `snapshot: ReverseSeedanceSyncSnapshot | null`（正是该 ref 的声明类型，无需断言），函数体其余部分逐字不变。
+**为什么快照只读一次。** 最初的实现是调用方读一次、被调方自己再读一次，两者靠一句注释维持一致——而 `syncReverseMediaToSeedance()` 当时一进来就清空 ref，使调用方的读取顺序成为隐式约束：任何一次调换两条相邻语句，都会静默判错模块，正是本功能设计上要避免的失效类型。改成传快照后，ref 的**读取只此一处**（写入仍在各处按原样武装快照，但消费路径不再依赖写入时序），顺序依赖**从结构上消失**。被调方因此接收 `snapshot: ReverseSeedanceSyncSnapshot | null`（正是该 ref 的声明类型，无需断言），函数体其余部分逐字不变。
 
 **`!== null` 不能简写成 `if (nextGenerateAudio)`。** `false` 是明确的「关」，真值判断会把「无人声」这一支悄悄丢掉——而那正是用户需求的一半。这是最容易被「顺手清理」掉的一处，因此由测试源码断言钉住。
 
