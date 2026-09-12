@@ -70,6 +70,18 @@ export function stripHumanSpeechMarker(text: string): string
 
 标记正则：`/【\s*人物说话\s*[：:]\s*(是|否)\s*】/`，取首个匹配。
 
+**标记措辞的单一事实来源。** `【人物说话：是/否】` 是横跨三方的契约：这里的解析正则、第 1 节提示词模板里的规则文本、以及 AI 实际输出的格式。
+
+这个耦合是不对称的：提示词措辞和正则一旦对不上，AI 会输出新措辞，`extractHumanSpeechMarker` 返回 `null`——而 `null` 的语义恰好是「旧记录，不要碰开关」。功能于是**静默失效**：没有异常、没有日志、没有测试失败，现象酷似「历史兼容逻辑正常生效」，极难排查。
+
+因此 `creative.ts` 额外导出一份权威 token：
+
+```ts
+export const HUMAN_SPEECH_MARKER_TOKENS = { yes: '【人物说话：是】', no: '【人物说话：否】' } as const;
+```
+
+提示词规则**必须插值**它，不得另抄字面量；正则保持宽松解析（容忍半角冒号与空白），因为正则要容错 AI 的写法偏移，而 token 是要求 AI 输出的规范写法。改措辞只需改 token 一处，测试会立刻暴露跟不上的地方。
+
 `extractHumanSpeechMarker` 返回三态：
 
 - `true` — 有人声开口

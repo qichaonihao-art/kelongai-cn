@@ -270,13 +270,29 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 三处修改，都在同一个文件。改完先做静态检查，真正的行为验证在 Task 5。
 
-- [ ] **Step 1: 新增共享常量**
+- [ ] **Step 1: 新增共享常量（必须插值权威 token）**
 
-在 `frontend-google-ui/src/pages/CreativeCreationPage.tsx` 中，找到 `PAINTING_WOOD_BAR_OUTPUT_RULE` 的定义（约第 626 行），在它**下面**新增：
+**先加 import。** 在 `frontend-google-ui/src/pages/CreativeCreationPage.tsx` 里 `} from "@/src/lib/creative";` 结尾的那段 import（约第 89 行）加上 Task 1 导出的 token：
 
 ```ts
-const HUMAN_SPEECH_MARKER_RULE = '【人声判定】必须在输出的第一行、且在“一、核心主体信息”之前，单独写一行机器可读标记：【人物说话：是】或【人物说话：否】。判定标准：只要素材中存在人声开口，包括人物台词、对话、口播、独白、旁白、画外音，无论画面中是否能看到人物张嘴，一律写“是”；只有纯背景音乐、纯环境音效、完全无声的素材才写“否”。这一行是给程序读取的，必须严格使用上述格式，不得改写措辞、不得添加其他字符。';
+  HUMAN_SPEECH_MARKER_TOKENS,
 ```
+
+然后在同文件中找到 `PAINTING_WOOD_BAR_OUTPUT_RULE` 的定义（约第 626 行），在它**下面**新增：
+
+```ts
+const HUMAN_SPEECH_MARKER_RULE = `【人声判定】必须在输出的第一行、且在“一、核心主体信息”之前，单独写一行机器可读标记：${HUMAN_SPEECH_MARKER_TOKENS.yes}或${HUMAN_SPEECH_MARKER_TOKENS.no}。判定标准：只要素材中存在人声开口，包括人物台词、对话、口播、独白、旁白、画外音，无论画面中是否能看到人物张嘴，一律写“是”；只有纯背景音乐、纯环境音效、完全无声的素材才写“否”。这一行是给程序读取的，必须严格使用上述格式，不得改写措辞、不得添加其他字符。`;
+```
+
+**不要**把 `【人物说话：是】`／`【人物说话：否】` 直接抄进这个字符串。必须走 `HUMAN_SPEECH_MARKER_TOKENS` 插值——原因见下方「标记措辞的单一事实来源」。注意这里必须用**反引号模板字符串**（不是单引号），否则 `${...}` 不会生效。
+
+### ⚠️ 标记措辞的单一事实来源
+
+`【人物说话：是/否】` 是一个横跨三方的契约：Task 1 的两个解析正则、本任务的提示词规则、以及 AI 实际输出的格式。
+
+这个耦合是**不对称**的：如果提示词规则和正则对不上，AI 会输出新措辞，`extractHumanSpeechMarker` 返回 `null`——而 `null` 的语义恰好是「旧记录，不要碰声音开关」。于是功能**静默失效**，没有异常、没有日志、没有测试失败，用户只看到开关该动没动，且现象酷似「历史兼容逻辑生效了」，极难排查。
+
+所以：**权威措辞只有一份** —— Task 1 在 `src/lib/creative.ts` 导出的 `HUMAN_SPEECH_MARKER_TOKENS`。提示词规则插值它，正则宽松地解析它。要改措辞，改 token 一处，测试会立刻告诉你哪些地方跟不上了。
 
 - [ ] **Step 2: 注入 `VIDEO_REVERSE_PROMPT`（直接反推）**
 
@@ -333,6 +349,12 @@ ${VIDEO_CONTEXT_ISOLATION_RULE}
 Run: `cd frontend-google-ui && grep -c "HUMAN_SPEECH_MARKER_RULE" src/pages/CreativeCreationPage.tsx`
 
 Expected: `4` —— 1 处常量定义 + 3 处模板插值。
+
+- [ ] **Step 5b: 确认没有硬编码标记字面量漏进来**
+
+Run: `cd frontend-google-ui && grep -n "人物说话" src/pages/CreativeCreationPage.tsx`
+
+Expected: **无输出**（退出码 1）。这是本任务最重要的一条检查：一旦这里出现字面量，就说明有人把标记措辞抄成了第四份，而这个文件里没有正则能保护它。措辞只能从 `HUMAN_SPEECH_MARKER_TOKENS` 来，所以这个文件里不该出现「人物说话」四个字。
 
 - [ ] **Step 6: 类型检查**
 
@@ -505,6 +527,7 @@ Run: `cd frontend-google-ui && npm run dev`，浏览器打开 `http://localhost:
 
 **Spec 覆盖**
 - 标记规则与三处模板注入 → Task 3
+- 标记措辞单一事实来源（`HUMAN_SPEECH_MARKER_TOKENS`）→ Task 1 导出，Task 3 插值，Task 3 Step 5b 守住
 - 标记解析 / 清理纯函数 → Task 1
 - 决策真值表（painting / H3 / null / true / false）→ Task 2
 - `activeMode` 顺序陷阱 → Task 4 Step 2
