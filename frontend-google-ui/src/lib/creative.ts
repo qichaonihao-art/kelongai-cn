@@ -1515,6 +1515,10 @@ export function stripHumanSpeechMarker(text: string): string {
 
 export type AutoAudioReverseMode = 'direct' | 'replace' | 'image' | 'painting';
 
+// 只有前三个反推模式自动设置声音；第四个「装饰画创意素材」以及将来新增的模式一律不碰，
+// 让它们落到 null（保持用户手动设置），而不是掉进 hasSpeech 分支。
+const AUTO_AUDIO_IN_SCOPE_MODES: ReadonlySet<AutoAudioReverseMode> = new Set(['direct', 'replace', 'image']);
+
 /**
  * 决定同步提示词时要不要自动设置「生成声音」开关。
  * 返回 null 表示不改动开关，用户此前的手动设置原样保留。
@@ -1525,11 +1529,10 @@ export function resolveAutoAudioSetting(options: {
   model: string;
 }): boolean | null {
   const { hasSpeech, mode, model } = options;
-  // 第四个模块「装饰画创意素材」不在范围内。
-  if (mode === 'painting') return null;
+  if (!AUTO_AUDIO_IN_SCOPE_MODES.has(mode)) return null;
   // MiniMax-H3 的音轨随模型，声音按钮本来就是禁用的。
   if (model === 'MiniMax-H3') return null;
   // 历史记录或 AI 未按格式输出时保持现状，不猜。
-  if (hasSpeech === null || hasSpeech === undefined) return null;
+  if (typeof hasSpeech !== 'boolean') return null;
   return hasSpeech;
 }

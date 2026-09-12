@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, resolveAutoAudioSetting } from './src/lib/creative';
+import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, resolveAutoAudioSetting, type AutoAudioReverseMode } from './src/lib/creative';
 
 // extractHumanSpeechMarker：三态
 assert.equal(extractHumanSpeechMarker('【人物说话：是】\n一、核心主体信息'), true);
@@ -60,5 +60,9 @@ assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'direct', model: 
 assert.equal(resolveAutoAudioSetting({ hasSpeech: null, mode: 'direct', model: MODEL }), null);
 assert.equal(resolveAutoAudioSetting({ hasSpeech: null, mode: 'replace', model: MODEL }), null);
 assert.equal(resolveAutoAudioSetting({ hasSpeech: null, mode: 'image', model: MODEL }), null);
+// 未知模式（将来新增的反推模式）默认不参与，而不是掉进 hasSpeech 分支
+assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'unknown' as AutoAudioReverseMode, model: MODEL }), null);
+// 非布尔值（未按类型调用）一律不猜
+assert.equal(resolveAutoAudioSetting({ hasSpeech: undefined as unknown as null, mode: 'direct', model: MODEL }), null);
 
 console.log('前端人声标记测试通过：标记三态解析、标记行清理、声音开关决策真值表。无真实网络调用。');
