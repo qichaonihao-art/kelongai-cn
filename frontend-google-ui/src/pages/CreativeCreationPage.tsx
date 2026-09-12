@@ -74,6 +74,9 @@ import {
   setPaintingFolderBinding,
   getPaintingUsedDirections,
   HUMAN_SPEECH_MARKER_TOKENS,
+  extractHumanSpeechMarker,
+  stripHumanSpeechMarker,
+  resolveAutoAudioSetting,
   sha256File,
   type CreativeReverseModel,
   type CreativeHistoryItem,
@@ -2743,6 +2746,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
 
+    // 【顺序有硬性要求】activeMode 必须在 syncReverseMediaToSeedance() 之前读：
+    // 那个函数一进来就执行 pendingReverseSeedanceSyncRef.current = null，读完再调它就取不到了，
+    // 会静默退化成当前的 reverseMode，导致刚跑完的模块被判成另一个模块。
+    // hasSpeech 用未格式化的原始文本判定，必须在 strip 之前算。
+    const activeMode = pendingReverseSeedanceSyncRef.current?.mode || reverseMode;
+    const hasSpeech = extractHumanSpeechMarker(latestAssistantText);
+
     // 格式化：在每个章节标题前插入一个空行，标题后紧跟正文不空行
     const formatted = latestAssistantText
       .replace(/\n{2,}/g, '\n')
@@ -2752,12 +2762,21 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
-    setSeedancePrompt(formatted);
+    setSeedancePrompt(stripHumanSpeechMarker(formatted));
     setSeedanceReplaceHighlight(null);
     setSeedancePromptScrollTop(0);
     setRequestError("");
     setSeedancePromptHighlight(true);
     setTimeout(() => setSeedancePromptHighlight(false), 2000);
+
+    // 按素材里有没有人声开口自动设置「生成声音」，只作用于当前这次任务。
+    // 【明确不调用 rememberManualSeedancePreference()】那个函数会把设置写进 localStorage
+    // 并覆盖 normalSeedanceSettingsRef；自动判定一旦写进去，一条恰好有人声的提示词就会把
+    // 用户的全局默认永久改成「开声音」。自动结果不落盘。
+    const nextGenerateAudio = resolveAutoAudioSetting({ hasSpeech, mode: activeMode, model: seedanceModel });
+    if (nextGenerateAudio !== null) {
+      setSeedanceGenerateAudio(nextGenerateAudio);
+    }
 
     // 反推完成自动带出：时长（源视频真实时长四舍五入）+ 参考图（元素替换 / 图片生视频）。
     syncReverseMediaToSeedance();
