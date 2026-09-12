@@ -648,9 +648,21 @@ Run: `cd frontend-google-ui && npm run dev`，浏览器打开 `http://localhost:
 
 ## 验证记录
 
-（执行时填写）
+（执行时填写；Task 5 中不需要模型额度的部分已在实现阶段跑通：三个测试脚本全绿、`npm run build` 通过、`npm run lint` 与基线一致、标记规则确认注入三处模板。需要真实模型额度的 9 行表待与用户一起跑。）
 
 ---
+
+## 后续跟进（本期明确不做，非阻塞）
+
+审查过程中发现、但刻意留到本功能之外的项，按优先级排列：
+
+1. **第四个模块在请求飞行中被切进来的窄竞态（既存，非本次引入）**。用户在反推请求进行中把右侧切到 `video-edit-painting` 时，自动同步的 `useEffect` 仍会触发 `syncLatestPromptToSeedance()`，此时 `seedanceTaskMode === 'video-edit-painting'`、`seedanceModel === 'doubao-seedance-2-5-...'`。提示词被覆盖的隐患先于本次改动就存在（`syncReverseMediaToSeedance` 同样会覆盖时长与参考图），本次改动只多了一个症状：可能翻转 `:2970` 强制为 `true` 的声音开关。手动按钮那条路径已经被 `seedanceTaskMode === 'generate'` 挡住，只有自动路径没挡——修法是在 `syncLatestPromptToSeedance()` 开头补同样的判断。**建议在下一个碰这个文件的改动里一并处理**，因为本期的 spec 明确把第四个模块排除在外。
+
+2. **图片判定标准的「（如有）」插入位置读起来略生硬**。现文「在…要求（如有）里明确要求…」把「在…里」的框拆开了；更顺的是「或者本条任务的其他调整要求（如有）明确要求出现人声」（去掉「在…里」）。纯语感问题，不值得单独一次提交，留给下次碰这行时顺手改。
+
+3. **`AutoAudioReverseMode` 与页面里的 `ReverseMode` 未合并**。两者是同构联合类型，结构化类型下编译器抓不到二者分叉；真正的防线是 `creative.ts` 里的运行时放行表 `AUTO_AUDIO_IN_SCOPE_MODES`，所以合并只是洁癖，且需要触碰页面里的类型定义。
+
+4. **`resolveAutoAudioSetting` 的 `model: string` 未收窄成联合类型**。收窄需要改 `creative.ts:576` 的 `createSeedanceTask` 签名，而 `'MiniMax-H3'` 这个字面量在页面里已有约 6 处重复，只给一个调用点加类型并不能解决这一类问题。
 
 ## 自查
 
