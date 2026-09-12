@@ -635,7 +635,7 @@ const HUMAN_SPEECH_MARKER_RULE = (criterion: string) => `【人声判定】必�
 
 const HUMAN_SPEECH_CRITERION_VIDEO = '只要素材中存在人声开口，包括人物台词、对话、口播、独白、旁白、画外音，无论画面中是否能看到人物张嘴，一律写“是”；只有纯背景音乐、纯环境音效、完全无声的素材才写“否”。';
 
-const HUMAN_SPEECH_CRITERION_IMAGE = '只要图片中的人物处于说话状态（张嘴说话、手持话筒、口播或演唱姿态等），或者用户在本条指令的附加要求里明确要求人物开口说话，一律写“是”；纯风景、纯静物、人物只是静止看向镜头等没有说话意图的图片一律写“否”。';
+const HUMAN_SPEECH_CRITERION_IMAGE = '只要图片中的人物处于说话状态（张嘴说话、手持话筒、口播或演唱姿态等），或者用户在本条任务的其他调整要求（如有）里明确要求出现人声——包括人物开口说话、旁白、口播、配音等，一律写“是”；纯风景、纯静物、人物只是静止看向镜头等没有说话意图的图片，且用户未要求出现人声的，一律写“否”。';
 
 function buildCharacterRemixClause(characterRemix?: string) {
   const text = characterRemix?.trim();
