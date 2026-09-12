@@ -25,8 +25,9 @@ assert.equal(stripHumanSpeechMarker('【人物说话：可能是】正文'), '�
 // 半角方括号不认（必须全角【】），不清除真实内容
 assert.equal(stripHumanSpeechMarker('[人物说话：是]正文'), '[人物说话：是]正文');
 
-// 不变式：解析出来的标记经过清理后必须消失，三者指向同一个措辞。
-// 任何一处正则与另两处漂移，这条会失败。
+// 不变式：解析出来的标记经过清理后必须消失。
+// 注意：真正拦住措辞漂移的是前面那些基于字面量的断言（它们会先失败），
+// 这两条只是把两个函数的行为串起来，不构成独立防线。
 assert.equal(extractHumanSpeechMarker(stripHumanSpeechMarker('【人物说话：是】\n正文')), null);
 assert.equal(extractHumanSpeechMarker(stripHumanSpeechMarker('正文\n【人物说话：否】')), null);
 

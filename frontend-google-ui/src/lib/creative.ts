@@ -1488,8 +1488,8 @@ const HUMAN_SPEECH_MARKER_LINE_PATTERN = /^[^\S\n]*【\s*人物说话\s*[：:]\s
  *
  * 与 HUMAN_SPEECH_MARKER_TOKENS 双向耦合：tokens 是提示词要求 AI 输出的规范写法，
  * 本函数及 stripHumanSpeechMarker 据此解析。改任何一处的措辞必须同步另一处，
- * 否则解析会静默返回 null、功能无声失效。Task 3 会在 CreativeCreationPage.tsx
- * 的 HUMAN_SPEECH_MARKER_RULE 常量里插值这些 tokens。
+ * 否则解析会静默返回 null、功能无声失效。提示词规则常量 HUMAN_SPEECH_MARKER_RULE
+ * （CreativeCreationPage.tsx）必须插值这些 tokens，不得另抄字面量。
  */
 export function extractHumanSpeechMarker(text: string): boolean | null {
   const match = HUMAN_SPEECH_MARKER_PATTERN.exec(String(text || ''));
@@ -1502,7 +1502,8 @@ export function extractHumanSpeechMarker(text: string): boolean | null {
  * 先删独占一行的标记（连同换行），再清掉同行内联残留，最后收敛空行。
  *
  * 与 HUMAN_SPEECH_MARKER_TOKENS 双向耦合（同 extractHumanSpeechMarker），
- * 正则措辞需与 tokens 一致。三个正则保持独立字面量、不合并成共享 RegExp 对象。
+ * 正则措辞需与 tokens 一致。三个正则保持独立字面量、不要合并成共享 RegExp 对象：
+ * /g 正则用于 exec 时 lastIndex 有状态（会漏匹配），而 replace 每次重置 lastIndex。
  */
 export function stripHumanSpeechMarker(text: string): string {
   return String(text || '')
