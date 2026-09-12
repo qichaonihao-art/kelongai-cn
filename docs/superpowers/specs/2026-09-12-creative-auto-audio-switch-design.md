@@ -30,10 +30,13 @@
 
 ### 改动范围
 
-1. `frontend-google-ui/src/lib/creative.ts`：新增 2 个纯函数（约 25 行）。
-2. `frontend-google-ui/src/pages/CreativeCreationPage.tsx`：新增 1 个共享常量、在 3 个提示词模板里各插值一次、新增 1 个应用函数、在 `syncLatestPromptToSeedance()` 里调用（约 20 行）。
+1. `frontend-google-ui/src/lib/creative.ts`：新增 3 个纯函数和 1 个联合类型（约 35 行）。
+2. `frontend-google-ui/src/pages/CreativeCreationPage.tsx`：新增 1 个共享常量、在 3 个提示词模板里各插值一次、在 `syncLatestPromptToSeedance()` 里接 8 行（约 20 行）。
+3. `frontend-google-ui/test-creative-speech-marker.ts`：新增，覆盖两个解析函数和决策真值表。
 
-无新增文件、无新增依赖、无后端改动。
+无新增依赖、无后端改动。
+
+**测试约定**：本仓库没有 vitest/jest，沿用现有的独立脚本约定——根目录 `test-*.ts`，`node:assert/strict`，`node --import tsx test-xxx.ts` 运行，与 `test-sticker-creative.ts`、`test-video-library-local.ts` 同风格。`tsconfig.json` 没有 `include`/`exclude`，所以 `npm run lint`（`tsc --noEmit`）会一并检查测试脚本。
 
 ### 1. 让反推 AI 输出机器可读标记
 
@@ -73,16 +76,32 @@ export function stripHumanSpeechMarker(text: string): string
 - `false` — 无人声开口
 - `null` — 没找到标记（历史记录、AI 未按格式输出）
 
-### 3. 应用函数（`CreativeCreationPage.tsx`）
+### 3. 决策函数（`src/lib/creative.ts`）
 
-新增 `applyAutoAudioSetting(hasSpeech: boolean | null, activeMode: string)`，按顺序短路，任一命中即不改动开关：
+决策逻辑做成纯函数放进 `creative.ts`，而不是内联在组件里——这张真值表是本功能唯一的实际逻辑，放纯函数才能被 `test-*.ts` 覆盖：
 
-| 条件 | 行为 | 理由 |
+```ts
+export type AutoAudioReverseMode = 'direct' | 'replace' | 'image' | 'painting';
+
+export function resolveAutoAudioSetting(options: {
+  hasSpeech: boolean | null;
+  mode: AutoAudioReverseMode;
+  model: string;
+}): boolean | null
+```
+
+按顺序短路，任一命中即返回 `null`（不改动开关）：
+
+| 条件 | 返回 | 理由 |
 |---|---|---|
-| `activeMode === 'painting'` | 跳过 | 第四个模块不在范围内，与 `syncReverseMediaToSeedance()` 中现有的 `if (activeMode === 'painting') return;` 保持一致 |
-| `seedanceModel === 'MiniMax-H3'` | 跳过 | 该模型音轨随模型，声音按钮本就 `disabled`，改了也不生效 |
-| `hasSpeech === null` | 跳过，不猜 | 历史记录和格式异常时保持现状，避免误关掉用户需要的声音 |
-| `hasSpeech === true` / `false` | `setSeedanceGenerateAudio(true / false)` | 本期唯一的行为 |
+| `mode === 'painting'` | `null` | 第四个模块不在范围内，与 `syncReverseMediaToSeedance()` 中现有的 `if (activeMode === 'painting') return;` 保持一致 |
+| `model === 'MiniMax-H3'` | `null` | 该模型音轨随模型，声音按钮本就 `disabled`，改了也不生效 |
+| `hasSpeech === null` | `null`，不猜 | 历史记录和格式异常时保持现状，避免误关掉用户需要的声音 |
+| `hasSpeech === true` / `false` | `true` / `false` | 本期唯一的行为 |
+
+组件侧只保留三行：拿到返回值，非 `null` 才调 `setSeedanceGenerateAudio`。
+
+`AutoAudioReverseMode` 与页面里的 `ReverseMode` 是同构联合类型，页面的 `reverseMode` 可直接传入，无需类型断言。
 
 **明确不调用 `rememberManualSeedancePreference()`**：该函数会把设置写进 `localStorage` 并覆盖 `normalSeedanceSettingsRef`。自动判定如果写进去，一条恰好有人说话的提示词就会把用户的全局默认永久改成「开声音」。自动结果只作用于当前这次任务的状态。
 
@@ -97,6 +116,15 @@ export function stripHumanSpeechMarker(text: string): string
 3. `setSeedancePrompt(stripHumanSpeechMarker(formatted));` —— 右侧输入框不含标记行。
 4. `applyAutoAudioSetting(hasSpeech, activeMode);` —— 设置开关。
 5. `syncReverseMediaToSeedance();` —— 现有调用，保持在最后。
+
+第 4 步的实际代码：
+
+```ts
+const nextGenerateAudio = resolveAutoAudioSetting({ hasSpeech, mode: activeMode, model: seedanceModel });
+if (nextGenerateAudio !== null) {
+  setSeedanceGenerateAudio(nextGenerateAudio);
+}
+```
 
 `activeMode` 的取值方式与 `syncReverseMediaToSeedance()` 内部完全一致，不引入第二套口径。
 
@@ -129,7 +157,8 @@ export function stripHumanSpeechMarker(text: string): string
 4. **聊天区与输入框**：确认聊天区能看到标记行，右侧输入框没有。
 5. **手动覆盖**：自动设置后手动点一次开关，确认点击生效且不被再次同步覆盖（同步只在点击时发生）。
 6. **MiniMax-H3**：切到该模型后同步，确认不报错、开关状态不被改动。
-7. `cd frontend-google-ui && npm run build` 通过。
+7. `cd frontend-google-ui && node --import tsx test-creative-speech-marker.ts` 通过，输出 `前端人声标记测试通过：...`。
+8. `cd frontend-google-ui && npm run lint && npm run build` 通过。
 
 ## 风险与兜底
 
