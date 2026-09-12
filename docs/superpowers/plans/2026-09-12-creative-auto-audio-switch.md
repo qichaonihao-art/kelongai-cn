@@ -283,13 +283,29 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
   HUMAN_SPEECH_MARKER_TOKENS,
 ```
 
-然后在同文件中找到 `PAINTING_WOOD_BAR_OUTPUT_RULE` 的定义（约第 626 行），在它**下面**新增：
+然后在同文件中找到 `PAINTING_WOOD_BAR_OUTPUT_RULE` 的定义（约第 626 行），在它**下面**新增——一条注释、一个接受判定标准的规则模板、两条判定标准：
 
 ```ts
-const HUMAN_SPEECH_MARKER_RULE = `【人声判定】必须在输出的第一行、且在“一、核心主体信息”之前，单独写一行机器可读标记：${HUMAN_SPEECH_MARKER_TOKENS.yes}或${HUMAN_SPEECH_MARKER_TOKENS.no}。判定标准：只要素材中存在人声开口，包括人物台词、对话、口播、独白、旁白、画外音，无论画面中是否能看到人物张嘴，一律写“是”；只有纯背景音乐、纯环境音效、完全无声的素材才写“否”。这一行是给程序读取的，必须严格使用上述格式，不得改写措辞、不得添加其他字符。`;
+// 【人物说话：是/否】标记是横跨三方的契约：这里的规则文案、creative.ts 里的解析正则、
+// 以及 AI 实际输出的格式。措辞和正则一旦对不上，解析会返回 null，而 null 的语义恰好是
+// 「旧记录，不要碰开关」——功能于是静默失效：没有异常、没有日志，现象酷似历史兼容逻辑
+// 正常生效。所以标记文字只能插值 HUMAN_SPEECH_MARKER_TOKENS，不得另抄字面量；
+// test-creative-speech-marker.ts 用源码断言钉住了这一点，手抄会直接测试失败。
+// 判定标准随模式而异：视频看音轨里有没有人声，图片没有音轨，只能看画面里人物的说话状态。
+const HUMAN_SPEECH_MARKER_RULE = (criterion: string) => `【人声判定】必须在输出的第一行、且在“一、核心主体信息”之前，单独写一行机器可读标记：${HUMAN_SPEECH_MARKER_TOKENS.yes}或${HUMAN_SPEECH_MARKER_TOKENS.no}。判定标准：${criterion}这一行是给程序读取的，必须严格使用上述格式，不得改写措辞、不得添加其他字符。`;
+
+const HUMAN_SPEECH_CRITERION_VIDEO = '只要素材中存在人声开口，包括人物台词、对话、口播、独白、旁白、画外音，无论画面中是否能看到人物张嘴，一律写“是”；只有纯背景音乐、纯环境音效、完全无声的素材才写“否”。';
+
+const HUMAN_SPEECH_CRITERION_IMAGE = '只要图片中的人物处于说话状态（张嘴说话、手持话筒、口播或演唱姿态等），或者用户在本条指令的附加要求里明确要求人物开口说话，一律写“是”；纯风景、纯静物、人物只是静止看向镜头等没有说话意图的图片一律写“否”。';
 ```
 
-**不要**把 `【人物说话：是】`／`【人物说话：否】` 直接抄进这个字符串。必须走 `HUMAN_SPEECH_MARKER_TOKENS` 插值——原因见下方「标记措辞的单一事实来源」。注意这里必须用**反引号模板字符串**（不是单引号），否则 `${...}` 不会生效。
+**不要**把 `【人物说话：是】`／`【人物说话：否】` 直接抄进这些字符串。必须走 `HUMAN_SPEECH_MARKER_TOKENS` 插值——原因见下方「标记措辞的单一事实来源」。注意规则模板必须用**反引号模板字符串**（不是单引号），否则 `${...}` 不会生效。（注意：注释里也不能出现「人物说话」四个字，Step 5b 的 grep 会连注释一起扫到。）
+
+#### 为什么判定标准要按模式拆开
+
+原设计只有一条判定标准，写的是「只要**素材**中存在人声开口」——这是按**音轨**写的。但 `IMAGE_TO_VIDEO_PROMPT` 的输入是**静态图片**（模板开头即「请把我上传的这张图片作为唯一的视觉基准」），静态图没有音轨，字面答案恒为「否」。而 `image` 又在 `AUTO_AUDIO_IN_SCOPE_MODES` 里，于是**每次图片生视频同步都会把声音关掉**；更糟的是模型遇到「照片里人物张着嘴」也可能反答「是」，行为不稳定。
+
+所以图片模式换成看**画面里人物的说话状态 + 用户附加要求**：这才是用户真正关心的东西——生成出来的视频会不会有台词。`IMAGE_TO_VIDEO_PROMPT` 把用户的附加要求渲染成「其他调整要求：…」（在「本次可选调整」里），模型能直接看到，所以判定标准里引用它是可判定的。
 
 ### ⚠️ 标记措辞的单一事实来源
 
@@ -310,7 +326,7 @@ const HUMAN_SPEECH_MARKER_RULE = `【人声判定】必须在输出的第一行�
 改成：
 
 ```
-光影和氛围。\n\n${HUMAN_SPEECH_MARKER_RULE}\n\n${VIDEO_CONTEXT_ISOLATION_RULE}\n\n请严格按以下结构输出：
+光影和氛围。\n\n${HUMAN_SPEECH_MARKER_RULE(HUMAN_SPEECH_CRITERION_VIDEO)}\n\n${VIDEO_CONTEXT_ISOLATION_RULE}\n\n请严格按以下结构输出：
 ```
 
 **只改这一处，不要动这个模板里其它任何内容。** 该模板后面还有 `durationLockedBase = base.replace(VIDEO_CONTEXT_ISOLATION_RULE, ...)`，因为标记规则文本与隔离规则文本不重叠，这个 `replace` 仍然正常工作。
@@ -330,12 +346,12 @@ ${VIDEO_CONTEXT_ISOLATION_RULE}
 ```
 ${buildReverseDurationRule(options.durationSeconds, options.sourceDurationSeconds)}
 
-${HUMAN_SPEECH_MARKER_RULE}
+${HUMAN_SPEECH_MARKER_RULE(HUMAN_SPEECH_CRITERION_VIDEO)}
 
 ${VIDEO_CONTEXT_ISOLATION_RULE}
 ```
 
-- [ ] **Step 4: 注入 `IMAGE_TO_VIDEO_PROMPT`（图片生视频）**
+- [ ] **Step 4: 注入 `IMAGE_TO_VIDEO_PROMPT`（图片生视频，用图片判定标准）**
 
 在该模板的 `return \`...\`` 里，把：
 
@@ -346,20 +362,78 @@ ${VIDEO_CONTEXT_ISOLATION_RULE}
 改成：
 
 ```
-动态细节。\n\n${HUMAN_SPEECH_MARKER_RULE}\n\n${imageIsolationRule}\n\n请严格按以下结构输出：
+动态细节。\n\n${HUMAN_SPEECH_MARKER_RULE(HUMAN_SPEECH_CRITERION_IMAGE)}\n\n${imageIsolationRule}\n\n请严格按以下结构输出：
 ```
+
+- [ ] **Step 4b: 解除「严格十二个部分」与新增第一行的措辞冲突**
+
+`VIDEO_REVERSE_FORMAT_SUFFIX`（约第 623 行）在 `handleSend` 里被追加到反推提示词的**最末尾**（约第 4974 行，`isReversePrompt` 为真时）——这是位置最靠后、最显眼的一条指令，它说「请严格按照以上十二个部分输出」，而标记规则要的是一个**在第一部分之前**的第十三样东西。
+
+把该字符串开头从：
+
+```
+'\n\n请严格按照以上十二个部分输出，
+```
+
+改成：
+
+```
+'\n\n除第一行的人声判定标记外，请严格按照以上十二个部分输出，
+```
+
+**改之前先确认作用范围**：`grep -n "VIDEO_REVERSE_FORMAT_SUFFIX" src/pages/CreativeCreationPage.tsx` 应当只有定义处 + 约 4974 行一处消费；`isReversePrompt` 要求同时含 `核心主体信息` 与（`待复刻样片` 或 `唯一的视觉基准`），恰好就是收标记规则的那三个模板。若发现别的消费方会把它追加到不含标记规则的提示词上，**停下来报告**，不要改。
+
+- [ ] **Step 4c: 用源码断言把「规则 ↔ token」这一半也钉住**
+
+`test-creative-speech-marker.ts` 原本只钉了「token ↔ 解析器」。测试文件只 import `src/lib/creative`，所以将来有人改文案时手打 `【人物说话：是】`，不会有任何测试变红——而这正是本设计认定的静默失效路径。补三条源码级断言（放在末尾 `console.log` 之前）：
+
+```ts
+// 源码级断言：提示词模板必须插值权威 token，不得手抄字面量。
+// 这个耦合失败时是静默的——解析返回 null 等同「旧记录」，功能无声失效、不报错。
+// 改动 CreativeCreationPage.tsx 的提示词文案时如果手抄了标记文字，这里会先红。
+const pageSource = readFileSync(new URL('./src/pages/CreativeCreationPage.tsx', import.meta.url), 'utf8');
+assert.ok(
+  pageSource.includes('${HUMAN_SPEECH_MARKER_TOKENS.yes}') && pageSource.includes('${HUMAN_SPEECH_MARKER_TOKENS.no}'),
+  '提示词规则必须插值 HUMAN_SPEECH_MARKER_TOKENS，不得手抄标记字面量',
+);
+assert.equal(pageSource.includes('人物说话'), false, '页面里不得出现手抄的标记字面量');
+const ruleCallSites = pageSource.split('HUMAN_SPEECH_MARKER_RULE(').length - 1;
+assert.equal(ruleCallSites, 3, '三个反推模板（直接反推／元素替换／图片生视频）应各插值一次标记规则；新增模式时同步更新此处');
+```
+
+顶部加 `import { readFileSync } from 'node:fs';`。上面两个 `'${HUMAN_SPEECH_MARKER_TOKENS.yes}'` 必须留在**单引号**里，否则会被当成模板插值。计数为 3 是因为定义行写的是 `const HUMAN_SPEECH_MARKER_RULE = (criterion: string) => …`，不含 `HUMAN_SPEECH_MARKER_RULE(`。
 
 - [ ] **Step 5: 确认三处都注入了，且没有多注**
 
-Run: `cd frontend-google-ui && grep -c "HUMAN_SPEECH_MARKER_RULE" src/pages/CreativeCreationPage.tsx`
+Run: `cd frontend-google-ui && grep -c "HUMAN_SPEECH_MARKER_RULE(" src/pages/CreativeCreationPage.tsx`
 
-Expected: `4` —— 1 处常量定义 + 3 处模板插值。
+Expected: `3` —— 三个模板各一次调用。
+
+（`grep -c "HUMAN_SPEECH_MARKER_RULE"` 不带左括号应为 `4`：1 处定义 + 3 处调用。）
 
 - [ ] **Step 5b: 确认没有硬编码标记字面量漏进来**
 
 Run: `cd frontend-google-ui && grep -n "人物说话" src/pages/CreativeCreationPage.tsx`
 
-Expected: **无输出**（退出码 1）。这是本任务最重要的一条检查：一旦这里出现字面量，就说明有人把标记措辞抄成了第四份，而这个文件里没有正则能保护它。措辞只能从 `HUMAN_SPEECH_MARKER_TOKENS` 来，所以这个文件里不该出现「人物说话」四个字。
+Expected: **无输出**（退出码 1）。这是本任务最重要的一条检查：一旦这里出现字面量，就说明有人把标记措辞抄成了第四份，而这个文件里没有正则能保护它。措辞只能从 `HUMAN_SPEECH_MARKER_TOKENS` 来，所以这个文件里不该出现「人物说话」四个字——**注释里也不行**。
+
+- [ ] **Step 5c: 变异测试（确认 Step 4c 的断言不是恒真的摆设）**
+
+源码断言容易写成永远通过。用两次变异确认它真的会红，改完记得还原：
+
+```bash
+cd frontend-google-ui
+cp src/pages/CreativeCreationPage.tsx /tmp/page.bak.ts
+# 变异 1：手抄字面量替代 token 插值
+perl -0pi -e 's/\$\{HUMAN_SPEECH_MARKER_TOKENS\.yes\}/【人物说话：是】/' src/pages/CreativeCreationPage.tsx
+node --import tsx test-creative-speech-marker.ts   # 预期：AssertionError「必须插值 HUMAN_SPEECH_MARKER_TOKENS」
+cp /tmp/page.bak.ts src/pages/CreativeCreationPage.tsx
+# 变异 2：漏掉一个模板的插值
+perl -0pi -e 's/\$\{HUMAN_SPEECH_MARKER_RULE\(HUMAN_SPEECH_CRITERION_IMAGE\)\}//' src/pages/CreativeCreationPage.tsx
+node --import tsx test-creative-speech-marker.ts   # 预期：AssertionError「应各插值一次标记规则」
+cp /tmp/page.bak.ts src/pages/CreativeCreationPage.tsx
+git status --porcelain src/pages/CreativeCreationPage.tsx   # 预期：无输出
+```
 
 - [ ] **Step 6: 类型检查**
 
@@ -371,11 +445,13 @@ Expected: 输出与前置说明里的基线**完全一致**。`CreativeCreationP
 
 ```bash
 cd /Users/qichao/Documents/kelongai-cn
-git add frontend-google-ui/src/pages/CreativeCreationPage.tsx
+git add frontend-google-ui/src/pages/CreativeCreationPage.tsx frontend-google-ui/test-creative-speech-marker.ts
 git commit -m "Require speech marker in reverse prompt templates
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ```
+
+Task 3 实际分两个 commit 落地（都已完成）：`211e071` 只做三处模板注入，review 后 `527daac` 补上按模式拆分的判定标准、格式后缀措辞、以及 Step 4c 的源码断言。`src/lib/creative.ts` 在本任务中不应被修改。
 
 ---
 
@@ -496,7 +572,7 @@ Expected: 三个脚本各自输出自己的「通过」行，无 assert 失败�
 
 Run: `cd frontend-google-ui && grep -n "【人声判定】" src/pages/CreativeCreationPage.tsx`
 
-Expected: `1` 行 —— 常量定义处。模板里是 `${HUMAN_SPEECH_MARKER_RULE}` 插值，所以只有常量那行含字面量。这确认了常量存在且被引用（引用数由 Task 3 Step 5 的 `grep -c` 确认）。
+Expected: `1` 行 —— 规则模板定义处。三个模板里是 `${HUMAN_SPEECH_MARKER_RULE(...)}` 调用，所以只有定义那行含字面量。这确认了模板存在（调用数由 Task 3 Step 5 的 `grep -c` 确认）。
 
 - [ ] **Step 3: 真实验证（需要模型额度）**
 
@@ -508,7 +584,10 @@ Run: `cd frontend-google-ui && npm run dev`，浏览器打开 `http://localhost:
 |---|---|---|
 | 1 | 直接反推，传一条**有人说话**的视频，等自动同步 | 聊天区第一行出现 `【人物说话：是】`；右侧提示词框**没有**这一行；声音按钮变「生成声音」 |
 | 2 | 直接反推，传一条**无人说话**的视频（如纯风景/产品展示） | 标记为 `否`；右侧无标记行；按钮变「不生成声音」 |
-| 3 | 图片生视频，传一张**画面中人物看图未说话**的图片 | 标记为 `否`，按钮变「不生成声音」 |
+| 3 | 图片生视频，传一张**纯风景/静物**图片 | 标记为 `否`，按钮变「不生成声音」 |
+| 3b | **图片模式关键用例**：图片生视频，传一张人物静止看向镜头的图片，**附加要求里不写任何开口说话的需求** | 标记为 `否`。这条验证的是图片模式用的是自己的判定标准，而不是去看不存在的音轨 |
+| 3c | **图片模式关键用例**：同上图片，但附加要求里明确写「让人物开口说一句欢迎光临」 | 标记为 `是`，按钮变「生成声音」。这条验证附加要求能被模型看到并纳入判定 |
+| 3d | **图片模式不定性检查**：图片生视频，传一张**人物张着嘴说话**的照片 | 标记为 `是`（按图片判定标准：人物处于说话状态） |
 | 4 | 元素替换，传一条有人声的视频 | 标记为 `是`，按钮变「生成声音」 |
 | 5 | **关键用例**：找一条只有旁白/画外音、画面人物不张嘴的视频 | 必须是 `是`（本期边界定义：有无人声开口，不看是否张嘴） |
 | 6 | 从历史记录里打开一条**改造前**生成的反推结果，点「同步最新提示词」 | 无标记，走 `null` 分支，声音按钮**保持原状态不变** |
@@ -532,7 +611,9 @@ Run: `cd frontend-google-ui && npm run dev`，浏览器打开 `http://localhost:
 
 **Spec 覆盖**
 - 标记规则与三处模板注入 → Task 3
-- 标记措辞单一事实来源（`HUMAN_SPEECH_MARKER_TOKENS`）→ Task 1 导出，Task 3 插值，Task 3 Step 5b 守住
+- 标记措辞单一事实来源（`HUMAN_SPEECH_MARKER_TOKENS`）→ Task 1 导出，Task 3 插值，Task 3 Step 4c 源码断言 + Step 5b + Step 5c 变异测试守住
+- 图片模式用独立判定标准（静态图无音轨，不能沿用「素材里有没有人声开口」）→ Task 3 Step 1 + Step 4 + Task 5 表 #3/#3b/3c/3d
+- 「严格十二个部分」与新增第一行不冲突 → Task 3 Step 4b
 - 标记解析 / 清理纯函数 → Task 1
 - 决策真值表（painting / H3 / null / true / false）→ Task 2
 - `activeMode` 顺序陷阱 → Task 4 Step 2
