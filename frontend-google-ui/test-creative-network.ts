@@ -12,6 +12,10 @@ import {
   describePaintingNetworkError,
   generatePaintingRequestId,
   getSeedanceRatePerSecond,
+  getVideoGenerationDurationLimits,
+  normalizeVideoGenerationDuration,
+  extractVideoGenerationDurationFromPrompt,
+  extractRequestedVideoDurationFromText,
   waitForPaintingTask,
 } from './src/lib/creative';
 
@@ -241,6 +245,27 @@ async function main() {
     assert(getSeedanceRatePerSecond('MiniMax-H3', '768p') === 0.5, 'H3 768P = 0.50元/秒');
     assert(getSeedanceRatePerSecond('MiniMax-H3', '720p') === null, 'H3不误用Seedance 720P价格');
     assert(getSeedanceRatePerSecond('MiniMax-H3', '2K') === null, 'H3试验版尚未开放2K价格入口');
+  }
+
+  // ===== 9. 前三个创意模块统一时长裁决 =====
+  console.log('\n[9] 创意提示词同步时长');
+  {
+    assert(normalizeVideoGenerationDuration(7.49, 'wan3.0-video') === 7, '源视频 7.49 秒四舍五入为 7 秒');
+    assert(normalizeVideoGenerationDuration(7.5, 'doubao-seedance-2-0-mini-260615') === 8, '源视频 7.5 秒四舍五入为 8 秒');
+    assert(normalizeVideoGenerationDuration(1.8, 'wan3.0-video') === 2, '千问时长下限为 2 秒');
+    assert(normalizeVideoGenerationDuration(18, 'doubao-seedance-2-0-mini-260615') === null, 'Seedance 2.0 不会把超限时长偷偷改成 15 秒');
+    assert(normalizeVideoGenerationDuration(18, 'wan3.0-video') === 18, '千问允许 18 秒时长');
+    assert(getVideoGenerationDurationLimits('doubao-seedance-2-5-260628').max === 30, 'Seedance 2.5 上限为 30 秒');
+    assert(extractVideoGenerationDurationFromPrompt('生成指令\n总时长：7.6 秒') === 8, '可从标准字段读取小数并四舍五入');
+    assert(extractVideoGenerationDurationFromPrompt('视频时长约为6秒\n总时长：9秒') === 9, '多个时长字段以最后的总时长为准');
+    assert(extractVideoGenerationDurationFromPrompt('最终成片时长设置为 6 秒钟') === 6, '可识别“成片时长”和“秒钟”写法');
+    assert(extractVideoGenerationDurationFromPrompt('视频长度：8s') === 8, '可识别“视频长度”和英文 s 写法');
+    assert(extractVideoGenerationDurationFromPrompt('最终视频做成 10 seconds') === 10, '可识别“最终视频”和英文 seconds 写法');
+    assert(extractVideoGenerationDurationFromPrompt('没有填写时长') === null, '无时长字段时不猜测');
+    assert(extractRequestedVideoDurationFromText('原视频只有3秒，新视频设置为6秒') === 6, '额外调整可识别“新视频设置为6秒”');
+    assert(extractRequestedVideoDurationFromText('请延长到8秒，动作自然一些') === 8, '额外调整可识别“延长到8秒”');
+    assert(extractRequestedVideoDurationFromText('最终总时长改成7.6秒') === 8, '额外调整中的小数时长执行四舍五入');
+    assert(extractRequestedVideoDurationFromText('前2秒人物走入，后面自然展示') === null, '分段动作秒数不会误判为总时长');
   }
 
   console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);

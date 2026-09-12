@@ -60,6 +60,10 @@ import {
   generatePaintingRequestId,
   isPaintingCreationOutcomeUnknown,
   getSeedanceRatePerSecond,
+  getVideoGenerationDurationLimits,
+  normalizeVideoGenerationDuration,
+  extractVideoGenerationDurationFromPrompt,
+  extractRequestedVideoDurationFromText,
   getPaintingBatchResolutionOptions,
   getPaintingBatchDefaultResolution,
   SEEDANCE_BATCH_MODEL,
@@ -615,7 +619,7 @@ function getSeedanceCostStats(): { daily: number; monthly: number; yearly: numbe
   }
 }
 
-const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上十二个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。';
+const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n请严格按照以上十二个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。最终完整提示词的最后必须单独使用标准格式写一行“总时长：X秒”，X必须与本条任务已经锁定的整数时长完全一致，不得另行估算。';
 const VIDEO_CONTEXT_ISOLATION_RULE = '本次任务是完全独立的一次视频分析。只能基于当前上传的视频、当前上传的参考图片（如有）、本条指令中的替换要求、额外调整、人物改造要求和字幕选项进行判断。不得引用、继承、延续或假设任何历史会话、上一次视频、上一次替换目标、上一次参考图、旧提示词中的主体、道具、场景、动作、挂画、海报、装饰物、文字内容或风格要求。所有主体、道具、动作和场景元素必须来自当前视频可见内容或当前指令明确要求；如果当前视频中没有明确出现某元素，不得写入分析和最终提示词。';
 const VIDEO_LIVE_EYE_GAZE_RULE = '如果视频中出现人物，且正面或偏正面机位能明显看到人物眼神，必须重点描述人物眼神的真人感：眼睛不能一直僵硬睁着不动，需根据原视频状态写出自然眨眼、视线轻微移动、眼神聚焦变化、看向镜头或看向道具/画面的真实互动感，避免眼珠固定、空洞呆滞、假人感和 AI 式凝视。';
 const PAINTING_WOOD_BAR_RULE = '挂画上下两端的木条、挂轴或压杆必须严格以当前视频和参考图片中实际可见的结构为准，完整保持其形状、颜色、材质、粗细、长度、截面和两端轮廓，不得重新设计。滚动展开只改变画布的卷起与释放状态，不得把原有扁平或方形木条改成传统圆柱形卷轴、圆杆或转轴；不得在木条左右两端擅自增加圆球、葫芦头、轴头、端帽、把手或任何参考素材中不存在的圆柱形及装饰性构件。';
@@ -627,7 +631,11 @@ function buildCharacterRemixClause(characterRemix?: string) {
   return `\n\n人物改造要求：${text}\n如果启用了人物改造要求，只允许改变人物设定本身，不得改变原视频中的场景、道具、构图、镜头运动、动作流程、光影、节奏、卷轴/挂画等非人物元素。必须在保持原视频镜头、构图、动作节奏和场景关系不变的前提下，根据用户指定的人物年龄、性别或身份重新设计人物设定。不能只替换年龄或性别标签，也不能机械保留原人物的服装、发型、妆容和气质。必须根据新人物的年龄、性别、身份气质以及当前视频场景，重新合理设计服装、发型、体态、配饰和整体气质；服装要与场景协调，例如书房、客厅、茶室、办公室、展厅、讲台、家居环境等，应选择符合人物年龄身份和场景氛围的自然着装。最终提示词中必须明确写出改造后人物的年龄段、性别、气质、服装、发型、体态，以及这些人物设定如何与当前场景协调，同时保留原视频中可复刻的镜头语言、动作流程、构图、光影和节奏。`;
 }
 
-const VIDEO_REVERSE_PROMPT = (options?: { additionalChange?: string; includeSubtitles?: boolean; characterRemix?: string }) => {
+const buildReverseDurationRule = (durationSeconds: number, sourceDurationSeconds: number) => sourceDurationSeconds === durationSeconds
+  ? `【视频时长强制锁定】当前源视频真实时长经四舍五入后为 ${sourceDurationSeconds} 秒，本次复刻视频的目标总时长为 ${durationSeconds} 秒。动作和镜头时间轴必须从0秒连续安排到${durationSeconds}秒；最终完整提示词的最后必须单独写一行“总时长：${durationSeconds}秒”。`
+  : `【视频时长强制锁定】当前源视频真实时长经四舍五入后为 ${sourceDurationSeconds} 秒，但用户在“额外调整”中明确要求新视频改为 ${durationSeconds} 秒，因此目标总时长必须以 ${durationSeconds} 秒为准，禁止恢复成源视频时长。请通过补充合理动作和镜头过程自然延展内容，禁止慢放、重复或静止凑时长。时间轴必须从0秒连续安排到${durationSeconds}秒；最终完整提示词的最后必须单独写一行“总时长：${durationSeconds}秒”。`;
+
+const VIDEO_REVERSE_PROMPT = (options: { durationSeconds: number; sourceDurationSeconds: number; additionalChange?: string; includeSubtitles?: boolean; characterRemix?: string }) => {
   const additionalChange = options?.additionalChange;
   const includeSubtitles = options?.includeSubtitles ?? false;
   const characterRemixClause = buildCharacterRemixClause(options?.characterRemix);
@@ -635,14 +643,18 @@ const VIDEO_REVERSE_PROMPT = (options?: { additionalChange?: string; includeSubt
     ? '12. 如果视频中有人物口播或旁白字幕，必须逐字提取并完整保留在最终提示词中，字幕内容不得遗漏、省略或改写。'
     : '12. 视频中的字幕、文字叠加、人物口播字幕、旁白字幕等所有文字元素均不得保留，必须在复刻时彻底去除，确保输出画面不含任何字幕或文字叠加。';
   const base = `请把这个视频当作”待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n${VIDEO_CONTEXT_ISOLATION_RULE}\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。\n5. 目标不是”风格相似”，而是”尽量复刻接近原视频”。\n6. 对于画面中的挂画、海报、装饰画、屏幕显示内容等平面元素，必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换或修改后的元素在画面中的空间占比和边界框大小必须与原元素一致。\n7. 如果原视频中存在水印、平台标识、AI生成标记（如”豆包AI生成”等文字或Logo），必须在复刻时去除，不得保留任何水印信息。\n8. 复刻的视频要尽量减少 AI 感，人物、动作、镜头、光影、材质和环境细节都要更自然、更真实，避免塑料感、过度磨皮、虚假光泽、异常肢体、过度电影化和明显的 AI 生成痕迹。\n9. 如果视频中出现人物，必须重点观察并详细描述人物手部动作，包括手指、手腕、手掌与道具或挂画的接触方式、拿取方式、展开方式、扶持位置、发力方向和动作先后顺序，不得只笼统描述为”展示”或”操作”。\n10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：卷轴或卷筒沿轴向旋转，画布从卷筒中逐步释放并展开；不得描述成普通平面图片的滑动、平移或直接展开。${PAINTING_WOOD_BAR_OUTPUT_RULE}\n${subtitleClause}${characterRemixClause}`;
-  const enhancedBase = base.replace(
+  const durationLockedBase = base.replace(
+    VIDEO_CONTEXT_ISOLATION_RULE,
+    `${buildReverseDurationRule(options.durationSeconds, options.sourceDurationSeconds)}\n\n${VIDEO_CONTEXT_ISOLATION_RULE}`,
+  );
+  const enhancedBase = durationLockedBase.replace(
     '\n10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：',
     `\n10. ${VIDEO_LIVE_EYE_GAZE_RULE}\n11. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：`
   );
   if (!additionalChange?.trim()) return enhancedBase;
   return `${enhancedBase}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
 };
-const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, options?: { additionalChange?: string; includeSubtitles?: boolean; characterRemix?: string }) => {
+const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, options: { durationSeconds: number; sourceDurationSeconds: number; additionalChange?: string; includeSubtitles?: boolean; characterRemix?: string }) => {
   const additionalChange = options?.additionalChange;
   const includeSubtitles = options?.includeSubtitles ?? false;
   const characterRemixClause = buildCharacterRemixClause(options?.characterRemix);
@@ -655,6 +667,8 @@ const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, options?: { a
 2. 同时参考我上传的图片，把视频中的【${target}】替换成【${replacement}】。
 3. 替换时，${replacement}的外观、风格、质感要与我上传的参考图片保持一致。
 4. 除了被替换的元素外，视频中其他所有内容（场景、人物、动作、镜头运动、光影、色彩、节奏等）必须与原视频完全一致，不能有任何改变。
+
+${buildReverseDurationRule(options.durationSeconds, options.sourceDurationSeconds)}
 
 ${VIDEO_CONTEXT_ISOLATION_RULE}
 
@@ -766,10 +780,8 @@ function parsePaintingBatchRequestedCount(value: string): number | null {
 
 interface ReverseSeedanceSyncSnapshot {
   mode: Exclude<ReverseMode, 'painting'>;
-  sourceVideo: SelectedCreativeMedia | null;
   referenceImages: SelectedCreativeMedia[];
   requestedDuration?: number;
-  durationPromise?: Promise<number | null>;
 }
 
 function getSeedanceModelLabel(model: SeedanceModelId) {
@@ -896,14 +908,6 @@ function readVideoDuration(file: File): Promise<number> {
     };
     video.src = previewUrl;
   });
-}
-
-function extractVideoDurationFromPrompt(prompt: string): number | null {
-  const matches = Array.from(String(prompt || '').matchAll(
-    /(?:总时长|视频时长|目标视频总时长)\s*(?:必须严格为|约为|为|是|[：:])?\s*(\d{1,3})\s*秒/gi,
-  ));
-  const value = Number(matches.at(-1)?.[1]);
-  return Number.isFinite(value) && value > 0 ? Math.round(value) : null;
 }
 
 function createMessageId(prefix: string) {
@@ -2614,20 +2618,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     });
   }
 
-  function prepareVideoReversePrompt() {
+  async function prepareVideoReversePrompt() {
     if (reverseMode === 'image') {
       if (selectedMedia?.kind !== 'image') {
         setRequestError('请先上传一张图片，作为生成视频提示词的视觉基准。');
         return;
       }
       const durationSeconds = Number(imageToVideoDuration);
-      const maxDuration = seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15;
+      const { min: minDuration, max: maxDuration } = getVideoGenerationDurationLimits(seedanceModel);
       if (!imageToVideoDuration.trim()) {
         setRequestError('请填写图片生成视频的时长。');
         return;
       }
-      if (!Number.isInteger(durationSeconds) || durationSeconds < 4 || durationSeconds > maxDuration) {
-        setRequestError(`请输入 4-${maxDuration} 之间的整数秒数。`);
+      if (!Number.isInteger(durationSeconds) || durationSeconds < minDuration || durationSeconds > maxDuration) {
+        setRequestError(`请输入 ${minDuration}-${maxDuration} 之间的整数秒数。`);
         return;
       }
       if (imageToVideoAddPainting && !imageToVideoPainting) {
@@ -2651,7 +2655,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       saveAdditionalChangeHistory(additionalChange);
       pendingReverseSeedanceSyncRef.current = {
         mode: 'image',
-        sourceVideo: null,
         referenceImages: [selectedMedia, imageToVideoAddPainting ? imageToVideoPainting : null]
           .filter((media): media is SelectedCreativeMedia => Boolean(media?.kind === 'image')),
         requestedDuration: durationSeconds,
@@ -2668,22 +2671,41 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
 
+    if (reverseMode === 'replace' && (!replaceTarget.trim() || !replaceWith.trim())) {
+      setRequestError('请填写需要替换的元素和目标元素');
+      return;
+    }
+
     const sourceVideo = selectedMedia?.kind === 'video' ? selectedMedia : null;
+    if (!sourceVideo) {
+      setRequestError('请先上传需要反推的视频。');
+      return;
+    }
+    let sourceDurationSeconds: number;
+    let durationSeconds: number;
+    try {
+      const sourceDuration = await readVideoDuration(sourceVideo.file);
+      sourceDurationSeconds = Math.round(sourceDuration);
+      durationSeconds = extractRequestedVideoDurationFromText(additionalChange) ?? sourceDurationSeconds;
+      const { min, max } = getVideoGenerationDurationLimits(seedanceModel);
+      if (!Number.isInteger(durationSeconds) || durationSeconds < min || durationSeconds > max) {
+        throw new Error(`本次目标时长为 ${durationSeconds} 秒，当前模型只支持 ${min}-${max} 秒，请调整“额外调整”中的时长或切换模型。`);
+      }
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : '无法读取源视频时长，请更换视频后重试。');
+      return;
+    }
+
+    // 先确定唯一权威时长；AI提示词和右侧生成参数始终共用这个整数值。
+    setSeedanceDuration(durationSeconds);
     pendingReverseSeedanceSyncRef.current = {
       mode: reverseMode === 'replace' ? 'replace' : 'direct',
-      sourceVideo,
       referenceImages: reverseMode === 'replace' && replaceImage ? [replaceImage] : [],
-      durationPromise: sourceVideo
-        ? readVideoDuration(sourceVideo.file).catch(() => null)
-        : undefined,
+      requestedDuration: durationSeconds,
     };
 
     if (reverseMode === 'replace') {
-      if (!replaceTarget.trim() || !replaceWith.trim()) {
-        setRequestError('请填写需要替换的元素和目标元素');
-        return;
-      }
-      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { additionalChange, includeSubtitles, characterRemix: characterRemixText });
+      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText });
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
@@ -2691,7 +2713,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       scrollToRef(textareaRef);
       handleSend(prompt);
     } else {
-      const prompt = VIDEO_REVERSE_PROMPT({ additionalChange, includeSubtitles, characterRemix: characterRemixText });
+      const prompt = VIDEO_REVERSE_PROMPT({ durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText });
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
@@ -2723,7 +2745,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setSeedancePromptHighlight(true);
     setTimeout(() => setSeedancePromptHighlight(false), 2000);
 
-    // 反推完成自动带出：时长（源视频真实时长向上取整）+ 参考图（元素替换 / 图片生视频）。
+    // 反推完成自动带出：时长（源视频真实时长四舍五入）+ 参考图（元素替换 / 图片生视频）。
     syncReverseMediaToSeedance();
   }
 
@@ -2747,29 +2769,24 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setSeedanceReferences(computeSeedanceReferencesWithImages(referenceImages));
     }
 
-    const maxDuration = seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15;
-    const promptDuration = extractVideoDurationFromPrompt(latestAssistantText);
+    const promptDuration = extractVideoGenerationDurationFromPrompt(latestAssistantText);
     const applyDuration = (duration: number | null | undefined) => {
-      if (!duration || !Number.isFinite(duration)) return false;
-      setSeedanceDuration(Math.min(maxDuration, Math.max(4, Math.ceil(duration))));
+      const normalizedDuration = normalizeVideoGenerationDuration(duration, seedanceModel);
+      if (!normalizedDuration) return false;
+      setSeedanceDuration(normalizedDuration);
       return true;
     };
 
-    if (snapshot?.requestedDuration) {
-      applyDuration(snapshot.requestedDuration);
+    // 右侧实际拿到的最终提示词是第一依据；AI漏写标准时长时，再回退到提交前锁定的目标值。
+    if (applyDuration(promptDuration)) {
       return;
     }
 
-    // 直接反推 / 元素替换优先使用源视频真实时长；读取失败时再从完整提示词提取。
-    const durationPromise = snapshot?.durationPromise
-      || (selectedMedia?.kind === 'video' ? readVideoDuration(selectedMedia.file).catch(() => null) : null);
-    if (durationPromise) {
-      void durationPromise.then((duration) => {
-        if (!applyDuration(duration) && !applyDuration(promptDuration)) {
-          setRequestError('提示词和参考图片已自动同步，但没有识别到有效视频时长，请手动选择时长。');
-        }
-      });
-    } else if (!applyDuration(promptDuration) && (activeMode === 'direct' || activeMode === 'replace')) {
+    if (applyDuration(snapshot?.requestedDuration)) {
+      return;
+    }
+
+    if (activeMode === 'direct' || activeMode === 'replace') {
       setRequestError('提示词和参考图片已自动同步，但没有识别到有效视频时长，请手动选择时长。');
     }
   }
@@ -3027,8 +3044,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
     const references = overrides?.references ?? seedanceReferences;
     const requestedDuration = overrides?.duration ?? seedanceDuration;
-    const minGenerationDuration = generationModel === 'wan3.0-video' ? 2 : 4;
-    const maxGenerationDuration = generationModel === 'doubao-seedance-2-5-260628' || generationModel === 'wan3.0-video' ? 30 : 15;
+    const { min: minGenerationDuration, max: maxGenerationDuration } = getVideoGenerationDurationLimits(generationModel);
     const duration = isVideoEdit ? -1 : Math.round(requestedDuration);
 
     if (!isVideoEdit && !(getSeedanceResolutions(generationModel) as readonly string[]).includes(generationResolution)) {
@@ -6219,20 +6235,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         视频时长（秒）<span className="ml-1 text-red-500">必填</span>
                       </label>
                       <span className="text-[10px] font-semibold text-slate-400">
-                        当前模型支持 4-{seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15} 秒
+                        当前模型支持 {getVideoGenerationDurationLimits(seedanceModel).min}-{getVideoGenerationDurationLimits(seedanceModel).max} 秒
                       </span>
                     </div>
                     <input
                       id="image-to-video-duration"
                       type="number"
-                      min={4}
-                      max={seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15}
+                      min={getVideoGenerationDurationLimits(seedanceModel).min}
+                      max={getVideoGenerationDurationLimits(seedanceModel).max}
                       step={1}
                       inputMode="numeric"
                       required
                       value={imageToVideoDuration}
                       onChange={(event) => setImageToVideoDuration(event.target.value)}
-                      placeholder={`请输入 4-${seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15} 之间的整数`}
+                      placeholder={`请输入 ${getVideoGenerationDurationLimits(seedanceModel).min}-${getVideoGenerationDurationLimits(seedanceModel).max} 之间的整数`}
                       disabled={isLoading}
                       className="mt-2 w-full rounded-xl border border-indigo-100 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
                     />

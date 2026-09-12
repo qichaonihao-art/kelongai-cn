@@ -31,6 +31,62 @@ interface CreativeConfigStatus {
 
 export type CreativeReverseModel = 'doubao' | 'qwen';
 
+export function getVideoGenerationDurationLimits(model: string) {
+  return model === 'wan3.0-video'
+    ? { min: 2, max: 30 }
+    : model === 'doubao-seedance-2-5-260628'
+      ? { min: 4, max: 30 }
+      : { min: 4, max: 15 };
+}
+
+export function normalizeVideoGenerationDuration(value: unknown, model: string): number | null {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  const { min, max } = getVideoGenerationDurationLimits(model);
+  const rounded = Math.round(seconds);
+  return rounded >= min && rounded <= max ? rounded : null;
+}
+
+export function extractVideoGenerationDurationFromPrompt(prompt: string): number | null {
+  const source = String(prompt || '');
+  const candidates: Array<{ index: number; seconds: number }> = [];
+  const patterns = [
+    /(?:目标视频总时长|新视频总时长|成片总时长|视频总时长|总时长|视频时长|成片时长|最终时长|目标时长|视频长度|成片长度)\s*(?:必须严格(?:控制)?为|严格为|设置为|设定为|调整为|改成|延长到|缩短到|控制在|约为|为|是|到|[：:])?\s*(\d{1,3}(?:\.\d+)?)\s*(?:秒钟?|s(?:ec(?:onds?)?)?)/gi,
+    /(?:最终视频|新视频|成片|全片)\s*(?:设置|设定|调整|修改|改成|制作|做成|控制)?\s*(?:到|至|为|成|[：:])?\s*(\d{1,3}(?:\.\d+)?)\s*(?:秒钟?|s(?:ec(?:onds?)?)?)/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const seconds = Number(match[1]);
+      if (Number.isFinite(seconds) && seconds > 0) {
+        candidates.push({ index: match.index ?? 0, seconds: Math.round(seconds) });
+      }
+    }
+  }
+  candidates.sort((left, right) => left.index - right.index);
+  return candidates.at(-1)?.seconds ?? null;
+}
+
+export function extractRequestedVideoDurationFromText(text: string): number | null {
+  const source = String(text || '');
+  const candidates: Array<{ index: number; seconds: number }> = [];
+  const patterns = [
+    /(?:总时长|视频时长|成片时长|最终时长|目标时长)\s*(?:必须严格(?:控制)?为|设置|设定|调整|修改|改成|延长|缩短|控制|约为|为|到|至|成|是|[：:])?\s*(\d{1,3}(?:\.\d+)?)\s*秒/gi,
+    /(?:新视频|最终视频|生成视频|生成的视频|成片)(?:的)?(?:总时长|时长|时间)?\s*(?:设置|设定|调整|修改|改成|延长|缩短|制作|做成|控制)?\s*(?:到|至|为|成|[：:])?\s*(\d{1,3}(?:\.\d+)?)\s*秒/gi,
+    /(?:延长|缩短)(?:新视频|最终视频|视频|成片)?(?:的)?(?:总时长|时长|时间)?\s*(?:到|至|为|成|[：:])\s*(\d{1,3}(?:\.\d+)?)\s*秒/gi,
+    /(?:做成|制作成|生成为?)\s*(?:一个|一条)?\s*(\d{1,3}(?:\.\d+)?)\s*秒(?:钟)?(?:的)?(?:新视频|视频|成片)/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const seconds = Number(match[1]);
+      if (Number.isFinite(seconds) && seconds > 0) {
+        candidates.push({ index: match.index ?? 0, seconds: Math.round(seconds) });
+      }
+    }
+  }
+  candidates.sort((left, right) => left.index - right.index);
+  return candidates.at(-1)?.seconds ?? null;
+}
+
 export interface SeedanceTaskResult {
   ok: boolean;
   taskId: string;
