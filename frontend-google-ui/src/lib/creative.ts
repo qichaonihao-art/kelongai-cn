@@ -1464,15 +1464,32 @@ export async function setPaintingFolderBinding(options: {
   };
 }
 
+/**
+ * 【人物说话：是/否】标记的权威措辞。提示词模板必须插值这里的字符串，
+ * 不要另抄字面量——正则与提示词一旦不一致，解析会静默返回 null（等同「旧记录」），
+ * 功能会无声失效且没有任何报错。
+ */
+export const HUMAN_SPEECH_MARKER_TOKENS = {
+  yes: '【人物说话：是】',
+  no: '【人物说话：否】',
+} as const;
+
+// 宽松解析：容忍半角冒号、空白。HUMAN_SPEECH_MARKER_TOKENS 是提示词要求 AI 输出的规范写法，
+// 改 tokens 就必须同步改下面的正则，反之亦然（否则解析静默返回 null、功能无声失效）。
 const HUMAN_SPEECH_MARKER_PATTERN = /【\s*人物说话\s*[：:]\s*(是|否)\s*】/;
 
 // 只匹配独占一行的标记（允许行首行尾空白），用于整行删除
 const HUMAN_SPEECH_MARKER_LINE_PATTERN = /^[^\S\n]*【\s*人物说话\s*[：:]\s*(?:是|否)\s*】[^\S\n]*\n?/gm;
 
 /**
- * 读取反推结果里的【人物说话：是/否】标记。
+ * 读取反推结果里的【人物说话：是/否】标记（宽松解析，容忍半角冒号与空白）。
  * 返回 null 表示没找到标记（改造前的历史记录，或 AI 未按格式输出），
  * 此时调用方不应改动声音开关，避免误关掉用户需要的声音。
+ *
+ * 与 HUMAN_SPEECH_MARKER_TOKENS 双向耦合：tokens 是提示词要求 AI 输出的规范写法，
+ * 本函数及 stripHumanSpeechMarker 据此解析。改任何一处的措辞必须同步另一处，
+ * 否则解析会静默返回 null、功能无声失效。Task 3 会在 CreativeCreationPage.tsx
+ * 的 HUMAN_SPEECH_MARKER_RULE 常量里插值这些 tokens。
  */
 export function extractHumanSpeechMarker(text: string): boolean | null {
   const match = HUMAN_SPEECH_MARKER_PATTERN.exec(String(text || ''));
@@ -1483,6 +1500,9 @@ export function extractHumanSpeechMarker(text: string): boolean | null {
 /**
  * 删除标记，用于把反推结果填进右侧提示词框之前做清理。
  * 先删独占一行的标记（连同换行），再清掉同行内联残留，最后收敛空行。
+ *
+ * 与 HUMAN_SPEECH_MARKER_TOKENS 双向耦合（同 extractHumanSpeechMarker），
+ * 正则措辞需与 tokens 一致。三个正则保持独立字面量、不合并成共享 RegExp 对象。
  */
 export function stripHumanSpeechMarker(text: string): string {
   return String(text || '')
