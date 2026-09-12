@@ -74,10 +74,26 @@ assert.ok(
   pageSource.includes('${HUMAN_SPEECH_MARKER_TOKENS.yes}') && pageSource.includes('${HUMAN_SPEECH_MARKER_TOKENS.no}'),
   '提示词规则必须插值 HUMAN_SPEECH_MARKER_TOKENS，不得手抄标记字面量',
 );
-assert.equal(pageSource.includes('人物说话'), false, '页面里不得出现手抄的标记字面量');
+// 禁的是「手抄的标记本身」，不是这四个字出现的任何场合——散文里提一句判定标准的措辞是合法的。
+assert.equal(/【\s*人物说话\s*[：:]\s*[是否]/.test(pageSource), false, '页面里不得出现手抄的标记字面量');
 // 锚在模板字面量前缀 `${` 上，而不是裸的 HUMAN_SPEECH_MARKER_RULE(——后者在规则被改成
 // function 声明时也会命中定义行，计数变 4，而失败信息会误导人把数字改成 4（于是掩盖真实的删除）。
 const ruleCallSites = pageSource.split('${HUMAN_SPEECH_MARKER_RULE(').length - 1;
 assert.equal(ruleCallSites, 3, '三个反推模板（直接反推／元素替换／图片生视频）应各插值一次标记规则；新增模式时同步更新此处');
+
+// 源码级断言：接入点那三行。决策真值表全绿也拦不住接线写错——把 `!== null` 改成真值判断，
+// 上面 13 条断言一条都不会红，而用户需求里「无人声就关掉」那一半已经没了。
+assert.ok(
+  pageSource.includes('if (nextGenerateAudio !== null)'),
+  '自动设置必须判 !== null：false 是明确的「关」，真值判断会丢掉这一支',
+);
+assert.ok(
+  pageSource.includes('extractHumanSpeechMarker(latestAssistantText)'),
+  '人声标记必须从原始文本取，不能用 strip 之后的输出（strip 已经把它删了）',
+);
+assert.ok(
+  pageSource.includes('setSeedancePrompt(stripHumanSpeechMarker(formatted))'),
+  '填框前必须清掉标记行，不能把标记发给视频模型',
+);
 
 console.log('前端人声标记测试通过：标记三态解析、标记行清理、声音开关决策真值表。无真实网络调用。');
