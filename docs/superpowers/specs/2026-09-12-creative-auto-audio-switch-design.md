@@ -106,10 +106,14 @@ export function resolveAutoAudioSetting(options: {
 
 | 条件 | 返回 | 理由 |
 |---|---|---|
-| `mode === 'painting'` | `null` | 第四个模块不在范围内，与 `syncReverseMediaToSeedance()` 中现有的 `if (activeMode === 'painting') return;` 保持一致 |
+| `mode` 不在 `{direct, replace, image}` 内 | `null` | 第四个反推模式「装饰画创意素材」不在范围内，与 `syncReverseMediaToSeedance()` 中现有的 `if (activeMode === 'painting') return;` 保持一致 |
 | `model === 'MiniMax-H3'` | `null` | 该模型音轨随模型，声音按钮本就 `disabled`，改了也不生效 |
-| `hasSpeech === null` | `null`，不猜 | 历史记录和格式异常时保持现状，避免误关掉用户需要的声音 |
+| `typeof hasSpeech !== 'boolean'` | `null`，不猜 | 历史记录和格式异常时保持现状，避免误关掉用户需要的声音 |
 | `hasSpeech === true` / `false` | `true` / `false` | 本期唯一的行为 |
+
+**第一行用放行式（allow-list）而不是排除式。** `null` 的语义就是「超出范围」，而将来新增的反推模式**按定义**就是超出范围的。排除式（只判 `painting`）会把新增模式静默放进自动设置分支；放行式让它落到安全默认 `null`，即保持用户的手动设置——也就是本功能上线前的状态。代价不对称，取安全的一侧。
+
+**第三行用 `typeof` 而不是 `=== null || === undefined` 两连判。** 后者在声明的参数类型下 `undefined` 那一支不可达（唯一生产者 `extractHumanSpeechMarker` 返回 `boolean | null`），也测不到。`typeof` 一句同时涵盖两者，并且让声明的返回类型 `boolean | null` 按构造成立——`return hasSpeech` 在这一行之后必然是 `boolean`。
 
 组件侧只保留三行：拿到返回值，非 `null` 才调 `setSeedanceGenerateAudio`。
 
