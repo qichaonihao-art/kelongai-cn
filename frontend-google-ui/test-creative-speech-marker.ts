@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS } from './src/lib/creative';
+import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, resolveAutoAudioSetting } from './src/lib/creative';
 
 // extractHumanSpeechMarker：三态
 assert.equal(extractHumanSpeechMarker('【人物说话：是】\n一、核心主体信息'), true);
@@ -42,4 +42,23 @@ assert.equal(stripHumanSpeechMarker('正文\r\n【人物说话：否】\r\n结�
 // 只有标记、没有其它内容
 assert.equal(stripHumanSpeechMarker('【人物说话：是】'), '');
 
-console.log('前端人声标记测试通过：标记三态解析、标记行清理。无真实网络调用。');
+// resolveAutoAudioSetting：真值表
+const MODEL = 'doubao-seedance-2-5-260628';
+assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'direct', model: MODEL }), true);
+assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'direct', model: MODEL }), false);
+assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'replace', model: MODEL }), true);
+assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'replace', model: MODEL }), false);
+assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'image', model: MODEL }), true);
+assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'image', model: MODEL }), false);
+// 第四个模块不参与
+assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'painting', model: MODEL }), null);
+assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'painting', model: MODEL }), null);
+// H3 音轨随模型，按钮本就是禁用的
+assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'direct', model: 'MiniMax-H3' }), null);
+assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'direct', model: 'MiniMax-H3' }), null);
+// 没读到标记就不猜
+assert.equal(resolveAutoAudioSetting({ hasSpeech: null, mode: 'direct', model: MODEL }), null);
+assert.equal(resolveAutoAudioSetting({ hasSpeech: null, mode: 'replace', model: MODEL }), null);
+assert.equal(resolveAutoAudioSetting({ hasSpeech: null, mode: 'image', model: MODEL }), null);
+
+console.log('前端人声标记测试通过：标记三态解析、标记行清理、声音开关决策真值表。无真实网络调用。');
