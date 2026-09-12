@@ -150,21 +150,21 @@ export function resolveAutoAudioSetting(options: {
 
 `AutoAudioReverseMode` 与页面里的 `ReverseMode` 是同构联合类型，页面的 `reverseMode` 可直接传入，无需类型断言。
 
-**明确不调用 `rememberManualSeedancePreference()`**：该函数会把设置写进 `localStorage` 并覆盖 `normalSeedanceSettingsRef`。自动判定如果写进去，一条恰好有人说话的提示词就会把用户的全局默认永久改成「开声音」。自动结果只作用于当前这次任务的状态。
+**明确不调用 `rememberManualSeedancePreference()`**：该函数会把设置写进 `localStorage` 并覆盖 `normalSeedanceSettingsRef`。自动判定如果写进去，一条恰好有人说话的提示词就会把用户的全局默认永久改成「开声音」。自动结果不落盘。
+
+（注意措辞：是「不落盘」，不是「只作用于当前这次任务」。`switchSeedanceTaskMode` 进入 `video-edit-painting` 时会把当时的开关值存进 `normalSeedanceSettingsRef`、退出时还原，所以自动值在会话内可以活过「这次任务」。真正成立且重要的是不写入 `localStorage`。）
 
 ### 4. 接入点
 
-`syncLatestPromptToSeedance()`（约 2726 行）是唯一接入点——自动同步（`useEffect` 里 `autoSyncToSeedanceRef` 命中时）和手动点「同步最新提示词」按钮都走这里。
+`syncLatestPromptToSeedance()`（约 2743 行）是唯一接入点——自动同步（`useEffect` 里 `autoSyncToSeedanceRef` 命中时）和手动点「同步最新提示词」按钮都走这里。
 
-执行顺序（**顺序有硬性要求**）：
+执行顺序：
 
-1. `const activeMode = pendingReverseSeedanceSyncRef.current?.mode || reverseMode;` —— 必须在第 4 步之前读。`syncReverseMediaToSeedance()` 一进来就执行 `pendingReverseSeedanceSyncRef.current = null`，读完再调它就取不到了。这是本次改动最容易踩的坑。
-2. `const hasSpeech = extractHumanSpeechMarker(latestAssistantText);` —— 用原始文本判定，先算，避免 strip 影响匹配。
-3. `setSeedancePrompt(stripHumanSpeechMarker(formatted));` —— 右侧输入框不含标记行。
-4. `applyAutoAudioSetting(hasSpeech, activeMode);` —— 设置开关。
-5. `syncReverseMediaToSeedance();` —— 现有调用，保持在最后。
-
-第 4 步的实际代码：
+1. `const snapshot = pendingReverseSeedanceSyncRef.current; pendingReverseSeedanceSyncRef.current = null;` —— 快照在这里**读一次并就地清空**，位置在 `!latestAssistantText` 早退之后（早退不该消费快照）。
+2. `const activeMode = snapshot?.mode || reverseMode;` —— 从上面那个快照推导，不重复读 ref。
+3. `const hasSpeech = extractHumanSpeechMarker(latestAssistantText);` —— 必须用**原始文本**判定，不能用 strip 之后的输出（strip 已经把标记删掉了）。
+4. `setSeedancePrompt(stripHumanSpeechMarker(formatted));` —— 右侧输入框不含标记行。
+5. 设置开关：
 
 ```ts
 const nextGenerateAudio = resolveAutoAudioSetting({ hasSpeech, mode: activeMode, model: seedanceModel });
@@ -173,7 +173,13 @@ if (nextGenerateAudio !== null) {
 }
 ```
 
-`activeMode` 的取值方式与 `syncReverseMediaToSeedance()` 内部完全一致，不引入第二套口径。
+6. `syncReverseMediaToSeedance(snapshot);` —— 现有调用，保持在最后，并把**同一个快照**传进去。
+
+**为什么快照只读一次。** 最初的实现是调用方读一次、被调方自己再读一次，两者靠一句注释维持一致——而 `syncReverseMediaToSeedance()` 当时一进来就清空 ref，使调用方的读取顺序成为隐式约束：任何一次调换两条相邻语句，都会静默判错模块，正是本功能设计上要避免的失效类型。改成传快照后，ref 只有一处读、一处写，顺序依赖**从结构上消失**。被调方因此接收 `snapshot: ReverseSeedanceSyncSnapshot | null`（正是该 ref 的声明类型，无需断言），函数体其余部分逐字不变。
+
+**`!== null` 不能简写成 `if (nextGenerateAudio)`。** `false` 是明确的「关」，真值判断会把「无人声」这一支悄悄丢掉——而那正是用户需求的一半。这是最容易被「顺手清理」掉的一处，因此由测试源码断言钉住。
+
+`activeMode` 的取值只此一处，不再有第二套口径；被调方拿到的是已经算好的快照。
 
 ### 5. 用户可见行为
 
