@@ -2775,8 +2775,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     // 按素材里有没有人声开口自动设置「生成声音」，自动判定只改当前开关，不写入本地记忆。
     // 【明确不调用 rememberManualSeedancePreference()】那个函数会把设置写进 localStorage
     // 并覆盖 normalSeedanceSettingsRef；自动判定一旦写进去，一条恰好有人声的提示词就会把
-    // 用户的全局默认永久改成「开声音」。自动结果不落盘。
-    // nextGenerateAudio 为 null 表示不表态（历史记录、AI 未按格式输出、该模式不适用），
+    // 用户的全局默认永久改成「开声音」。
+    // nextGenerateAudio 为 null 表示不表态（历史记录、AI 未按格式输出、该模式不适用、H3 模型），
     // 保持用户设置；false 是明确的「关」。所以这里必须判 !== null，不能简写成 if (x)。
     const nextGenerateAudio = resolveAutoAudioSetting({ hasSpeech, mode: activeMode, model: seedanceModel });
     if (nextGenerateAudio !== null) {
