@@ -1463,3 +1463,31 @@ export async function setPaintingFolderBinding(options: {
     folderName: String(json?.folderName || ''),
   };
 }
+
+const HUMAN_SPEECH_MARKER_PATTERN = /【\s*人物说话\s*[：:]\s*(是|否)\s*】/;
+
+// 只匹配独占一行的标记（允许行首行尾空白），用于整行删除
+const HUMAN_SPEECH_MARKER_LINE_PATTERN = /^[^\S\n]*【\s*人物说话\s*[：:]\s*(?:是|否)\s*】[^\S\n]*\n?/gm;
+
+/**
+ * 读取反推结果里的【人物说话：是/否】标记。
+ * 返回 null 表示没找到标记（改造前的历史记录，或 AI 未按格式输出），
+ * 此时调用方不应改动声音开关，避免误关掉用户需要的声音。
+ */
+export function extractHumanSpeechMarker(text: string): boolean | null {
+  const match = HUMAN_SPEECH_MARKER_PATTERN.exec(String(text || ''));
+  if (!match) return null;
+  return match[1] === '是';
+}
+
+/**
+ * 删除标记，用于把反推结果填进右侧提示词框之前做清理。
+ * 先删独占一行的标记（连同换行），再清掉同行内联残留，最后收敛空行。
+ */
+export function stripHumanSpeechMarker(text: string): string {
+  return String(text || '')
+    .replace(HUMAN_SPEECH_MARKER_LINE_PATTERN, '')
+    .replace(/【\s*人物说话\s*[：:]\s*(?:是|否)\s*】/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
