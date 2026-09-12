@@ -158,7 +158,7 @@ if (nextGenerateAudio !== null) {
 5. **手动覆盖**：自动设置后手动点一次开关，确认点击生效且不被再次同步覆盖（同步只在点击时发生）。
 6. **MiniMax-H3**：切到该模型后同步，确认不报错、开关状态不被改动。
 7. `cd frontend-google-ui && node --import tsx test-creative-speech-marker.ts` 通过，输出 `前端人声标记测试通过：...`。
-8. `cd frontend-google-ui && npm run lint && npm run build` 通过。
+8. `cd frontend-google-ui && npm run build` 通过。`npm run lint` 在本仓库改动前就有 11 个既存错误（详见实施计划的前置说明），验收标准是**不新增错误**，不是全绿。
 
 ## 风险与兜底
 

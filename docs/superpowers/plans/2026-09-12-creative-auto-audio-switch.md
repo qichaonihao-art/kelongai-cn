@@ -19,6 +19,33 @@
 - 本仓库没有测试框架。测试脚本放在 `frontend-google-ui/` 根目录，命名 `test-*.ts`，用 `node --import tsx test-xxx.ts` 直接运行，风格对齐 `test-sticker-creative.ts`。
 - `tsconfig.json` 没有 `include`/`exclude`，`npm run lint`（即 `tsc --noEmit`）会检查测试脚本，所以测试脚本必须类型正确。
 
+### ⚠️ lint 门禁：`npm run lint` 在本仓库**本来就不是干净的**
+
+开工前（commit `ab333dd`，未包含本次任何改动）跑 `npm run lint` 就有 11 个既存错误，分布如下：
+
+```
+4  src/pages/DouyinDownloaderPage.tsx  TS2339  Property 'hasAudio' does not exist on type '{ url: string; }'.
+4  src/pages/CreativeCreationPage.tsx   TS2769  No overload matches this call.
+1  src/pages/CreativeCreationPage.tsx   TS2322  Type '(forceQuestion?: string) => void' is not assignable to 'MouseEventHandler<HTMLButtonElement>'.
+1  src/pages/DouyinDownloaderPage.tsx   TS2322  AnimatePresence className 不存在
+1  test-video-library-local.ts         TS2741  Property 'shotRole' is missing in type 'VideoLibraryItem'
+```
+
+**因此本计划中所有 lint 步骤的正确验收标准不是「无输出」，而是「与基线相比不新增错误」。** 上方列表就是基线。Task 3 和 Task 4 会修改 `CreativeCreationPage.tsx` 并插入新行，既存错误的**行号会漂移**，所以比对时必须剥掉 `(行,列)` 再比，不能按行号比。
+
+**不要顺手修这些既存错误。** 它们与本次功能无关，修它们属于计划外的重构，会让 diff 无法审查。
+
+基线比对命令（任意 task 完成后都可复跑）：
+
+```bash
+cd frontend-google-ui
+npm run lint 2>&1 | grep -E "^[a-zA-Z].*\.tsx?\(" | sed -E 's/\([0-9]+,[0-9]+\)//' | sort | uniq -c | sort -rn
+```
+
+把输出与基线列表逐行对照，必须完全一致。多出任何一行 = 本次改动引入了新类型错误，必须修掉。
+
+`npm run build` 不受影响：`package.json` 的 `build` 是纯 `vite build`，不跑 `tsc`，所以构建成功仍是有效的独立门禁。
+
 ---
 
 ## 文件结构
@@ -120,9 +147,9 @@ Expected: PASS，输出 `前端人声标记测试通过：标记三态解析、�
 
 - [ ] **Step 5: 类型检查**
 
-Run: `cd frontend-google-ui && npm run lint`
+Run: `cd frontend-google-ui && npm run lint 2>&1 | grep -E "^[a-zA-Z].*\.tsx?\(" | sed -E 's/\([0-9]+,[0-9]+\)//' | sort | uniq -c | sort -rn`
 
-Expected: 无输出（`tsc --noEmit` 通过）。
+Expected: 输出与前置说明里的基线**完全一致**（11 个既存错误，不含本任务的文件）。本任务新增的两个文件不得出现在输出里。
 
 - [ ] **Step 6: 提交**
 
@@ -220,9 +247,9 @@ Expected: PASS，输出 `前端人声标记测试通过：标记三态解析、�
 
 - [ ] **Step 5: 类型检查**
 
-Run: `cd frontend-google-ui && npm run lint`
+Run: `cd frontend-google-ui && npm run lint 2>&1 | grep -E "^[a-zA-Z].*\.tsx?\(" | sed -E 's/\([0-9]+,[0-9]+\)//' | sort | uniq -c | sort -rn`
 
-Expected: 无输出。
+Expected: 输出与前置说明里的基线完全一致。新增的文件不得出现在输出里。
 
 - [ ] **Step 6: 提交**
 
@@ -309,9 +336,9 @@ Expected: `4` —— 1 处常量定义 + 3 处模板插值。
 
 - [ ] **Step 6: 类型检查**
 
-Run: `cd frontend-google-ui && npm run lint`
+Run: `cd frontend-google-ui && npm run lint 2>&1 | grep -E "^[a-zA-Z].*\.tsx?\(" | sed -E 's/\([0-9]+,[0-9]+\)//' | sort | uniq -c | sort -rn`
 
-Expected: 无输出。
+Expected: 输出与前置说明里的基线**完全一致**。`CreativeCreationPage.tsx` 本来就贡献 4× TS2769 + 1× TS2322，插入新行后行号会漂移，所以剥掉行列号比对——条数和内容都不能变。
 
 - [ ] **Step 7: 提交**
 
@@ -396,9 +423,13 @@ Expected: 依次能看到 —— 早退块 → `const activeMode = ...` → `con
 
 - [ ] **Step 6: 类型检查**
 
-Run: `cd frontend-google-ui && npm run lint`
+Run: `cd frontend-google-ui && npm run lint 2>&1 | grep -E "^[a-zA-Z].*\.tsx?\(" | sed -E 's/\([0-9]+,[0-9]+\)//' | sort | uniq -c | sort -rn`
 
-Expected: 无输出。若报 `activeMode` 类型不匹配，检查是否误改成了 `as` 断言——`ReverseMode` 与 `AutoAudioReverseMode` 是同构联合类型，不需要断言，直接传即可。
+Expected: 输出与前置说明里的基线**完全一致**（`CreativeCreationPage.tsx` 仍是 4× TS2769 + 1× TS2322，行号漂移不算变化）。多出任何一行就是本次改动引入的新类型错误。若新错误是 `activeMode` 类型不匹配，检查是否误改成了 `as` 断言——`ReverseMode` 与 `AutoAudioReverseMode` 是同构联合类型，不需要断言，直接传即可。
+
+- [ ] **Step 6b: 确认没顺手去修无关的既存错误**
+
+**不要**为了让 lint 变干净去修那些既存错误。它们与本次功能无关，修了会让 diff 无法审查。本次改动只允许新增自己那一段代码。
 
 - [ ] **Step 7: 构建**
 
