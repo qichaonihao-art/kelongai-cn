@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, resolveAutoAudioSetting, type AutoAudioReverseMode } from './src/lib/creative';
 
 // extractHumanSpeechMarker：三态
@@ -64,5 +65,17 @@ assert.equal(resolveAutoAudioSetting({ hasSpeech: null, mode: 'image', model: MO
 assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'unknown' as AutoAudioReverseMode, model: MODEL }), null);
 // 非布尔值（未按类型调用）一律不猜
 assert.equal(resolveAutoAudioSetting({ hasSpeech: undefined as unknown as null, mode: 'direct', model: MODEL }), null);
+
+// 源码级断言：提示词模板必须插值权威 token，不得手抄字面量。
+// 这个耦合失败时是静默的——解析返回 null 等同「旧记录」，功能无声失效、不报错。
+// 改动 CreativeCreationPage.tsx 的提示词文案时如果手抄了标记文字，这里会先红。
+const pageSource = readFileSync(new URL('./src/pages/CreativeCreationPage.tsx', import.meta.url), 'utf8');
+assert.ok(
+  pageSource.includes('${HUMAN_SPEECH_MARKER_TOKENS.yes}') && pageSource.includes('${HUMAN_SPEECH_MARKER_TOKENS.no}'),
+  '提示词规则必须插值 HUMAN_SPEECH_MARKER_TOKENS，不得手抄标记字面量',
+);
+assert.equal(pageSource.includes('人物说话'), false, '页面里不得出现手抄的标记字面量');
+const ruleCallSites = pageSource.split('HUMAN_SPEECH_MARKER_RULE(').length - 1;
+assert.equal(ruleCallSites, 3, '三个反推模板（直接反推／元素替换／图片生视频）应各插值一次标记规则；新增模式时同步更新此处');
 
 console.log('前端人声标记测试通过：标记三态解析、标记行清理、声音开关决策真值表。无真实网络调用。');
