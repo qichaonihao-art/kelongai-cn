@@ -74,8 +74,11 @@ import {
   setPaintingFolderBinding,
   getPaintingUsedDirections,
   HUMAN_SPEECH_MARKER_TOKENS,
+  DIALOGUE_MARKER_TOKENS,
   extractHumanSpeechMarker,
   stripHumanSpeechMarker,
+  extractDialogueLines,
+  stripReverseMarkers,
   resolveAutoAudioSetting,
   sha256File,
   type CreativeReverseModel,
@@ -220,9 +223,11 @@ interface AdditionalChangeHistoryItem {
   createdAt: number;
 }
 
+type TextHighlightTone = 'replace' | 'dialogue';
+
 interface TextHighlightState {
   text: string;
-  ranges: Array<{ start: number; end: number }>;
+  ranges: Array<{ start: number; end: number; tone: TextHighlightTone }>;
 }
 
 type HistoryPreviewItem = UploadHistoryPreviewItem & {
@@ -525,7 +530,7 @@ function replaceAllWithHighlightRanges(source: string, search: string, replaceme
     const start = text.length;
     text += replacement;
     if (replacement) {
-      ranges.push({ start, end: start + replacement.length });
+      ranges.push({ start, end: start + replacement.length, tone: 'replace' });
     }
     count += 1;
     cursor = index + search.length;
@@ -539,26 +544,33 @@ function replaceAllWithHighlightRanges(source: string, search: string, replaceme
   return { text, count, ranges };
 }
 
+// 台词走浅绿（用户要的），元素替换走琥珀——两者语义不同，
+// 而元素替换模式下会同时出现，撞色就分不出谁是谁了。
+const HIGHLIGHT_TONE_CLASS: Record<TextHighlightTone, string> = {
+  dialogue: 'bg-emerald-200/80 text-emerald-900 ring-emerald-300/70',
+  replace: 'bg-amber-200/80 text-amber-900 ring-amber-300/70',
+};
+
 function renderHighlightedText(state: TextHighlightState | null) {
   if (!state) return null;
   if (state.ranges.length === 0) return state.text;
 
-  const parts: Array<{ text: string; highlighted: boolean; key: string }> = [];
+  const parts: Array<{ text: string; tone: TextHighlightTone | null; key: string }> = [];
   let cursor = 0;
   state.ranges.forEach((range, index) => {
     if (range.start > cursor) {
-      parts.push({ text: state.text.slice(cursor, range.start), highlighted: false, key: `plain_${index}` });
+      parts.push({ text: state.text.slice(cursor, range.start), tone: null, key: `plain_${index}` });
     }
-    parts.push({ text: state.text.slice(range.start, range.end), highlighted: true, key: `hit_${index}` });
+    parts.push({ text: state.text.slice(range.start, range.end), tone: range.tone, key: `hit_${index}` });
     cursor = range.end;
   });
   if (cursor < state.text.length) {
-    parts.push({ text: state.text.slice(cursor), highlighted: false, key: 'plain_tail' });
+    parts.push({ text: state.text.slice(cursor), tone: null, key: 'plain_tail' });
   }
 
   return parts.map((part) => (
-    part.highlighted ? (
-      <mark key={part.key} className="rounded bg-emerald-200/80 px-0.5 font-bold text-emerald-900 ring-1 ring-emerald-300/70">
+    part.tone ? (
+      <mark key={part.key} className={cn('rounded px-0.5 font-bold ring-1', HIGHLIGHT_TONE_CLASS[part.tone])}>
         {part.text}
       </mark>
     ) : (
@@ -623,7 +635,7 @@ function getSeedanceCostStats(): { daily: number; monthly: number; yearly: numbe
   }
 }
 
-const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n除第一行的人声判定标记外，请严格按照以上十二个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。最终完整提示词的最后必须单独使用标准格式写一行“总时长：X秒”，X必须与本条任务已经锁定的整数时长完全一致，不得另行估算。';
+const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n除开头标记区的人声判定与台词标记外，请严格按照以上十二个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。最终完整提示词的最后必须单独使用标准格式写一行“总时长：X秒”，X必须与本条任务已经锁定的整数时长完全一致，不得另行估算。';
 const VIDEO_CONTEXT_ISOLATION_RULE = '本次任务是完全独立的一次视频分析。只能基于当前上传的视频、当前上传的参考图片（如有）、本条指令中的替换要求、额外调整、人物改造要求和字幕选项进行判断。不得引用、继承、延续或假设任何历史会话、上一次视频、上一次替换目标、上一次参考图、旧提示词中的主体、道具、场景、动作、挂画、海报、装饰物、文字内容或风格要求。所有主体、道具、动作和场景元素必须来自当前视频可见内容或当前指令明确要求；如果当前视频中没有明确出现某元素，不得写入分析和最终提示词。';
 const VIDEO_LIVE_EYE_GAZE_RULE = '如果视频中出现人物，且正面或偏正面机位能明显看到人物眼神，必须重点描述人物眼神的真人感：眼睛不能一直僵硬睁着不动，需根据原视频状态写出自然眨眼、视线轻微移动、眼神聚焦变化、看向镜头或看向道具/画面的真实互动感，避免眼珠固定、空洞呆滞、假人感和 AI 式凝视。';
 const PAINTING_WOOD_BAR_RULE = '挂画上下两端的木条、挂轴或压杆必须严格以当前视频和参考图片中实际可见的结构为准，完整保持其形状、颜色、材质、粗细、长度、截面和两端轮廓，不得重新设计。滚动展开只改变画布的卷起与释放状态，不得把原有扁平或方形木条改成传统圆柱形卷轴、圆杆或转轴；不得在木条左右两端擅自增加圆球、葫芦头、轴头、端帽、把手或任何参考素材中不存在的圆柱形及装饰性构件。';
@@ -634,7 +646,7 @@ const PAINTING_WOOD_BAR_OUTPUT_RULE = `${PAINTING_WOOD_BAR_RULE} 如果当前素
 // 正常生效。所以标记文字只能插值 HUMAN_SPEECH_MARKER_TOKENS，不得另抄字面量；
 // test-creative-speech-marker.ts 用源码断言钉住了这一点，手抄会直接测试失败。
 // 判定标准随模式而异：视频看音轨里有没有人声，图片没有音轨，只能看画面里人物的说话状态。
-const HUMAN_SPEECH_MARKER_RULE = (criterion: string) => `【人声判定】必须在输出的第一行、且在“一、核心主体信息”之前，单独写一行机器可读标记：${HUMAN_SPEECH_MARKER_TOKENS.yes}或${HUMAN_SPEECH_MARKER_TOKENS.no}。判定标准：${criterion}这一行是给程序读取的，必须严格使用上述格式，不得改写措辞、不得添加其他字符。`;
+const HUMAN_SPEECH_MARKER_RULE = (criterion: string) => `【标记区】必须在输出的最开头、且在“一、核心主体信息”之前，连续若干行，每行一个机器可读标记，标记区中间不得夹带任何其他文字。第一行固定是：${HUMAN_SPEECH_MARKER_TOKENS.yes}或${HUMAN_SPEECH_MARKER_TOKENS.no}。判定标准：${criterion}第一行之后，如果素材里有人物说出口的台词（含旁白、画外音），就另起若干行、每句一行，逐句照抄台词原文，格式为${DIALOGUE_MARKER_TOKENS.prefix}台词原文${DIALOGUE_MARKER_TOKENS.suffix}；只写台词原文，不要写说话人、不要写语气、不要写动作描述，也不要把同一句拆成多行；没有台词就一行都不写，不要输出空标记。台词原文必须逐字照抄，不得改写、不得翻译、不得省略。标记区这些行是给程序读取的，必须严格使用上述格式，不得改写措辞、不得添加其他字符。`;
 
 const HUMAN_SPEECH_CRITERION_VIDEO = '只要素材中存在人声开口，包括人物台词、对话、口播、独白、旁白、画外音，无论画面中是否能看到人物张嘴，一律写“是”；只有纯背景音乐、纯环境音效、完全无声的素材才写“否”。';
 
@@ -1913,6 +1925,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [replaceText, setReplaceText] = useState("");
   const [replaceResult, setReplaceResult] = useState<string | null>(null);
   const [seedanceReplaceHighlight, setSeedanceReplaceHighlight] = useState<TextHighlightState | null>(null);
+  // 台词只存文本本身，位置每次从当前提示词重新算（见下面的 seedanceDialogueHighlight）。
+  // 元素替换存的是 text+ranges 快照、一改即清，两者语义不同所以分开存。
+  const [seedanceDialogueLines, setSeedanceDialogueLines] = useState<string[]>([]);
   const [seedancePromptScrollTop, setSeedancePromptScrollTop] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
@@ -1981,6 +1996,52 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setSeedanceReplaceHighlight(null);
     }
   }, [seedancePrompt, seedanceReplaceHighlight]);
+
+  // 台词高亮按当前提示词实时重算：用户改动右侧框时绿色跟着走，某句被删掉它自然就不标了。
+  // 这是「存文本、每次算位置」而不是「存位置快照」的原因——后者一改就失效。
+  const seedanceDialogueHighlight = useMemo<TextHighlightState | null>(() => {
+    if (seedanceDialogueLines.length === 0 || !seedancePrompt) return null;
+    const ranges: TextHighlightState['ranges'] = [];
+    for (const line of seedanceDialogueLines) {
+      let cursor = 0;
+      let index = seedancePrompt.indexOf(line, cursor);
+      while (index !== -1) {
+        ranges.push({ start: index, end: index + line.length, tone: 'dialogue' });
+        cursor = index + line.length;
+        index = seedancePrompt.indexOf(line, cursor);
+      }
+    }
+    if (ranges.length === 0) return null;
+    // 一句台词可能是另一句的子串（「欢迎」/「欢迎光临」），交集在渲染时会让切片错位，这里裁掉重叠。
+    ranges.sort((a, b) => a.start - b.start);
+    const merged: TextHighlightState['ranges'] = [];
+    for (const range of ranges) {
+      const last = merged[merged.length - 1];
+      if (last && range.start < last.end) continue;
+      merged.push(range);
+    }
+    return { text: seedancePrompt, ranges: merged };
+  }, [seedanceDialogueLines, seedancePrompt]);
+
+  // 叠加层渲染的必须是「当前提示词」这一份文本，否则上层 textarea 的文字被设成透明后
+  // 会整框看不见。元素替换的 range 只在快照仍与当前文本一致时才参与，正好由上面的
+  // effect 保证；这个 memo 再兜一次底，不满足就不进叠加层。
+  const seedanceOverlayHighlight = useMemo<TextHighlightState | null>(() => {
+    const ranges: TextHighlightState['ranges'] = [];
+    if (seedanceReplaceHighlight && seedanceReplaceHighlight.text === seedancePrompt) {
+      ranges.push(...seedanceReplaceHighlight.ranges);
+    }
+    if (seedanceDialogueHighlight) ranges.push(...seedanceDialogueHighlight.ranges);
+    if (ranges.length === 0) return null;
+    ranges.sort((a, b) => a.start - b.start);
+    const merged: TextHighlightState['ranges'] = [];
+    for (const range of ranges) {
+      const last = merged[merged.length - 1];
+      if (last && range.start < last.end) continue;
+      merged.push(range);
+    }
+    return { text: seedancePrompt, ranges: merged };
+  }, [seedanceReplaceHighlight, seedanceDialogueHighlight, seedancePrompt]);
 
   function scrollAnalysisToBottom() {
     requestAnimationFrame(() => {
@@ -2755,6 +2816,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const activeMode = snapshot?.mode || reverseMode;
     // 人声标记必须从原始文本里取，不能用 strip 之后的输出——strip 已经把它删掉了。
     const hasSpeech = extractHumanSpeechMarker(latestAssistantText);
+    // 台词同样从原始文本取（strip 之后标记就没了），供右侧框标绿用。
+    const dialogueLines = extractDialogueLines(latestAssistantText);
 
     // 格式化：在每个章节标题前插入一个空行，标题后紧跟正文不空行
     const formatted = latestAssistantText
@@ -2765,7 +2828,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
-    setSeedancePrompt(stripHumanSpeechMarker(formatted));
+    setSeedancePrompt(stripReverseMarkers(formatted));
+    setSeedanceDialogueLines(dialogueLines);
     setSeedanceReplaceHighlight(null);
     setSeedancePromptScrollTop(0);
     setRequestError("");
@@ -7023,13 +7087,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
                 {/* 提示词输入框 + 内部参考素材 */}
                 <div className="relative">
-                  {seedanceReplaceHighlight && (
+                  {seedanceOverlayHighlight && (
                     <div
                       className="pointer-events-none absolute inset-0 z-0 min-h-[280px] overflow-hidden rounded-xl bg-white p-4 pb-20 text-sm leading-7 text-slate-700 whitespace-pre-wrap"
                       aria-hidden="true"
                     >
                       <div style={{ transform: `translateY(-${seedancePromptScrollTop}px)` }}>
-                        {renderHighlightedText(seedanceReplaceHighlight)}
+                        {renderHighlightedText(seedanceOverlayHighlight)}
                       </div>
                     </div>
                   )}
@@ -7043,7 +7107,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     placeholder={seedanceTaskMode === 'video-edit-painting' ? '上传原视频和目标挂画后即可提交视频编辑任务' : '等待模块一反推出视频提示词...'}
                     className={cn(
                       "relative z-10 min-h-[280px] w-full resize-none rounded-xl border p-4 pb-20 text-sm leading-7 outline-none transition-all focus:border-violet-300 whitespace-pre-wrap",
-                      seedanceReplaceHighlight ? "bg-transparent text-transparent caret-slate-800 selection:bg-emerald-200/70" : "bg-white text-slate-700",
+                      // 透明只在叠加层确实渲染着同一份文本时才加：条件写成 seedanceReplaceHighlight
+                      // 会让「有台词但元素替换高亮为空」时文字整框隐形。
+                      seedanceOverlayHighlight ? "bg-transparent text-transparent caret-slate-800 selection:bg-emerald-200/70" : "bg-white text-slate-700",
                       seedancePromptHighlight ? "border-violet-400 ring-2 ring-violet-300" : "border-slate-300"
                     )}
                   />

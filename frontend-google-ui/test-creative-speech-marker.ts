@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, resolveAutoAudioSetting, type AutoAudioReverseMode } from './src/lib/creative';
+import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, extractDialogueLines, stripDialogueMarkers, stripReverseMarkers, DIALOGUE_MARKER_TOKENS, resolveAutoAudioSetting, type AutoAudioReverseMode } from './src/lib/creative';
 
 // extractHumanSpeechMarker：三态
 assert.equal(extractHumanSpeechMarker('【人物说话：是】\n一、核心主体信息'), true);
@@ -92,8 +92,74 @@ assert.ok(
   '人声标记必须从原始文本取，不能用 strip 之后的输出（strip 已经把它删了）',
 );
 assert.ok(
-  pageSource.includes('setSeedancePrompt(stripHumanSpeechMarker(formatted))'),
-  '填框前必须清掉标记行，不能把标记发给视频模型',
+  pageSource.includes('setSeedancePrompt(stripReverseMarkers(formatted))'),
+  '填框前必须清掉全部标记行（人声判定 + 台词），不能把标记发给视频模型',
+);
+assert.ok(
+  pageSource.includes('extractDialogueLines(latestAssistantText)'),
+  '台词必须从原始文本取，不能用 strip 之后的输出',
+);
+assert.ok(
+  pageSource.includes('const dialogueLines = extractDialogueLines(latestAssistantText)'),
+  '台词要在 strip 之前从原始文本抽出来',
+);
+assert.ok(
+  pageSource.includes('setSeedanceDialogueLines(dialogueLines)'),
+  '抽出来的台词必须写进 state，否则右侧框一句都不会标绿',
 );
 
-console.log('前端人声标记测试通过：标记三态解析、标记行清理、声音开关决策真值表。无真实网络调用。');
+// ---------------------------------------------------------------------------
+// 台词标记
+// ---------------------------------------------------------------------------
+
+assert.deepEqual(extractDialogueLines('【台词：欢迎光临】\n一、核心主体信息'), ['欢迎光临']);
+assert.deepEqual(
+  extractDialogueLines('【人物说话：是】\n【台词：欢迎光临】\n【台词：您稍等】\n一、核心主体信息'),
+  ['欢迎光临', '您稍等'],
+  '多句台词按出现顺序返回',
+);
+assert.deepEqual(extractDialogueLines('一、核心主体信息\n十二、负面提示词'), [], '没有标记返回空数组');
+assert.deepEqual(extractDialogueLines(''), [], '空文本返回空数组');
+assert.deepEqual(extractDialogueLines('【台词：欢迎光临】\n【台词：欢迎光临】'), ['欢迎光临', '欢迎光临'], '同一句出现两次都返回');
+// 容忍半角冒号与空白
+assert.deepEqual(extractDialogueLines('【台词: 你好 】'), ['你好']);
+// 空标记丢弃，不产生空字符串（否则 indexOf('') 会匹配到位置 0，整篇被误标）
+assert.deepEqual(extractDialogueLines('【台词：】\n【台词：   】'), [], '空标记必须丢弃');
+// 只在台词标记里找，不误抓人声判定标记
+assert.deepEqual(extractDialogueLines('【人物说话：是】'), [], '人声判定标记不是台词');
+
+// tokens 与正则一致
+assert.deepEqual(extractDialogueLines(`${DIALOGUE_MARKER_TOKENS.prefix}你好${DIALOGUE_MARKER_TOKENS.suffix}`), ['你好']);
+
+// stripDialogueMarkers
+assert.equal(stripDialogueMarkers('【台词：欢迎光临】\n正文'), '正文');
+assert.equal(stripDialogueMarkers('【人物说话：是】\n【台词：欢迎光临】\n【台词：您稍等】\n正文'), '【人物说话：是】\n正文', '只删台词，不动人声判定');
+assert.equal(stripDialogueMarkers('正文'), '正文');
+assert.equal(stripDialogueMarkers('【台词：欢迎光临】'), '');
+assert.equal(stripReverseMarkers('【人物说话：是】\n【台词：欢迎光临】\n【台词：您稍等】\n一、核心主体信息'),
+  '一、核心主体信息', '一次清掉两种标记');
+assert.equal(stripReverseMarkers('【人物说话：否】\n一、核心主体信息'), '一、核心主体信息', '只有人声判定时也正常');
+
+// 不变式：抽取出来的台词，清理后必须不再以标记形式存在
+assert.deepEqual(extractDialogueLines(stripReverseMarkers('【台词：欢迎光临】\n正文')), []);
+
+// 源码级断言：台词标记的措辞同样必须插值权威 token
+assert.ok(
+  pageSource.includes('${DIALOGUE_MARKER_TOKENS.prefix}') && pageSource.includes('${DIALOGUE_MARKER_TOKENS.suffix}'),
+  '提示词规则必须插值 DIALOGUE_MARKER_TOKENS，不得手抄台词标记字面量',
+);
+assert.equal(/【\s*台词\s*[：:]/.test(pageSource), false, '页面里不得出现手抄的台词标记字面量');
+
+// 源码级断言：透明文字必须挂在「叠加层确实渲染着同一份文本」上。
+// 写成 seedanceReplaceHighlight 会让「有台词、但元素替换高亮为空」时整框文字隐形——
+// 不报错、不是白屏，是一个看得见边框、里面什么都没有的空框。
+assert.ok(
+  pageSource.includes('seedanceOverlayHighlight ? "bg-transparent text-transparent'),
+  'textarea 的透明文字必须由合并后的叠加层状态决定，不能只看元素替换高亮',
+);
+assert.ok(
+  pageSource.includes('const seedanceOverlayHighlight = useMemo'),
+  '叠加层文本必须来自同一份当前提示词，否则两层对不上就会隐形',
+);
+
+console.log('前端人声标记测试通过：标记三态解析、台词标记抽取与清理、标记行清理、声音开关决策真值表、高亮接线。无真实网络调用。');

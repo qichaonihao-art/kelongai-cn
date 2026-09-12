@@ -1513,6 +1513,56 @@ export function stripHumanSpeechMarker(text: string): string {
     .trim();
 }
 
+/**
+ * 【台词：…】标记的权威措辞。与 HUMAN_SPEECH_MARKER_TOKENS 同理：提示词模板必须插值
+ * 这里的前后缀，不得另抄字面量——一旦措辞和正则对不上，解析会静默返回空数组，
+ * 右侧提示词框里一句台词都不会标绿，且没有任何报错。
+ */
+export const DIALOGUE_MARKER_TOKENS = {
+  prefix: '【台词：',
+  suffix: '】',
+} as const;
+
+/**
+ * 抽取反推结果里的台词标记，按出现顺序返回台词原文。找不到任何标记时返回空数组
+ * （改造前的历史记录，或 AI 未按格式输出），调用方据此不标任何东西。
+ *
+ * 容忍半角冒号与标记内的空白；标记内容为空的行直接丢弃。
+ */
+export function extractDialogueLines(text: string): string[] {
+  const source = String(text || '');
+  if (!source) return [];
+  // /g 正则在函数内新建：模块级共享的 /g 正则带 lastIndex 状态，
+  // 多次 matchAll 之间会互相干扰、漏掉匹配。
+  const pattern = /【\s*台词\s*[：:]\s*([^】]*?)\s*】/g;
+  const lines: string[] = [];
+  for (const match of source.matchAll(pattern)) {
+    const line = match[1].trim();
+    if (line) lines.push(line);
+  }
+  return lines;
+}
+
+/**
+ * 删除台词标记行，用于把反推结果填进右侧提示词框之前做清理。
+ * 与 DIALOGUE_MARKER_TOKENS 双向耦合（同 extractHumanSpeechMarker）。
+ */
+export function stripDialogueMarkers(text: string): string {
+  return String(text || '')
+    .replace(/^[^\S\n]*【\s*台词\s*[：:][^】]*】[^\S\n]*\n?/gm, '')
+    .replace(/【\s*台词\s*[：:][^】]*】/g, '');
+}
+
+/**
+ * 一次性清掉反推结果开头的全部机器可读标记（人声判定 + 台词）。
+ * 同步路径只调这一个函数，避免将来新增标记时漏清一种、把标记发给了视频模型。
+ */
+export function stripReverseMarkers(text: string): string {
+  return stripDialogueMarkers(stripHumanSpeechMarker(text))
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export type AutoAudioReverseMode = 'direct' | 'replace' | 'image' | 'painting';
 
 // 只有前三个反推模式自动设置声音；第四个「装饰画创意素材」以及将来新增的模式一律不碰，
