@@ -490,17 +490,25 @@ Task 3 实际分两个 commit 落地（都已完成）：`211e071` 只做三处�
 
 （三个符号按字母序插入到合适位置即可，`type` 前缀的条目保持原样。）
 
-- [ ] **Step 2: 在 `syncLatestPromptToSeedance()` 里先读 `activeMode`**
+- [ ] **Step 2: 把快照的读取收敛到一处**
 
-找到 `syncLatestPromptToSeedance()`（约第 2726 行）。在 `if (!latestAssistantText) { ... }` 这个早退块**之后**、`const formatted = latestAssistantText` **之前**，插入：
+找到 `syncLatestPromptToSeedance()`（约第 2743 行）。在 `if (!latestAssistantText) { ... }` 这个早退块**之后**、`const formatted = latestAssistantText` **之前**，插入：
 
 ```ts
-    // 必须在 syncReverseMediaToSeedance() 之前读取：它一进来就会把 pendingReverseSeedanceSyncRef 置空。
-    const activeMode = pendingReverseSeedanceSyncRef.current?.mode || reverseMode;
+    // 快照在这里读一次并就地清空：syncReverseMediaToSeedance() 消费同一个快照，
+    // 两边都从这一个值推导 activeMode，所以既没有「当前是哪个模块」的第二套口径，
+    // 也没有读写顺序错位导致判定到别的模块的余地。
+    // 这中间没有 await，提前清空不会漏掉任何重新赋值的时机。
+    const snapshot = pendingReverseSeedanceSyncRef.current;
+    pendingReverseSeedanceSyncRef.current = null;
+    const activeMode = snapshot?.mode || reverseMode;
+    // 人声标记必须从原始文本里取，不能用 strip 之后的输出——strip 已经把它删掉了。
     const hasSpeech = extractHumanSpeechMarker(latestAssistantText);
 ```
 
-**顺序是硬性要求。** `syncReverseMediaToSeedance()` 的第一行就是 `pendingReverseSeedanceSyncRef.current = null`，它在本函数末尾被调用。若把这两行放到它后面，`activeMode` 会退化成当前的 `reverseMode`，用户切过左侧标签页后会判错模块。
+**为什么不是「在调用前读一下、再照旧让被调方自己读」：** 那是本任务最初的做法，`activeMode` 会在调用方与被调方各推导一次，而两者的唯一同步手段是一句注释——将来有人调换两条相邻语句就会静默判错模块，正是本功能设计上要避免的失效类型。改成传快照后，ref 只被读一次，顺序依赖**从结构上消失**。
+
+这一步必须**同时**改被调方签名（Step 4b），否则 ref 会被清两次、`snapshot` 到不了被调方。
 
 - [ ] **Step 3: 填框时清掉标记行**
 
@@ -521,19 +529,42 @@ Task 3 实际分两个 commit 落地（都已完成）：`211e071` 只做三处�
 在 `setSeedancePromptHighlight(true);` / `setTimeout(() => setSeedancePromptHighlight(false), 2000);` 这两行**之后**、`// 反推完成自动带出：...` 注释**之前**，插入：
 
 ```ts
-    // 自动判定素材中是否有人声开口，并据此设置声音开关；判定不出来时不动用户的手动设置。
-    // 这里刻意不调用 rememberManualSeedancePreference()：自动结果不应写进 localStorage 改变全局默认。
+    // 按素材里有没有人声开口自动设置「生成声音」，自动判定只改当前开关，不写入本地记忆。
+    // 【明确不调用 rememberManualSeedancePreference()】那个函数会把设置写进 localStorage
+    // 并覆盖 normalSeedanceSettingsRef；自动判定一旦写进去，一条恰好有人声的提示词就会把
+    // 用户的全局默认永久改成「开声音」。自动结果不落盘。
+    // nextGenerateAudio 为 null 表示不表态（历史记录、AI 未按格式输出、该模式不适用），
+    // 保持用户设置；false 是明确的「关」。所以这里必须判 !== null，不能简写成 if (x)。
     const nextGenerateAudio = resolveAutoAudioSetting({ hasSpeech, mode: activeMode, model: seedanceModel });
     if (nextGenerateAudio !== null) {
       setSeedanceGenerateAudio(nextGenerateAudio);
     }
 ```
 
+两点措辞是刻意的：
+
+1. **不要写「只作用于当前这次任务」**——`switchSeedanceTaskMode`（约 2963 行）进入 `video-edit-painting` 时会把当时的 `seedanceGenerateAudio` 存进 `normalSeedanceSettingsRef`，退出时还原，所以自动值在会话内可以活过「这次任务」。真正成立且重要的只有一条：不落盘。
+2. **`!== null` 不能简写成 `if (x)`**——`false` 是明确的「关」，真值判断会把「无人声」这一支悄悄丢掉。这是后来者最容易"顺手清理"掉的一处，所以把非对称性写在调用点。
+
+- [ ] **Step 4b: 被调方改为接收快照**
+
+```ts
+  function syncReverseMediaToSeedance(snapshot: ReverseSeedanceSyncSnapshot | null) {
+    const activeMode = snapshot?.mode || reverseMode;
+```
+
+删掉原有的 `const snapshot = pendingReverseSeedanceSyncRef.current;` 与 `pendingReverseSeedanceSyncRef.current = null;` 两行；函数体**其余部分逐字不动**（`painting` 早退、参考图选择、时长逻辑、错误提示都不改）。`ReverseSeedanceSyncSnapshot | null` 正是该 ref 的声明类型（`useRef<ReverseSeedanceSyncSnapshot | null>(null)`），无需断言。
+
 - [ ] **Step 5: 确认改动落位正确**
 
-Run: `cd frontend-google-ui && sed -n '/function syncLatestPromptToSeedance/,/^  }/p' src/pages/CreativeCreationPage.tsx`
+Run:
+```bash
+cd frontend-google-ui
+grep -n "syncReverseMediaToSeedance" src/pages/CreativeCreationPage.tsx
+grep -n "pendingReverseSeedanceSyncRef" src/pages/CreativeCreationPage.tsx
+```
 
-Expected: 依次能看到 —— 早退块 → `const activeMode = ...` → `const hasSpeech = ...` → `const formatted = ...` → `setSeedancePrompt(stripHumanSpeechMarker(formatted));` → `resolveAutoAudioSetting(...)` 与 `if (nextGenerateAudio !== null)` → 最后一行 `syncReverseMediaToSeedance();`。
+Expected: 调用点**只有一个**，且传 `snapshot`；ref 的「读取 + 清空」**只在调用方一处**出现，其余命中只能是 `useRef` 声明、设置快照的三处赋值、以及生成失败路径上的一处清空。被调方不再碰这个 ref。
 
 - [ ] **Step 6: 类型检查**
 
@@ -560,6 +591,8 @@ git commit -m "Auto set audio switch when syncing prompt to seedance
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ```
+
+Task 4 实际分两个 commit 落地（都已完成）：`e34ba8b` 完成接线，review 后 `6f286d6` 把快照读取收敛到一处（Step 2 + Step 4b）并修正三处注释措辞。`src/lib/creative.ts` 在本任务中不应被修改。
 
 ---
 
@@ -598,8 +631,8 @@ Run: `cd frontend-google-ui && npm run dev`，浏览器打开 `http://localhost:
 | 3 | 图片生视频，传一张**纯风景/静物**图片 | 标记为 `否`，按钮变「不生成声音」 |
 | 3b | **图片模式关键用例**：图片生视频，传一张人物静止看向镜头的图片，**附加要求里不写任何开口说话的需求** | 标记为 `否`。这条验证的是图片模式用的是自己的判定标准，而不是去看不存在的音轨 |
 | 3c | **图片模式关键用例**：同上图片，但附加要求里明确写「让人物开口说一句欢迎光临」 | 标记为 `是`，按钮变「生成声音」。这条验证附加要求能被模型看到并纳入判定 |
-| 3e | **图片模式误关检查**：纯静物/风景图，附加要求写「加一段旁白讲解」 | 标记为 `是`。人物不在画面里，但用户明确要了人声——判定标准的「用户要求」那一支必须涵盖旁白/配音，否则会误关 |
 | 3d | **图片模式不定性检查**：图片生视频，传一张**人物张着嘴说话**的照片 | 标记为 `是`（按图片判定标准：人物处于说话状态） |
+| 3e | **图片模式误关检查**：纯静物/风景图，附加要求写「加一段旁白讲解」 | 标记为 `是`。人物不在画面里，但用户明确要了人声——判定标准的「用户要求」那一支必须涵盖旁白/配音，否则会误关 |
 | 4 | 元素替换，传一条有人声的视频 | 标记为 `是`，按钮变「生成声音」 |
 | 5 | **关键用例**：找一条只有旁白/画外音、画面人物不张嘴的视频 | 必须是 `是`（本期边界定义：有无人声开口，不看是否张嘴） |
 | 6 | 从历史记录里打开一条**改造前**生成的反推结果，点「同步最新提示词」 | 无标记，走 `null` 分支，声音按钮**保持原状态不变** |
@@ -628,7 +661,7 @@ Run: `cd frontend-google-ui && npm run dev`，浏览器打开 `http://localhost:
 - 「严格十二个部分」与新增第一行不冲突 → Task 3 Step 4b
 - 标记解析 / 清理纯函数 → Task 1
 - 决策真值表（painting / H3 / null / true / false）→ Task 2
-- `activeMode` 顺序陷阱 → Task 4 Step 2
+- `activeMode` 顺序陷阱 → Task 4 Step 2 + Step 4b（不是靠注释警告，而是把快照读取收敛到一处，让顺序依赖从结构上消失）
 - 不调用 `rememberManualSeedancePreference` → Task 4 Step 4
 - 聊天区保留标记、右侧输入框去掉 → Task 4 Step 3 + Task 5 Step 3 表 #1
 - 旧记录走 `null` 分支 → Task 1 测试 + Task 5 表 #6
