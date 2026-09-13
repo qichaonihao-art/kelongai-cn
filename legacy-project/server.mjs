@@ -15,6 +15,7 @@ import { config as loadDotenv } from 'dotenv';
 import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
 import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, inspectStickerPromptIssues, stickerProfileFromPrompt } from './sticker-creative.mjs';
 import { setVideoLibraryShotRole } from './video-library-shot-role.mjs';
+import { deleteEmptyVideoLibraryFolder } from './video-library-folder-delete.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2919,6 +2920,27 @@ async function handleCreateVideoLibraryFolder(req, res) {
     sendJson(res, 201, { ok: true, folder });
   } catch (error) {
     sendJson(res, 500, { error: error.message || '新建文件夹失败' });
+  }
+}
+
+async function handleDeleteVideoLibraryFolder(req, res, encodedName) {
+  try {
+    const folderName = decodeURIComponent(encodedName).trim();
+    if (!folderName || sanitizeVideoLibraryFolder(folderName) !== folderName) {
+      sendJson(res, 400, { error: '文件夹名称不合法' });
+      return;
+    }
+    if (folderName === '通用素材') {
+      sendJson(res, 400, { error: '默认文件夹不能删除' });
+      return;
+    }
+    const result = deleteEmptyVideoLibraryFolder(getCollectionDb(), folderName);
+    if (result.status === 'missing') sendJson(res, 404, { error: '文件夹不存在，请刷新后重试' });
+    else if (result.status === 'not_empty') sendJson(res, 409, { error: '文件夹里还有视频，请先移动或删除视频后再删文件夹' });
+    else if (result.status === 'in_use') sendJson(res, 409, { error: '该文件夹仍被批量生成任务使用，请等任务结束后再删除' });
+    else sendJson(res, 200, { ok: true, folder: folderName });
+  } catch (error) {
+    sendJson(res, error instanceof URIError ? 400 : 500, { error: error instanceof URIError ? '文件夹名称不合法' : (error.message || '删除文件夹失败') });
   }
 }
 
@@ -20432,6 +20454,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/video-library/folders') {
     await handleCreateVideoLibraryFolder(req, res);
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname.startsWith('/api/video-library/folders/')) {
+    await handleDeleteVideoLibraryFolder(req, res, url.pathname.slice('/api/video-library/folders/'.length));
     return;
   }
 

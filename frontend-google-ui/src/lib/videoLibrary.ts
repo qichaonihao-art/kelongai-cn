@@ -179,6 +179,15 @@ export async function createVideoLibraryFolder(folderName: string) {
   return String(json?.folder || folderName);
 }
 
+export async function deleteVideoLibraryFolder(folderName: string) {
+  const response = await fetch(`/api/video-library/folders/${encodeURIComponent(folderName)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  const json = await readJson(response);
+  if (!response.ok) throw new Error(errorMessage(json, '删除文件夹失败'));
+}
+
 export async function getVideoLibraryFolders() {
   const response = await fetch('/api/video-library/folders', { credentials: 'include' });
   const json = await readJson(response);

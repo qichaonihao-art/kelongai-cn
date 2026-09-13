@@ -6,6 +6,7 @@ import HomeBackButton from '@/src/components/HomeBackButton';
 import {
   deleteVideoLibrarySelection,
   createVideoLibraryFolder,
+  deleteVideoLibraryFolder,
   formatVideoLibrarySize,
   formatVideoLibraryTime,
   calculateVideoLibraryUnread,
@@ -158,6 +159,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [downloadingVideoId, setDownloadingVideoId] = useState<number | null>(null);
   const [isDownloadBusy, setIsDownloadBusy] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
   const [isChangingShotRole, setIsChangingShotRole] = useState(false);
   const [shotRoleView, setShotRoleView] = useState<'regular' | 'shot-one'>('regular');
   const [checkedVideoIds, setCheckedVideoIds] = useState<Set<number>>(new Set());
@@ -292,16 +294,23 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const folderHomeContent = (
     <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
       {folders.map((folder) => (
-        <button key={folder} type="button" onClick={() => setSelectedFolder(folder)} className="group relative flex aspect-[1.35] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-4 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-md">
+        <div key={folder} className="group relative flex aspect-[1.35] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-4 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-md">
           {(folderUnreadCounts.get(folder) || 0) > 0 && (
             <span className="absolute right-3 top-3 flex min-w-6 h-6 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-black text-white shadow-sm">
               {(folderUnreadCounts.get(folder) || 0) > 99 ? '99+' : folderUnreadCounts.get(folder)}
             </span>
           )}
-          <FolderOpen className="size-11 text-sky-400 transition-colors group-hover:text-sky-500" />
-          <span className="mt-3 max-w-full truncate text-sm font-black text-slate-700">{folder}</span>
-          <span className="mt-1 text-[11px] font-bold text-slate-400">{folderCounts.get(folder) || 0} 个视频</span>
-        </button>
+          <button type="button" onClick={() => setSelectedFolder(folder)} className="flex h-full w-full flex-col items-center justify-center rounded-xl" aria-label={`打开${folder}文件夹`}>
+            <FolderOpen className="size-11 text-sky-400 transition-colors group-hover:text-sky-500" />
+            <span className="mt-3 max-w-full truncate text-sm font-black text-slate-700">{folder}</span>
+            <span className="mt-1 text-[11px] font-bold text-slate-400">{folderCounts.get(folder) || 0} 个视频</span>
+          </button>
+          {folder !== DEFAULT_FOLDER && (
+            <button type="button" onClick={() => void handleDeleteFolder(folder)} disabled={deletingFolder !== null || isDeleting || isDownloadBusy} className="absolute bottom-2 right-2 inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-wait disabled:opacity-50" title={`删除文件夹“${folder}”（仅限空文件夹）`} aria-label={`删除${folder}文件夹`}>
+              {deletingFolder === folder ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+            </button>
+          )}
+        </div>
       ))}
     </div>
   );
@@ -399,6 +408,30 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       setNotice(`文件夹“${folder}”已创建`);
     } catch (folderError) {
       setError(folderError instanceof Error ? folderError.message : '新建文件夹失败');
+    }
+  }
+
+  async function handleDeleteFolder(folder: string) {
+    if (folder === DEFAULT_FOLDER || deleteBusyRef.current || downloadBusyRef.current || isUploading || isMoving) return;
+    if ((folderCounts.get(folder) || 0) > 0) {
+      setError(`“${folder}”里还有视频，请先移动或删除视频，再删除文件夹。`);
+      return;
+    }
+    if (!window.confirm(`确定删除空文件夹“${folder}”吗？\n\n只删除素材库里的文件夹分类，不会删除电脑已下载的文件。删除后所有设备都会同步。`)) return;
+    deleteBusyRef.current = true;
+    setDeletingFolder(folder);
+    setError('');
+    setNotice('');
+    try {
+      await deleteVideoLibraryFolder(folder);
+      if (!mountedRef.current) return;
+      setFolders((previous) => previous.filter((name) => name !== folder));
+      setNotice(`空文件夹“${folder}”已删除`);
+    } catch (folderError) {
+      if (mountedRef.current) setError(folderError instanceof Error ? folderError.message : '删除文件夹失败');
+    } finally {
+      deleteBusyRef.current = false;
+      if (mountedRef.current) setDeletingFolder(null);
     }
   }
 
