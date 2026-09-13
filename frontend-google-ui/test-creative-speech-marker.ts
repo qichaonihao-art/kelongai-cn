@@ -75,6 +75,16 @@ const correctDialoguePrompt = dialoguePrompt.replace('人物说：AI时代，创
 const exactHits = findDialogueOccurrencesInFinalPrompt(correctDialoguePrompt, ['AI时代，创新是唯一生产力']);
 assert.equal(exactHits.length, 1, '只高亮最终提示词中的精确原话');
 assert.equal(correctDialoguePrompt.slice(exactHits[0].start, exactHits[0].end), 'AI时代，创新是唯一生产力');
+const punctuationPrompt = '十一、最终可直接用于视频生成模型的完整提示词\n台词精准匹配：人物说出“如果你现在连五万块钱存款都拿不出来，刚挣点钱就左手进右手出，起早贪黑干好几年，一下又回到原典，你就听我的”\n十二、负面提示词';
+const punctuationHits = findDialogueOccurrencesInFinalPrompt(punctuationPrompt, ['如果你现在连五万块钱存款都拿不出来，刚挣点钱就左手进右手出，起早贪黑干好几年，一下又回到原典，你就听我的。']);
+assert.equal(punctuationHits.length, 1, '仅少句末句号时仍应点亮原话');
+assert.equal(punctuationPrompt.slice(punctuationHits[0].start, punctuationHits[0].end), '如果你现在连五万块钱存款都拿不出来，刚挣点钱就左手进右手出，起早贪黑干好几年，一下又回到原典，你就听我的');
+assert.deepEqual(findDialogueOccurrencesInFinalPrompt(punctuationPrompt.replace('原典', '原点'), ['如果你现在连五万块钱存款都拿不出来，刚挣点钱就左手进右手出，起早贪黑干好几年，一下又回到原典，你就听我的。']), [], '任何汉字改动都不能因忽略标点而误标绿');
+assert.deepEqual(findDialogueOccurrencesInFinalPrompt(punctuationPrompt.replace('你就听我的”', '你就听我的呀”'), ['如果你现在连五万块钱存款都拿不出来，刚挣点钱就左手进右手出，起早贪黑干好几年，一下又回到原典，你就听我的。']), [], '句末多说一个字也不能只因原话是子串就误标绿');
+const wrappedPrompt = '台词：“欢迎，\n光临！”';
+const wrappedHits = findDialogueOccurrencesInFinalPrompt(wrappedPrompt, ['欢迎,光临!']);
+assert.equal(wrappedHits.length, 1, '中英文标点及换行排版不同仍可定位到原提示词');
+assert.equal(wrappedPrompt.slice(wrappedHits[0].start, wrappedHits[0].end), '欢迎，\n光临');
 assert.deepEqual(findDialogueOccurrencesInFinalPrompt('十一、最终可直接用于视频生成模型的完整提示词\n禁止人物说“AI时代，创新是唯一生产力”\n十二、负面提示词', ['AI时代，创新是唯一生产力']), [], '否定语境中的原话不应误判为已让人物说出');
 // 第四个模块不参与
 assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'painting', model: MODEL }), null);
@@ -125,8 +135,9 @@ assert.ok(
   '台词必须从原始文本取，不能用 strip 之后的输出',
 );
 assert.ok(
-  pageSource.includes("const requestedDialogueLines = extractRequestedDialogueLines(snapshot?.additionalChange || '')"),
-  '用户明确指定的台词必须直接来自额外调整，不能依赖 AI 转述',
+  pageSource.includes('extractRequestedDialogueLines(snapshot?.additionalChange ?? lastReverseDialogueInputRef.current)')
+    && (pageSource.match(/lastReverseDialogueInputRef\.current = additionalChange/g) || []).length === 2,
+  '用户明确指定的台词必须来自当次提交的额外调整，自动或手动同步都不能依赖 AI 转述',
 );
 assert.ok(
   pageSource.includes('setSeedanceDialogueLines(dialogueLines)'),

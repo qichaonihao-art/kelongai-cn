@@ -89,26 +89,56 @@ export function hasRequestedDialogueIntent(text: string): boolean {
   return /(?:台词|对白|口播内容|旁白内容|配音内容|(?:说|念|读|朗读)\s*[：:])/i.test(String(text || ''));
 }
 
-/** 精确查找最终生成指令中的台词；分析部分出现同一句不算通过核对。 */
+/** 台词核对只忽略排版空白和标点；汉字、数字及其顺序仍须逐字一致。 */
+function normalizeDialogueForMatch(text: string): { text: string; starts: number[]; ends: number[] } {
+  let normalized = '';
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (let offset = 0; offset < text.length;) {
+    const character = String.fromCodePoint(text.codePointAt(offset)!);
+    const nextOffset = offset + character.length;
+    const folded = character.normalize('NFKC');
+    for (const foldedCharacter of folded) {
+      if (!/[\p{White_Space}\p{P}]/u.test(foldedCharacter)) {
+        normalized += foldedCharacter;
+        for (let unit = 0; unit < foldedCharacter.length; unit += 1) {
+          starts.push(offset);
+          ends.push(nextOffset);
+        }
+      }
+    }
+    offset = nextOffset;
+  }
+  return { text: normalized, starts, ends };
+}
+
+/** 在最终生成指令中核对原话；标点差异不算改词，分析区出现同一句不算通过。 */
 export function findDialogueOccurrencesInFinalPrompt(prompt: string, lines: string[]): Array<{ line: string; start: number; end: number }> {
   const source = String(prompt || '');
   const finalRange = findFinalVideoPromptRange(source);
   if (!finalRange && /核心主体信息/.test(source)) return [];
   const start = finalRange?.start ?? 0;
   const end = finalRange?.end ?? source.length;
+  const searchable = normalizeDialogueForMatch(source.slice(start, end));
   const hits: Array<{ line: string; start: number; end: number }> = [];
   for (const line of lines) {
     if (!line) continue;
-    let cursor = start;
-    let index = source.indexOf(line, cursor);
-    while (index !== -1 && index + line.length <= end) {
+    const needle = normalizeDialogueForMatch(line).text;
+    if (!needle) continue;
+    let cursor = 0;
+    let normalizedIndex = searchable.text.indexOf(needle, cursor);
+    while (normalizedIndex !== -1) {
+      const index = start + searchable.starts[normalizedIndex];
+      const matchEnd = start + searchable.ends[normalizedIndex + needle.length - 1];
       const clauseStart = Math.max(start, source.lastIndexOf('。', index) + 1, source.lastIndexOf('；', index) + 1, source.lastIndexOf('\n', index) + 1);
       const precedingClause = source.slice(clauseStart, index);
-      if (!/(?:禁止|严禁|不得|不要|避免|不说|不念|不读|不口播)/.test(precedingClause)) {
-        hits.push({ line, start: index, end: index + line.length });
+      const attachedBefore = /[\p{L}\p{N}]$/u.test(source.slice(0, index));
+      const attachedAfter = /^[\p{L}\p{N}]/u.test(source.slice(matchEnd));
+      if (!attachedBefore && !attachedAfter && !/(?:禁止|严禁|不得|不要|避免|不说|不念|不读|不口播)/.test(precedingClause)) {
+        hits.push({ line, start: index, end: matchEnd });
       }
-      cursor = index + line.length;
-      index = source.indexOf(line, cursor);
+      cursor = normalizedIndex + needle.length;
+      normalizedIndex = searchable.text.indexOf(needle, cursor);
     }
   }
   return hits.sort((left, right) => left.start - right.start);

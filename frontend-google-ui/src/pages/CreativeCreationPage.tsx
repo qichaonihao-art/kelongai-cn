@@ -1970,6 +1970,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const additionalHistoryRef = useRef<HTMLDivElement>(null);
   const autoSyncToSeedanceRef = useRef(false);
   const pendingReverseSeedanceSyncRef = useRef<ReverseSeedanceSyncSnapshot | null>(null);
+  // 自动同步消费快照后，手动再次同步仍以当次提交的原话为准。
+  const lastReverseDialogueInputRef = useRef('');
   const normalSeedanceSettingsRef = useRef({
     ...seedanceManualPreferenceRef.current,
   });
@@ -2484,6 +2486,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   }
 
   function handleCreateNewSession() {
+    lastReverseDialogueInputRef.current = '';
+    pendingReverseSeedanceSyncRef.current = null;
     if (selectedMedia) {
       URL.revokeObjectURL(selectedMedia.previewUrl);
     }
@@ -2522,6 +2526,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (!targetSession) {
       return;
     }
+    lastReverseDialogueInputRef.current = '';
+    pendingReverseSeedanceSyncRef.current = null;
 
     if (selectedMedia) {
       URL.revokeObjectURL(selectedMedia.previewUrl);
@@ -2599,6 +2605,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (sessionId !== activeSessionId) {
       return;
     }
+    lastReverseDialogueInputRef.current = '';
+    pendingReverseSeedanceSyncRef.current = null;
 
     const fallbackSession = remainingSessions[0] || null;
 
@@ -2754,6 +2762,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         requestedDuration: durationSeconds,
         additionalChange,
       };
+      lastReverseDialogueInputRef.current = additionalChange;
       autoSyncToSeedanceRef.current = true;
       scrollToRef(textareaRef);
       handleSend(prompt);
@@ -2799,6 +2808,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       requestedDuration: durationSeconds,
       additionalChange,
     };
+    lastReverseDialogueInputRef.current = additionalChange;
 
     if (reverseMode === 'replace') {
       const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText });
@@ -2836,7 +2846,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const hasSpeech = extractHumanSpeechMarker(latestAssistantText);
     const finalVideoPrompt = extractFinalVideoPromptSection(latestAssistantText);
     // 台词同样从原始文本取（strip 之后标记就没了），供右侧框标绿用。
-    const requestedDialogueLines = extractRequestedDialogueLines(snapshot?.additionalChange || '');
+    const requestedDialogueLines = extractRequestedDialogueLines(snapshot?.additionalChange ?? lastReverseDialogueInputRef.current);
     const explicitAudio = extractExplicitAudioPreference(snapshot?.additionalChange || '')
       ?? (requestedDialogueLines.length > 0 ? true : extractExplicitAudioPreference(finalVideoPrompt || ''));
     const needsDialogueClarification = requestedDialogueLines.length === 0
@@ -3694,6 +3704,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
   function switchReverseMode(nextMode: ReverseMode) {
     if (nextMode === reverseMode) return;
+    lastReverseDialogueInputRef.current = '';
     clearSelectedMedia();
     clearReplaceImage();
     clearImageToVideoPainting();
@@ -5152,6 +5163,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   async function handleSend(forceQuestion?: string) {
     const rawQuestion = forceQuestion?.trim() || input.trim();
     if (!rawQuestion || isLoading) return;
+    if (!autoSyncToSeedanceRef.current) lastReverseDialogueInputRef.current = '';
 
     // If the user is sending the video reverse prompt, silently append format
     // instructions so Doubao returns each section on its own line without
