@@ -306,7 +306,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             <span className="mt-1 text-[11px] font-bold text-slate-400">{folderCounts.get(folder) || 0} 个视频</span>
           </button>
           {folder !== DEFAULT_FOLDER && (
-            <button type="button" onClick={() => void handleDeleteFolder(folder)} disabled={deletingFolder !== null || isDeleting || isDownloadBusy} className="absolute bottom-2 right-2 inline-flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-wait disabled:opacity-50" title={`删除文件夹“${folder}”（仅限空文件夹）`} aria-label={`删除${folder}文件夹`}>
+            <button type="button" onClick={() => void handleDeleteFolder(folder)} disabled={deletingFolder !== null || isDeleting || isDownloadBusy} className={cn('pointer-events-none absolute bottom-2 right-2 inline-flex size-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-red-50 hover:text-red-600 disabled:cursor-wait disabled:opacity-50', deletingFolder === folder && 'pointer-events-auto opacity-100')} title={`删除文件夹“${folder}”（仅限空文件夹）`} aria-label={`删除${folder}文件夹`}>
               {deletingFolder === folder ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
             </button>
           )}
