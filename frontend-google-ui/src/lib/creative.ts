@@ -47,8 +47,79 @@ export function normalizeVideoGenerationDuration(value: unknown, model: string):
   return rounded >= min && rounded <= max ? rounded : null;
 }
 
-export function extractVideoGenerationDurationFromPrompt(prompt: string): number | null {
+/** 第十一部分在完整反推结果中的范围；高亮与参数识别都只检查这一段。 */
+export function findFinalVideoPromptRange(text: string): { start: number; end: number } | null {
+  const source = String(text || '');
+  const start = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*\s*)?(?:十一|11)[、.．]\s*最终可直接用于[^\n]*/i.exec(source);
+  if (!start) return null;
+  const contentStart = start.index + start[0].length;
+  const remainder = source.slice(contentStart);
+  const end = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*\s*)?(?:十二|12)[、.．]\s*负面提示词/i.exec(remainder);
+  return { start: contentStart, end: contentStart + (end?.index ?? remainder.length) };
+}
+
+/** 只取反推回复中真正交给视频模型的第十一部分，不让后面的负面提示词干扰参数。 */
+export function extractFinalVideoPromptSection(text: string): string | null {
+  const range = findFinalVideoPromptRange(text);
+  return range ? String(text || '').slice(range.start, range.end).trim() : null;
+}
+
+/** 从“额外调整”中提取用户明确用引号指定的原话，不依赖 AI 转述。 */
+export function extractRequestedDialogueLines(text: string): string[] {
+  const source = String(text || '');
+  const cue = '(?:台词|对白|口播(?:内容)?|旁白(?:内容)?|配音(?:内容)?|说(?:出)?|讲出|念(?:出)?|读(?:出)?|朗读)';
+  const patterns = [
+    new RegExp(`${cue}[^。；;\\n“”「」『』]{0,24}[“「『]([^”」』\\n]{1,160})[”」』]`, 'g'),
+    new RegExp(`${cue}[^。；;\\n"]{0,24}"([^"\\n]{1,160})"`, 'g'),
+  ];
+  const matches: Array<{ index: number; line: string }> = [];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const prefix = source.slice(Math.max(0, (match.index ?? 0) - 4), match.index ?? 0);
+      if (/(?:不要|不再|禁止|别|避免)$/.test(prefix)) continue;
+      const line = match[1].trim();
+      if (line) matches.push({ index: match.index ?? 0, line });
+    }
+  }
+  matches.sort((left, right) => left.index - right.index);
+  return [...new Set(matches.map((match) => match.line))];
+}
+
+export function hasRequestedDialogueIntent(text: string): boolean {
+  return /(?:台词|对白|口播内容|旁白内容|配音内容|(?:说|念|读|朗读)\s*[：:])/i.test(String(text || ''));
+}
+
+/** 精确查找最终生成指令中的台词；分析部分出现同一句不算通过核对。 */
+export function findDialogueOccurrencesInFinalPrompt(prompt: string, lines: string[]): Array<{ line: string; start: number; end: number }> {
   const source = String(prompt || '');
+  const finalRange = findFinalVideoPromptRange(source);
+  if (!finalRange && /核心主体信息/.test(source)) return [];
+  const start = finalRange?.start ?? 0;
+  const end = finalRange?.end ?? source.length;
+  const hits: Array<{ line: string; start: number; end: number }> = [];
+  for (const line of lines) {
+    if (!line) continue;
+    let cursor = start;
+    let index = source.indexOf(line, cursor);
+    while (index !== -1 && index + line.length <= end) {
+      const clauseStart = Math.max(start, source.lastIndexOf('。', index) + 1, source.lastIndexOf('；', index) + 1, source.lastIndexOf('\n', index) + 1);
+      const precedingClause = source.slice(clauseStart, index);
+      if (!/(?:禁止|严禁|不得|不要|避免|不说|不念|不读|不口播)/.test(precedingClause)) {
+        hits.push({ line, start: index, end: index + line.length });
+      }
+      cursor = index + line.length;
+      index = source.indexOf(line, cursor);
+    }
+  }
+  return hits.sort((left, right) => left.start - right.start);
+}
+
+export function extractVideoGenerationDurationFromPrompt(prompt: string): number | null {
+  const source = extractFinalVideoPromptSection(prompt) ?? String(prompt || '');
+  // 独立的总时长字段优先级最高；负面约束里引用的“原视频时长”不能覆盖它。
+  const totalFields = [...source.matchAll(/(?:目标视频总时长|新视频总时长|成片总时长|视频总时长|总时长)\s*[：:]\s*(\d{1,3}(?:\.\d+)?)\s*(?:秒钟?|s(?:ec(?:onds?)?)?)/gim)]
+    .filter((match) => !/(?:原|源)(?:视频)?$/.test(source.slice(Math.max(0, (match.index ?? 0) - 3), match.index ?? 0)));
+  if (totalFields.length > 0) return Math.round(Number(totalFields.at(-1)![1]));
   const candidates: Array<{ index: number; seconds: number }> = [];
   const patterns = [
     /(?:目标视频总时长|新视频总时长|成片总时长|视频总时长|总时长|视频时长|成片时长|最终时长|目标时长|视频长度|成片长度)\s*(?:必须严格(?:控制)?为|严格为|设置为|设定为|调整为|改成|延长到|缩短到|控制在|约为|为|是|到|[：:])?\s*(\d{1,3}(?:\.\d+)?)\s*(?:秒钟?|s(?:ec(?:onds?)?)?)/gi,
@@ -64,6 +135,25 @@ export function extractVideoGenerationDurationFromPrompt(prompt: string): number
   }
   candidates.sort((left, right) => left.index - right.index);
   return candidates.at(-1)?.seconds ?? null;
+}
+
+/** 仅识别明确的有声或全片静音要求；没有说清楚时交给素材人声标记或保留手动设置。 */
+export function extractExplicitAudioPreference(text: string): boolean | null {
+  const clauses = String(text || '').split(/[。；;，,\n]|但/);
+  let preference: boolean | null = null;
+  const sound = '(?:人声|台词|对白|口播|旁白|配音|对话|背景音乐|配乐|环境音(?:效)?|音效|原声|声音|音频|声轨|音轨)';
+  const fullSilence = /(?:全片|全程|视频|成片)?\s*(?:保持|设为|设置为|输出为)?\s*(?:完全)?\s*(?:静音|无声)|(?:不要|不用|无需|不需要|不生成|关闭|去掉|移除|删除|不保留|禁止)\s*(?:生成)?\s*(?:任何|全部|所有)?\s*(?:声音|音频|声轨|音轨)/;
+  const audible = new RegExp(`(?:保留|增加|添加|加入|加上|生成|开启|需要|包含|伴随|配有|配上|带有).{0,8}?${sound}|(?:^|视频|画面|全片|全程)有.{0,8}?${sound}|${sound}\\s*(?:为|是|持续|存在|清晰可闻|可听见)`);
+  for (const raw of clauses) {
+    const clause = raw.trim();
+    if (!clause) continue;
+    if (!/(?:禁止|避免|不得)\s*(?:出现)?\s*(?:静音|无声)/.test(clause) && fullSilence.test(clause)) {
+      preference = false;
+    } else if (!/(?:禁止|严禁|避免|不得|不要|不用|无需|不需要|不生成|关闭|去掉|移除|删除|不保留)/.test(clause) && audible.test(clause)) {
+      preference = true;
+    }
+  }
+  return preference;
 }
 
 export function extractRequestedVideoDurationFromText(text: string): number | null {
@@ -585,6 +675,7 @@ export async function createSeedanceTask(options: {
   imageHash?: string;
   directionNumber?: number;
   variationRound?: number;
+  creativeSessionId?: string;
 }): Promise<SeedanceTaskResult> {
   let headers: Record<string, string> | undefined = {
     'Content-Type': 'application/json',
@@ -605,6 +696,7 @@ export async function createSeedanceTask(options: {
     if (options.imageHash) formData.append('imageHash', options.imageHash);
     if (options.directionNumber) formData.append('directionNumber', String(options.directionNumber));
     if (options.variationRound) formData.append('variationRound', String(options.variationRound));
+    if (options.creativeSessionId) formData.append('creativeSessionId', options.creativeSessionId);
     for (const reference of options.references) {
       formData.append('files', reference.file, reference.fileName);
     }
@@ -624,6 +716,7 @@ export async function createSeedanceTask(options: {
       imageHash: options.imageHash || undefined,
       directionNumber: options.directionNumber || undefined,
       variationRound: options.variationRound || undefined,
+      creativeSessionId: options.creativeSessionId || undefined,
     });
   }
 
@@ -1157,6 +1250,7 @@ export interface CreatePaintingBatchRunOptions {
   resolution: string;
   ratio: string;
   variationRound: number;
+  creativeSessionId?: string;
   generateAudio: boolean;
   watermark: boolean;
   stylePreset: string;
@@ -1242,6 +1336,7 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
   formData.append('resolution', options.resolution);
   formData.append('ratio', options.ratio);
   formData.append('variationRound', String(options.variationRound));
+  if (options.creativeSessionId) formData.append('creativeSessionId', options.creativeSessionId);
   formData.append('generateAudio', String(options.generateAudio));
   formData.append('watermark', String(options.watermark));
   formData.append('stylePreset', options.stylePreset);
@@ -1401,11 +1496,12 @@ export async function resubmitPaintingBatchTask(taskId: number, options?: { conf
   };
 }
 
-export async function getPaintingUsedDirections(imageHash: string, variationRound: number, productType: PaintingProductType = 'hanging'): Promise<number[]> {
+export async function getPaintingUsedDirections(imageHash: string, variationRound: number, productType: PaintingProductType = 'hanging', creativeSessionId = ''): Promise<number[]> {
   const params = new URLSearchParams();
   params.set('imageHash', imageHash);
   params.set('variationRound', String(variationRound));
   params.set('productType', productType);
+  if (creativeSessionId) params.set('creativeSessionId', creativeSessionId);
   const response = await fetch(`/api/painting/used-directions?${params.toString()}`, {
     credentials: 'include',
   });
@@ -1575,13 +1671,16 @@ const AUTO_AUDIO_IN_SCOPE_MODES: ReadonlySet<AutoAudioReverseMode> = new Set(['d
  */
 export function resolveAutoAudioSetting(options: {
   hasSpeech: boolean | null;
+  explicitPreference?: boolean | null;
   mode: AutoAudioReverseMode;
   model: string;
 }): boolean | null {
-  const { hasSpeech, mode, model } = options;
+  const { hasSpeech, explicitPreference, mode, model } = options;
   if (!AUTO_AUDIO_IN_SCOPE_MODES.has(mode)) return null;
   // MiniMax-H3 的音轨随模型，声音按钮本来就是禁用的。
   if (model === 'MiniMax-H3') return null;
+  // 用户的明确要求及最终生成指令，高于对原素材是否有人声的判断。
+  if (typeof explicitPreference === 'boolean') return explicitPreference;
   // 历史记录或 AI 未按格式输出时保持现状，不猜。
   if (typeof hasSpeech !== 'boolean') return null;
   return hasSpeech;

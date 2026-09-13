@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, extractDialogueLines, stripDialogueMarkers, stripReverseMarkers, DIALOGUE_MARKER_TOKENS, resolveAutoAudioSetting, type AutoAudioReverseMode } from './src/lib/creative';
+import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, extractDialogueLines, stripDialogueMarkers, stripReverseMarkers, DIALOGUE_MARKER_TOKENS, resolveAutoAudioSetting, extractExplicitAudioPreference, extractFinalVideoPromptSection, findFinalVideoPromptRange, extractRequestedDialogueLines, hasRequestedDialogueIntent, findDialogueOccurrencesInFinalPrompt, type AutoAudioReverseMode } from './src/lib/creative';
 
 // extractHumanSpeechMarker：三态
 assert.equal(extractHumanSpeechMarker('【人物说话：是】\n一、核心主体信息'), true);
@@ -51,6 +51,31 @@ assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'replace', model: 
 assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'replace', model: MODEL }), false);
 assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'image', model: MODEL }), true);
 assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'image', model: MODEL }), false);
+assert.equal(resolveAutoAudioSetting({ hasSpeech: false, explicitPreference: true, mode: 'image', model: MODEL }), true, '明确新增声音高于原素材无声标记');
+assert.equal(resolveAutoAudioSetting({ hasSpeech: true, explicitPreference: false, mode: 'direct', model: MODEL }), false, '明确静音高于原素材人声标记');
+assert.equal(resolveAutoAudioSetting({ hasSpeech: true, explicitPreference: false, mode: 'painting', model: MODEL }), null, '装饰画模块不受明确声音判定影响');
+assert.equal(resolveAutoAudioSetting({ hasSpeech: true, explicitPreference: false, mode: 'direct', model: 'MiniMax-H3' }), null, 'H3 不受声音开关判定影响');
+assert.equal(extractExplicitAudioPreference('新视频增加旁白'), true);
+assert.equal(extractExplicitAudioPreference('请保留室内环境音，不要背景音乐'), true);
+assert.equal(extractExplicitAudioPreference('全片静音，不需要生成声音'), false);
+assert.equal(extractExplicitAudioPreference('不要背景音乐'), null, '仅不要配乐不等于整个视频静音');
+assert.equal(extractExplicitAudioPreference('避免添加背景音乐'), null, '负面约束里的音频词不误开声音');
+assert.equal(extractExplicitAudioPreference('没有提到音频要求'), null);
+assert.equal(extractFinalVideoPromptSection('十一、最终可直接用于视频生成模型的完整提示词\n保留环境音\n十二、负面提示词\n禁止生成声音'), '保留环境音');
+assert.deepEqual(extractRequestedDialogueLines('请让人物说：“AI时代，创新是唯一生产力”。'), ['AI时代，创新是唯一生产力']);
+assert.deepEqual(extractRequestedDialogueLines('台词："欢迎光临"；随后旁白：“请进”'), ['欢迎光临', '请进']);
+assert.deepEqual(extractRequestedDialogueLines('不要说“旧话”，改为说“新话”'), ['新话'], '旧台词不能被当作待核对原话');
+assert.deepEqual(extractRequestedDialogueLines('人物说：欢迎光临'), [], '未加引号时不猜测原话边界');
+assert.equal(hasRequestedDialogueIntent('人物说：欢迎光临'), true, '未加引号的台词要求应提示补充格式');
+const finalRange = findFinalVideoPromptRange('一、核心主体信息\n人物说：欢迎光临\n十一、最终可直接用于视频生成模型的完整提示词\n人物说：欢迎光临\n十二、负面提示词\n无');
+assert.equal(finalRange && '一、核心主体信息\n人物说：欢迎光临\n十一、最终可直接用于视频生成模型的完整提示词\n人物说：欢迎光临\n十二、负面提示词\n无'.slice(finalRange.start, finalRange.end).trim(), '人物说：欢迎光临', '台词范围只包括最终提示词');
+const dialoguePrompt = '一、核心主体信息\n原话：AI时代，创新是唯一生产力\n十一、最终可直接用于视频生成模型的完整提示词\n人物说：AI时代，创新是第一生产力\n十二、负面提示词\n原话：AI时代，创新是唯一生产力';
+assert.deepEqual(findDialogueOccurrencesInFinalPrompt(dialoguePrompt, ['AI时代，创新是唯一生产力']), [], '分析区和负面区有原话，最终提示词改字仍须判不匹配');
+const correctDialoguePrompt = dialoguePrompt.replace('人物说：AI时代，创新是第一生产力', '人物说：AI时代，创新是唯一生产力');
+const exactHits = findDialogueOccurrencesInFinalPrompt(correctDialoguePrompt, ['AI时代，创新是唯一生产力']);
+assert.equal(exactHits.length, 1, '只高亮最终提示词中的精确原话');
+assert.equal(correctDialoguePrompt.slice(exactHits[0].start, exactHits[0].end), 'AI时代，创新是唯一生产力');
+assert.deepEqual(findDialogueOccurrencesInFinalPrompt('十一、最终可直接用于视频生成模型的完整提示词\n禁止人物说“AI时代，创新是唯一生产力”\n十二、负面提示词', ['AI时代，创新是唯一生产力']), [], '否定语境中的原话不应误判为已让人物说出');
 // 第四个模块不参与
 assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'painting', model: MODEL }), null);
 assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'painting', model: MODEL }), null);
@@ -100,12 +125,12 @@ assert.ok(
   '台词必须从原始文本取，不能用 strip 之后的输出',
 );
 assert.ok(
-  pageSource.includes('const dialogueLines = extractDialogueLines(latestAssistantText)'),
-  '台词要在 strip 之前从原始文本抽出来',
+  pageSource.includes("const requestedDialogueLines = extractRequestedDialogueLines(snapshot?.additionalChange || '')"),
+  '用户明确指定的台词必须直接来自额外调整，不能依赖 AI 转述',
 );
 assert.ok(
   pageSource.includes('setSeedanceDialogueLines(dialogueLines)'),
-  '抽出来的台词必须写进 state，否则右侧框一句都不会标绿',
+  '选定的台词必须写进 state，否则右侧框一句都不会标绿',
 );
 
 // ---------------------------------------------------------------------------

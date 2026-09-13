@@ -2661,8 +2661,16 @@ function dbGetPaintingBatchTaskBySeedanceTaskId(seedanceTaskId) {
   return normalizeBatchTask(getCollectionDb().prepare('SELECT * FROM painting_batch_tasks WHERE seedance_task_id = ?').get(taskId));
 }
 
-function dbMarkPaintingDirectionUsed(imageHash, variationRound, directionNumber, productType = 'hanging') {
+function paintingDirectionUsageHash(imageHash, productType, creativeSessionId = '') {
   const hash = productUsageHash(imageHash, productType);
+  const sessionId = String(creativeSessionId || '');
+  if (!hash || !sessionId) return hash;
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(sessionId)) throw new Error('创作批次标识不合法');
+  return `${hash}:session:${sessionId}`;
+}
+
+function dbMarkPaintingDirectionUsed(imageHash, variationRound, directionNumber, productType = 'hanging', creativeSessionId = '') {
+  const hash = paintingDirectionUsageHash(imageHash, productType, creativeSessionId);
   const direction = Number(directionNumber) || 0;
   if (!hash || !direction) return;
   getCollectionDb().prepare(`
@@ -2673,8 +2681,8 @@ function dbMarkPaintingDirectionUsed(imageHash, variationRound, directionNumber,
   `).run(hash, Number(variationRound) || 0, direction);
 }
 
-function dbGetPaintingUsedDirections(imageHash, variationRound, productType = 'hanging') {
-  const hash = productUsageHash(imageHash, productType);
+function dbGetPaintingUsedDirections(imageHash, variationRound, productType = 'hanging', creativeSessionId = '') {
+  const hash = paintingDirectionUsageHash(imageHash, productType, creativeSessionId);
   if (!hash) return [];
   const rows = getCollectionDb().prepare(`
     SELECT direction_number FROM painting_direction_usage
@@ -10848,6 +10856,7 @@ async function readMultipartFormBody(req) {
     targetFolderId: readValue(formData.get('targetFolderId')),
     targetFolderName: readValue(formData.get('targetFolderName')),
     onlyUnused: readValue(formData.get('onlyUnused')),
+    creativeSessionId: readValue(formData.get('creativeSessionId')),
     autoEnhance480p: readValue(formData.get('autoEnhance480p')),
     creationRequestId: readValue(formData.get('creationRequestId')),
   };
@@ -10882,7 +10891,8 @@ async function readSeedanceTaskFormBody(req) {
     imageHash: readValue(formData.get('imageHash')),
     directionNumber: readValue(formData.get('directionNumber')),
     productType: readValue(formData.get('productType')),
-    variationRound: readValue(formData.get('variationRound'))
+    variationRound: readValue(formData.get('variationRound')),
+    creativeSessionId: readValue(formData.get('creativeSessionId')),
   };
 }
 
@@ -14293,6 +14303,11 @@ async function handleCreatePaintingBatchRun(req, res) {
     // 创意轮次允许持续递增。前端会在四组方向循环完后进入下一轮，不能把第4轮及以后
     // 强行折算为第3轮，否则同一产品反复测试时会错误命中旧轮次的“已使用方向”。
     const variationRound = Math.max(0, Math.min(9999, Math.trunc(Number(body.variationRound) || 0)));
+    const creativeSessionId = readValue(body.creativeSessionId);
+    if (creativeSessionId && !/^[A-Za-z0-9_-]{1,64}$/.test(creativeSessionId)) {
+      sendJson(res, 400, { error: '创作批次标识不合法' });
+      return;
+    }
     const onlyUnused = body.onlyUnused === 'true' || body.onlyUnused === true;
     // 全自动批量入库同样固定检测并增强480P视频。
     const autoEnhance480p = true;
@@ -14329,7 +14344,7 @@ async function handleCreatePaintingBatchRun(req, res) {
     let selectedIdeas = [...ideas];
     // 服务端重新校验“仅生成未使用方向”：以服务端持久化的方向使用记录为准，避免前端统计不准确导致重复生成。
     if (onlyUnused) {
-      const usedDirections = new Set(dbGetPaintingUsedDirections(imageHash, variationRound, profile.productType));
+      const usedDirections = new Set(dbGetPaintingUsedDirections(imageHash, variationRound, profile.productType, creativeSessionId));
       selectedIdeas = selectedIdeas.filter((idea) => {
         const directionNumber = Number(idea.directionNumber) > 0 ? Number(idea.directionNumber) : 0;
         return directionNumber > 0 && !usedDirections.has(directionNumber);
@@ -14348,6 +14363,7 @@ async function handleCreatePaintingBatchRun(req, res) {
       ...(body.options && typeof body.options === 'object' ? body.options : {}),
       startOrder,
       requestedCount,
+      creativeSessionId,
       autoEnhance480p,
       costEstimate,
       woodReferences: {
@@ -14859,7 +14875,7 @@ async function handleGetPaintingUsedDirections(req, res) {
       sendJson(res, 400, { error: '缺少图片哈希 imageHash' });
       return;
     }
-    sendJson(res, 200, { ok: true, usedDirections: dbGetPaintingUsedDirections(imageHash, variationRound, url.searchParams.get('productType')) });
+    sendJson(res, 200, { ok: true, usedDirections: dbGetPaintingUsedDirections(imageHash, variationRound, url.searchParams.get('productType'), url.searchParams.get('creativeSessionId')) });
   } catch (error) {
     sendJson(res, 500, { error: error?.message || '读取已使用方向失败' });
   }
@@ -16585,7 +16601,7 @@ async function processBatchTask(taskId) {
           errorMessage: '',
         });
         // 提交到 Seedance 即视为该方向已被使用（“仅生成未使用方向”的服务端持久化依据）。
-        dbMarkPaintingDirectionUsed(currentRun.imageHash, currentRun.variationRound, task.directionNumber, currentRun.profile?.productType);
+        dbMarkPaintingDirectionUsed(currentRun.imageHash, currentRun.variationRound, task.directionNumber, currentRun.profile?.productType, currentRun.options?.creativeSessionId);
         await sleepMs(PAINTING_BATCH_SEEDANCE_SUBMIT_INTERVAL_MS);
       } catch (error) {
         const nextRetryCount = (task.retryCount || 0) + 1;
@@ -18552,7 +18568,7 @@ async function handleSeedanceCreateTask(req, res) {
     const manualImageHash = String(body?.imageHash || '');
     const manualVariationRound = Number(body?.variationRound) || 0;
     if (manualImageHash && manualDirection && taskId) {
-      dbMarkPaintingDirectionUsed(manualImageHash, manualVariationRound, manualDirection, stickerProfile ? 'sticker' : 'hanging');
+      dbMarkPaintingDirectionUsed(manualImageHash, manualVariationRound, manualDirection, stickerProfile ? 'sticker' : 'hanging', body?.creativeSessionId);
     }
 
     sendJson(res, 200, {

@@ -258,6 +258,10 @@ async function main() {
     assert(getVideoGenerationDurationLimits('doubao-seedance-2-5-260628').max === 30, 'Seedance 2.5 上限为 30 秒');
     assert(extractVideoGenerationDurationFromPrompt('生成指令\n总时长：7.6 秒') === 8, '可从标准字段读取小数并四舍五入');
     assert(extractVideoGenerationDurationFromPrompt('视频时长约为6秒\n总时长：9秒') === 9, '多个时长字段以最后的总时长为准');
+    assert(extractVideoGenerationDurationFromPrompt('最终提示词：总时长：8秒。\n负面约束：禁止恢复原视频时长：3秒。') === 8, '独立总时长字段不被后续源视频时长覆盖');
+    assert(extractVideoGenerationDurationFromPrompt('十一、最终可直接用于视频生成模型的完整复刻提示词\n总时长：8秒\n十二、负面提示词\n原视频时长：3秒') === 8, '只从最终生成提示词读取时长');
+    assert(extractVideoGenerationDurationFromPrompt('### 十一、最终可直接用于视频生成模型的完整复刻提示词\n总时长：8秒\n### 十二、负面提示词\n原视频时长：3秒') === 8, '兼容 Markdown 标题格式');
+    assert(extractVideoGenerationDurationFromPrompt('十一、最终可直接用于视频生成模型的完整复刻提示词\n没有写时长\n十二、负面提示词\n原视频时长：3秒') === null, '最终提示词漏写时长不从负面提示词误取');
     assert(extractVideoGenerationDurationFromPrompt('最终成片时长设置为 6 秒钟') === 6, '可识别“成片时长”和“秒钟”写法');
     assert(extractVideoGenerationDurationFromPrompt('视频长度：8s') === 8, '可识别“视频长度”和英文 s 写法');
     assert(extractVideoGenerationDurationFromPrompt('最终视频做成 10 seconds') === 10, '可识别“最终视频”和英文 seconds 写法');

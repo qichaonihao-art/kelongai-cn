@@ -63,6 +63,11 @@ import {
   getVideoGenerationDurationLimits,
   normalizeVideoGenerationDuration,
   extractVideoGenerationDurationFromPrompt,
+  extractFinalVideoPromptSection,
+  extractExplicitAudioPreference,
+  extractRequestedDialogueLines,
+  hasRequestedDialogueIntent,
+  findDialogueOccurrencesInFinalPrompt,
   extractRequestedVideoDurationFromText,
   getPaintingBatchResolutionOptions,
   getPaintingBatchDefaultResolution,
@@ -208,6 +213,7 @@ interface PaintingHistoryItem {
   frameworkBatch?: number;
   totalBatches?: number;
   variationRound?: number;
+  creativeSessionId?: string;
 }
 
 interface UploadHistoryPreviewItem {
@@ -652,6 +658,12 @@ const HUMAN_SPEECH_CRITERION_VIDEO = '只要素材中存在人声开口，包括
 
 const HUMAN_SPEECH_CRITERION_IMAGE = '只要图片中的人物处于说话状态（张嘴说话、手持话筒、口播或演唱姿态等），或者用户在本条任务的其他调整要求（如有）里明确要求出现人声——包括人物开口说话、旁白、口播、配音等，一律写“是”；纯风景、纯静物、人物只是静止看向镜头等没有说话意图的图片，且用户未要求出现人声的，一律写“否”。';
 
+function buildRequestedDialogueLock(additionalChange?: string) {
+  const lines = extractRequestedDialogueLines(additionalChange || '');
+  if (lines.length === 0) return '';
+  return `\n\n【用户指定台词逐字锁定】以下是用户在额外调整中明确指定的原话，最终视频生成提示词必须逐字包含，不得同义改写、增删字、替换近义词或改变字序：\n${lines.map((line, index) => `${index + 1}. “${line}”`).join('\n')}\n若原视频中的台词与这些原话冲突，以用户指定原话为准。`;
+}
+
 function buildCharacterRemixClause(characterRemix?: string) {
   const text = characterRemix?.trim();
   if (!text) return '';
@@ -679,7 +691,7 @@ const VIDEO_REVERSE_PROMPT = (options: { durationSeconds: number; sourceDuration
     `\n10. ${VIDEO_LIVE_EYE_GAZE_RULE}\n11. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：`
   );
   if (!additionalChange?.trim()) return enhancedBase;
-  return `${enhancedBase}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
+  return `${enhancedBase}${buildRequestedDialogueLock(additionalChange)}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
 };
 const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, options: { durationSeconds: number; sourceDurationSeconds: number; additionalChange?: string; includeSubtitles?: boolean; characterRemix?: string }) => {
   const additionalChange = options?.additionalChange;
@@ -733,7 +745,7 @@ ${subtitleClause}${characterRemixClause}`;
     `\n10. ${VIDEO_LIVE_EYE_GAZE_RULE}\n11. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：`
   );
   if (!additionalChange?.trim()) return enhancedBase;
-  return `${enhancedBase}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
+  return `${enhancedBase}${buildRequestedDialogueLock(additionalChange)}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
 };
 
 const IMAGE_TO_VIDEO_PROMPT = (options: {
@@ -758,7 +770,7 @@ const IMAGE_TO_VIDEO_PROMPT = (options: {
   ].filter(Boolean).join('\n');
 
   const imageIsolationRule = `本次任务只基于当前上传的图片${addPainting ? '和当前上传的挂画参考图片' : ''}以及本条指令进行判断。不得引用、继承、延续或假设任何历史会话、旧图片、旧提示词中的主体、道具、场景、挂画、装饰物、文字内容或风格要求；如果图片中没有明确出现某元素，除非用户在本条指令中明确要求，否则不得写入分析和最终提示词。`;
-  return `请把我上传的这张图片作为唯一的视觉基准，生成一份可以直接交给 Seedance 图生视频模型使用的完整视频提示词。目标视频总时长必须严格为 ${durationSeconds} 秒。不是简单描述图片，而是要在尽量保持图片内容一致的基础上，补全合理、真实、可执行的视频动作、镜头、时间顺序和动态细节。\n\n${HUMAN_SPEECH_MARKER_RULE(HUMAN_SPEECH_CRITERION_IMAGE)}\n\n${imageIsolationRule}\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、图片生视频关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整提示词\n十二、负面提示词\n\n必须遵守以下规则：\n1. 先完整识别图片中的主体、人物年龄和性别（仅在确实可判断时）、服装、发型、姿态、道具、背景、空间层次、构图、景别、光线方向和色彩，再设计动态；不确定的内容不要臆造。\n2. 图片是本次唯一基准。除用户明确提出的调整外，主体身份、人物外观、场景、道具、画面布局、空间比例、色彩和氛围都要保持一致，不得凭借历史对话增加以前出现过的挂画、家具、人物或其他元素。\n3. 生成的视频动作必须从静态图片自然延伸出来，并围绕 ${durationSeconds} 秒总时长设计。所有时间段必须从 0 秒开始，连续且不重叠，按先后顺序排列，最后一个时间段必须准确结束于 ${durationSeconds} 秒；禁止时间倒置、区间交叉、时间断层或超过总时长。\n4. 镜头运动要克制、真实并服务于主体，不要凭空添加复杂运镜；同时明确固定机位、推近、横移、跟拍或轻微环绕等动作的起止时间。\n5. 如果有人物，正面或偏正面能看见眼睛时，必须表现出真人感：适当自然眨眼、视线轻微移动和真实聚焦变化，避免眼睛一直睁着、眼珠固定、空洞凝视和 AI 呆滞感。人物手部可见时，重点描述手指、手腕、手掌的自然动作、接触位置、发力方向和动作先后，避免手部畸形和穿模。\n6. 如果出现卷轴式挂画、卷筒挂画或挂画需要打开，必须明确写成沿轴向旋转的滚动展开，画布从卷筒中逐步释放；禁止滑动、平移、平铺或直接弹开。挂画、海报和其他平面元素必须保持原始宽高比、透视、边界和文字内容，不得拉伸变形。${PAINTING_WOOD_BAR_OUTPUT_RULE}\n7. ${subtitleRule}\n8. 画面要减少 AI 感，保持自然的动作惯性、真实材质、合理接触、柔和光影和生活化节奏，避免塑料感、过度磨皮、虚假高光、僵硬表情、异常肢体和过度电影化。\n${optionalRules ? `\n本次可选调整：\n${optionalRules}\n` : ''}\n最终提示词必须以“生成指令”开头，明确写出总时长 ${durationSeconds} 秒，内容完整、具体、可直接复制使用；不要把分析过程写成空泛建议。`;
+  return `请把我上传的这张图片作为唯一的视觉基准，生成一份可以直接交给 Seedance 图生视频模型使用的完整视频提示词。目标视频总时长必须严格为 ${durationSeconds} 秒。不是简单描述图片，而是要在尽量保持图片内容一致的基础上，补全合理、真实、可执行的视频动作、镜头、时间顺序和动态细节。\n\n${HUMAN_SPEECH_MARKER_RULE(HUMAN_SPEECH_CRITERION_IMAGE)}\n\n${imageIsolationRule}\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、图片生视频关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整提示词\n十二、负面提示词\n\n必须遵守以下规则：\n1. 先完整识别图片中的主体、人物年龄和性别（仅在确实可判断时）、服装、发型、姿态、道具、背景、空间层次、构图、景别、光线方向和色彩，再设计动态；不确定的内容不要臆造。\n2. 图片是本次唯一基准。除用户明确提出的调整外，主体身份、人物外观、场景、道具、画面布局、空间比例、色彩和氛围都要保持一致，不得凭借历史对话增加以前出现过的挂画、家具、人物或其他元素。\n3. 生成的视频动作必须从静态图片自然延伸出来，并围绕 ${durationSeconds} 秒总时长设计。所有时间段必须从 0 秒开始，连续且不重叠，按先后顺序排列，最后一个时间段必须准确结束于 ${durationSeconds} 秒；禁止时间倒置、区间交叉、时间断层或超过总时长。\n4. 镜头运动要克制、真实并服务于主体，不要凭空添加复杂运镜；同时明确固定机位、推近、横移、跟拍或轻微环绕等动作的起止时间。\n5. 如果有人物，正面或偏正面能看见眼睛时，必须表现出真人感：适当自然眨眼、视线轻微移动和真实聚焦变化，避免眼睛一直睁着、眼珠固定、空洞凝视和 AI 呆滞感。人物手部可见时，重点描述手指、手腕、手掌的自然动作、接触位置、发力方向和动作先后，避免手部畸形和穿模。\n6. 如果出现卷轴式挂画、卷筒挂画或挂画需要打开，必须明确写成沿轴向旋转的滚动展开，画布从卷筒中逐步释放；禁止滑动、平移、平铺或直接弹开。挂画、海报和其他平面元素必须保持原始宽高比、透视、边界和文字内容，不得拉伸变形。${PAINTING_WOOD_BAR_OUTPUT_RULE}\n7. ${subtitleRule}\n8. 画面要减少 AI 感，保持自然的动作惯性、真实材质、合理接触、柔和光影和生活化节奏，避免塑料感、过度磨皮、虚假高光、僵硬表情、异常肢体和过度电影化。\n${optionalRules ? `\n本次可选调整：\n${optionalRules}\n` : ''}${buildRequestedDialogueLock(additionalChange)}\n最终提示词必须以“生成指令”开头，明确写出总时长 ${durationSeconds} 秒，内容完整、具体、可直接复制使用；不要把分析过程写成空泛建议。`;
 };
 const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const;
 const SEEDANCE_RESOLUTIONS_2_0 = ['480p', '720p', '1080p', '4k'] as const;
@@ -811,6 +823,7 @@ interface ReverseSeedanceSyncSnapshot {
   mode: Exclude<ReverseMode, 'painting'>;
   referenceImages: SelectedCreativeMedia[];
   requestedDuration?: number;
+  additionalChange?: string;
 }
 
 function getSeedanceModelLabel(model: SeedanceModelId) {
@@ -1820,6 +1833,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingFrameworkBatch, setPaintingFrameworkBatch] = useState(0);
   const [paintingTotalBatches, setPaintingTotalBatches] = useState(4);
   const [paintingVariationRound, setPaintingVariationRound] = useState(0);
+  const [paintingCreativeSessionId, setPaintingCreativeSessionId] = useState(() => generatePaintingRequestId('session'));
   const [paintingFullPrompt, setPaintingFullPrompt] = useState('');
   const [paintingLoading, setPaintingLoading] = useState<'idle' | 'analyze' | 'ideas' | 'prompt'>('idle');
   const [paintingHistoryRestoring, setPaintingHistoryRestoring] = useState(false);
@@ -1833,6 +1847,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     prompt: string;
     directionNumber: number;
     variationRound: number;
+    creativeSessionId?: string;
     imageHash?: string;
     paintingName?: string;
     paintingSubject?: string;
@@ -1928,7 +1943,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   // 台词只存文本本身，位置每次从当前提示词重新算（见下面的 seedanceDialogueHighlight）。
   // 元素替换存的是 text+ranges 快照、一改即清，两者语义不同所以分开存。
   const [seedanceDialogueLines, setSeedanceDialogueLines] = useState<string[]>([]);
+  const [seedanceRequestedDialogueLines, setSeedanceRequestedDialogueLines] = useState<string[]>([]);
+  const [seedanceDialogueNeedsClarification, setSeedanceDialogueNeedsClarification] = useState(false);
   const [seedancePromptScrollTop, setSeedancePromptScrollTop] = useState(0);
+
+  function clearSeedanceDialogueReview() {
+    setSeedanceDialogueLines([]);
+    setSeedanceRequestedDialogueLines([]);
+    setSeedanceDialogueNeedsClarification(false);
+  }
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1997,20 +2020,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }, [seedancePrompt, seedanceReplaceHighlight]);
 
+  useEffect(() => {
+    if (!seedancePrompt.trim()) clearSeedanceDialogueReview();
+  }, [seedancePrompt]);
+
   // 台词高亮按当前提示词实时重算：用户改动右侧框时绿色跟着走，某句被删掉它自然就不标了。
   // 这是「存文本、每次算位置」而不是「存位置快照」的原因——后者一改就失效。
   const seedanceDialogueHighlight = useMemo<TextHighlightState | null>(() => {
     if (seedanceDialogueLines.length === 0 || !seedancePrompt) return null;
-    const ranges: TextHighlightState['ranges'] = [];
-    for (const line of seedanceDialogueLines) {
-      let cursor = 0;
-      let index = seedancePrompt.indexOf(line, cursor);
-      while (index !== -1) {
-        ranges.push({ start: index, end: index + line.length, tone: 'dialogue' });
-        cursor = index + line.length;
-        index = seedancePrompt.indexOf(line, cursor);
-      }
-    }
+    const ranges: TextHighlightState['ranges'] = findDialogueOccurrencesInFinalPrompt(seedancePrompt, seedanceDialogueLines)
+      .map(({ start, end }) => ({ start, end, tone: 'dialogue' }));
     if (ranges.length === 0) return null;
     // 一句台词可能是另一句的子串（「欢迎」/「欢迎光临」），交集在渲染时会让切片错位，这里裁掉重叠。
     ranges.sort((a, b) => a.start - b.start);
@@ -2022,6 +2041,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
     return { text: seedancePrompt, ranges: merged };
   }, [seedanceDialogueLines, seedancePrompt]);
+
+  const seedanceDialogueVerification = useMemo(() => {
+    if (seedanceRequestedDialogueLines.length === 0) return null;
+    const found = new Set(findDialogueOccurrencesInFinalPrompt(seedancePrompt, seedanceRequestedDialogueLines).map((hit) => hit.line));
+    return seedanceRequestedDialogueLines.map((line) => ({ line, matched: found.has(line) }));
+  }, [seedanceRequestedDialogueLines, seedancePrompt]);
 
   // 叠加层渲染的必须是「当前提示词」这一份文本，否则上层 textarea 的文字被设成透明后
   // 会整框看不见。元素替换的 range 只在快照仍与当前文本一致时才参与，正好由上面的
@@ -2224,6 +2249,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setSeedanceTaskMode(activeItem.taskMode || 'generate');
     setSeedanceModel(activeItem.model);
     setSeedancePrompt(activeItem.prompt);
+    clearSeedanceDialogueReview();
     setSeedanceResolution(activeItem.resolution || '720p');
     setSeedanceRatio(activeItem.ratio);
     setSeedanceDuration(activeItem.duration);
@@ -2736,6 +2762,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         referenceImages: [selectedMedia, imageToVideoAddPainting ? imageToVideoPainting : null]
           .filter((media): media is SelectedCreativeMedia => Boolean(media?.kind === 'image')),
         requestedDuration: durationSeconds,
+        additionalChange,
       };
       autoSyncToSeedanceRef.current = true;
       scrollToRef(textareaRef);
@@ -2780,6 +2807,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       mode: reverseMode === 'replace' ? 'replace' : 'direct',
       referenceImages: reverseMode === 'replace' && replaceImage ? [replaceImage] : [],
       requestedDuration: durationSeconds,
+      additionalChange,
     };
 
     if (reverseMode === 'replace') {
@@ -2816,8 +2844,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const activeMode = snapshot?.mode || reverseMode;
     // 人声标记必须从原始文本里取，不能用 strip 之后的输出——strip 已经把它删掉了。
     const hasSpeech = extractHumanSpeechMarker(latestAssistantText);
+    const finalVideoPrompt = extractFinalVideoPromptSection(latestAssistantText);
     // 台词同样从原始文本取（strip 之后标记就没了），供右侧框标绿用。
-    const dialogueLines = extractDialogueLines(latestAssistantText);
+    const requestedDialogueLines = extractRequestedDialogueLines(snapshot?.additionalChange || '');
+    const explicitAudio = extractExplicitAudioPreference(snapshot?.additionalChange || '')
+      ?? (requestedDialogueLines.length > 0 ? true : extractExplicitAudioPreference(finalVideoPrompt || ''));
+    const needsDialogueClarification = requestedDialogueLines.length === 0
+      && hasRequestedDialogueIntent(snapshot?.additionalChange || '');
+    const dialogueLines = requestedDialogueLines.length > 0
+      ? requestedDialogueLines
+      : needsDialogueClarification ? [] : extractDialogueLines(latestAssistantText);
 
     // 格式化：在每个章节标题前插入一个空行，标题后紧跟正文不空行
     const formatted = latestAssistantText
@@ -2830,9 +2866,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
     setSeedancePrompt(stripReverseMarkers(formatted));
     setSeedanceDialogueLines(dialogueLines);
+    setSeedanceRequestedDialogueLines(requestedDialogueLines);
+    setSeedanceDialogueNeedsClarification(needsDialogueClarification);
     setSeedanceReplaceHighlight(null);
     setSeedancePromptScrollTop(0);
     setRequestError("");
+    if (activeMode !== 'painting') setSeedanceError("");
     setSeedancePromptHighlight(true);
     setTimeout(() => setSeedancePromptHighlight(false), 2000);
 
@@ -2842,9 +2881,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     // 用户的全局默认永久改成「开声音」。
     // nextGenerateAudio 为 null 表示不表态（历史记录、AI 未按格式输出、该模式不适用、H3 模型），
     // 保持用户设置；false 是明确的「关」。所以这里必须判 !== null，不能简写成 if (x)。
-    const nextGenerateAudio = resolveAutoAudioSetting({ hasSpeech, mode: activeMode, model: seedanceModel });
+    const nextGenerateAudio = resolveAutoAudioSetting({ hasSpeech, explicitPreference: explicitAudio, mode: activeMode, model: seedanceModel });
     if (nextGenerateAudio !== null) {
       setSeedanceGenerateAudio(nextGenerateAudio);
+    } else if (activeMode !== 'painting' && seedanceModel !== 'MiniMax-H3') {
+      setSeedanceError('未能明确判断本条视频是否需要声音，已保留当前声音设置，请在生成前确认。');
     }
 
     // 反推完成自动带出：时长（源视频真实时长四舍五入）+ 参考图（元素替换 / 图片生视频）。
@@ -2877,7 +2918,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return true;
     };
 
-    // 右侧实际拿到的最终提示词是第一依据；AI漏写标准时长时，再回退到提交前锁定的目标值。
+    // 提交前的目标时长是权威值；若 AI 最终提示词写错，保留目标参数并明确提醒核对。
+    if (snapshot?.requestedDuration && promptDuration !== null && promptDuration !== snapshot.requestedDuration) {
+      applyDuration(snapshot.requestedDuration);
+      const warning = `AI 最终提示词写的是 ${promptDuration} 秒，与本次目标 ${snapshot.requestedDuration} 秒不一致。右侧已保留目标时长，请先核对提示词中的动作时间轴。`;
+      setRequestError(warning);
+      setSeedanceError(warning);
+      return;
+    }
+
+    // 一致时采用最终提示词；AI 漏写标准时长时回退到提交前锁定的目标值。
     if (applyDuration(promptDuration)) {
       return;
     }
@@ -3014,6 +3064,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
 
     clearSeedanceReferences();
+    clearSeedanceDialogueReview();
     setSeedanceTask(null);
     setSeedanceError('');
     setSeedanceReplaceHighlight(null);
@@ -3116,6 +3167,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     imageHash?: string;
     directionNumber?: number;
     variationRound?: number;
+    creativeSessionId?: string;
   }) {
     const isVideoEdit = seedanceTaskMode === 'video-edit-painting';
     // 右侧面板当前显示什么，手动和单条自动生成就提交什么；不再回读另一套旧偏好覆盖界面。
@@ -3135,6 +3187,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const paintingDirectionNumber = overrides?.directionNumber ?? matchedPaintingSource?.directionNumber;
     const paintingSourceVariationRound = overrides?.variationRound ?? matchedPaintingSource?.variationRound;
     const paintingSourceImageHash = overrides?.imageHash || matchedPaintingSource?.imageHash;
+    const paintingSourceCreativeSessionId = overrides?.creativeSessionId ?? matchedPaintingSource?.creativeSessionId;
     const paintingSourceName = matchedPaintingSource?.paintingName
       || (paintingDirectionNumber ? String(paintingProfile?.name || '') : '');
     const paintingSourceSubject = matchedPaintingSource?.paintingSubject
@@ -3255,6 +3308,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         imageHash: paintingSourceImageHash,
         directionNumber: paintingDirectionNumber,
         variationRound: paintingSourceVariationRound,
+        creativeSessionId: paintingSourceCreativeSessionId,
       });
       setSeedanceTask({
         ...task,
@@ -3365,6 +3419,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setSeedanceTask(seedanceHistoryItemToTask(item));
     setSeedanceTaskMode(item.taskMode || 'generate');
     setSeedancePrompt(item.prompt);
+    clearSeedanceDialogueReview();
     setSeedanceReplaceHighlight(null);
     setSeedanceModel(item.model);
     setSeedanceResolution(item.resolution || '720p');
@@ -3672,6 +3727,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingIdeaLastPrompts({});
     setPaintingFrameworkBatch(0);
     setPaintingVariationRound(0);
+    setPaintingCreativeSessionId(generatePaintingRequestId('session'));
     setPaintingUsedDirections([]);
     setPaintingBatchIdeas([]);
     setPaintingBatchConfirmOpen(false);
@@ -4030,6 +4086,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       const maxDuration = seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15;
       const durationSeconds = Math.min(maxDuration, Math.max(4, Math.round(duration)));
       setSeedancePrompt(prompt.trim());
+      clearSeedanceDialogueReview();
       setSeedanceRatio(ratio);
       setSeedanceDuration(durationSeconds);
       const nextReferences = computeNextSeedanceReferencesWithPainting(Number(idea.directionNumber) || 0);
@@ -4061,6 +4118,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         frameworkBatch: paintingFrameworkBatch,
         totalBatches: paintingTotalBatches,
         variationRound: paintingVariationRound,
+        creativeSessionId: paintingCreativeSessionId,
       };
       setPaintingHistory((previous) => {
         const next = mergePaintingHistoryItem(previous, historyItem);
@@ -4083,6 +4141,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
             productType: paintingProductType,
             directionNumber,
             variationRound: paintingVariationRound,
+            creativeSessionId: paintingCreativeSessionId,
             imageHash: sourceImageHash,
             paintingName: String(paintingProfile.name || ''),
             paintingSubject: String(paintingProfile.subject || ''),
@@ -4130,6 +4189,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       imageHash,
       directionNumber: idea.directionNumber ? Number(idea.directionNumber) : undefined,
       variationRound: paintingVariationRound,
+      creativeSessionId: paintingCreativeSessionId,
     });
   }
 
@@ -4331,7 +4391,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingBatchPrepareStage('正在读取已使用方向');
       if (imageHash) {
         try {
-          const used = await getPaintingUsedDirections(imageHash, variationRound, paintingProductType);
+          const used = await getPaintingUsedDirections(imageHash, variationRound, paintingProductType, paintingCreativeSessionId);
           setPaintingUsedDirections(Array.isArray(used) ? used : []);
         } catch {
           setPaintingUsedDirections([]);
@@ -4386,6 +4446,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       resolution: paintingBatchResolution,
       ratio: paintingPlan.ratio || seedanceRatio,
       variationRound: paintingVariationRound,
+      creativeSessionId: paintingCreativeSessionId,
       generateAudio: seedanceGenerateAudio,
       watermark: seedanceWatermark,
       stylePreset: paintingPlan.stylePreset,
@@ -4713,6 +4774,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingFrameworkBatch(restoredBatch);
     setPaintingTotalBatches(item.totalBatches || 4);
     setPaintingVariationRound(restoredRound);
+    setPaintingCreativeSessionId(item.creativeSessionId || '');
     if (item.plan) {
       setPaintingPlan(item.plan);
     } else {
@@ -4939,6 +5001,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingIdeaLastPrompts({});
     setPaintingFrameworkBatch(0);
     setPaintingVariationRound(0);
+    setPaintingCreativeSessionId(generatePaintingRequestId('session'));
     setPaintingError('');
   }
 
@@ -5384,7 +5447,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 >
                   <span className="flex items-center justify-center gap-1.5">
                     <ImageIcon className="size-3.5" />
-                    装饰画创意素材
+                    AI生成素材
                   </span>
                 </button>
               </div>
@@ -6527,11 +6590,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   ref={additionalChangeRef}
                   value={additionalChange}
                   onChange={(e) => setAdditionalChange(e.target.value)}
-                  placeholder="如：把模特的衣服换成红色"
+                  placeholder="如：把模特衣服换成红色；台词：“欢迎光临”"
                   disabled={isLoading}
                   rows={2}
                   className="min-h-[48px] w-full resize-none overflow-hidden rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold leading-5 text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
                 />
+                <p className="text-[10px] text-slate-400">要逐字核对人物说的话，请写成「台词：“原话”」或「让人物说：“原话”」。</p>
               </div>
 
               <div className="mt-3 flex items-center">
@@ -7207,6 +7271,28 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     </div>
                   )}
                 </div>
+
+                {seedanceTaskMode === 'generate' && (seedanceDialogueNeedsClarification || seedanceDialogueVerification) && (
+                  <div className={cn(
+                    'mt-2 rounded-xl border px-3 py-2 text-xs leading-5',
+                    seedanceDialogueNeedsClarification || seedanceDialogueVerification?.some((item) => !item.matched)
+                      ? 'border-amber-300 bg-amber-50 text-amber-900'
+                      : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  )}>
+                    {seedanceDialogueNeedsClarification ? (
+                      <p>额外调整提到了台词，但没有识别到明确原话。请写成「台词：“要说的原话”」，系统才能逐字核对。</p>
+                    ) : (
+                      <>
+                        <p className="font-bold">指定台词核对：{seedanceDialogueVerification?.every((item) => item.matched) ? '已在最终提示词中逐字找到，浅绿色标出' : '有台词缺失或被改写，请核对后再生成'}</p>
+                        {seedanceDialogueVerification?.map((item, index) => (
+                          <p key={`${index}_${item.line}`} className="mt-1 break-all">
+                            {item.matched ? '✓ 已匹配' : '⚠ 未匹配'}：{item.line}
+                          </p>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {seedanceTaskMode === 'generate' && imageHistory.length > 0 && (
                   <button
