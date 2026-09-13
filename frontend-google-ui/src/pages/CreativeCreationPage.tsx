@@ -1943,14 +1943,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   // 台词只存文本本身，位置每次从当前提示词重新算（见下面的 seedanceDialogueHighlight）。
   // 元素替换存的是 text+ranges 快照、一改即清，两者语义不同所以分开存。
   const [seedanceDialogueLines, setSeedanceDialogueLines] = useState<string[]>([]);
-  const [seedanceRequestedDialogueLines, setSeedanceRequestedDialogueLines] = useState<string[]>([]);
-  const [seedanceDialogueNeedsClarification, setSeedanceDialogueNeedsClarification] = useState(false);
   const [seedancePromptScrollTop, setSeedancePromptScrollTop] = useState(0);
 
   function clearSeedanceDialogueReview() {
     setSeedanceDialogueLines([]);
-    setSeedanceRequestedDialogueLines([]);
-    setSeedanceDialogueNeedsClarification(false);
   }
   const scrollRef = useRef<HTMLDivElement>(null);
   const analysisScrollRef = useRef<HTMLDivElement>(null);
@@ -2041,12 +2037,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
     return { text: seedancePrompt, ranges: merged };
   }, [seedanceDialogueLines, seedancePrompt]);
-
-  const seedanceDialogueVerification = useMemo(() => {
-    if (seedanceRequestedDialogueLines.length === 0) return null;
-    const found = new Set(findDialogueOccurrencesInFinalPrompt(seedancePrompt, seedanceRequestedDialogueLines).map((hit) => hit.line));
-    return seedanceRequestedDialogueLines.map((line) => ({ line, matched: found.has(line) }));
-  }, [seedanceRequestedDialogueLines, seedancePrompt]);
 
   // 叠加层渲染的必须是「当前提示词」这一份文本，否则上层 textarea 的文字被设成透明后
   // 会整框看不见。元素替换的 range 只在快照仍与当前文本一致时才参与，正好由上面的
@@ -2866,8 +2856,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
     setSeedancePrompt(stripReverseMarkers(formatted));
     setSeedanceDialogueLines(dialogueLines);
-    setSeedanceRequestedDialogueLines(requestedDialogueLines);
-    setSeedanceDialogueNeedsClarification(needsDialogueClarification);
     setSeedanceReplaceHighlight(null);
     setSeedancePromptScrollTop(0);
     setRequestError("");
@@ -3848,6 +3836,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingProfile(null);
       setPaintingIdeas([]);
       setPaintingIdeaBatchCache({});
+      paintingIdeaBatchCacheRef.current = {};
+      paintingIdeaClientRequestIdsRef.current = {};
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
       setPaintingIdeaUsageCounts({});
@@ -3882,11 +3872,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingProfile(profile);
       setPaintingIdeas([]);
       setPaintingIdeaBatchCache({});
+      paintingIdeaBatchCacheRef.current = {};
+      paintingIdeaClientRequestIdsRef.current = {};
       setPaintingSelectedIdea(null);
       setPaintingFullPrompt('');
       setPaintingIdeaUsageCounts({});
       setPaintingIdeaLastPrompts({});
       setPaintingVariationRound(0);
+      // 每次重新分析都是一份新创作；只有从历史恢复才沿用原创作批次。
+      setPaintingCreativeSessionId(generatePaintingRequestId('session'));
       setTimeout(() => scrollToRef(paintingPlanRef), 80);
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '挂画分析失败，请稍后重试。');
@@ -3913,6 +3907,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     return JSON.stringify({
       batch,
       variationRound,
+      creativeSessionId: paintingCreativeSessionId,
       profile: {
         productType: paintingProductType,
         widthCm: paintingProfile?.widthCm,
@@ -4332,6 +4327,40 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingBatchListError(error instanceof Error ? error.message : '删除批量生成历史失败');
     } finally {
       setPaintingBatchDeletingRunId(null);
+    }
+  }
+
+  async function handlePaintingContinueBatchRun(run: PaintingBatchRun) {
+    if (paintingDraftBusy || !PAINTING_BATCH_TERMINAL_STATUSES.includes(run.status)) return;
+    setPaintingHistoryRestoring(true);
+    setPaintingError('');
+    try {
+      const response = await fetch(`/api/painting/history-images/${encodeURIComponent(run.imageHash)}/file`, { credentials: 'include' });
+      if (!response.ok) throw new Error('历史原图无法恢复，请重新上传图片开启新任务。');
+      const blob = await response.blob();
+      const mimeType = blob.type || 'image/jpeg';
+      const extension = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : mimeType.includes('gif') ? 'gif' : 'jpg';
+      const file = new File([blob], `历史原图.${extension}`, { type: mimeType });
+      if (await sha256File(file) !== run.imageHash) throw new Error('历史原图校验失败，无法安全续做。');
+      const previewUrl = createMediaPreviewUrl(file);
+      if (paintingImage) URL.revokeObjectURL(paintingImage.previewUrl);
+      resetPaintingProductDraft();
+      setPaintingImage({ kind: 'image', file, previewUrl, fileName: file.name });
+      setPaintingUploadHistoryId(null);
+      setPaintingProductType(getPaintingProductType(run.profile));
+      setPaintingProfile(run.profile);
+      setPaintingPlan(run.plan);
+      setStickerWidthCm(Number(run.profile.widthCm) || 180);
+      setStickerHeightCm(Number(run.profile.heightCm) || 60);
+      setPaintingVariationRound(run.variationRound);
+      setPaintingCreativeSessionId(typeof run.options?.creativeSessionId === 'string' ? run.options.creativeSessionId : '');
+      setPaintingBatchOnlyUnused(true);
+      setPaintingBatchRequestedCount('');
+      setTimeout(() => scrollToRef(paintingPlanRef), 80);
+    } catch (error) {
+      setPaintingError(error instanceof Error ? error.message : '恢复批量任务失败。');
+    } finally {
+      setPaintingHistoryRestoring(false);
     }
   }
 
@@ -6174,6 +6203,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                 <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', getPaintingBatchStatusTone(run.status))}>
                                   {getPaintingBatchStatusLabel(run.status)}
                                 </span>
+                                {canDelete && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handlePaintingContinueBatchRun(run)}
+                                    disabled={paintingDraftBusy}
+                                    className="rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-600 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                    title="恢复这条任务的原图、轮次和剩余方向"
+                                  >
+                                    续做
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => void handleDeletePaintingBatchRun(run)}
@@ -7272,28 +7312,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   )}
                 </div>
 
-                {seedanceTaskMode === 'generate' && (seedanceDialogueNeedsClarification || seedanceDialogueVerification) && (
-                  <div className={cn(
-                    'mt-2 rounded-xl border px-3 py-2 text-xs leading-5',
-                    seedanceDialogueNeedsClarification || seedanceDialogueVerification?.some((item) => !item.matched)
-                      ? 'border-amber-300 bg-amber-50 text-amber-900'
-                      : 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                  )}>
-                    {seedanceDialogueNeedsClarification ? (
-                      <p>额外调整提到了台词，但没有识别到明确原话。请写成「台词：“要说的原话”」，系统才能逐字核对。</p>
-                    ) : (
-                      <>
-                        <p className="font-bold">指定台词核对：{seedanceDialogueVerification?.every((item) => item.matched) ? '已在最终提示词中逐字找到，浅绿色标出' : '有台词缺失或被改写，请核对后再生成'}</p>
-                        {seedanceDialogueVerification?.map((item, index) => (
-                          <p key={`${index}_${item.line}`} className="mt-1 break-all">
-                            {item.matched ? '✓ 已匹配' : '⚠ 未匹配'}：{item.line}
-                          </p>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                )}
-
                 {seedanceTaskMode === 'generate' && imageHistory.length > 0 && (
                   <button
                     type="button"
@@ -8284,6 +8302,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               <span className="text-xs font-bold text-slate-700">仅生成未使用方向</span>
               <span className="text-[10px] text-slate-400">（默认，跳过当前轮次已生成过的方向）</span>
             </label>
+            <p className="mt-1.5 text-[10px] leading-4 text-slate-500">重新上传并分析同一张图，会开启新的40方向创作；点批量历史中的“续做”，才沿用原任务的剩余方向。</p>
 
             <div className="mt-4">
               <div className="mb-2 text-xs font-black text-slate-700">保存到文件夹</div>

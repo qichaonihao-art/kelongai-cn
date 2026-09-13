@@ -336,6 +336,21 @@ console.log('\n[4] 手动 / 换元素提交成功后写入方向使用记录');
   assert(!highRoundBody.usedDirections.includes(3) && !highRoundBody.usedDirections.includes(7), '高轮次不会串入旧轮次方向');
 }
 
+console.log('\n[4b] 同一原图的新创作批次独立拥有40个方向，历史续做只扣本批次已用方向');
+{
+  const hash = 'same-image-new-session';
+  const oldSession = 'session-old-test';
+  const newSession = 'session-new-test';
+  for (let direction = 1; direction <= 30; direction += 1) {
+    dbMarkPaintingDirectionUsed(hash, 2, direction, 'hanging', oldSession);
+  }
+  assert(dbGetPaintingUsedDirections(hash, 2, 'hanging', oldSession).length === 30, '恢复旧创作批次仍显示已用30个方向');
+  assert(dbGetPaintingUsedDirections(hash, 2, 'hanging', newSession).length === 0, '同一张原图重新开始的新创作批次有40个可用方向');
+  dbMarkPaintingDirectionUsed(hash, 2, 1, 'hanging', newSession);
+  assert(dbGetPaintingUsedDirections(hash, 2, 'hanging', newSession).length === 1, '新创作批次提交一条后剩余39个方向');
+  assert(dbGetPaintingUsedDirections(hash, 2, 'sticker', newSession).length === 0, '挂画与贴画使用方向保持隔离');
+}
+
 // ===== T5 stopping 批次刷新后仍被视为活动批次 =====
 console.log('\n[5] stopping 批次刷新后仍被视为活动批次');
 {
@@ -1498,6 +1513,38 @@ console.log('\n[40] 批量起始组、随机顺序与自定义数量');
   const randomInserted = getCollectionDb().prepare('SELECT direction_number FROM painting_batch_tasks WHERE batch_run_id = ? ORDER BY id ASC').all(randomBody.batchRunId).map((row) => Number(row.direction_number));
   assert(randomRes._code === 202 && randomInserted.join(',') === '9,1,40,22,3', '随机顺序按传入乱序取前5条', randomInserted.join(','));
 dbUpdatePaintingBatchRun(randomBody.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+}
+
+console.log('\n[40b] 同图新分析给40个方向，旧批次续做只取剩余方向');
+{
+  const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const imageHash = dbGetPaintingBatchRun(getCollectionDb().prepare('SELECT batch_run_id FROM painting_batch_runs WHERE creation_request_id = ?').get('batch-group2-count15').batch_run_id).imageHash;
+  const ideas = Array.from({ length: 40 }, (_, index) => ({ id: `session-${index + 1}`, directionNumber: index + 1, title: `方向${index + 1}`, durationMin: 6, durationMax: 6 }));
+  for (let direction = 1; direction <= 30; direction += 1) dbMarkPaintingDirectionUsed(imageHash, 0, direction, 'hanging', 'session-previous');
+  const makeRequest = async (creativeSessionId, creationRequestId) => {
+    const res = mockRes();
+    await handleCreatePaintingBatchRun(mockReq('/api/painting/batch-runs', {
+      image,
+      profile: { name: '同图续做测试', style: '现代', subject: '书法' },
+      plan: { durationMin: 6, durationMax: 6, ratio: '9:16', stylePreset: 'modern-minimal' },
+      ideas,
+      requestedCount: 40,
+      model: PAINTING_BATCH_MODEL,
+      resolution: '720p',
+      variationRound: 0,
+      onlyUnused: true,
+      creativeSessionId,
+      creationRequestId,
+    }), res);
+    return { res, body: jsonBody(res) };
+  };
+  const fresh = await makeRequest('session-fresh', 'batch-same-image-fresh');
+  assert(fresh.res._code === 202 && fresh.body.taskCount === 40, '相同图片开启新创作批次仍可生成40条', JSON.stringify(fresh.body));
+  assert(dbGetPaintingBatchRun(fresh.body.batchRunId).options.creativeSessionId === 'session-fresh', '批量历史保存创作批次标识');
+  dbUpdatePaintingBatchRun(fresh.body.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
+  const resumed = await makeRequest('session-previous', 'batch-same-image-resume');
+  assert(resumed.res._code === 202 && resumed.body.taskCount === 10, '恢复旧创作批次只生成剩余10条', JSON.stringify(resumed.body));
+  dbUpdatePaintingBatchRun(resumed.body.batchRunId, { status: 'stopped', controlStatus: 'stopped' });
 }
 
 // ===== T41 删除批量生成历史：仅允许终态，并级联删除任务明细 =====
