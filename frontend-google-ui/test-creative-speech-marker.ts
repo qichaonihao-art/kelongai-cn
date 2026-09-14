@@ -130,7 +130,8 @@ assert.ok(
   '人声标记必须从原始文本取，不能用 strip 之后的输出（strip 已经把它删了）',
 );
 assert.ok(
-  pageSource.includes('setSeedancePrompt(stripReverseMarkers(formatted))'),
+  pageSource.includes('const cleanPrompt = stripReverseMarkers(formatted);')
+    && pageSource.includes('SEEDANCE_SHOT_FIDELITY_LOCK}\\n\\n${cleanPrompt}'),
   '填框前必须清掉全部标记行（人声判定 + 台词），不能把标记发给视频模型',
 );
 assert.ok(

@@ -642,9 +642,11 @@ function getSeedanceCostStats(): { daily: number; monthly: number; yearly: numbe
 
 const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n除开头标记区的人声判定与台词标记外，请严格按照以上十二个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。最终完整提示词的最后必须单独使用标准格式写一行“总时长：X秒”，X必须与本条任务已经锁定的整数时长完全一致，不得另行估算。';
 const VIDEO_CONTEXT_ISOLATION_RULE = '本次任务是完全独立的一次视频分析。只能基于当前上传的视频、当前上传的参考图片（如有）、本条指令中的替换要求、额外调整、人物改造要求和字幕选项进行判断。不得引用、继承、延续或假设任何历史会话、上一次视频、上一次替换目标、上一次参考图、旧提示词中的主体、道具、场景、动作、挂画、海报、装饰物、文字内容或风格要求。所有主体、道具、动作和场景元素必须来自当前视频可见内容或当前指令明确要求；如果当前视频中没有明确出现某元素，不得写入分析和最终提示词。';
+const VIDEO_SHOT_FIDELITY_RULE = '【画面与台词分离／镜头强制复刻】先逐段观察原视频的真实画面，明确原片有几个镜头、有没有剪辑点、机位是否固定、景别和构图是否变化。台词、口播、旁白只用于还原声音和口型，不是新增画面、道具、人物动作或转场的指令；某件物品只在话里被提到但从未出现在画面中，就绝不能让它上镜。原片若是全程固定机位的一镜到底，最终生成指令必须明确写出从0秒到结束始终同一机位、同一构图、同一背景、同一人物连续说话，禁止切镜、插入特写、横移、推近、摇镜或转向台词提到的物品。元素替换只允许修改原片画面中实际可见的指定元素及其原有位置，不得为了展示替换物而新增镜头或改变取景。请把镜头数量、机位、剪辑点和台词提及但不可见的物品边界写入第三至五部分、复刻关键约束、第十一部分的最终生成指令和第十二部分的负面提示词。';
+const SEEDANCE_SHOT_FIDELITY_LOCK = '【原片镜头优先】下文是原视频的反推分析，生成视频时严格执行其中真实拍到的镜头数量、机位、景别、构图和时间顺序。台词里提到的物品仅属于声音内容，不是视觉生成指令；除非原片画面确实拍到，或用户明确要求在原有画面位置替换，否则不得新增该物品、切到它的特写或为了展示它移动镜头。若下文描述原片为固定机位一镜到底，必须全程保持同一连续镜头、同一取景和背景，不得切镜、插镜、推拉摇移或另拍展示画面。';
 const VIDEO_LIVE_EYE_GAZE_RULE = '如果视频中出现人物，且正面或偏正面机位能明显看到人物眼神，必须重点描述人物眼神的真人感：眼睛不能一直僵硬睁着不动，需根据原视频状态写出自然眨眼、视线轻微移动、眼神聚焦变化、看向镜头或看向道具/画面的真实互动感，避免眼珠固定、空洞呆滞、假人感和 AI 式凝视。';
 const PAINTING_WOOD_BAR_RULE = '挂画上下两端的木条、挂轴或压杆必须严格以当前视频和参考图片中实际可见的结构为准，完整保持其形状、颜色、材质、粗细、长度、截面和两端轮廓，不得重新设计。滚动展开只改变画布的卷起与释放状态，不得把原有扁平或方形木条改成传统圆柱形卷轴、圆杆或转轴；不得在木条左右两端擅自增加圆球、葫芦头、轴头、端帽、把手或任何参考素材中不存在的圆柱形及装饰性构件。';
-const PAINTING_WOOD_BAR_OUTPUT_RULE = `${PAINTING_WOOD_BAR_RULE} 如果当前素材涉及挂画或卷轴，必须把这项要求同时写入“复刻关键约束”“负面约束”“最终完整提示词”和“负面提示词”，不能只在分析部分提到。`;
+const PAINTING_WOOD_BAR_OUTPUT_RULE = `${PAINTING_WOOD_BAR_RULE} 仅当当前视觉素材的画面中实际出现挂画或卷轴时，才把这项要求写入“复刻关键约束”“负面约束”“最终完整提示词”和“负面提示词”；如果只在台词里提到，不得因此添加挂画镜头。`;
 // 「人声判定」标记是横跨三方的契约：这里的规则文案、creative.ts 里的解析正则、
 // 以及 AI 实际输出的格式。措辞和正则一旦对不上，解析会返回 null，而 null 的语义恰好是
 // 「旧记录，不要碰开关」——功能于是静默失效：没有异常、没有日志，现象酷似历史兼容逻辑
@@ -671,7 +673,7 @@ function buildCharacterRemixClause(characterRemix?: string) {
 
 const buildReverseDurationRule = (durationSeconds: number, sourceDurationSeconds: number) => sourceDurationSeconds === durationSeconds
   ? `【视频时长强制锁定】当前源视频真实时长经四舍五入后为 ${sourceDurationSeconds} 秒，本次复刻视频的目标总时长为 ${durationSeconds} 秒。动作和镜头时间轴必须从0秒连续安排到${durationSeconds}秒；最终完整提示词的最后必须单独写一行“总时长：${durationSeconds}秒”。`
-  : `【视频时长强制锁定】当前源视频真实时长经四舍五入后为 ${sourceDurationSeconds} 秒，但用户在“额外调整”中明确要求新视频改为 ${durationSeconds} 秒，因此目标总时长必须以 ${durationSeconds} 秒为准，禁止恢复成源视频时长。请通过补充合理动作和镜头过程自然延展内容，禁止慢放、重复或静止凑时长。时间轴必须从0秒连续安排到${durationSeconds}秒；最终完整提示词的最后必须单独写一行“总时长：${durationSeconds}秒”。`;
+  : `【视频时长强制锁定】当前源视频真实时长经四舍五入后为 ${sourceDurationSeconds} 秒，但用户在“额外调整”中明确要求新视频改为 ${durationSeconds} 秒，因此目标总时长必须以 ${durationSeconds} 秒为准，禁止恢复成源视频时长。只在原有机位和取景内延展连续动作与说话节奏，不得通过新增镜头、转场、台词联想画面来凑时长，也禁止慢放、重复或静止等待。时间轴必须从0秒连续安排到${durationSeconds}秒；最终完整提示词的最后必须单独写一行“总时长：${durationSeconds}秒”。`;
 
 const VIDEO_REVERSE_PROMPT = (options: { durationSeconds: number; sourceDurationSeconds: number; additionalChange?: string; includeSubtitles?: boolean; characterRemix?: string }) => {
   const additionalChange = options?.additionalChange;
@@ -685,7 +687,8 @@ const VIDEO_REVERSE_PROMPT = (options: { durationSeconds: number; sourceDuration
     VIDEO_CONTEXT_ISOLATION_RULE,
     `${buildReverseDurationRule(options.durationSeconds, options.sourceDurationSeconds)}\n\n${VIDEO_CONTEXT_ISOLATION_RULE}`,
   );
-  const enhancedBase = durationLockedBase.replace(
+  const shotLockedBase = durationLockedBase.replace(VIDEO_CONTEXT_ISOLATION_RULE, `${VIDEO_CONTEXT_ISOLATION_RULE}\n\n${VIDEO_SHOT_FIDELITY_RULE}`);
+  const enhancedBase = shotLockedBase.replace(
     '\n10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：',
     `\n10. ${VIDEO_LIVE_EYE_GAZE_RULE}\n11. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：`
   );
@@ -739,7 +742,8 @@ ${VIDEO_CONTEXT_ISOLATION_RULE}
 9. 如果视频中出现人物，必须重点观察并详细描述人物手部动作，包括手指、手腕、手掌与道具或挂画的接触方式、拿取方式、展开方式、扶持位置、发力方向和动作先后顺序，不得只笼统描述为”展示”或”操作”。
 10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：卷轴或卷筒沿轴向旋转，画布从卷筒中逐步释放并展开；不得描述成普通平面图片的滑动、平移或直接展开。${PAINTING_WOOD_BAR_OUTPUT_RULE}
 ${subtitleClause}${characterRemixClause}`;
-  const enhancedBase = base.replace(
+  const shotLockedBase = base.replace(VIDEO_CONTEXT_ISOLATION_RULE, `${VIDEO_CONTEXT_ISOLATION_RULE}\n\n${VIDEO_SHOT_FIDELITY_RULE}`);
+  const enhancedBase = shotLockedBase.replace(
     '\n10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：',
     `\n10. ${VIDEO_LIVE_EYE_GAZE_RULE}\n11. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：`
   );
@@ -2864,7 +2868,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
-    setSeedancePrompt(stripReverseMarkers(formatted));
+    const cleanPrompt = stripReverseMarkers(formatted);
+    // 常规生成没有自动上传原视频；把镜头锁明确放在 Seedance 实际收到的提示词最前面。
+    setSeedancePrompt(activeMode === 'direct' || activeMode === 'replace'
+      ? `${SEEDANCE_SHOT_FIDELITY_LOCK}\n\n${cleanPrompt}`
+      : cleanPrompt);
     setSeedanceDialogueLines(dialogueLines);
     setSeedanceReplaceHighlight(null);
     if (seedancePromptRef.current) seedancePromptRef.current.scrollTop = 0;
