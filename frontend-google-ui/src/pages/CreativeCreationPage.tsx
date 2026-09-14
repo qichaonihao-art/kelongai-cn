@@ -552,8 +552,8 @@ function replaceAllWithHighlightRanges(source: string, search: string, replaceme
 // 台词走浅绿（用户要的），元素替换走琥珀——两者语义不同，
 // 而元素替换模式下会同时出现，撞色就分不出谁是谁了。
 const HIGHLIGHT_TONE_CLASS: Record<TextHighlightTone, string> = {
-  dialogue: 'bg-emerald-200/80',
-  replace: 'bg-amber-200/80',
+  dialogue: 'bg-emerald-300/70 text-transparent',
+  replace: 'bg-amber-200/80 text-transparent',
 };
 
 function renderHighlightedText(state: TextHighlightState | null) {
@@ -1942,7 +1942,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   // 台词只存文本本身，位置每次从当前提示词重新算（见下面的 seedanceDialogueHighlight）。
   // 元素替换存的是 text+ranges 快照、一改即清，两者语义不同所以分开存。
   const [seedanceDialogueLines, setSeedanceDialogueLines] = useState<string[]>([]);
-  const [isSeedancePromptFocused, setIsSeedancePromptFocused] = useState(false);
 
   function clearSeedanceDialogueReview() {
     setSeedanceDialogueLines([]);
@@ -2022,11 +2021,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (!seedancePrompt.trim()) clearSeedanceDialogueReview();
   }, [seedancePrompt]);
 
-  // 台词高亮按当前提示词重算：编辑时用原生文字，离开输入框后再显示匹配的绿色标记。
+  // 台词高亮按当前提示词重算，编辑过程中也同步更新标记位置。
   // 这是「存文本、每次算位置」而不是「存位置快照」的原因——后者一改就失效。
   const seedanceDialogueHighlight = useMemo<TextHighlightState | null>(() => {
-    // 编辑时只显示原生 textarea；高亮叠加层会改变可见文字与光标的对应关系。
-    if (isSeedancePromptFocused || seedanceDialogueLines.length === 0 || !seedancePrompt) return null;
+    if (seedanceDialogueLines.length === 0 || !seedancePrompt) return null;
     const ranges: TextHighlightState['ranges'] = findDialogueOccurrencesInFinalPrompt(seedancePrompt, seedanceDialogueLines)
       .map(({ start, end }) => ({ start, end, tone: 'dialogue' }));
     if (ranges.length === 0) return null;
@@ -2039,13 +2037,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       merged.push(range);
     }
     return { text: seedancePrompt, ranges: merged };
-  }, [isSeedancePromptFocused, seedanceDialogueLines, seedancePrompt]);
+  }, [seedanceDialogueLines, seedancePrompt]);
 
-  // 叠加层渲染的必须是「当前提示词」这一份文本，否则上层 textarea 的文字被设成透明后
-  // 会整框看不见。元素替换的 range 只在快照仍与当前文本一致时才参与，正好由上面的
-  // effect 保证；这个 memo 再兜一次底，不满足就不进叠加层。
+  // 叠加层只画色块，不显示文字；真实文字和光标始终由 textarea 绘制。
+  // 元素替换的 range 只在快照仍与当前文本一致时参与，避免旧位置标错。
   const seedanceOverlayHighlight = useMemo<TextHighlightState | null>(() => {
-    if (isSeedancePromptFocused) return null;
     const ranges: TextHighlightState['ranges'] = [];
     if (seedanceReplaceHighlight && seedanceReplaceHighlight.text === seedancePrompt) {
       ranges.push(...seedanceReplaceHighlight.ranges);
@@ -2060,7 +2056,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       merged.push(range);
     }
     return { text: seedancePrompt, ranges: merged };
-  }, [isSeedancePromptFocused, seedanceReplaceHighlight, seedanceDialogueHighlight, seedancePrompt]);
+  }, [seedanceReplaceHighlight, seedanceDialogueHighlight, seedancePrompt]);
 
   function scrollAnalysisToBottom() {
     requestAnimationFrame(() => {
@@ -7209,7 +7205,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 <div className="relative">
                   {seedanceOverlayHighlight && (
                     <div
-                      className="pointer-events-none absolute inset-0 z-0 min-h-[280px] overflow-hidden rounded-xl bg-white p-4 pb-20 text-sm leading-7 text-slate-700 whitespace-pre-wrap"
+                      className="pointer-events-none absolute inset-0 z-0 min-h-[280px] overflow-hidden rounded-xl bg-white p-4 pb-20 text-sm leading-7 text-transparent whitespace-pre-wrap"
                       aria-hidden="true"
                     >
                       <div
@@ -7227,8 +7223,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     value={seedancePrompt}
                     onChange={handleSeedancePromptChange}
                     onKeyDown={handleSeedanceKeyDown}
-                    onFocus={() => setIsSeedancePromptFocused(true)}
-                    onBlur={() => setIsSeedancePromptFocused(false)}
                     onScroll={(event) => {
                       if (seedanceHighlightContentRef.current) {
                         seedanceHighlightContentRef.current.style.transform = `translateY(-${event.currentTarget.scrollTop}px)`;
@@ -7238,8 +7232,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     placeholder={seedanceTaskMode === 'video-edit-painting' ? '上传原视频和目标挂画后即可提交视频编辑任务' : '等待模块一反推出视频提示词...'}
                     className={cn(
                       "relative z-10 min-h-[280px] w-full resize-none rounded-xl border p-4 pb-20 text-sm leading-7 outline-none transition-[border-color,box-shadow] focus:border-violet-300 whitespace-pre-wrap",
-                      // 只有未编辑且叠加层渲染当前文本时才隐藏 textarea 文字。
-                      seedanceOverlayHighlight ? "bg-transparent text-transparent caret-slate-800 selection:bg-emerald-200/70" : "bg-white text-slate-700",
+                      // 真实文字在输入框上层始终可见，叠加层只提供背后的标记色块。
+                      seedanceOverlayHighlight ? "bg-transparent text-slate-700 caret-slate-800 selection:bg-emerald-200/70" : "bg-white text-slate-700",
                       seedancePromptHighlight ? "border-violet-400 ring-2 ring-violet-300" : "border-slate-300"
                     )}
                   />

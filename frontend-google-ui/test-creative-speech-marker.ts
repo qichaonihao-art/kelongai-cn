@@ -196,21 +196,22 @@ assert.ok(
 );
 assert.equal(/【\s*台词\s*[：:]/.test(pageSource), false, '页面里不得出现手抄的台词标记字面量');
 
-// 源码级断言：透明文字必须挂在「叠加层确实渲染着同一份文本」上。
-// 写成 seedanceReplaceHighlight 会让「有台词、但元素替换高亮为空」时整框文字隐形——
-// 不报错、不是白屏，是一个看得见边框、里面什么都没有的空框。
+// 真实文字与光标始终由 textarea 绘制；叠加层只画标记色块。
+// 编辑时不能把台词标记关闭，也不能把 textarea 文字设为透明，否则又会错位或不可见。
 assert.ok(
-  pageSource.includes('seedanceOverlayHighlight ? "bg-transparent text-transparent'),
-  'textarea 的透明文字必须由合并后的叠加层状态决定，不能只看元素替换高亮',
+  pageSource.includes('seedanceOverlayHighlight ? "bg-transparent text-slate-700')
+    && pageSource.includes('bg-emerald-300/70 text-transparent')
+    && pageSource.includes('bg-white p-4 pb-20 text-sm leading-7 text-transparent whitespace-pre-wrap'),
+  'textarea 的文字必须可见，叠加层文字必须透明且仅保留台词色块',
 );
 assert.ok(
   pageSource.includes('const seedanceOverlayHighlight = useMemo'),
-  '叠加层文本必须来自同一份当前提示词，否则两层对不上就会隐形',
+  '叠加层标记位置必须来自当前提示词',
 );
 assert.ok(
-  pageSource.includes('if (isSeedancePromptFocused) return null;')
-    && pageSource.includes('onFocus={() => setIsSeedancePromptFocused(true)}'),
-  '编辑提示词时必须关闭叠加层，让原生文字与光标保持一致',
+  !pageSource.includes('if (isSeedancePromptFocused) return null;')
+    && !pageSource.includes('onFocus={() => setIsSeedancePromptFocused(true)}'),
+  '编辑时台词标记必须继续显示',
 );
 assert.ok(
   !pageSource.includes('setSeedancePromptScrollTop(event.currentTarget.scrollTop)')
