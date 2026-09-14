@@ -53,6 +53,9 @@ assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'image', model: MO
 assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'image', model: MODEL }), false);
 assert.equal(resolveAutoAudioSetting({ hasSpeech: false, explicitPreference: true, mode: 'image', model: MODEL }), true, '明确新增声音高于原素材无声标记');
 assert.equal(resolveAutoAudioSetting({ hasSpeech: true, explicitPreference: false, mode: 'direct', model: MODEL }), false, '明确静音高于原素材人声标记');
+const noDialogueWithMusic = `${HUMAN_SPEECH_MARKER_TOKENS.no}\n十一、最终可直接用于视频生成模型的完整提示词\n生成指令：人物安静地走过街道，保留环境音和背景音乐。`;
+assert.equal(extractExplicitAudioPreference(extractFinalVideoPromptSection(noDialogueWithMusic) || ''), true, '复现：AI 写了背景音乐会被旧逻辑误认为必须开声音');
+assert.equal(resolveAutoAudioSetting({ hasSpeech: extractHumanSpeechMarker(noDialogueWithMusic), explicitPreference: extractExplicitAudioPreference(''), mode: 'direct', model: MODEL }), false, '无人说话时，即使 AI 最终提示词有音乐，也要关闭声音');
 assert.equal(resolveAutoAudioSetting({ hasSpeech: true, explicitPreference: false, mode: 'painting', model: MODEL }), null, '装饰画模块不受明确声音判定影响');
 assert.equal(resolveAutoAudioSetting({ hasSpeech: true, explicitPreference: false, mode: 'direct', model: 'MiniMax-H3' }), null, 'H3 不受声音开关判定影响');
 assert.equal(extractExplicitAudioPreference('新视频增加旁白'), true);
@@ -135,9 +138,16 @@ assert.ok(
   '台词必须从原始文本取，不能用 strip 之后的输出',
 );
 assert.ok(
-  pageSource.includes('extractRequestedDialogueLines(snapshot?.additionalChange ?? lastReverseDialogueInputRef.current)')
+  pageSource.includes('const userAdjustments = snapshot?.additionalChange ?? lastReverseDialogueInputRef.current;')
+    && pageSource.includes('extractRequestedDialogueLines(userAdjustments)')
     && (pageSource.match(/lastReverseDialogueInputRef\.current = additionalChange/g) || []).length === 2,
   '用户明确指定的台词必须来自当次提交的额外调整，自动或手动同步都不能依赖 AI 转述',
+);
+const syncSource = pageSource.slice(pageSource.indexOf('function syncLatestPromptToSeedance()'), pageSource.indexOf('function syncReverseMediaToSeedance('));
+assert.ok(
+  syncSource.includes('extractExplicitAudioPreference(userAdjustments)')
+    && !syncSource.includes('extractExplicitAudioPreference(finalVideoPrompt'),
+  '只有用户明确提出的声音要求能覆盖人声标记，AI 生成的背景音乐不能阻止自动关声',
 );
 assert.ok(
   pageSource.includes('setSeedanceDialogueLines(dialogueLines)'),
@@ -196,6 +206,16 @@ assert.ok(
 assert.ok(
   pageSource.includes('const seedanceOverlayHighlight = useMemo'),
   '叠加层文本必须来自同一份当前提示词，否则两层对不上就会隐形',
+);
+assert.ok(
+  pageSource.includes('if (isSeedancePromptFocused) return null;')
+    && pageSource.includes('onFocus={() => setIsSeedancePromptFocused(true)}'),
+  '编辑提示词时必须关闭叠加层，让原生文字与光标保持一致',
+);
+assert.ok(
+  !pageSource.includes('setSeedancePromptScrollTop(event.currentTarget.scrollTop)')
+    && pageSource.includes('seedanceHighlightContentRef.current.style.transform'),
+  '滚动提示词时只同步叠加层位置，不能触发整页状态更新',
 );
 
 console.log('前端人声标记测试通过：标记三态解析、台词标记抽取与清理、标记行清理、声音开关决策真值表、高亮接线。无真实网络调用。');
