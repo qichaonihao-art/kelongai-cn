@@ -208,27 +208,28 @@ assert.ok(
 );
 assert.equal(/【\s*台词\s*[：:]/.test(pageSource), false, '页面里不得出现手抄的台词标记字面量');
 
-// textarea 与普通 div 的自动换行无法长期保持像素级一致，台词不再使用叠加色块。
-// 只把真正匹配到的原话列在输入框上方，避免标错位置并保留正常编辑能力。
+// 查看态直接渲染带台词标记的正文，编辑态只使用原生 textarea；两者不能叠加。
 assert.ok(
-  pageSource.includes('seedanceOverlayHighlight ? "bg-transparent text-slate-700')
-    && !pageSource.includes("dialogue: 'bg-emerald")
-    && pageSource.includes('const matchedSeedanceDialogueLines = useMemo'),
-  '台词不能继续使用会错位的输入框叠加色块',
+  pageSource.includes("dialogue: 'rounded-sm bg-emerald-200/80 font-black")
+    && pageSource.includes('showSeedancePromptPreview ? (')
+    && pageSource.includes("{isSeedancePromptEditing ? '查看台词位置' : '编辑提示词'}"),
+  '查看态必须在正文原位置突出台词，并提供明确的查看／编辑切换',
 );
 assert.ok(
-  pageSource.includes("unmatchedSeedanceDialogueLines.length === 0 ? '已核对台词' : '台词待核对'")
-    && pageSource.includes('以下原话没有在最终生成提示词中完整匹配'),
-  '只显示真正匹配的台词，匹配失败时必须明确提醒检查',
+  pageSource.includes("data-dialogue-highlight={part.tone === 'dialogue' ? 'true' : undefined}")
+    && pageSource.includes("querySelector<HTMLElement>('[data-dialogue-highlight=\"true\"]')"),
+  '查看提示词时必须自动滚动到正文中的第一处台词',
 );
 assert.ok(
   pageSource.includes('findDialogueOccurrencesInFinalPrompt(seedancePrompt, seedanceDialogueLines).map(({ line }) => line)'),
-  '独立台词提示必须复用最终提示词的精确匹配结果，不能固定显示未匹配的文字',
+  '台词状态必须复用最终提示词的精确匹配结果，不能固定显示未匹配的文字',
 );
 assert.ok(
-  !pageSource.includes('setSeedancePromptScrollTop(event.currentTarget.scrollTop)')
-    && pageSource.includes('seedanceHighlightContentRef.current.style.transform'),
-  '滚动提示词时只同步叠加层位置，不能触发整页状态更新',
+  !pageSource.includes('seedanceHighlightContentRef')
+    && !pageSource.includes('seedanceOverlayHighlight')
+    && pageSource.includes('ref={seedancePromptPreviewRef}')
+    && pageSource.includes('ref={seedancePromptRef}'),
+  '高亮预览和原生输入框必须是互斥节点，不能再用同步滚动的叠加层',
 );
 
 console.log('前端人声标记测试通过：标记三态解析、台词标记抽取与清理、标记行清理、声音开关决策真值表、高亮接线。无真实网络调用。');

@@ -229,7 +229,7 @@ interface AdditionalChangeHistoryItem {
   createdAt: number;
 }
 
-type TextHighlightTone = 'replace';
+type TextHighlightTone = 'replace' | 'dialogue';
 
 interface TextHighlightState {
   text: string;
@@ -551,7 +551,8 @@ function replaceAllWithHighlightRanges(source: string, search: string, replaceme
 }
 
 const HIGHLIGHT_TONE_CLASS: Record<TextHighlightTone, string> = {
-  replace: 'bg-amber-200/80 text-transparent',
+  replace: 'rounded-sm bg-amber-200/80 text-slate-900',
+  dialogue: 'rounded-sm bg-emerald-200/80 font-black text-emerald-950 underline decoration-2 underline-offset-2',
 };
 
 function renderHighlightedText(state: TextHighlightState | null) {
@@ -573,7 +574,11 @@ function renderHighlightedText(state: TextHighlightState | null) {
 
   return parts.map((part) => (
     part.tone ? (
-      <mark key={part.key} className={HIGHLIGHT_TONE_CLASS[part.tone]}>
+      <mark
+        key={part.key}
+        className={HIGHLIGHT_TONE_CLASS[part.tone]}
+        data-dialogue-highlight={part.tone === 'dialogue' ? 'true' : undefined}
+      >
         {part.text}
       </mark>
     ) : (
@@ -1941,7 +1946,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [replaceText, setReplaceText] = useState("");
   const [replaceResult, setReplaceResult] = useState<string | null>(null);
   const [seedanceReplaceHighlight, setSeedanceReplaceHighlight] = useState<TextHighlightState | null>(null);
-  // 台词只存文本本身，位置每次从当前提示词重新算（见下面的 seedanceDialogueHighlight）。
+  const [isSeedancePromptEditing, setIsSeedancePromptEditing] = useState(false);
+  // 台词只存文本本身，位置每次从当前提示词重新计算。
   // 元素替换存的是 text+ranges 快照、一改即清，两者语义不同所以分开存。
   const [seedanceDialogueLines, setSeedanceDialogueLines] = useState<string[]>([]);
 
@@ -1963,7 +1969,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const paintingIdeasRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const seedancePromptRef = useRef<HTMLTextAreaElement>(null);
-  const seedanceHighlightContentRef = useRef<HTMLDivElement>(null);
+  const seedancePromptPreviewRef = useRef<HTMLDivElement>(null);
   const additionalChangeRef = useRef<HTMLTextAreaElement>(null);
   const videoEditTargetRef = useRef<HTMLTextAreaElement>(null);
   const videoEditAdjustmentsRef = useRef<HTMLTextAreaElement>(null);
@@ -2023,8 +2029,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (!seedancePrompt.trim()) clearSeedanceDialogueReview();
   }, [seedancePrompt]);
 
-  // 输入框无法可靠地给局部文字着色：独立叠加层与 textarea 的自动换行会逐行累积偏移。
-  // 改为单独列出真正匹配到的台词；用户编辑提示词后，这里会立即重新核对。
+  // 查看状态直接渲染带标记的正文；编辑状态只保留原生 textarea。
+  // 两者不叠加，局部高亮不会再干扰光标、输入法、换行或滚动。
   const matchedSeedanceDialogueLines = useMemo(() => {
     if (seedanceDialogueLines.length === 0 || !seedancePrompt) return [];
     return [...new Set(
@@ -2036,11 +2042,33 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     return [...new Set(seedanceDialogueLines.filter((line) => !matched.has(line)))];
   }, [matchedSeedanceDialogueLines, seedanceDialogueLines]);
 
-  // 元素替换的短暂结果标记仍使用快照；一旦用户编辑，effect 会立即清除。
-  const seedanceOverlayHighlight = useMemo<TextHighlightState | null>(() => {
-    if (!seedanceReplaceHighlight || seedanceReplaceHighlight.text !== seedancePrompt) return null;
-    return seedanceReplaceHighlight;
-  }, [seedanceReplaceHighlight, seedancePrompt]);
+  const seedancePromptPreviewHighlight = useMemo<TextHighlightState>(() => {
+    const ranges: TextHighlightState['ranges'] = [];
+    if (seedanceReplaceHighlight?.text === seedancePrompt) ranges.push(...seedanceReplaceHighlight.ranges);
+    ranges.push(...findDialogueOccurrencesInFinalPrompt(seedancePrompt, seedanceDialogueLines)
+      .map(({ start, end }) => ({ start, end, tone: 'dialogue' as const })));
+    ranges.sort((left, right) => left.start - right.start || right.end - left.end);
+    const nonOverlapping: TextHighlightState['ranges'] = [];
+    for (const range of ranges) {
+      const previous = nonOverlapping[nonOverlapping.length - 1];
+      if (previous && range.start < previous.end) continue;
+      nonOverlapping.push(range);
+    }
+    return { text: seedancePrompt, ranges: nonOverlapping };
+  }, [seedanceDialogueLines, seedancePrompt, seedanceReplaceHighlight]);
+
+  const showSeedancePromptPreview = seedanceTaskMode === 'generate'
+    && seedanceDialogueLines.length > 0
+    && !isSeedancePromptEditing;
+
+  useEffect(() => {
+    if (!showSeedancePromptPreview) return;
+    requestAnimationFrame(() => {
+      const preview = seedancePromptPreviewRef.current;
+      const dialogue = preview?.querySelector<HTMLElement>('[data-dialogue-highlight="true"]');
+      if (preview && dialogue) preview.scrollTop = Math.max(0, dialogue.offsetTop - preview.clientHeight / 3);
+    });
+  }, [showSeedancePromptPreview, seedancePrompt]);
 
   function scrollAnalysisToBottom() {
     requestAnimationFrame(() => {
@@ -2853,6 +2881,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       ? `${SEEDANCE_SHOT_FIDELITY_LOCK}\n\n${promptWithRequiredDialogue}`
       : promptWithRequiredDialogue);
     setSeedanceDialogueLines(dialogueLines);
+    if (dialogueLines.length > 0) setIsSeedancePromptEditing(false);
     setSeedanceReplaceHighlight(null);
     if (seedancePromptRef.current) seedancePromptRef.current.scrollTop = 0;
     setRequestError("");
@@ -7188,72 +7217,56 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   </div>
                 )}
 
-                {seedanceDialogueLines.length > 0 && (
-                  <div className={cn(
-                    "mb-2 rounded-xl border px-3 py-2.5 text-xs leading-5",
-                    unmatchedSeedanceDialogueLines.length === 0
-                      ? "border-emerald-200 bg-emerald-50/80 text-emerald-900"
-                      : "border-amber-200 bg-amber-50 text-amber-900",
-                  )}>
-                    <div className="mb-1 font-black">
-                      {unmatchedSeedanceDialogueLines.length === 0 ? '已核对台词' : '台词待核对'}
-                    </div>
-                    {matchedSeedanceDialogueLines.length > 0 ? (
-                      <div className="space-y-1">
-                        {matchedSeedanceDialogueLines.map((line, index) => (
-                          <div key={`${line}_${index}`} className="font-bold underline decoration-2 underline-offset-2">
-                            “{line}”
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    {unmatchedSeedanceDialogueLines.length > 0 && (
-                      <div className="mt-1 space-y-1 font-semibold">
-                        <div>以下原话没有在最终生成提示词中完整匹配，请检查是否被改字或遗漏：</div>
-                        {unmatchedSeedanceDialogueLines.map((line, index) => (
-                          <div key={`${line}_${index}`}>“{line}”</div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
                 {/* 提示词输入框 + 内部参考素材 */}
                 <div className="relative">
-                  {seedanceOverlayHighlight && (
+                  {seedanceDialogueLines.length > 0 && (
                     <div
-                      className="pointer-events-none absolute inset-0 z-0 min-h-[280px] overflow-hidden rounded-xl bg-white p-4 pb-20 text-sm leading-7 text-transparent whitespace-pre-wrap"
-                      aria-hidden="true"
+                      className="absolute right-3 top-3 z-20 flex items-center gap-2"
                     >
-                      <div
-                        ref={(element) => {
-                          seedanceHighlightContentRef.current = element;
-                          if (element) element.style.transform = `translateY(-${seedancePromptRef.current?.scrollTop || 0}px)`;
+                      {unmatchedSeedanceDialogueLines.length > 0 && !isSeedancePromptEditing && (
+                        <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black text-amber-700">
+                          台词待核对
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextEditing = !isSeedancePromptEditing;
+                          setIsSeedancePromptEditing(nextEditing);
+                          if (nextEditing) requestAnimationFrame(() => seedancePromptRef.current?.focus());
                         }}
+                        className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-2.5 py-1 text-[10px] font-black text-slate-600 shadow-sm hover:border-emerald-300 hover:text-emerald-700"
                       >
-                        {renderHighlightedText(seedanceOverlayHighlight)}
-                      </div>
+                        <BookText className="size-3" />
+                        {isSeedancePromptEditing ? '查看台词位置' : '编辑提示词'}
+                      </button>
                     </div>
                   )}
-                  <textarea
-                    ref={seedancePromptRef}
-                    value={seedancePrompt}
-                    onChange={handleSeedancePromptChange}
-                    onKeyDown={handleSeedanceKeyDown}
-                    onScroll={(event) => {
-                      if (seedanceHighlightContentRef.current) {
-                        seedanceHighlightContentRef.current.style.transform = `translateY(-${event.currentTarget.scrollTop}px)`;
-                      }
-                    }}
-                    readOnly={seedanceTaskMode === 'video-edit-painting'}
-                    placeholder={seedanceTaskMode === 'video-edit-painting' ? '上传原视频和目标挂画后即可提交视频编辑任务' : '等待模块一反推出视频提示词...'}
-                    className={cn(
-                      "relative z-10 min-h-[280px] w-full resize-none rounded-xl border p-4 pb-20 text-sm leading-7 outline-none transition-[border-color,box-shadow] focus:border-violet-300 whitespace-pre-wrap",
-                      // 真实文字在输入框上层始终可见，叠加层只提供背后的标记色块。
-                      seedanceOverlayHighlight ? "bg-transparent text-slate-700 caret-slate-800 selection:bg-emerald-200/70" : "bg-white text-slate-700",
-                      seedancePromptHighlight ? "border-violet-400 ring-2 ring-violet-300" : "border-slate-300"
-                    )}
-                  />
+                  {showSeedancePromptPreview ? (
+                    <div
+                      ref={seedancePromptPreviewRef}
+                      className={cn(
+                        "relative h-[280px] w-full overflow-y-auto rounded-xl border bg-white p-4 pb-20 pt-12 text-sm leading-7 text-slate-700 whitespace-pre-wrap break-words",
+                        seedancePromptHighlight ? "border-violet-400 ring-2 ring-violet-300" : "border-slate-300",
+                      )}
+                    >
+                      {renderHighlightedText(seedancePromptPreviewHighlight)}
+                    </div>
+                  ) : (
+                    <textarea
+                      ref={seedancePromptRef}
+                      value={seedancePrompt}
+                      onChange={handleSeedancePromptChange}
+                      onKeyDown={handleSeedanceKeyDown}
+                      readOnly={seedanceTaskMode === 'video-edit-painting'}
+                      placeholder={seedanceTaskMode === 'video-edit-painting' ? '上传原视频和目标挂画后即可提交视频编辑任务' : '等待模块一反推出视频提示词...'}
+                      className={cn(
+                        "relative min-h-[280px] w-full resize-none rounded-xl border bg-white p-4 pb-20 text-sm leading-7 text-slate-700 outline-none transition-[border-color,box-shadow] focus:border-violet-300 whitespace-pre-wrap",
+                        seedanceDialogueLines.length > 0 ? "pt-12" : "",
+                        seedancePromptHighlight ? "border-violet-400 ring-2 ring-violet-300" : "border-slate-300",
+                      )}
+                    />
+                  )}
 
                   {/* 已上传的参考素材列表（放在输入框底部内部） */}
                   {seedanceReferences.length > 0 && (
