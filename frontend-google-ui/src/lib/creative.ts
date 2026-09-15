@@ -64,7 +64,7 @@ export function extractFinalVideoPromptSection(text: string): string | null {
   return range ? String(text || '').slice(range.start, range.end).trim() : null;
 }
 
-/** 从“额外调整”中提取用户明确用引号指定的原话，不依赖 AI 转述。 */
+/** 从“额外调整”中提取用户指定的原话，不依赖 AI 转述。 */
 export function extractRequestedDialogueLines(text: string): string[] {
   const source = String(text || '');
   const cue = '(?:台词|对白|口播(?:内容)?|旁白(?:内容)?|配音(?:内容)?|说(?:出)?|讲出|念(?:出)?|读(?:出)?|朗读)';
@@ -81,8 +81,42 @@ export function extractRequestedDialogueLines(text: string): string[] {
       if (line) matches.push({ index: match.index ?? 0, line });
     }
   }
+  // 用户经常直接写“中间女士说话内容为：……”而不加引号。只有带冒号的强提示才走
+  // 这条分支，并在下一条明确的制作指令前结束，避免把时长、人物改造等要求吞进台词。
+  const unquotedCue = /(?:人物|老人|老年人|女士|女性|女人|男士|男性|男人|中间人|画面中人物|中间女士|中间男士)?[^。；;\n：:]{0,12}?(?:说话内容|台词内容|对白内容|口播内容|旁白内容|配音内容|人物台词|台词|对白|说(?:出)?|讲出|念(?:出)?|读(?:出)?|朗读)\s*(?:为|是)?\s*[：:]\s*/g;
+  for (const match of source.matchAll(unquotedCue)) {
+    const index = match.index ?? 0;
+    const prefix = source.slice(Math.max(0, index - 4), index);
+    if (/(?:不要|不再|禁止|别|避免)$/.test(prefix)) continue;
+    const start = index + match[0].length;
+    // 已被上面的引号分支识别时不再生成一条带引号的重复内容。
+    if (/^\s*[“「『"]/.test(source.slice(start))) continue;
+    const remainder = source.slice(start);
+    const boundary = /[。；;\n](?=\s*(?:注意|请|要求|视频(?:时长|设置|比例|画面)|时长|把.{0,16}(?:调整|改成|替换|设为)|将.{0,16}(?:调整|改成|替换|设为)|人物(?:年龄|改造|设定)|镜头|字幕|不要|禁止|去掉|开启|关闭))/i.exec(remainder);
+    const end = boundary
+      ? start + boundary.index + (boundary[0] === '\n' ? 0 : boundary[0].length)
+      : Math.min(source.length, start + 500);
+    const line = source.slice(start, end).trim();
+    if (line) matches.push({ index, line });
+  }
   matches.sort((left, right) => left.index - right.index);
   return [...new Set(matches.map((match) => match.line))];
+}
+
+/**
+ * 用户指定的原话是硬约束。反推模型若在第十一部分漏写，程序把缺失原话补回；
+ * 已经完整出现的台词不重复追加。没有标准第十一部分时把锁放在整份提示词最前面。
+ */
+export function ensureRequestedDialogueInFinalPrompt(prompt: string, lines: string[]): string {
+  const source = String(prompt || '').trim();
+  const requested = [...new Set(lines.map((line) => String(line || '').trim()).filter(Boolean))];
+  if (requested.length === 0) return source;
+  const missing = requested.filter((line) => findDialogueOccurrencesInFinalPrompt(source, [line]).length === 0);
+  if (missing.length === 0) return source;
+  const lock = `【用户指定人物台词，必须逐字说出】\n${missing.map((line, index) => `${index + 1}. “${line}”`).join('\n')}\n禁止省略、改写、缩写或仅用口型代替；人物必须在原片对应镜头和时段内完整说出。`;
+  const range = findFinalVideoPromptRange(source);
+  if (!range) return `${lock}\n\n${source}`;
+  return `${source.slice(0, range.end).trimEnd()}\n\n${lock}\n${source.slice(range.end).trimStart()}`;
 }
 
 export function hasRequestedDialogueIntent(text: string): boolean {
@@ -188,15 +222,22 @@ export function extractExplicitAudioPreference(text: string): boolean | null {
 
 export function extractRequestedVideoDurationFromText(text: string): number | null {
   const source = String(text || '');
+  // “原视频只有3秒”描述的是素材，不是生成目标。先按分句屏蔽这类来源时长，
+  // 保留字符串长度以便后续多个目标表达仍能按原始先后顺序裁决。
+  const searchableSource = source.replace(
+    /(?:原|源)视频(?:的)?[^，。；;\n]{0,24}?\d{1,3}(?:\.\d+)?\s*秒(?:钟)?/gi,
+    (segment) => ' '.repeat(segment.length),
+  );
   const candidates: Array<{ index: number; seconds: number }> = [];
   const patterns = [
-    /(?:总时长|视频时长|成片时长|最终时长|目标时长)\s*(?:必须严格(?:控制)?为|设置|设定|调整|修改|改成|延长|缩短|控制|约为|为|到|至|成|是|[：:])?\s*(\d{1,3}(?:\.\d+)?)\s*秒/gi,
+    /(?:总时长|时长|视频时长|视频时间|成片时长|最终时长|目标时长)\s*(?:必须严格(?:控制)?为|设置|设定|调整|修改|改成|改为|变成|延长|缩短|控制|约为|为|到|至|成|是|[：:])?\s*(\d{1,3}(?:\.\d+)?)\s*秒/gi,
     /(?:新视频|最终视频|生成视频|生成的视频|成片|(?<![原源])视频)(?:的)?(?:总时长|时长|时间)?\s*(?:设置|设定|调整|修改|改成|延长|缩短|制作|做成|控制)?\s*(?:到|至|为|成|[：:])?\s*(\d{1,3}(?:\.\d+)?)\s*秒/gi,
     /(?:延长|缩短)(?:新视频|最终视频|视频|成片)?(?:的)?(?:总时长|时长|时间)?\s*(?:到|至|为|成|[：:])\s*(\d{1,3}(?:\.\d+)?)\s*秒/gi,
     /(?:做成|制作成|生成为?)\s*(?:一个|一条)?\s*(\d{1,3}(?:\.\d+)?)\s*秒(?:钟)?(?:的)?(?:新视频|视频|成片)/gi,
+    /(?:把|将)?\s*(?:(?:这个|该|当前|最终|生成的|新)?\s*(?:视频|成片|它)(?:的)?\s*)?(?:总时长|时长|时间)?\s*(?:延长|缩短|改成|改为|变成|调整为|修改为|设置为|设为)\s*(?:到|至|为|成)?\s*(\d{1,3}(?:\.\d+)?)\s*秒/gi,
   ];
   for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
+    for (const match of searchableSource.matchAll(pattern)) {
       const seconds = Number(match[1]);
       if (Number.isFinite(seconds) && seconds > 0) {
         candidates.push({ index: match.index ?? 0, seconds: Math.round(seconds) });
@@ -1709,7 +1750,7 @@ export function resolveAutoAudioSetting(options: {
   if (!AUTO_AUDIO_IN_SCOPE_MODES.has(mode)) return null;
   // MiniMax-H3 的音轨随模型，声音按钮本来就是禁用的。
   if (model === 'MiniMax-H3') return null;
-  // 用户的明确要求及最终生成指令，高于对原素材是否有人声的判断。
+  // 用户在额外调整中的明确要求，高于对原素材是否有人声的判断。
   if (typeof explicitPreference === 'boolean') return explicitPreference;
   // 历史记录或 AI 未按格式输出时保持现状，不猜。
   if (typeof hasSpeech !== 'boolean') return null;

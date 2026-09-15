@@ -271,6 +271,11 @@ async function main() {
     assert(extractRequestedVideoDurationFromText('人物说话内容：“测试台词。”视频设置为10秒。') === 10, '额外调整可识别本次实际使用的“视频设置为10秒”');
     assert(extractRequestedVideoDurationFromText('原视频设置为8秒') === null, '原视频时长不会误当新视频目标时长');
     assert(extractRequestedVideoDurationFromText('请延长到8秒，动作自然一些') === 8, '额外调整可识别“延长到8秒”');
+    assert(extractRequestedVideoDurationFromText('把视频延长到6秒') === 6, '额外调整可识别“把视频延长到6秒”');
+    assert(extractRequestedVideoDurationFromText('把它延长到6秒') === 6, '额外调整可识别“把它延长到6秒”');
+    assert(extractRequestedVideoDurationFromText('时长改成6秒') === 6, '额外调整可识别“时长改成6秒”');
+    assert(extractRequestedVideoDurationFromText('改为6秒') === 6, '额外调整可识别省略主语的“改为6秒”');
+    assert(extractRequestedVideoDurationFromText('让最终视频变成6秒') === 6, '额外调整可识别“最终视频变成6秒”');
     assert(extractRequestedVideoDurationFromText('最终总时长改成7.6秒') === 8, '额外调整中的小数时长执行四舍五入');
     assert(extractRequestedVideoDurationFromText('前2秒人物走入，后面自然展示') === null, '分段动作秒数不会误判为总时长');
   }

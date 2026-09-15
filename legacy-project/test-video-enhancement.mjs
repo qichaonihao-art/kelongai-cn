@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,6 +15,8 @@ const {
   getCollectionDb,
   parseFpsFraction,
   isVideo480pOrLower,
+  getStandard1080pCanvas,
+  normalizeEnhancedVideoToStandard1080p,
   extractEnhancementOutputUrl,
   normalizeEnhancementRemoteStatus,
   normalizeMediaKitUploadHeaders,
@@ -27,6 +30,10 @@ assert.equal(isVideo480pOrLower({ width: 480, height: 854 }), true);
 assert.equal(isVideo480pOrLower({ width: 496, height: 864 }), true);
 assert.equal(isVideo480pOrLower({ width: 540, height: 960 }), false);
 assert.equal(isVideo480pOrLower({ width: 720, height: 1280 }), false);
+assert.deepEqual(getStandard1080pCanvas({ width: 1080, height: 1918 }), { width: 1080, height: 1920 });
+assert.deepEqual(getStandard1080pCanvas({ width: 1918, height: 1080 }), { width: 1920, height: 1080 });
+assert.equal(getStandard1080pCanvas({ width: 1080, height: 1920 }), null);
+assert.equal(getStandard1080pCanvas({ width: 1440, height: 1080 }), null);
 assert.equal(normalizeEnhancementRemoteStatus({ data: { status: 'COMPLETED' } }), 'completed');
 assert.equal(
   extractEnhancementOutputUrl({ result: { outputs: [{ video_url: 'https://example.com/enhanced.mp4' }] } }),
@@ -52,6 +59,19 @@ assert.deepEqual(buildVideoEnhancementRetryUpdates(123), {
   errorMessage: '',
   nextPollAt: 123,
 });
+
+const nonstandardEnhancedPath = path.join(process.env.VIDEO_LIBRARY_DIR, 'nonstandard-1080p.mp4');
+await new Promise((resolve, reject) => {
+  const child = spawn('ffmpeg', [
+    '-y', '-f', 'lavfi', '-i', 'color=c=blue:s=1080x1918:d=0.1',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', nonstandardEnhancedPath,
+  ], { stdio: 'ignore' });
+  child.once('error', reject);
+  child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg退出码：${code}`)));
+});
+const standardizedMetadata = await normalizeEnhancedVideoToStandard1080p(nonstandardEnhancedPath);
+assert.equal(standardizedMetadata.width, 1080);
+assert.equal(standardizedMetadata.height, 1920);
 
 const database = getCollectionDb();
 const sourceStoredName = 'source-480p.mp4';

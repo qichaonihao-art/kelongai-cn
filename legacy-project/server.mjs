@@ -608,6 +608,56 @@ function isVideo480pOrLower(metadata) {
   return shortEdge > 0 && shortEdge <= VIDEO_ENHANCEMENT_480P_MAX_SHORT_EDGE;
 }
 
+function getStandard1080pCanvas(metadata) {
+  const width = Number(metadata?.width || 0);
+  const height = Number(metadata?.height || 0);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  const portrait = height > width;
+  const target = portrait ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 };
+  const ratio = width / height;
+  const targetRatio = target.width / target.height;
+  // 只修正接近标准9:16/16:9的编码取整偏差，避免把4:3等正常比例强行裁成宽屏。
+  if (Math.abs(ratio - targetRatio) > 0.03) return null;
+  if (width === target.width && height === target.height) return null;
+  return target;
+}
+
+async function normalizeEnhancedVideoToStandard1080p(filePath) {
+  const metadata = await probeVideoMetadata(filePath);
+  const target = getStandard1080pCanvas(metadata);
+  if (!target) return metadata;
+  const temporaryPath = `${filePath}.${process.pid}-${randomBytes(4).toString('hex')}.standard.mp4`;
+  try {
+    await execFileAsync('ffmpeg', [
+      '-y',
+      '-i', filePath,
+      '-map', '0:v:0',
+      '-map', '0:a:0?',
+      '-vf', `scale=${target.width}:${target.height}:force_original_aspect_ratio=increase,crop=${target.width}:${target.height}:(in_w-out_w)/2:(in_h-out_h)/2,setsar=1`,
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '17',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-movflags', '+faststart',
+      temporaryPath,
+    ], {
+      timeout: 10 * 60 * 1000,
+      killSignal: 'SIGKILL',
+    });
+    const normalizedMetadata = await probeVideoMetadata(temporaryPath);
+    if (normalizedMetadata.width !== target.width || normalizedMetadata.height !== target.height) {
+      throw new Error(`标准化输出尺寸异常：${normalizedMetadata.width}×${normalizedMetadata.height}`);
+    }
+    await rename(temporaryPath, filePath);
+    return normalizedMetadata;
+  } catch (error) {
+    await unlink(temporaryPath).catch(() => {});
+    throw error;
+  }
+}
+
 async function validateDownloadedVideoFile(filePath, timeoutMs = 30000) {
   let formatStdout = '';
   let streamsStdout = '';
@@ -2180,28 +2230,36 @@ async function downloadEnhancedVideo(row, outputUrl) {
   const response = await fetch(outputUrl, { signal: AbortSignal.timeout(3 * 60 * 1000) });
   if (!response.ok) throw new Error(`增强视频下载失败（HTTP ${response.status}）`);
   const buffer = await readVideoLibraryRemoteBuffer(response);
-  const sha256 = createHash('sha256').update(buffer).digest('hex');
-  let outputItem = dbFindVideoLibraryByHash(sha256);
-  if (!outputItem) {
-    const storedName = `${sha256}.mp4`;
-    const filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
-    await writeFile(filePath, buffer);
-    const metadata = await probeVideoMetadata(filePath);
-    outputItem = dbInsertVideoLibraryItem({
-      folderName: source.folder_name,
-      originalName: source.original_name || '视频.mp4',
-      storedName,
-      mimeType: 'video/mp4',
-      fileSize: buffer.length,
-      sha256,
-      note: source.note || '',
-      ...metadata,
-      variant: 'enhanced',
-      sourceItemId: null,
-      shotRole: Number(source.shot_role) === 1 ? 1 : 0,
-    });
-    void ensureVideoLibraryPreview({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
-    void ensureVideoLibraryThumbnail({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
+  const downloadedPath = path.join(VIDEO_LIBRARY_DIR, `.enhancement-${row.id}-${randomBytes(6).toString('hex')}.mp4`);
+  let outputItem;
+  try {
+    await writeFile(downloadedPath, buffer);
+    const metadata = await normalizeEnhancedVideoToStandard1080p(downloadedPath);
+    const normalizedBuffer = await readFile(downloadedPath);
+    const sha256 = createHash('sha256').update(normalizedBuffer).digest('hex');
+    outputItem = dbFindVideoLibraryByHash(sha256);
+    if (!outputItem) {
+      const storedName = `${sha256}.mp4`;
+      const filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
+      await rename(downloadedPath, filePath);
+      outputItem = dbInsertVideoLibraryItem({
+        folderName: source.folder_name,
+        originalName: source.original_name || '视频.mp4',
+        storedName,
+        mimeType: 'video/mp4',
+        fileSize: normalizedBuffer.length,
+        sha256,
+        note: source.note || '',
+        ...metadata,
+        variant: 'enhanced',
+        sourceItemId: null,
+        shotRole: Number(source.shot_role) === 1 ? 1 : 0,
+      });
+      void ensureVideoLibraryPreview({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
+      void ensureVideoLibraryThumbnail({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
+    }
+  } finally {
+    await unlink(downloadedPath).catch(() => {});
   }
   if (readValue(source.note)) {
     outputItem = dbUpdateVideoLibraryNote(outputItem.id, source.note);
@@ -20716,6 +20774,8 @@ export {
   compressMediaForArk,
   parseFpsFraction,
   isVideo480pOrLower,
+  getStandard1080pCanvas,
+  normalizeEnhancedVideoToStandard1080p,
   extractEnhancementOutputUrl,
   normalizeEnhancementRemoteStatus,
   normalizeMediaKitUploadHeaders,

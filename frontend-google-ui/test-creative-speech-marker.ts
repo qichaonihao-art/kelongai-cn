@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, extractDialogueLines, stripDialogueMarkers, stripReverseMarkers, DIALOGUE_MARKER_TOKENS, resolveAutoAudioSetting, extractExplicitAudioPreference, extractFinalVideoPromptSection, findFinalVideoPromptRange, extractRequestedDialogueLines, hasRequestedDialogueIntent, findDialogueOccurrencesInFinalPrompt, type AutoAudioReverseMode } from './src/lib/creative';
+import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, extractDialogueLines, stripDialogueMarkers, stripReverseMarkers, DIALOGUE_MARKER_TOKENS, resolveAutoAudioSetting, extractExplicitAudioPreference, extractFinalVideoPromptSection, findFinalVideoPromptRange, extractRequestedDialogueLines, ensureRequestedDialogueInFinalPrompt, hasRequestedDialogueIntent, findDialogueOccurrencesInFinalPrompt, type AutoAudioReverseMode } from './src/lib/creative';
 
 // extractHumanSpeechMarker：三态
 assert.equal(extractHumanSpeechMarker('【人物说话：是】\n一、核心主体信息'), true);
@@ -68,7 +68,13 @@ assert.equal(extractFinalVideoPromptSection('十一、最终可直接用于视�
 assert.deepEqual(extractRequestedDialogueLines('请让人物说：“AI时代，创新是唯一生产力”。'), ['AI时代，创新是唯一生产力']);
 assert.deepEqual(extractRequestedDialogueLines('台词："欢迎光临"；随后旁白：“请进”'), ['欢迎光临', '请进']);
 assert.deepEqual(extractRequestedDialogueLines('不要说“旧话”，改为说“新话”'), ['新话'], '旧台词不能被当作待核对原话');
-assert.deepEqual(extractRequestedDialogueLines('人物说：欢迎光临'), [], '未加引号时不猜测原话边界');
+assert.deepEqual(extractRequestedDialogueLines('人物说：欢迎光临'), ['欢迎光临'], '带冒号的无引号台词也要识别');
+assert.deepEqual(extractRequestedDialogueLines('人物说： 欢迎光临。视频时长6秒。'), ['欢迎光临。'], '冒号后的空格不能导致无引号台词漏识别');
+assert.deepEqual(
+  extractRequestedDialogueLines('中间女士说话内容为：有时候屋里被别人使坏你都不知道。今年啊就把这个，挂在家里，还有卧室。注意人物眼神和神态的刻画。视频时长6秒。把女士年龄调整为70岁左右。'),
+  ['有时候屋里被别人使坏你都不知道。今年啊就把这个，挂在家里，还有卧室。'],
+  '无引号长台词必须在后续制作要求前结束',
+);
 assert.equal(hasRequestedDialogueIntent('人物说：欢迎光临'), true, '未加引号的台词要求应提示补充格式');
 const finalRange = findFinalVideoPromptRange('一、核心主体信息\n人物说：欢迎光临\n十一、最终可直接用于视频生成模型的完整提示词\n人物说：欢迎光临\n十二、负面提示词\n无');
 assert.equal(finalRange && '一、核心主体信息\n人物说：欢迎光临\n十一、最终可直接用于视频生成模型的完整提示词\n人物说：欢迎光临\n十二、负面提示词\n无'.slice(finalRange.start, finalRange.end).trim(), '人物说：欢迎光临', '台词范围只包括最终提示词');
@@ -89,6 +95,10 @@ const wrappedHits = findDialogueOccurrencesInFinalPrompt(wrappedPrompt, ['欢迎
 assert.equal(wrappedHits.length, 1, '中英文标点及换行排版不同仍可定位到原提示词');
 assert.equal(wrappedPrompt.slice(wrappedHits[0].start, wrappedHits[0].end), '欢迎，\n光临');
 assert.deepEqual(findDialogueOccurrencesInFinalPrompt('十一、最终可直接用于视频生成模型的完整提示词\n禁止人物说“AI时代，创新是唯一生产力”\n十二、负面提示词', ['AI时代，创新是唯一生产力']), [], '否定语境中的原话不应误判为已让人物说出');
+const missingDialoguePrompt = '一、核心主体信息\n一位老人\n十一、最终可直接用于视频生成模型的完整提示词\n老人面对镜头自然说话。\n十二、负面提示词\n禁止切镜';
+const restoredDialoguePrompt = ensureRequestedDialogueInFinalPrompt(missingDialoguePrompt, ['挂上十年你都不会后悔。']);
+assert.equal(findDialogueOccurrencesInFinalPrompt(restoredDialoguePrompt, ['挂上十年你都不会后悔。']).length, 1, '反推模型漏掉的用户原话必须补回第十一部分');
+assert.equal(ensureRequestedDialogueInFinalPrompt(restoredDialoguePrompt, ['挂上十年你都不会后悔。']), restoredDialoguePrompt, '已经出现的原话不能重复追加');
 // 第四个模块不参与
 assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'painting', model: MODEL }), null);
 assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'painting', model: MODEL }), null);
@@ -131,7 +141,8 @@ assert.ok(
 );
 assert.ok(
   pageSource.includes('const cleanPrompt = stripReverseMarkers(formatted);')
-    && pageSource.includes('SEEDANCE_SHOT_FIDELITY_LOCK}\\n\\n${cleanPrompt}'),
+    && pageSource.includes('ensureRequestedDialogueInFinalPrompt(cleanPrompt, requestedDialogueLines)')
+    && pageSource.includes('SEEDANCE_SHOT_FIDELITY_LOCK}\\n\\n${promptWithRequiredDialogue}'),
   '填框前必须清掉全部标记行（人声判定 + 台词），不能把标记发给视频模型',
 );
 assert.ok(
@@ -197,22 +208,22 @@ assert.ok(
 );
 assert.equal(/【\s*台词\s*[：:]/.test(pageSource), false, '页面里不得出现手抄的台词标记字面量');
 
-// 真实文字与光标始终由 textarea 绘制；叠加层只画标记色块。
-// 编辑时不能把台词标记关闭，也不能把 textarea 文字设为透明，否则又会错位或不可见。
+// textarea 与普通 div 的自动换行无法长期保持像素级一致，台词不再使用叠加色块。
+// 只把真正匹配到的原话列在输入框上方，避免标错位置并保留正常编辑能力。
 assert.ok(
   pageSource.includes('seedanceOverlayHighlight ? "bg-transparent text-slate-700')
-    && pageSource.includes('bg-emerald-300/70 text-transparent')
-    && pageSource.includes('bg-white p-4 pb-20 text-sm leading-7 text-transparent whitespace-pre-wrap'),
-  'textarea 的文字必须可见，叠加层文字必须透明且仅保留台词色块',
+    && !pageSource.includes("dialogue: 'bg-emerald")
+    && pageSource.includes('const matchedSeedanceDialogueLines = useMemo'),
+  '台词不能继续使用会错位的输入框叠加色块',
 );
 assert.ok(
-  pageSource.includes('const seedanceOverlayHighlight = useMemo'),
-  '叠加层标记位置必须来自当前提示词',
+  pageSource.includes("unmatchedSeedanceDialogueLines.length === 0 ? '已核对台词' : '台词待核对'")
+    && pageSource.includes('以下原话没有在最终生成提示词中完整匹配'),
+  '只显示真正匹配的台词，匹配失败时必须明确提醒检查',
 );
 assert.ok(
-  !pageSource.includes('if (isSeedancePromptFocused) return null;')
-    && !pageSource.includes('onFocus={() => setIsSeedancePromptFocused(true)}'),
-  '编辑时台词标记必须继续显示',
+  pageSource.includes('findDialogueOccurrencesInFinalPrompt(seedancePrompt, seedanceDialogueLines).map(({ line }) => line)'),
+  '独立台词提示必须复用最终提示词的精确匹配结果，不能固定显示未匹配的文字',
 );
 assert.ok(
   !pageSource.includes('setSeedancePromptScrollTop(event.currentTarget.scrollTop)')

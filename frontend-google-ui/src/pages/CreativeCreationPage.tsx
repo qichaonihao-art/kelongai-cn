@@ -65,6 +65,7 @@ import {
   extractVideoGenerationDurationFromPrompt,
   extractExplicitAudioPreference,
   extractRequestedDialogueLines,
+  ensureRequestedDialogueInFinalPrompt,
   hasRequestedDialogueIntent,
   findDialogueOccurrencesInFinalPrompt,
   extractRequestedVideoDurationFromText,
@@ -228,7 +229,7 @@ interface AdditionalChangeHistoryItem {
   createdAt: number;
 }
 
-type TextHighlightTone = 'replace' | 'dialogue';
+type TextHighlightTone = 'replace';
 
 interface TextHighlightState {
   text: string;
@@ -549,10 +550,7 @@ function replaceAllWithHighlightRanges(source: string, search: string, replaceme
   return { text, count, ranges };
 }
 
-// 台词走浅绿（用户要的），元素替换走琥珀——两者语义不同，
-// 而元素替换模式下会同时出现，撞色就分不出谁是谁了。
 const HIGHLIGHT_TONE_CLASS: Record<TextHighlightTone, string> = {
-  dialogue: 'bg-emerald-300/70 text-transparent',
   replace: 'bg-amber-200/80 text-transparent',
 };
 
@@ -2025,42 +2023,24 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (!seedancePrompt.trim()) clearSeedanceDialogueReview();
   }, [seedancePrompt]);
 
-  // 台词高亮按当前提示词重算，编辑过程中也同步更新标记位置。
-  // 这是「存文本、每次算位置」而不是「存位置快照」的原因——后者一改就失效。
-  const seedanceDialogueHighlight = useMemo<TextHighlightState | null>(() => {
-    if (seedanceDialogueLines.length === 0 || !seedancePrompt) return null;
-    const ranges: TextHighlightState['ranges'] = findDialogueOccurrencesInFinalPrompt(seedancePrompt, seedanceDialogueLines)
-      .map(({ start, end }) => ({ start, end, tone: 'dialogue' }));
-    if (ranges.length === 0) return null;
-    // 一句台词可能是另一句的子串（「欢迎」/「欢迎光临」），交集在渲染时会让切片错位，这里裁掉重叠。
-    ranges.sort((a, b) => a.start - b.start);
-    const merged: TextHighlightState['ranges'] = [];
-    for (const range of ranges) {
-      const last = merged[merged.length - 1];
-      if (last && range.start < last.end) continue;
-      merged.push(range);
-    }
-    return { text: seedancePrompt, ranges: merged };
+  // 输入框无法可靠地给局部文字着色：独立叠加层与 textarea 的自动换行会逐行累积偏移。
+  // 改为单独列出真正匹配到的台词；用户编辑提示词后，这里会立即重新核对。
+  const matchedSeedanceDialogueLines = useMemo(() => {
+    if (seedanceDialogueLines.length === 0 || !seedancePrompt) return [];
+    return [...new Set(
+      findDialogueOccurrencesInFinalPrompt(seedancePrompt, seedanceDialogueLines).map(({ line }) => line),
+    )];
   }, [seedanceDialogueLines, seedancePrompt]);
+  const unmatchedSeedanceDialogueLines = useMemo(() => {
+    const matched = new Set(matchedSeedanceDialogueLines);
+    return [...new Set(seedanceDialogueLines.filter((line) => !matched.has(line)))];
+  }, [matchedSeedanceDialogueLines, seedanceDialogueLines]);
 
-  // 叠加层只画色块，不显示文字；真实文字和光标始终由 textarea 绘制。
-  // 元素替换的 range 只在快照仍与当前文本一致时参与，避免旧位置标错。
+  // 元素替换的短暂结果标记仍使用快照；一旦用户编辑，effect 会立即清除。
   const seedanceOverlayHighlight = useMemo<TextHighlightState | null>(() => {
-    const ranges: TextHighlightState['ranges'] = [];
-    if (seedanceReplaceHighlight && seedanceReplaceHighlight.text === seedancePrompt) {
-      ranges.push(...seedanceReplaceHighlight.ranges);
-    }
-    if (seedanceDialogueHighlight) ranges.push(...seedanceDialogueHighlight.ranges);
-    if (ranges.length === 0) return null;
-    ranges.sort((a, b) => a.start - b.start);
-    const merged: TextHighlightState['ranges'] = [];
-    for (const range of ranges) {
-      const last = merged[merged.length - 1];
-      if (last && range.start < last.end) continue;
-      merged.push(range);
-    }
-    return { text: seedancePrompt, ranges: merged };
-  }, [seedanceReplaceHighlight, seedanceDialogueHighlight, seedancePrompt]);
+    if (!seedanceReplaceHighlight || seedanceReplaceHighlight.text !== seedancePrompt) return null;
+    return seedanceReplaceHighlight;
+  }, [seedanceReplaceHighlight, seedancePrompt]);
 
   function scrollAnalysisToBottom() {
     requestAnimationFrame(() => {
@@ -2793,10 +2773,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       const sourceDuration = await readVideoDuration(sourceVideo.file);
       sourceDurationSeconds = Math.round(sourceDuration);
       durationSeconds = extractRequestedVideoDurationFromText(additionalChange) ?? sourceDurationSeconds;
-      const { min, max } = getVideoGenerationDurationLimits(seedanceModel);
-      if (!Number.isInteger(durationSeconds) || durationSeconds < min || durationSeconds > max) {
-        throw new Error(`本次目标时长为 ${durationSeconds} 秒，当前模型只支持 ${min}-${max} 秒，请调整“额外调整”中的时长或切换模型。`);
-      }
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : '无法读取源视频时长，请更换视频后重试。');
       return;
@@ -2869,10 +2845,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       .trim();
 
     const cleanPrompt = stripReverseMarkers(formatted);
+    const promptWithRequiredDialogue = (activeMode === 'direct' || activeMode === 'replace')
+      ? ensureRequestedDialogueInFinalPrompt(cleanPrompt, requestedDialogueLines)
+      : cleanPrompt;
     // 常规生成没有自动上传原视频；把镜头锁明确放在 Seedance 实际收到的提示词最前面。
     setSeedancePrompt(activeMode === 'direct' || activeMode === 'replace'
-      ? `${SEEDANCE_SHOT_FIDELITY_LOCK}\n\n${cleanPrompt}`
-      : cleanPrompt);
+      ? `${SEEDANCE_SHOT_FIDELITY_LOCK}\n\n${promptWithRequiredDialogue}`
+      : promptWithRequiredDialogue);
     setSeedanceDialogueLines(dialogueLines);
     setSeedanceReplaceHighlight(null);
     if (seedancePromptRef.current) seedancePromptRef.current.scrollTop = 0;
@@ -6655,7 +6634,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   rows={2}
                   className="min-h-[48px] w-full resize-none overflow-hidden rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold leading-5 text-slate-900 outline-none transition-colors placeholder:text-slate-300 focus:border-indigo-400 disabled:opacity-60"
                 />
-                <p className="text-[10px] text-slate-400">要逐字核对人物说的话，请写成「台词：“原话”」或「让人物说：“原话”」。</p>
+                <p className="text-[10px] text-slate-400">人物台词可写成「台词：“原话”」或「人物说话内容为：原话」；系统会逐字保留到右侧提示词。</p>
               </div>
 
               <div className="mt-3 flex items-center">
@@ -7206,6 +7185,36 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         />
                       </label>
                     </div>
+                  </div>
+                )}
+
+                {seedanceDialogueLines.length > 0 && (
+                  <div className={cn(
+                    "mb-2 rounded-xl border px-3 py-2.5 text-xs leading-5",
+                    unmatchedSeedanceDialogueLines.length === 0
+                      ? "border-emerald-200 bg-emerald-50/80 text-emerald-900"
+                      : "border-amber-200 bg-amber-50 text-amber-900",
+                  )}>
+                    <div className="mb-1 font-black">
+                      {unmatchedSeedanceDialogueLines.length === 0 ? '已核对台词' : '台词待核对'}
+                    </div>
+                    {matchedSeedanceDialogueLines.length > 0 ? (
+                      <div className="space-y-1">
+                        {matchedSeedanceDialogueLines.map((line, index) => (
+                          <div key={`${line}_${index}`} className="font-bold underline decoration-2 underline-offset-2">
+                            “{line}”
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {unmatchedSeedanceDialogueLines.length > 0 && (
+                      <div className="mt-1 space-y-1 font-semibold">
+                        <div>以下原话没有在最终生成提示词中完整匹配，请检查是否被改字或遗漏：</div>
+                        {unmatchedSeedanceDialogueLines.map((line, index) => (
+                          <div key={`${line}_${index}`}>“{line}”</div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
