@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto';
 import {
   calculateVideoLibraryUnread,
   markVideoLibraryItemsRead,
+  sortVideoLibraryFoldersByCount,
   type VideoLibraryItem,
 } from './src/lib/videoLibrary';
 import {
@@ -106,6 +107,22 @@ async function main() {
   (globalThis as any).window = { localStorage: storage, dispatchEvent() {}, setTimeout };
 
   console.log('\n[1] 每个浏览器、每个素材库文件夹独立记录已读');
+  assert(
+    JSON.stringify(sortVideoLibraryFoldersByCount(['通用素材', '百福临门', '喜居宝地千年旺', '天官赐福'], new Map([
+      ['通用素材', 122], ['百福临门', 70], ['喜居宝地千年旺', 53], ['天官赐福', 13],
+    ]))) === JSON.stringify(['通用素材', '百福临门', '喜居宝地千年旺', '天官赐福']),
+    '文件夹卡片按实际视频数量降序显示',
+  );
+  assert(
+    JSON.stringify(sortVideoLibraryFoldersByCount(['空文件夹', '八悟贴画', '青云志', '弥勒佛'], new Map([
+      ['八悟贴画', 132], ['青云志', 125], ['弥勒佛', 230],
+    ]))) === JSON.stringify(['弥勒佛', '八悟贴画', '青云志', '空文件夹']),
+    '后面的高数量文件夹会提前，空文件夹排在最后',
+  );
+  assert(
+    JSON.stringify(sortVideoLibraryFoldersByCount(['甲', '乙', '丙'], new Map([['甲', 5], ['乙', 9], ['丙', 5]]))) === JSON.stringify(['乙', '甲', '丙']),
+    '数量相同的文件夹保持原有顺序',
+  );
   const summary = [
     { id: 1, folderName: '静心', createdAt: 1 },
     { id: 2, folderName: '牡丹', createdAt: 1 },

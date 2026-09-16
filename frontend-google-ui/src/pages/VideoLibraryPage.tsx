@@ -14,6 +14,7 @@ import {
   getVideoLibrarySummary,
   markVideoLibraryItemsRead,
   retryVideoEnhancement,
+  sortVideoLibraryFoldersByCount,
   setVideoLibraryShotRole,
   startVideoEnhancement,
   updateVideoLibraryItem,
@@ -309,10 +310,15 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     return counts;
   }, [items]);
 
+  const sortedFolders = useMemo(
+    () => sortVideoLibraryFoldersByCount(folders, folderCounts),
+    [folders, folderCounts],
+  );
+
   const isFolderHome = !selectedFolder && !search.trim();
   const folderHomeContent = (
     <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-      {folders.map((folder) => (
+      {sortedFolders.map((folder) => (
         <div key={folder} className="group relative flex aspect-[1.35] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-4 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-md">
           {(folderUnreadCounts.get(folder) || 0) > 0 && (
             <span className="absolute right-3 top-3 flex min-w-6 h-6 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-black text-white shadow-sm">

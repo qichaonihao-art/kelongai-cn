@@ -44,6 +44,14 @@ export interface VideoLibraryUnreadState {
   byFolder: Map<string, number>;
 }
 
+export function sortVideoLibraryFoldersByCount(folders: string[], counts: ReadonlyMap<string, number>): string[] {
+  return folders
+    .map((folder, index) => ({ folder, index }))
+    .sort((left, right) =>
+      (counts.get(right.folder) || 0) - (counts.get(left.folder) || 0) || left.index - right.index)
+    .map(({ folder }) => folder);
+}
+
 export const VIDEO_LIBRARY_READ_CHANGE_EVENT = 'kelongai:video-library-read-change';
 export const VIDEO_LIBRARY_READ_STATE_KEY = 'kelongai.videoLibraryReadState.v2';
 const LEGACY_VIDEO_LIBRARY_READ_STATE_KEY = 'kelongai.videoLibraryReadState.v1';
