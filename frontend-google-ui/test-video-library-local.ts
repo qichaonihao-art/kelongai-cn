@@ -120,6 +120,11 @@ async function main() {
   const moved = [{ id: 1, folderName: '新文件夹', createdAt: 1 }, summary[1]];
   unread = calculateVideoLibraryUnread(moved);
   assert(unread.unreadIds.has(1), '素材移动到另一个素材库文件夹后重新视为未下载');
+  const allFolders = [...moved, { id: 4, folderName: '牡丹', createdAt: 3 }];
+  const allUnread = calculateVideoLibraryUnread(allFolders).unreadIds;
+  markVideoLibraryItemsRead(allFolders.filter((entry) => allUnread.has(entry.id)));
+  assert(calculateVideoLibraryUnread(allFolders).total === 0, '一键已读覆盖所有文件夹，刷新后红点仍为零');
+  assert(calculateVideoLibraryUnread([...allFolders, { id: 5, folderName: '牡丹', createdAt: 4 }]).unreadIds.has(5), '一键已读后新增的视频仍正常显示未读');
 
   const legacyStorage = new MemoryStorage();
   legacyStorage.setItem('kelongai.videoLibraryReadState.v1', JSON.stringify({ baselineId: 1, readIds: [2] }));

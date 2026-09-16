@@ -3003,7 +3003,14 @@ async function handleDeleteVideoLibraryFolder(req, res, encodedName) {
 }
 
 async function handleGetVideoLibraryFolders(req, res) {
-  sendJson(res, 200, { ok: true, folders: dbGetVideoLibraryFolders() });
+  const counts = new Map(getCollectionDb().prepare(`
+    SELECT folder_name, COUNT(*) AS file_count
+    FROM video_library_items
+    GROUP BY folder_name
+  `).all().map((row) => [row.folder_name, Number(row.file_count)]));
+  const folders = dbGetVideoLibraryFolders().sort((left, right) =>
+    (counts.get(right) || 0) - (counts.get(left) || 0));
+  sendJson(res, 200, { ok: true, folders });
 }
 
 async function handleGetVideoLibrarySummary(req, res) {

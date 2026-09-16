@@ -169,6 +169,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [notice, setNotice] = useState('');
   const [unreadVideoIds, setUnreadVideoIds] = useState<Set<number>>(() => new Set());
   const [folderUnreadCounts, setFolderUnreadCounts] = useState<Map<string, number>>(() => new Map());
+  const [isMarkingAllRead, setIsMarkingAllRead] = useState(false);
   const [localFolderHandle, setLocalFolderHandle] = useState<VideoLibraryDirectoryHandle | null>(null);
   const [localFolderName, setLocalFolderName] = useState('');
   const [localFolderUpdatedAt, setLocalFolderUpdatedAt] = useState(0);
@@ -187,6 +188,24 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       applyUnreadSummary(await getVideoLibrarySummary());
     } catch {
       // 未看提醒更新失败不影响素材的上传、移动或删除。
+    }
+  }
+
+  async function handleMarkAllRead() {
+    if (isMarkingAllRead) return;
+    setIsMarkingAllRead(true);
+    setError('');
+    try {
+      // 使用全库摘要，不受当前文件夹、搜索词或镜头分类影响。
+      const summary = await getVideoLibrarySummary();
+      const unread = calculateVideoLibraryUnread(summary);
+      markVideoLibraryItemsRead(summary.filter((item) => unread.unreadIds.has(item.id)));
+      applyUnreadSummary(summary);
+      setNotice(unread.total > 0 ? `已将全部 ${unread.total} 个未读视频标为已读。` : '所有视频都已是已读状态。');
+    } catch (markError) {
+      setError(markError instanceof Error ? markError.message : '标记全部已读失败，请重试。');
+    } finally {
+      setIsMarkingAllRead(false);
     }
   }
 
@@ -923,7 +942,11 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
           <div className="min-w-0 flex-1 overflow-hidden">
             <ModuleQuickNav current="video-library" onNavigate={onNavigate} />
           </div>
-          <button type="button" onClick={() => { setError(''); setNewFolderDraft(''); setIsFolderOpen(true); }} className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-black text-white shadow-sm hover:bg-slate-800">
+          <button type="button" onClick={() => void handleMarkAllRead()} disabled={isMarkingAllRead || unreadVideoIds.size === 0} className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-black text-slate-700 shadow-sm hover:border-sky-300 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-50" title="将视频素材库中所有未读视频标为已读">
+            {isMarkingAllRead ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+            <span className="hidden sm:inline">全部标为已读</span><span className="sm:hidden">全部已读</span>
+          </button>
+          <button type="button" onClick={() => { setError(''); setNewFolderDraft(''); setIsFolderOpen(true); }} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-black text-white shadow-sm hover:bg-slate-800">
             <Plus className="size-4" />新建文件夹
           </button>
         </div>
