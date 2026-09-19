@@ -47,19 +47,37 @@ const SIZE_OPTIONS = [
   { value: '2:3', label: '2:3' },
   { value: '4:3', label: '4:3' },
   { value: '3:4', label: '3:4' },
+  { value: '5:4', label: '5:4' },
+  { value: '4:5', label: '4:5' },
   { value: '16:9', label: '16:9' },
   { value: '9:16', label: '9:16' },
   { value: '2:1', label: '2:1' },
   { value: '1:2', label: '1:2' },
   { value: '21:9', label: '21:9' },
   { value: '9:21', label: '9:21' },
+  { value: '3:1', label: '3:1' },
+  { value: '1:3', label: '1:3' },
 ];
 
-const RESOLUTION_OPTIONS = [
-  { value: '1k', label: '1K' },
-  { value: '2k', label: '2K' },
-  { value: '4k', label: '4K' },
+type GenerationMode = 'quick' | 'standard' | 'fine';
+
+const GENERATION_MODES: Array<{
+  value: GenerationMode;
+  label: string;
+  description: string;
+  resolution: string;
+  quality: string;
+}> = [
+  { value: 'quick', label: '快速预览', description: '速度优先', resolution: '1k', quality: 'medium' },
+  { value: 'standard', label: '标准出图', description: '日常默认', resolution: '2k', quality: 'high' },
+  { value: 'fine', label: '精细成品', description: '最终交付', resolution: '4k', quality: 'xhigh' },
 ];
+
+const MODE_LABELS: Record<string, string> = {
+  quick: '快速预览',
+  standard: '标准出图',
+  fine: '精细成品',
+};
 
 const MAX_REFERENCE_IMAGES = 16;
 const MAX_REFERENCE_IMAGE_BYTES = 50 * 1024 * 1024;
@@ -86,7 +104,7 @@ const STATUS_META: Record<string, { label: string; color: string; icon: typeof L
 export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerationPageProps) {
   const [prompt, setPrompt] = useState('');
   const [size, setSize] = useState('1:1');
-  const [resolution, setResolution] = useState('1k');
+  const [generationMode, setGenerationMode] = useState<GenerationMode>('standard');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [tasks, setTasks] = useState<ImageTask[]>([]);
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
@@ -302,8 +320,10 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
     // Capture current input state before clearing
     const currentPrompt = trimmed;
     const currentSize = size;
-    const currentResolution = resolution;
+    const currentMode = GENERATION_MODES.find((mode) => mode.value === generationMode) || GENERATION_MODES[1];
+    const currentResolution = currentMode.resolution;
     const currentRefImages = [...referenceImages];
+    const currentModel = currentRefImages.length > 0 ? 'gpt-image-2.5-sunburst' : 'gpt-image-2.5-flare';
 
     // Optimistic task: immediately show in chat
     const optimisticId = -Date.now();
@@ -312,6 +332,9 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
       prompt: currentPrompt,
       size: currentSize,
       resolution: currentResolution,
+      quality: currentMode.quality,
+      model: currentModel,
+      generation_mode: currentMode.value,
       status: 'submitted',
       external_task_id: '',
       result_urls: [],
@@ -333,7 +356,7 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
       const task = await createImageTask(
         currentPrompt,
         currentSize,
-        currentResolution,
+        currentMode.value,
         currentRefImages.length > 0 ? currentRefImages : undefined,
         optimisticId
       );
@@ -563,7 +586,12 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
               )}
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px]">{task.size}</span>
-                <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px]">{task.resolution}</span>
+                <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px]">{task.resolution.toUpperCase()}</span>
+                {task.generation_mode && (
+                  <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px]">
+                    {MODE_LABELS[task.generation_mode] || task.generation_mode}
+                  </span>
+                )}
               </div>
             </div>
             <p className="mt-1.5 px-1 text-right text-[10px] text-slate-400">
@@ -579,7 +607,13 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
               <div className="flex size-7 items-center justify-center rounded-full bg-gradient-to-br from-amber-500 to-orange-600 text-white">
                 <Sparkles className="size-3.5" />
               </div>
-              <span className="text-xs font-semibold text-slate-700">GPT Image-2</span>
+              <span className="text-xs font-semibold text-slate-700">
+                {task.model?.includes('sunburst')
+                  ? 'Image 2.5 Sunburst'
+                  : task.model?.includes('flare')
+                    ? 'Image 2.5 Flare'
+                    : 'Image 2'}
+              </span>
               <span className={cn('text-[10px] font-medium', meta.color)}>
                 <StatusIcon className={cn('mr-0.5 inline size-3', task.status === 'processing' && 'animate-spin')} />
                 {meta.label}
@@ -647,7 +681,11 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
                   })}
                 </div>
                 <div className="flex items-center gap-3 text-[10px] text-slate-400">
-                  <span>{task.size} · {task.resolution}</span>
+                  <span>
+                    {task.size} · {task.resolution.toUpperCase()}
+                    {task.quality ? ` · ${task.quality}` : ''}
+                    {task.generation_mode ? ` · ${MODE_LABELS[task.generation_mode] || task.generation_mode}` : ''}
+                  </span>
                   {task.completed_at && (
                     <span>完成于 {formatTime(task.completed_at)}</span>
                   )}
@@ -728,7 +766,7 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">比例</Label>
-            <div className="flex gap-1">
+            <div className="flex flex-wrap gap-1">
               {SIZE_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
@@ -746,20 +784,22 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">分辨率</Label>
-            <div className="flex gap-1">
-              {RESOLUTION_OPTIONS.map((opt) => (
+            <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">出图模式</Label>
+            <div className="flex flex-wrap gap-1">
+              {GENERATION_MODES.map((opt) => (
                 <button
                   key={opt.value}
-                  onClick={() => setResolution(opt.value)}
+                  onClick={() => setGenerationMode(opt.value)}
+                  title={`${opt.resolution.toUpperCase()} · ${opt.quality} · ${opt.description}`}
                   className={cn(
-                    'rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
-                    resolution === opt.value
+                    'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
+                    generationMode === opt.value
                       ? 'bg-amber-100 text-amber-700'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   )}
                 >
                   {opt.label}
+                  <span className="text-[9px] opacity-65">{opt.resolution.toUpperCase()}</span>
                 </button>
               ))}
             </div>

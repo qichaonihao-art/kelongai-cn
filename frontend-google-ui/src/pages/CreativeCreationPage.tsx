@@ -643,20 +643,21 @@ function getSeedanceCostStats(): { daily: number; monthly: number; yearly: numbe
   }
 }
 
-const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n除开头标记区的人声判定与台词标记外，请严格按照以上十二个部分输出，每个部分之间必须空一行（即每个部分结束后换两行再开始下一个部分）。最终完整提示词的最后必须单独使用标准格式写一行“总时长：X秒”，X必须与本条任务已经锁定的整数时长完全一致，不得另行估算。';
+const VIDEO_REVERSE_FORMAT_SUFFIX = '\n\n除开头的机器标记区外，只输出“一、最终可直接用于视频生成模型的完整复刻提示词”和“二、负面提示词”两个正文部分，不要输出观察笔记、分析过程、摘要、关键约束复述或第三份提示词。两个部分之间空一行。第一部分的最后必须单独使用标准格式写一行“总时长：X秒”，X必须与本条任务已经锁定的整数时长完全一致，不得另行估算。';
+const IMAGE_REVERSE_FORMAT_SUFFIX = '\n\n除开头标记区的人声判定与台词标记外，请严格按照以上十二个部分输出，每个部分之间必须空一行。最终完整提示词的最后必须单独使用标准格式写一行“总时长：X秒”，X必须与本条任务已经锁定的整数时长完全一致，不得另行估算。';
 const VIDEO_CONTEXT_ISOLATION_RULE = '本次任务是完全独立的一次视频分析。只能基于当前上传的视频、当前上传的参考图片（如有）、本条指令中的替换要求、额外调整、人物改造要求和字幕选项进行判断。不得引用、继承、延续或假设任何历史会话、上一次视频、上一次替换目标、上一次参考图、旧提示词中的主体、道具、场景、动作、挂画、海报、装饰物、文字内容或风格要求。所有主体、道具、动作和场景元素必须来自当前视频可见内容或当前指令明确要求；如果当前视频中没有明确出现某元素，不得写入分析和最终提示词。';
-const VIDEO_SHOT_FIDELITY_RULE = '【画面与台词分离／镜头强制复刻】先逐段观察原视频的真实画面，明确原片有几个镜头、有没有剪辑点、机位是否固定、景别和构图是否变化。台词、口播、旁白只用于还原声音和口型，不是新增画面、道具、人物动作或转场的指令；某件物品只在话里被提到但从未出现在画面中，就绝不能让它上镜。原片若是全程固定机位的一镜到底，最终生成指令必须明确写出从0秒到结束始终同一机位、同一构图、同一背景、同一人物连续说话，禁止切镜、插入特写、横移、推近、摇镜或转向台词提到的物品。元素替换只允许修改原片画面中实际可见的指定元素及其原有位置，不得为了展示替换物而新增镜头或改变取景。请把镜头数量、机位、剪辑点和台词提及但不可见的物品边界写入第三至五部分、复刻关键约束、第十一部分的最终生成指令和第十二部分的负面提示词。';
-const SEEDANCE_SHOT_FIDELITY_LOCK = '【原片镜头优先】下文是原视频的反推分析，生成视频时严格执行其中真实拍到的镜头数量、机位、景别、构图和时间顺序。台词里提到的物品仅属于声音内容，不是视觉生成指令；除非原片画面确实拍到，或用户明确要求在原有画面位置替换，否则不得新增该物品、切到它的特写或为了展示它移动镜头。若下文描述原片为固定机位一镜到底，必须全程保持同一连续镜头、同一取景和背景，不得切镜、插镜、推拉摇移或另拍展示画面。';
+const VIDEO_SHOT_FIDELITY_RULE = '【画面与台词分离／镜头强制复刻】先逐段观察原视频的真实画面，明确原片有几个镜头、有没有剪辑点、机位是否固定、景别和构图是否变化。台词、口播、旁白只用于还原声音和口型，不是新增画面、道具、人物动作或转场的指令；某件物品只在话里被提到但从未出现在画面中，就绝不能让它上镜。原片若是全程固定机位的一镜到底，最终生成指令必须明确写出从0秒到结束始终同一机位、同一构图、同一背景、同一人物连续说话，禁止切镜、插入特写、横移、推近、摇镜或转向台词提到的物品。元素替换只允许修改原片画面中实际可见的指定元素及其原有位置，不得为了展示替换物而新增镜头或改变取景。镜头数量、机位、剪辑点和“台词提及但画面不可见”的边界必须直接写进最终复刻提示词及其负面提示词。';
+const SEEDANCE_SHOT_FIDELITY_LOCK = '【原片复刻优先】严格执行下文锁定的镜头数量、切点、机位、景别、构图、动作顺序和时间轴。台词只控制声音与口型，台词提到但原片未拍到的内容不得进入画面。除下文明确列出的允许变化外，禁止新增镜头、物体、动作、人物或运镜。';
 const VIDEO_LIVE_EYE_GAZE_RULE = '如果视频中出现人物，且正面或偏正面机位能明显看到人物眼神，必须重点描述人物眼神的真人感：眼睛不能一直僵硬睁着不动，需根据原视频状态写出自然眨眼、视线轻微移动、眼神聚焦变化、看向镜头或看向道具/画面的真实互动感，避免眼珠固定、空洞呆滞、假人感和 AI 式凝视。';
 const PAINTING_WOOD_BAR_RULE = '挂画上下两端的木条、挂轴或压杆必须严格以当前视频和参考图片中实际可见的结构为准，完整保持其形状、颜色、材质、粗细、长度、截面和两端轮廓，不得重新设计。滚动展开只改变画布的卷起与释放状态，不得把原有扁平或方形木条改成传统圆柱形卷轴、圆杆或转轴；不得在木条左右两端擅自增加圆球、葫芦头、轴头、端帽、把手或任何参考素材中不存在的圆柱形及装饰性构件。';
-const PAINTING_WOOD_BAR_OUTPUT_RULE = `${PAINTING_WOOD_BAR_RULE} 仅当当前视觉素材的画面中实际出现挂画或卷轴时，才把这项要求写入“复刻关键约束”“负面约束”“最终完整提示词”和“负面提示词”；如果只在台词里提到，不得因此添加挂画镜头。`;
+const PAINTING_WOOD_BAR_OUTPUT_RULE = `${PAINTING_WOOD_BAR_RULE} 仅当当前视觉素材中实际出现挂画或卷轴时，才把这项要求写入最终提示词；如果只在台词里提到，不得因此添加挂画镜头。`;
 // 「人声判定」标记是横跨三方的契约：这里的规则文案、creative.ts 里的解析正则、
 // 以及 AI 实际输出的格式。措辞和正则一旦对不上，解析会返回 null，而 null 的语义恰好是
 // 「旧记录，不要碰开关」——功能于是静默失效：没有异常、没有日志，现象酷似历史兼容逻辑
 // 正常生效。所以标记文字只能插值 HUMAN_SPEECH_MARKER_TOKENS，不得另抄字面量；
 // test-creative-speech-marker.ts 用源码断言钉住了这一点，手抄会直接测试失败。
 // 判定标准随模式而异：视频看音轨里有没有人声，图片没有音轨，只能看画面里人物的说话状态。
-const HUMAN_SPEECH_MARKER_RULE = (criterion: string) => `【标记区】必须在输出的最开头、且在“一、核心主体信息”之前，连续若干行，每行一个机器可读标记，标记区中间不得夹带任何其他文字。第一行固定是：${HUMAN_SPEECH_MARKER_TOKENS.yes}或${HUMAN_SPEECH_MARKER_TOKENS.no}。判定标准：${criterion}第一行之后，如果素材里有人物说出口的台词（含旁白、画外音），就另起若干行、每句一行，逐句照抄台词原文，格式为${DIALOGUE_MARKER_TOKENS.prefix}台词原文${DIALOGUE_MARKER_TOKENS.suffix}；只写台词原文，不要写说话人、不要写语气、不要写动作描述，也不要把同一句拆成多行；没有台词就一行都不写，不要输出空标记。台词原文必须逐字照抄，不得改写、不得翻译、不得省略。标记区这些行是给程序读取的，必须严格使用上述格式，不得改写措辞、不得添加其他字符。`;
+const HUMAN_SPEECH_MARKER_RULE = (criterion: string) => `【标记区】必须在输出最开头、且在第一个正文标题之前，连续若干行，每行一个机器可读标记，标记区中间不得夹带任何其他文字。第一行固定是：${HUMAN_SPEECH_MARKER_TOKENS.yes}或${HUMAN_SPEECH_MARKER_TOKENS.no}。判定标准：${criterion}第一行之后，如果素材里有人物说出口的台词（含旁白、画外音），就另起若干行、每句一行，逐句照抄台词原文，格式为${DIALOGUE_MARKER_TOKENS.prefix}台词原文${DIALOGUE_MARKER_TOKENS.suffix}；只写台词原文，不要写说话人、不要写语气、不要写动作描述，也不要把同一句拆成多行；没有台词就一行都不写，不要输出空标记。台词原文必须逐字照抄，不得改写、不得翻译、不得省略。标记区这些行是给程序读取的，必须严格使用上述格式，不得改写措辞、不得添加其他字符。`;
 
 const HUMAN_SPEECH_CRITERION_VIDEO = '只要素材中存在人声开口，包括人物台词、对话、口播、独白、旁白、画外音，无论画面中是否能看到人物张嘴，一律写“是”；只有纯背景音乐、纯环境音效、完全无声的素材才写“否”。';
 
@@ -676,83 +677,47 @@ function buildCharacterRemixClause(characterRemix?: string) {
 
 const buildReverseDurationRule = (durationSeconds: number, sourceDurationSeconds: number) => sourceDurationSeconds === durationSeconds
   ? `【视频时长强制锁定】当前源视频真实时长经四舍五入后为 ${sourceDurationSeconds} 秒，本次复刻视频的目标总时长为 ${durationSeconds} 秒。动作和镜头时间轴必须从0秒连续安排到${durationSeconds}秒；最终完整提示词的最后必须单独写一行“总时长：${durationSeconds}秒”。`
-  : `【视频时长强制锁定】当前源视频真实时长经四舍五入后为 ${sourceDurationSeconds} 秒，但用户在“额外调整”中明确要求新视频改为 ${durationSeconds} 秒，因此目标总时长必须以 ${durationSeconds} 秒为准，禁止恢复成源视频时长。只在原有机位和取景内延展连续动作与说话节奏，不得通过新增镜头、转场、台词联想画面来凑时长，也禁止慢放、重复或静止等待。时间轴必须从0秒连续安排到${durationSeconds}秒；最终完整提示词的最后必须单独写一行“总时长：${durationSeconds}秒”。`;
+  : `【视频时长强制锁定】当前源视频真实时长经四舍五入后为 ${sourceDurationSeconds} 秒，但用户在“额外调整”中明确要求新视频改为 ${durationSeconds} 秒，因此目标总时长必须以 ${durationSeconds} 秒为准，禁止恢复成源视频时长。保持原片镜头数量、机位、取景、核心动作和事件顺序不变，在同一镜头与同一行为语义内自然补足过程：可以增加与原动作直接相连的起手、过渡、收势，以及自然眨眼、呼吸、视线变化、口播停连、细微手势和合理的物体接触过程；不得新增主体、道具、场景、独立剧情事件、镜头或转场，也不得根据台词联想补画面。延长必须依靠真实连续表演，禁止把原动作整体机械慢放、循环重复、定格或长时间静止等待。时间轴必须从0秒连续安排到${durationSeconds}秒；最终完整提示词的最后必须单独写一行“总时长：${durationSeconds}秒”。`;
 
-const VIDEO_REVERSE_PROMPT = (options: { durationSeconds: number; sourceDurationSeconds: number; additionalChange?: string; includeSubtitles?: boolean; characterRemix?: string }) => {
+interface VideoClonePromptOptions {
+  durationSeconds: number;
+  sourceDurationSeconds: number;
+  additionalChange?: string;
+  includeSubtitles?: boolean;
+  characterRemix?: string;
+}
+
+function buildVideoClonePrompt(options: VideoClonePromptOptions, replacement?: { target: string; value: string }) {
   const additionalChange = options?.additionalChange;
   const includeSubtitles = options?.includeSubtitles ?? false;
-  const characterRemixClause = buildCharacterRemixClause(options?.characterRemix);
+  const characterRemix = options?.characterRemix?.trim();
+  const characterRemixClause = buildCharacterRemixClause(characterRemix);
   const subtitleClause = includeSubtitles
-    ? '12. 如果视频中有人物口播或旁白字幕，必须逐字提取并完整保留在最终提示词中，字幕内容不得遗漏、省略或改写。'
-    : '12. 视频中的字幕、文字叠加、人物口播字幕、旁白字幕等所有文字元素均不得保留，必须在复刻时彻底去除，确保输出画面不含任何字幕或文字叠加。';
-  const base = `请把这个视频当作”待复刻样片”来分析，不要只做普通内容描述，而要尽量提取出所有会影响视频复刻结果的关键信息。目标是让我把你输出的提示词交给图生视频/文生视频模型后，最大程度复刻原视频的主体、构图、镜头、动作、节奏、光影和氛围。\n\n${HUMAN_SPEECH_MARKER_RULE(HUMAN_SPEECH_CRITERION_VIDEO)}\n\n${VIDEO_CONTEXT_ISOLATION_RULE}\n\n请严格按以下结构输出：\n\n一、核心主体信息\n二、场景与背景环境\n三、构图与机位\n四、镜头运动\n五、动作设计与时间顺序\n六、节奏与动态风格\n七、光影与色彩\n八、情绪与气质\n九、复刻关键约束（提炼 8 条最关键因素）\n十、负面约束（列出应避免的问题）\n十一、最终可直接用于视频生成模型的完整复刻提示词\n十二、负面提示词\n\n要求：\n1. 描述必须具体，避免空泛词语。\n2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。\n3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。\n4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。\n5. 目标不是”风格相似”，而是”尽量复刻接近原视频”。\n6. 对于画面中的挂画、海报、装饰画、屏幕显示内容等平面元素，必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换或修改后的元素在画面中的空间占比和边界框大小必须与原元素一致。\n7. 如果原视频中存在水印、平台标识、AI生成标记（如”豆包AI生成”等文字或Logo），必须在复刻时去除，不得保留任何水印信息。\n8. 复刻的视频要尽量减少 AI 感，人物、动作、镜头、光影、材质和环境细节都要更自然、更真实，避免塑料感、过度磨皮、虚假光泽、异常肢体、过度电影化和明显的 AI 生成痕迹。\n9. 如果视频中出现人物，必须重点观察并详细描述人物手部动作，包括手指、手腕、手掌与道具或挂画的接触方式、拿取方式、展开方式、扶持位置、发力方向和动作先后顺序，不得只笼统描述为”展示”或”操作”。\n10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：卷轴或卷筒沿轴向旋转，画布从卷筒中逐步释放并展开；不得描述成普通平面图片的滑动、平移或直接展开。${PAINTING_WOOD_BAR_OUTPUT_RULE}\n${subtitleClause}${characterRemixClause}`;
-  const durationLockedBase = base.replace(
-    VIDEO_CONTEXT_ISOLATION_RULE,
-    `${buildReverseDurationRule(options.durationSeconds, options.sourceDurationSeconds)}\n\n${VIDEO_CONTEXT_ISOLATION_RULE}`,
-  );
-  const shotLockedBase = durationLockedBase.replace(VIDEO_CONTEXT_ISOLATION_RULE, `${VIDEO_CONTEXT_ISOLATION_RULE}\n\n${VIDEO_SHOT_FIDELITY_RULE}`);
-  const enhancedBase = shotLockedBase.replace(
-    '\n10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：',
-    `\n10. ${VIDEO_LIVE_EYE_GAZE_RULE}\n11. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：`
-  );
-  if (!additionalChange?.trim()) return enhancedBase;
-  return `${enhancedBase}${buildRequestedDialogueLock(additionalChange)}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
-};
-const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, options: { durationSeconds: number; sourceDurationSeconds: number; additionalChange?: string; includeSubtitles?: boolean; characterRemix?: string }) => {
-  const additionalChange = options?.additionalChange;
-  const includeSubtitles = options?.includeSubtitles ?? false;
-  const characterRemixClause = buildCharacterRemixClause(options?.characterRemix);
-  const subtitleClause = includeSubtitles
-    ? '12. 如果视频中有人物口播或旁白字幕，必须逐字提取并完整保留在最终提示词中，字幕内容不得遗漏、省略或改写。'
-    : '12. 视频中的字幕、文字叠加、人物口播字幕、旁白字幕等所有文字元素均不得保留，必须在复刻时彻底去除，确保输出画面不含任何字幕或文字叠加。';
-  const base = `我上传了一个视频和一个参考图片。请你完成以下任务：
+    ? '字幕规则：逐字识别并保留原片实际出现的有效字幕，锁定内容、位置、字号、颜色、出现与消失时段；水印、平台标识和 AI 生成标记仍必须去除。'
+    : '字幕规则：去除原片字幕、文字叠加、水印、平台标识和 AI 生成标记；不得生成新的画面文字。';
+  const taskRule = replacement
+    ? `这是“元素替换复刻”。第一个素材是唯一的镜头与时序基准视频；第二个素材只用于提供【${replacement.value}】的具体画面内容、造型、颜色、风格、材质、纹理和可见细节。仅把原视频中实际可见的【${replacement.target}】替换为【${replacement.value}】，保持原目标的出现时段、位置、尺寸占比、宽高比、透视、朝向、运动轨迹、遮挡关系和受光关系。参考图片不得改变人物、背景、构图、镜头、动作、整体色调或引入图片里的其他物体。`
+    : '这是“直接反推复刻”。当前视频是唯一的视觉、镜头和时序基准。除用户明确提出的调整外，画面中任何主体、物体、动作、背景、构图和镜头都不得改变。';
+  const allowedChangeItems = [
+    replacement ? `把【${replacement.target}】替换为【${replacement.value}】` : '',
+    characterRemix ? '执行本次人物改造要求，只改变人物设定及与新设定直接相关的外观' : '',
+    additionalChange?.trim() ? '执行用户在本次额外调整中明确提出的变化' : '',
+    options.durationSeconds !== options.sourceDurationSeconds ? `将原片时序自然重排为 ${options.durationSeconds} 秒，但保持镜头数量、核心动作和事件顺序` : '',
+    includeSubtitles ? '保留有效字幕并去除水印、平台标识和 AI 生成标记' : '去除字幕、文字叠加、水印、平台标识和 AI 生成标记',
+  ].filter(Boolean);
+  const allowedChanges = `只允许以下变化：${allowedChangeItems.join('；')}。除此之外，原片内容全部冻结。`;
+  const userAdjustments = additionalChange?.trim()
+    ? `${buildRequestedDialogueLock(additionalChange)}\n\n【本次额外调整】\n${additionalChange.trim()}`
+    : '';
 
-1. 先像分析”待复刻样片”一样，完整分析这个视频，提取所有影响复刻结果的关键信息（主体、构图、镜头、动作、节奏、光影、氛围等）。
-2. 同时参考我上传的图片，把视频中的【${target}】替换成【${replacement}】。
-3. 替换时，${replacement}的外观、风格、质感要与我上传的参考图片保持一致。
-4. 除了被替换的元素外，视频中其他所有内容（场景、人物、动作、镜头运动、光影、色彩、节奏等）必须与原视频完全一致，不能有任何改变。
+  return `请把当前视频当作“待复刻样片”，先在内部逐帧核对，再输出一份可直接交给视频生成模型执行的单一复刻规格。目标是几何、镜头、时序和内容尽可能 1:1，不是改编、润色或根据台词再创作。不要输出你的观察过程，也不要把同一内容先分析后复述。\n\n${taskRule}\n\n【证据与变更优先级】\n1. 原视频实际可见画面与真实剪辑点，是镜头、构图、人物、场景、动作和时间轴的最高依据。\n2. 用户本次明确要求的变化，只覆盖被明确点名的内容。\n3. ${replacement ? '参考图片只决定替换元素本身的内容和视觉特征，不得覆盖原视频的镜头与布局。' : '不得使用历史任务或常识补充原片没拍到的内容。'}\n4. 台词与旁白只决定声音和口型，不能作为新增物体、插镜、特写、运镜或动作的依据。\n5. 看不清的细节写成中性、不扩张画面的约束，不得猜测或补拍。\n\n${buildReverseDurationRule(options.durationSeconds, options.sourceDurationSeconds)}\n\n${HUMAN_SPEECH_MARKER_RULE(HUMAN_SPEECH_CRITERION_VIDEO)}\n\n${VIDEO_CONTEXT_ISOLATION_RULE}\n\n${VIDEO_SHOT_FIDELITY_RULE}\n\n【内部核对清单，不要单独输出】\n- 逐段确认真实镜头数、每个切点、是否一镜到底；区分真实运镜与人物运动、画面抖动。目标时长变化时，保持镜头数量和先后顺序，按原片各镜头及关键动作的相对时长比例重排目标时间轴，不得死守已经失效的原始秒点。\n- 锁定原片画幅方向和宽高比，以及每个镜头的机位高度与方向、俯仰角、景别、主体边界框位置和占比、留白、透视、焦段观感、景深；无法测量时用相对关系准确表达。\n- 列全人物身份与外观、服装发型、姿态视线、表情、手指和道具接触，及背景物体的数量、位置、尺寸和遮挡；保持跨帧连续。\n- 按原片事件顺序覆盖 0-${options.durationSeconds} 秒，时间段连续、不重叠、不留空。目标时长变长时，保持核心动作与事件顺序，在同一镜头内补全直接相连的起手、过渡、收势和自然微动作，不得机械慢放、循环或新增独立剧情；目标时长缩短时，只压缩动作间隙，不得删除核心动作。\n- 精确分离画面事实与声音内容，逐字保留人声台词；台词提到但画面未出现的物体必须写入禁止生成项。分别核对原片的人声、背景音乐、环境音和动作音效，只写实际存在的声音及其出现时段，不得擅自增加配乐或音效。\n- 核对动作快慢、停顿、情绪、气质和环境氛围，以及主光方向、软硬、色温、曝光、对比、材质和环境动态，全部以原片为准，避免自动电影化和美化。\n- ${allowedChanges}\n- ${subtitleClause}\n- ${VIDEO_LIVE_EYE_GAZE_RULE}\n- 人物手部可见时，写清手指、手腕、手掌与物体的接触位置、发力方向和动作先后，避免笼统写“展示”或“操作”。\n- 挂画、海报、屏幕等平面元素保持原始比例、边界框、透视和空间占比，不得拉伸。出现卷轴滚动展开时，写清沿轴旋转、画布逐步释放；${PAINTING_WOOD_BAR_OUTPUT_RULE}\n- 明确抑制塑料感、过度磨皮、虚假光泽、僵硬表情、异常肢体、穿模、物体漂移、过度电影化和其他明显 AI 痕迹。\n${characterRemixClause}${userAdjustments}\n\n【唯一允许的输出结构】\n一、最终可直接用于视频生成模型的完整复刻提示词\n生成指令：按“复刻目标与允许变化、镜头硬锁、画面与空间、逐秒时间轴、人物动作与表演、节奏情绪与氛围、声音与逐字台词、光影材质与连续性”的顺序写成一份完整规格。必须使用具体、可执行的描述，避免“高级感、电影感、氛围感”等无法复刻原片的空泛词。必须包含目标时间轴上的准确镜头数和切点；固定机位一镜到底必须在镜头硬锁中明确，并在时间轴中落实为连续动作。除必要的镜头硬锁在时间轴中的落实外，每项事实只写一次，不要附加分析摘要或再次复述。第一部分最后单独写“总时长：${options.durationSeconds}秒”。\n\n二、负面提示词\n只集中列出会破坏本片 1:1 复刻的禁项，包括擅自新增或删除的镜头、运镜、人物、物体、独立动作或剧情事件、台词联想画面、构图漂移、比例透视错误、时序错误、连续性错误和 AI 瑕疵；自然补时所需的连续过渡与微动作不属于禁项。不要复制第一部分的正向描述。`;
+}
 
-${buildReverseDurationRule(options.durationSeconds, options.sourceDurationSeconds)}
+const VIDEO_REVERSE_PROMPT = (options: VideoClonePromptOptions) => buildVideoClonePrompt(options);
 
-${HUMAN_SPEECH_MARKER_RULE(HUMAN_SPEECH_CRITERION_VIDEO)}
-
-${VIDEO_CONTEXT_ISOLATION_RULE}
-
-请严格按以下结构输出：
-
-一、核心主体信息
-二、场景与背景环境
-三、构图与机位
-四、镜头运动
-五、动作设计与时间顺序
-六、节奏与动态风格
-七、光影与色彩
-八、情绪与气质
-九、复刻关键约束（提炼 8 条最关键因素，并明确指出”${target}”已替换为”${replacement}”）
-十、负面约束（列出应避免的问题）
-十一、最终可直接用于视频生成模型的完整复刻提示词（其中已包含替换后的元素描述）
-十二、负面提示词
-
-要求：
-1. 描述必须具体，避免空泛词语。
-2. 尽量写出主体在画面中的位置、景别、角度、运动方式、动作先后顺序。
-3. 如果视频里有明显的服装、道具、背景装饰、灯光方向、色温、节奏变化，必须写出来。
-4. 最终提示词要以”生成指令”的方式输出，不要写成分析说明。
-5. 目标不是”风格相似”，而是”尽量复刻接近原视频，同时仅替换指定元素”。
-6. 被替换的元素（如挂画、海报、装饰画、屏幕显示内容等平面元素）必须严格保持其原始比例（宽高比）和尺寸关系，不得出现拉伸、压扁或变形。替换后的新元素在画面中的空间占比、边界框大小和透视关系必须与原元素完全一致。
-7. 如果原视频中存在水印、平台标识、AI生成标记（如”豆包AI生成”等文字或Logo），必须在复刻时去除，不得保留任何水印信息。
-8. 复刻的视频要尽量减少 AI 感，人物、动作、镜头、光影、材质和环境细节都要更自然、更真实，避免塑料感、过度磨皮、虚假光泽、异常肢体、过度电影化和明显的 AI 生成痕迹。
-9. 如果视频中出现人物，必须重点观察并详细描述人物手部动作，包括手指、手腕、手掌与道具或挂画的接触方式、拿取方式、展开方式、扶持位置、发力方向和动作先后顺序，不得只笼统描述为”展示”或”操作”。
-10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：卷轴或卷筒沿轴向旋转，画布从卷筒中逐步释放并展开；不得描述成普通平面图片的滑动、平移或直接展开。${PAINTING_WOOD_BAR_OUTPUT_RULE}
-${subtitleClause}${characterRemixClause}`;
-  const shotLockedBase = base.replace(VIDEO_CONTEXT_ISOLATION_RULE, `${VIDEO_CONTEXT_ISOLATION_RULE}\n\n${VIDEO_SHOT_FIDELITY_RULE}`);
-  const enhancedBase = shotLockedBase.replace(
-    '\n10. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：',
-    `\n10. ${VIDEO_LIVE_EYE_GAZE_RULE}\n11. 如果视频中出现卷轴式挂画、卷筒挂画或被卷起后展开的画作，必须明确描述其展开方式为”滚动展开”：`
-  );
-  if (!additionalChange?.trim()) return enhancedBase;
-  return `${enhancedBase}${buildRequestedDialogueLock(additionalChange)}\n\n另外，在复刻时还需要做以下调整：${additionalChange.trim()}`;
-};
+const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, options: VideoClonePromptOptions) => (
+  buildVideoClonePrompt(options, { target, value: replacement })
+);
 
 const IMAGE_TO_VIDEO_PROMPT = (options: {
   durationSeconds: number;
@@ -2798,6 +2763,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     let sourceDurationSeconds: number;
     let durationSeconds: number;
     try {
+      // 画幅不按源视频自适应：产品要求输出固定 9:16（用户明确指示比例不用管），
+      // 同步只取时长，不碰 seedanceRatio。
       const sourceDuration = await readVideoDuration(sourceVideo.file);
       sourceDurationSeconds = Math.round(sourceDuration);
       durationSeconds = extractRequestedVideoDurationFromText(additionalChange) ?? sourceDurationSeconds;
@@ -2901,8 +2868,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     } else if (activeMode !== 'painting' && seedanceModel !== 'MiniMax-H3') {
       setSeedanceError('未能明确判断本条视频是否需要声音，已保留当前声音设置，请在生成前确认。');
     }
+    if (needsDialogueClarification) {
+      const warning = '检测到“额外调整”里有台词要求，但没有识别出具体原话。提示词已同步，请在生成前确认台词是否完整；建议写成“人物台词是：具体原话”。';
+      setRequestError(warning);
+      setSeedanceError(warning);
+    }
 
-    // 反推完成自动带出：时长（源视频真实时长四舍五入）+ 参考图（元素替换 / 图片生视频）。
+    // 反推完成自动带出：时长、源视频画幅，以及参考图（元素替换 / 图片生视频）。
     syncReverseMediaToSeedance(snapshot);
   }
 
@@ -2920,9 +2892,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
           ? [selectedMedia]
           : []
     );
-    if (referenceImages.length > 0) {
-      setSeedanceReferences(computeSeedanceReferencesWithImages(referenceImages));
-    }
+    // 自动同步必须完整反映本次左侧任务，不能把上一条任务的参考图继续带到下一条。
+    // 直接反推本身没有参考图，因此这里也要明确清空；否则做完一次元素替换后再做直接反推，
+    // 上一次的替换图仍会随 Seedance 请求提交，复刻结果会被无关图片带偏。
+    replaceSeedanceReferencesWithImages(referenceImages);
 
     const promptDuration = extractVideoGenerationDurationFromPrompt(latestAssistantText);
     const applyDuration = (duration: number | null | undefined) => {
@@ -4710,6 +4683,33 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     return nextReferences;
   }
 
+  function replaceSeedanceReferencesWithImages(images: SelectedCreativeMedia[]) {
+    const isSeedance25 = seedanceModel === 'doubao-seedance-2-5-260628';
+    const maxImageCount = isSeedance25 ? 30 : 9;
+    const seenFileNames = new Set<string>();
+    const nextReferences = images
+      .filter((image) => {
+        if (image.kind !== 'image' || seenFileNames.has(image.fileName)) return false;
+        seenFileNames.add(image.fileName);
+        return true;
+      })
+      .slice(0, maxImageCount)
+      .map((image) => ({
+        id: createMessageId('seedance_ref'),
+        kind: 'image' as const,
+        file: image.file,
+        previewUrl: createMediaPreviewUrl(image.file),
+        fileName: image.fileName,
+      }));
+
+    setSeedanceReferences((previous) => {
+      previous.forEach((item) => {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      });
+      return nextReferences;
+    });
+  }
+
   function computeSeedanceReferencesWithImage(image: SelectedCreativeMedia | null): SeedanceReferenceFile[] {
     return computeSeedanceReferencesWithImages(image ? [image] : []);
   }
@@ -5184,10 +5184,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     // If the user is sending the video reverse prompt, silently append format
     // instructions so Doubao returns each section on its own line without
     // cluttering the input box.
-    const isReversePrompt = rawQuestion.includes('核心主体信息') && (
-      rawQuestion.includes('待复刻样片') || rawQuestion.includes('唯一的视觉基准')
-    );
-    const question = isReversePrompt ? rawQuestion + VIDEO_REVERSE_FORMAT_SUFFIX : rawQuestion;
+    const isVideoReversePrompt = rawQuestion.includes('待复刻样片')
+      && rawQuestion.includes('最终可直接用于视频生成模型');
+    const isImageReversePrompt = rawQuestion.includes('唯一的视觉基准')
+      && rawQuestion.includes('核心主体信息');
+    const isReversePrompt = isVideoReversePrompt || isImageReversePrompt;
+    const question = isVideoReversePrompt
+      ? rawQuestion + VIDEO_REVERSE_FORMAT_SUFFIX
+      : isImageReversePrompt
+        ? rawQuestion + IMAGE_REVERSE_FORMAT_SUFFIX
+        : rawQuestion;
     const isReplaceMode = reverseMode === 'replace' && selectedMedia?.kind === 'video' && replaceImage;
     const isImageToVideoWithPainting = reverseMode === 'image' && selectedMedia?.kind === 'image' && imageToVideoAddPainting && imageToVideoPainting;
     const shouldIsolateReverseTask = !!selectedMedia && (isReversePrompt || isReplaceMode);

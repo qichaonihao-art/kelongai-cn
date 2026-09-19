@@ -45,7 +45,9 @@ const DOUBAO_COPY_TEXT_TIMEOUT_MS = 3 * 60 * 1000;
 const QWEN_CREATIVE_MULTIMODAL_MODEL = 'qwen3.8-max';
 const QWEN_CREATIVE_MULTIMODAL_TIMEOUT_MS = 10 * 60 * 1000;
 const APIMART_API_BASE_URL = String(process.env.APIMART_API_BASE_URL || 'https://api.apimart.ai/v1').trim().replace(/\/+$/g, '');
-const APIMART_IMAGE_MODEL = String(process.env.APIMART_IMAGE_MODEL || 'gpt-image-2').trim();
+const APIMART_IMAGE_TEXT_MODEL = String(process.env.APIMART_IMAGE_TEXT_MODEL || 'gpt-image-2.5-flare').trim();
+const APIMART_IMAGE_EDIT_MODEL = String(process.env.APIMART_IMAGE_EDIT_MODEL || 'gpt-image-2.5-sunburst').trim();
+const APIMART_IMAGE_FALLBACK_MODEL = String(process.env.APIMART_IMAGE_FALLBACK_MODEL || process.env.APIMART_IMAGE_MODEL || 'gpt-image-2').trim();
 const APIMART_IMAGE_FETCH_TIMEOUT_MS = 45 * 1000;
 const APIMART_IMAGE_RETRY_DELAYS_MS = [1000];
 const APIMART_CHAT_FETCH_TIMEOUT_MS = 8 * 60 * 1000;
@@ -1173,6 +1175,9 @@ function getCollectionDb() {
         prompt TEXT NOT NULL,
         size TEXT NOT NULL DEFAULT '1:1',
         resolution TEXT NOT NULL DEFAULT '1k',
+        quality TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT 'gpt-image-2',
+        generation_mode TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'submitted',
         external_task_id TEXT,
         result_urls TEXT NOT NULL DEFAULT '[]',
@@ -1363,6 +1368,13 @@ function getCollectionDb() {
       collectionDb.exec(`ALTER TABLE image_generation_tasks ADD COLUMN reference_images TEXT NOT NULL DEFAULT '[]'`);
     } catch {
       // Column already exists, ignore
+    }
+    for (const statement of [
+      `ALTER TABLE image_generation_tasks ADD COLUMN quality TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE image_generation_tasks ADD COLUMN model TEXT NOT NULL DEFAULT 'gpt-image-2'`,
+      `ALTER TABLE image_generation_tasks ADD COLUMN generation_mode TEXT NOT NULL DEFAULT ''`,
+    ]) {
+      try { collectionDb.exec(statement); } catch {}
     }
 
     // Migration: video library metadata and enhancement lineage.
@@ -1653,13 +1665,24 @@ function dbArticleExists(keywordId, platform, url) {
 
 // --- Image Generation Database ---
 
-function dbInsertImageTask({ prompt, size, resolution, externalTaskId, referenceImages }) {
+function dbInsertImageTask({ prompt, size, resolution, quality, model, generationMode, externalTaskId, referenceImages }) {
   const db = getCollectionDb();
   const stmt = db.prepare(
-    'INSERT INTO image_generation_tasks (prompt, size, resolution, status, external_task_id, reference_images, created_at) VALUES (?, ?, ?, ?, ?, ?, unixepoch())'
+    'INSERT INTO image_generation_tasks (prompt, size, resolution, quality, model, generation_mode, status, external_task_id, reference_images, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())'
   );
-  const result = stmt.run(prompt, size, resolution, 'submitted', externalTaskId || '', JSON.stringify(referenceImages || []));
-  return { id: Number(result.lastInsertRowid), prompt, size, resolution, status: 'submitted', external_task_id: externalTaskId || '', reference_images: referenceImages || [] };
+  const result = stmt.run(prompt, size, resolution, quality || '', model || '', generationMode || '', 'submitted', externalTaskId || '', JSON.stringify(referenceImages || []));
+  return {
+    id: Number(result.lastInsertRowid),
+    prompt,
+    size,
+    resolution,
+    quality: quality || '',
+    model: model || '',
+    generation_mode: generationMode || '',
+    status: 'submitted',
+    external_task_id: externalTaskId || '',
+    reference_images: referenceImages || [],
+  };
 }
 
 function dbUpdateImageTaskStatus(id, { status, externalTaskId, resultUrls, errorMessage, completedAt }) {
@@ -4795,7 +4818,15 @@ async function handleCreateImageTask(req, res) {
     const body = await readRequestBody(req);
     const prompt = String(body.prompt || '').trim();
     const size = String(body.size || '1:1');
-    const resolution = String(body.resolution || '1k');
+    const generationModes = {
+      quick: { resolution: '1k', quality: 'medium' },
+      standard: { resolution: '2k', quality: 'high' },
+      fine: { resolution: '4k', quality: 'xhigh' },
+    };
+    const legacyResolutionMode = { '1k': 'quick', '2k': 'standard', '4k': 'fine' }[String(body.resolution || '').toLowerCase()];
+    const requestedMode = String(body.generation_mode || legacyResolutionMode || 'standard').toLowerCase();
+    const generationMode = Object.hasOwn(generationModes, requestedMode) ? requestedMode : 'standard';
+    const { resolution, quality } = generationModes[generationMode];
 
     if (!prompt) {
       sendJson(res, 400, { error: '提示词不能为空' });
@@ -4808,27 +4839,92 @@ async function handleCreateImageTask(req, res) {
       return;
     }
 
+    const originalImageUrls = Array.isArray(body.image_urls)
+      ? body.image_urls.map((value) => String(value || '').trim()).filter(Boolean).slice(0, 16)
+      : [];
+    const preferredModel = originalImageUrls.length > 0 ? APIMART_IMAGE_EDIT_MODEL : APIMART_IMAGE_TEXT_MODEL;
     const apiBody = {
-      model: APIMART_IMAGE_MODEL,
+      model: preferredModel,
       prompt,
       n: 1,
       size,
       resolution,
+      quality,
     };
 
-    const imageUrls = Array.isArray(body.image_urls) ? body.image_urls : [];
-    if (imageUrls.length > 0) {
-      apiBody.image_urls = imageUrls.slice(0, 16);
+    let submittedModel = preferredModel;
+    let submittedQuality = quality;
+    let response;
+    let json;
+    let text;
+    let preferredGenerationStarted = false;
+
+    try {
+      if (originalImageUrls.length > 0) {
+        apiBody.image_urls = await Promise.all(originalImageUrls.map(async (imageUrl, index) => {
+          if (/^https?:\/\//i.test(imageUrl)) return imageUrl;
+          const match = imageUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,([\s\S]+)$/i);
+          if (!match) throw new Error(`第 ${index + 1} 张参考图格式无效，请重新上传`);
+
+          const mimeType = match[1].toLowerCase();
+          const extension = mimeType === 'image/jpeg' ? 'jpg' : mimeType.split('/')[1];
+          const formData = new FormData();
+          formData.append('file', new Blob([Buffer.from(match[2], 'base64')], { type: mimeType }), `reference-${index + 1}.${extension}`);
+          const uploadResult = await fetchApimartJson('/uploads/images', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData,
+          });
+          const uploadedUrl = uploadResult.json?.data?.url
+            || uploadResult.json?.data?.image_url
+            || uploadResult.json?.data?.file_url
+            || uploadResult.json?.data?.urls?.[0]
+            || uploadResult.json?.data?.[0]?.url
+            || uploadResult.json?.url;
+          if (!uploadResult.response.ok || !uploadedUrl) {
+            const uploadMessage = uploadResult.json?.error?.message || uploadResult.json?.message || uploadResult.text || '参考图上传失败';
+            throw new Error(uploadMessage);
+          }
+          return String(uploadedUrl);
+        }));
+      }
+
+      preferredGenerationStarted = true;
+      ({ response, json, text } = await fetchApimartJson('/images/generations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(apiBody),
+      }));
+    } catch (preferredError) {
+      if (!originalImageUrls.length || preferredGenerationStarted) throw preferredError;
+      response = null;
+      json = null;
+      text = String(preferredError?.message || '参考图上传失败');
     }
 
-    const { response, json, text } = await fetchApimartJson('/images/generations', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify(apiBody),
-    });
+    const canFallback = !response || [400, 404, 422, 500, 502, 503].includes(response.status);
+    if (canFallback) {
+      submittedModel = APIMART_IMAGE_FALLBACK_MODEL;
+      submittedQuality = '';
+      ({ response, json, text } = await fetchApimartJson('/images/generations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          model: submittedModel,
+          prompt,
+          n: 1,
+          size,
+          resolution,
+          ...(originalImageUrls.length > 0 ? { image_urls: originalImageUrls } : {}),
+        }),
+      }));
+    }
 
     if (!response.ok) {
       const msg = json?.error?.message || json?.message || text || `图片生成 API 错误: HTTP ${response.status}`;
@@ -4846,8 +4942,11 @@ async function handleCreateImageTask(req, res) {
       prompt,
       size,
       resolution,
+      quality: submittedQuality,
+      model: submittedModel,
+      generationMode,
       externalTaskId: taskData.task_id,
-      referenceImages: imageUrls,
+      referenceImages: originalImageUrls,
     });
 
     sendJson(res, 200, { ok: true, task });
@@ -18304,6 +18403,14 @@ async function handleSeedanceCreateTask(req, res) {
     const isWan3 = model === WAN3_VIDEO_MODEL;
     const manualDirection = Number(body?.directionNumber) || 0;
     const stickerProfile = stickerProfileFromPrompt(body?.prompt) || (isStickerProduct(body) ? normalizeStickerProfile() : null);
+    // 挂画批量/方向任务才允许注入挂画专用收尾和运镜规则。直接反推、元素替换、
+    // 图片生视频等普通任务即使提示词中条件性提到“挂画”，也不能被改写成产品广告片。
+    const isPaintingCreativeTask = !stickerProfile && Boolean(
+      manualDirection > 0
+      || readValue(body?.imageHash)
+      || readValue(body?.productType)
+    );
+    const isPaintingFamilyTask = Boolean(stickerProfile) || isPaintingCreativeTask;
     if (stickerProfile) {
       const stickerDirection = manualDirection || Number(String(body?.prompt).match(/框架方向：(\d+)/)?.[1]) || 1;
       const stickerIssues = inspectStickerPromptIssues(body?.prompt, stickerDirection);
@@ -18315,11 +18422,11 @@ async function handleSeedanceCreateTask(req, res) {
     let prompt = stickerProfile
       ? ensureStickerPrompt(readValue(body?.prompt), stickerProfile, manualDirection || Number(String(body?.prompt).match(/框架方向：(\d+)/)?.[1]) || 1)
       : ensurePaintingRollingUnfoldInstruction(readValue(body?.prompt), manualDirection);
-    if (isWan3 && !stickerProfile) {
+    if (isWan3 && isPaintingCreativeTask) {
       prompt = ensureWan3PaintingStructureLock(prompt, manualDirection);
     }
-    if (!stickerProfile) prompt = ensurePaintingProductFocusedEnding(prompt);
-    if (isWan3) {
+    if (isPaintingCreativeTask) prompt = ensurePaintingProductFocusedEnding(prompt);
+    if (isWan3 && isPaintingFamilyTask) {
       prompt = ensureWan3CameraMotionLock(prompt);
       if (stickerProfile) prompt = ensureWan3StickerCoplanarLock(prompt);
     }

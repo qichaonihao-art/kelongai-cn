@@ -41,7 +41,7 @@ const modules = [
   {
     id: 'image' as const,
     title: '图片生成',
-    desc: 'GPT Image-2 宇宙最强图片生成模型',
+    desc: 'Image 2.5 智能分流，兼顾速度与精细编辑',
     icon: Image,
     color: 'amber',
     gradient: 'from-amber-500 to-orange-600',

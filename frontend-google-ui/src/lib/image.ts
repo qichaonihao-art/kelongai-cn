@@ -3,6 +3,9 @@ export interface ImageTask {
   prompt: string;
   size: string;
   resolution: string;
+  quality?: string;
+  model?: string;
+  generation_mode?: string;
   status: string;
   external_task_id: string;
   result_urls: string[];
@@ -119,7 +122,7 @@ export async function getImageConfigStatus(): Promise<ImageConfigStatus> {
 export async function createImageTask(
   prompt: string,
   size: string,
-  resolution: string,
+  generationMode: string,
   imageUrls?: string[],
   localTaskId?: number
 ): Promise<ImageTask> {
@@ -127,7 +130,7 @@ export async function createImageTask(
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, size, resolution, image_urls: imageUrls }),
+    body: JSON.stringify({ prompt, size, generation_mode: generationMode, image_urls: imageUrls }),
   });
   const json = await parseJsonSafely(response);
   if (!response.ok) {

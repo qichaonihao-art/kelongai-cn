@@ -47,18 +47,18 @@ export function normalizeVideoGenerationDuration(value: unknown, model: string):
   return rounded >= min && rounded <= max ? rounded : null;
 }
 
-/** 第十一部分在完整反推结果中的范围；高亮与参数识别都只检查这一段。 */
+/** 最终生成指令在完整反推结果中的范围；兼容旧版十一/十二段和精简版一/二段。 */
 export function findFinalVideoPromptRange(text: string): { start: number; end: number } | null {
   const source = String(text || '');
-  const start = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*\s*)?(?:十一|11)[、.．]\s*最终可直接用于[^\n]*/i.exec(source);
+  const start = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*\s*)?(?:(?:十一|11)|(?:一|1))[、.．]\s*最终可直接用于[^\n]*/i.exec(source);
   if (!start) return null;
   const contentStart = start.index + start[0].length;
   const remainder = source.slice(contentStart);
-  const end = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*\s*)?(?:十二|12)[、.．]\s*负面提示词/i.exec(remainder);
+  const end = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*\s*)?(?:(?:十二|12)|(?:二|2))[、.．]\s*负面提示词/i.exec(remainder);
   return { start: contentStart, end: contentStart + (end?.index ?? remainder.length) };
 }
 
-/** 只取反推回复中真正交给视频模型的第十一部分，不让后面的负面提示词干扰参数。 */
+/** 只取反推回复中真正交给视频模型的正向部分，不让后面的负面提示词干扰参数。 */
 export function extractFinalVideoPromptSection(text: string): string | null {
   const range = findFinalVideoPromptRange(text);
   return range ? String(text || '').slice(range.start, range.end).trim() : null;
@@ -104,8 +104,8 @@ export function extractRequestedDialogueLines(text: string): string[] {
 }
 
 /**
- * 用户指定的原话是硬约束。反推模型若在第十一部分漏写，程序把缺失原话补回；
- * 已经完整出现的台词不重复追加。没有标准第十一部分时把锁放在整份提示词最前面。
+ * 用户指定的原话是硬约束。反推模型若在最终生成部分漏写，程序把缺失原话补回；
+ * 已经完整出现的台词不重复追加。没有标准最终生成部分时把锁放在整份提示词最前面。
  */
 export function ensureRequestedDialogueInFinalPrompt(prompt: string, lines: string[]): string {
   const source = String(prompt || '').trim();
@@ -116,7 +116,11 @@ export function ensureRequestedDialogueInFinalPrompt(prompt: string, lines: stri
   const lock = `【用户指定人物台词，必须逐字说出】\n${missing.map((line, index) => `${index + 1}. “${line}”`).join('\n')}\n禁止省略、改写、缩写或仅用口型代替；人物必须在原片对应镜头和时段内完整说出。`;
   const range = findFinalVideoPromptRange(source);
   if (!range) return `${lock}\n\n${source}`;
-  return `${source.slice(0, range.end).trimEnd()}\n\n${lock}\n${source.slice(range.end).trimStart()}`;
+  const finalSection = source.slice(range.start, range.end);
+  const durationLine = /^(?:[ \t]*)(?:总时长|目标视频总时长|新视频总时长|成片总时长|视频总时长)\s*[：:].*$/gim.exec(finalSection);
+  // “总时长”必须保持为正向提示词最后一行；若模型漏台词，把兜底锁插到它前面。
+  const insertAt = durationLine ? range.start + durationLine.index : range.end;
+  return `${source.slice(0, insertAt).trimEnd()}\n\n${lock}\n\n${source.slice(insertAt).trimStart()}`;
 }
 
 export function hasRequestedDialogueIntent(text: string): boolean {

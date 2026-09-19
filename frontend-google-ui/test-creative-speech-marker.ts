@@ -65,6 +65,7 @@ assert.equal(extractExplicitAudioPreference('不要背景音乐'), null, '仅不
 assert.equal(extractExplicitAudioPreference('避免添加背景音乐'), null, '负面约束里的音频词不误开声音');
 assert.equal(extractExplicitAudioPreference('没有提到音频要求'), null);
 assert.equal(extractFinalVideoPromptSection('十一、最终可直接用于视频生成模型的完整提示词\n保留环境音\n十二、负面提示词\n禁止生成声音'), '保留环境音');
+assert.equal(extractFinalVideoPromptSection('一、最终可直接用于视频生成模型的完整复刻提示词\n固定机位一镜到底\n二、负面提示词\n禁止切镜'), '固定机位一镜到底', '精简版一/二段结构也必须正确提取');
 assert.deepEqual(extractRequestedDialogueLines('请让人物说：“AI时代，创新是唯一生产力”。'), ['AI时代，创新是唯一生产力']);
 assert.deepEqual(extractRequestedDialogueLines('台词："欢迎光临"；随后旁白：“请进”'), ['欢迎光临', '请进']);
 assert.deepEqual(extractRequestedDialogueLines('不要说“旧话”，改为说“新话”'), ['新话'], '旧台词不能被当作待核对原话');
@@ -99,6 +100,11 @@ const missingDialoguePrompt = '一、核心主体信息\n一位老人\n十一、
 const restoredDialoguePrompt = ensureRequestedDialogueInFinalPrompt(missingDialoguePrompt, ['挂上十年你都不会后悔。']);
 assert.equal(findDialogueOccurrencesInFinalPrompt(restoredDialoguePrompt, ['挂上十年你都不会后悔。']).length, 1, '反推模型漏掉的用户原话必须补回第十一部分');
 assert.equal(ensureRequestedDialogueInFinalPrompt(restoredDialoguePrompt, ['挂上十年你都不会后悔。']), restoredDialoguePrompt, '已经出现的原话不能重复追加');
+const compactPrompt = '一、最终可直接用于视频生成模型的完整复刻提示词\n老人面对镜头自然说话。\n总时长：6秒\n\n二、负面提示词\n禁止切镜';
+const restoredCompactPrompt = ensureRequestedDialogueInFinalPrompt(compactPrompt, ['挂上十年你都不会后悔。']);
+assert.equal(findDialogueOccurrencesInFinalPrompt(restoredCompactPrompt, ['挂上十年你都不会后悔。']).length, 1, '精简版提示词漏掉的用户原话也必须补回正向生成部分');
+assert.equal(extractFinalVideoPromptSection(restoredCompactPrompt)?.includes('禁止切镜'), false, '精简版负面提示词不得混入正向参数和台词核对范围');
+assert.equal(extractFinalVideoPromptSection(restoredCompactPrompt)?.trimEnd().endsWith('总时长：6秒'), true, '补回台词后总时长仍必须是正向提示词最后一行');
 // 第四个模块不参与
 assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'painting', model: MODEL }), null);
 assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'painting', model: MODEL }), null);
@@ -124,10 +130,38 @@ assert.ok(
 );
 // 禁的是「手抄的标记本身」，不是这四个字出现的任何场合——散文里提一句判定标准的措辞是合法的。
 assert.equal(/【\s*人物说话\s*[：:]\s*[是否]/.test(pageSource), false, '页面里不得出现手抄的标记字面量');
-// 锚在模板字面量前缀 `${` 上，而不是裸的 HUMAN_SPEECH_MARKER_RULE(——后者在规则被改成
-// function 声明时也会命中定义行，计数变 4，而失败信息会误导人把数字改成 4（于是掩盖真实的删除）。
+// 直接反推与元素替换共用同一个视频复刻构建器，图片生视频另有一个模板，所以应有两处插值。
+// 锚在模板字面量前缀 `${` 上，而不是裸的 HUMAN_SPEECH_MARKER_RULE(——后者还会命中定义行。
 const ruleCallSites = pageSource.split('${HUMAN_SPEECH_MARKER_RULE(').length - 1;
-assert.equal(ruleCallSites, 3, '三个反推模板（直接反推／元素替换／图片生视频）应各插值一次标记规则；新增模式时同步更新此处');
+assert.equal(ruleCallSites, 2, '视频复刻共用模板与图片生视频模板应各插值一次标记规则；新增独立模板时同步更新此处');
+assert.ok(
+  pageSource.includes('const VIDEO_REVERSE_PROMPT = (options: VideoClonePromptOptions) => buildVideoClonePrompt(options);')
+    && pageSource.includes('buildVideoClonePrompt(options, { target, value: replacement })'),
+  '直接反推与元素替换必须共用同一套复刻规则，避免质量标准漂移',
+);
+assert.ok(
+  pageSource.includes('只输出“一、最终可直接用于视频生成模型的完整复刻提示词”和“二、负面提示词”两个正文部分')
+    && !pageSource.slice(pageSource.indexOf('function buildVideoClonePrompt'), pageSource.indexOf('const IMAGE_TO_VIDEO_PROMPT')).includes('一、核心主体信息'),
+  '视频反推不得再输出前十段分析后重复一遍最终提示词',
+);
+assert.ok(
+  pageSource.includes('有效字幕，锁定内容、位置、字号、颜色、出现与消失时段；水印、平台标识和 AI 生成标记仍必须去除')
+    && pageSource.includes('具体画面内容、造型、颜色、风格、材质、纹理和可见细节')
+    && pageSource.includes('禁止把原动作整体机械慢放、循环重复、定格或长时间静止等待'),
+  '精简模板必须保留旧版已验证的字幕/水印、参考图质感和自然延时约束',
+);
+assert.ok(
+  pageSource.includes("characterRemix ? '执行本次人物改造要求")
+    && pageSource.includes("includeSubtitles ? '保留有效字幕并去除水印")
+    && pageSource.includes('options.durationSeconds !== options.sourceDurationSeconds ? `将原片时序自然重排为')
+    && pageSource.includes('除此之外，原片内容全部冻结'),
+  '允许变化清单必须纳入人物改造、目标时长和字幕选项，不能与用户已启用的功能互相否定',
+);
+assert.ok(
+  pageSource.includes('rawQuestion + VIDEO_REVERSE_FORMAT_SUFFIX')
+    && pageSource.includes('rawQuestion + IMAGE_REVERSE_FORMAT_SUFFIX'),
+  '视频精简格式与图片生视频旧格式必须分开追加，不能让本次改动误伤图片模块',
+);
 
 // 源码级断言：接入点那三行。决策真值表全绿也拦不住接线写错——把 `!== null` 改成真值判断，
 // 上面 13 条断言一条都不会红，而用户需求里「无人声就关掉」那一半已经没了。
@@ -164,6 +198,15 @@ assert.ok(
 assert.ok(
   pageSource.includes('setSeedanceDialogueLines(dialogueLines)'),
   '选定的台词必须写进 state，否则右侧框一句都不会标绿',
+);
+assert.ok(
+  pageSource.includes('replaceSeedanceReferencesWithImages(referenceImages)')
+    && pageSource.includes('function replaceSeedanceReferencesWithImages(images: SelectedCreativeMedia[])'),
+  '自动同步必须用本次素材整体替换右侧参考图；直接反推也要清掉上一条元素替换的残留图片',
+);
+assert.ok(
+  pageSource.includes('检测到“额外调整”里有台词要求，但没有识别出具体原话'),
+  '台词意图存在但无法提取原话时必须提示用户，不能静默带着缺失台词继续生成',
 );
 
 // ---------------------------------------------------------------------------

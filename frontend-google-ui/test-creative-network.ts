@@ -1,5 +1,6 @@
 // 网络与幂等单元测试（前端纯逻辑，无真实 doubao/Seedance 调用）。
 // 运行：npx tsx test-creative-network.ts
+import { readFileSync } from 'node:fs';
 import {
   PAINTING_RETRIABLE_HTTP_STATUSES,
   PaintingHttpError,
@@ -262,6 +263,7 @@ async function main() {
     assert(extractVideoGenerationDurationFromPrompt('十一、最终可直接用于视频生成模型的完整复刻提示词\n总时长：8秒\n十二、负面提示词\n原视频时长：3秒') === 8, '只从最终生成提示词读取时长');
     assert(extractVideoGenerationDurationFromPrompt('### 十一、最终可直接用于视频生成模型的完整复刻提示词\n总时长：8秒\n### 十二、负面提示词\n原视频时长：3秒') === 8, '兼容 Markdown 标题格式');
     assert(extractVideoGenerationDurationFromPrompt('十一、最终可直接用于视频生成模型的完整复刻提示词\n没有写时长\n十二、负面提示词\n原视频时长：3秒') === null, '最终提示词漏写时长不从负面提示词误取');
+    assert(extractVideoGenerationDurationFromPrompt('一、最终可直接用于视频生成模型的完整复刻提示词\n总时长：8秒\n二、负面提示词\n原视频时长：3秒') === 8, '精简版一/二段结构只读取正向提示词时长');
     assert(extractVideoGenerationDurationFromPrompt('最终成片时长设置为 6 秒钟') === 6, '可识别“成片时长”和“秒钟”写法');
     assert(extractVideoGenerationDurationFromPrompt('视频长度：8s') === 8, '可识别“视频长度”和英文 s 写法');
     assert(extractVideoGenerationDurationFromPrompt('最终视频做成 10 seconds') === 10, '可识别“最终视频”和英文 seconds 写法');
@@ -278,6 +280,19 @@ async function main() {
     assert(extractRequestedVideoDurationFromText('让最终视频变成6秒') === 6, '额外调整可识别“最终视频变成6秒”');
     assert(extractRequestedVideoDurationFromText('最终总时长改成7.6秒') === 8, '额外调整中的小数时长执行四舍五入');
     assert(extractRequestedVideoDurationFromText('前2秒人物走入，后面自然展示') === null, '分段动作秒数不会误判为总时长');
+  }
+
+  // ===== 10. 普通复刻任务不得注入挂画专用规则 =====
+  console.log('\n[10] Seedance 提交前提示词隔离');
+  {
+    const serverSource = readFileSync(new URL('../legacy-project/server.mjs', import.meta.url), 'utf8');
+    const handlerSource = serverSource.slice(
+      serverSource.indexOf('async function handleSeedanceCreateTask'),
+      serverSource.indexOf('async function handleDouyinResolveDownload'),
+    );
+    assert(handlerSource.includes('if (isPaintingCreativeTask) prompt = ensurePaintingProductFocusedEnding(prompt);'), '挂画产品收尾只注入真正挂画创意任务');
+    assert(handlerSource.includes('if (isWan3 && isPaintingFamilyTask)'), 'Wan专用匀速运镜只注入挂画/PVC创意任务');
+    assert(!handlerSource.includes('if (!stickerProfile) prompt = ensurePaintingProductFocusedEnding(prompt);'), '普通直接反推和元素替换不再被强制改成挂画广告片');
   }
 
   console.log(`\n========== 结果：${passed} 通过 / ${failed} 失败 ==========`);
