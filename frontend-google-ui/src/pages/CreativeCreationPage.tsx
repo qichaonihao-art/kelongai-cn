@@ -2874,7 +2874,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setSeedanceError(warning);
     }
 
-    // 反推完成自动带出：时长、源视频画幅，以及参考图（元素替换 / 图片生视频）。
+    // 反推完成自动带出：时长，以及参考图（元素替换 / 图片生视频）。输出比例遵循业务默认的 9:16。
     syncReverseMediaToSeedance(snapshot);
   }
 

@@ -78,6 +78,8 @@ const {
   paintingPromptSimilarity,
   rewritePromptForDiversity,
   PaintingBatchSemaphore,
+  PaintingBatchRunScheduler,
+  PAINTING_BATCH_RUN_CONCURRENCY,
   getPaintingFrameworkPosition,
   formatPaintingSeedanceVideoLibraryName,
   formatSeedanceVideoLibraryName,
@@ -386,6 +388,42 @@ console.log('\n[6] 并发提示词相似度复核');
   sem.release();
   await second;
   assert(secondAcquired === true, '提交锁互斥：release 后放行');
+}
+
+// ===== T6b 多设备批次调度并发 =====
+console.log('\n[6b] 多设备批次调度并发');
+{
+  assert(PAINTING_BATCH_RUN_CONCURRENCY >= 2, '默认至少允许两个全自动批次同时推进');
+  const started = [];
+  const releases = new Map();
+  const scheduler = new PaintingBatchRunScheduler(2, async (id) => {
+    started.push(id);
+    await new Promise((resolve) => releases.set(id, resolve));
+  });
+  scheduler.enqueue('device-a');
+  scheduler.enqueue('device-b');
+  scheduler.enqueue('device-c');
+  await sleep(20);
+  assert(started.join(',') === 'device-a,device-b', '前两个设备的批次同时启动，第三个受并发上限保护', started.join(','));
+  releases.get('device-a')?.();
+  await sleep(20);
+  assert(started.includes('device-c'), '任一批次释放槽位后，等待批次立即启动', started.join(','));
+  releases.get('device-b')?.();
+  releases.get('device-c')?.();
+  await scheduler.whenIdle();
+
+  let sameRunCount = 0;
+  let releaseFirstRun;
+  const rerunScheduler = new PaintingBatchRunScheduler(2, async () => {
+    sameRunCount += 1;
+    if (sameRunCount === 1) await new Promise((resolve) => { releaseFirstRun = resolve; });
+  });
+  rerunScheduler.enqueue('resume-race');
+  await sleep(10);
+  rerunScheduler.enqueue('resume-race');
+  releaseFirstRun?.();
+  await rerunScheduler.whenIdle();
+  assert(sameRunCount === 2, '运行中收到恢复信号时会补跑一次，不会把恢复操作遗漏', String(sameRunCount));
 }
 
 // ===== T7 Seedance 按秒单价 =====

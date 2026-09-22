@@ -94,6 +94,8 @@ const COLLECTION_DB_PATH = path.join(RUNTIME_STATE_DIR, 'collection.db');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
 const STARTUP_UPLOAD_TEMP_FILE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const PAINTING_BATCH_RUN_DIR = path.join(RUNTIME_STATE_DIR, 'painting-batch-runs');
+// 允许两台设备的全自动批次同时推进；批次内部仍受提示词、模型提交和渲染三级并发限制保护。
+const PAINTING_BATCH_RUN_CONCURRENCY = Math.min(4, Math.max(1, Number(process.env.PAINTING_BATCH_RUN_CONCURRENCY || 2)));
 const PAINTING_BATCH_PROMPT_CONCURRENCY = 2;
 const PAINTING_BATCH_DISPATCH_CONCURRENCY = 8;
 const PAINTING_BATCH_SEEDANCE_SUBMIT_INTERVAL_MS = 800;
@@ -228,8 +230,6 @@ let volcSpeakerRemoteStatusCache = {
 };
 let collectionDb = null;
 let teamTimelineQueue = Promise.resolve();
-const paintingBatchRunQueue = [];
-let paintingBatchRunProcessorActive = false;
 const paintingBatchRunActivePromises = new Map();
 
 function readBooleanEnv(value) {
@@ -16258,9 +16258,76 @@ class PaintingBatchSemaphore {
   }
 }
 
+class PaintingBatchRunScheduler {
+  constructor(maxConcurrency, handler, onError = () => {}) {
+    this.maxConcurrency = Math.max(1, Number(maxConcurrency) || 1);
+    this.handler = handler;
+    this.onError = onError;
+    this.queue = [];
+    this.queued = new Set();
+    this.running = new Map();
+    this.rerun = new Set();
+    this.idleWaiters = [];
+  }
+
+  enqueue(batchRunId) {
+    const id = String(batchRunId || '');
+    if (!id) return false;
+    if (this.running.has(id)) {
+      // 暂停/恢复或停止可能在当前处理即将退出时到达；记一次补跑，避免状态变更后任务搁置。
+      this.rerun.add(id);
+      return true;
+    }
+    if (this.queued.has(id)) return false;
+    this.queue.push(id);
+    this.queued.add(id);
+    this.pump();
+    return true;
+  }
+
+  pump() {
+    while (this.running.size < this.maxConcurrency && this.queue.length > 0) {
+      const batchRunId = this.queue.shift();
+      this.queued.delete(batchRunId);
+      const promise = Promise.resolve()
+        .then(() => this.handler(batchRunId))
+        .catch((error) => this.onError(error, batchRunId))
+        .finally(() => {
+          this.running.delete(batchRunId);
+          if (this.rerun.delete(batchRunId) && !this.queued.has(batchRunId)) {
+            this.queue.push(batchRunId);
+            this.queued.add(batchRunId);
+          }
+          this.pump();
+          this.resolveIdleWaiters();
+        });
+      this.running.set(batchRunId, promise);
+    }
+    this.resolveIdleWaiters();
+  }
+
+  resolveIdleWaiters() {
+    if (this.queue.length > 0 || this.running.size > 0) return;
+    const waiters = this.idleWaiters.splice(0);
+    waiters.forEach((resolve) => resolve());
+  }
+
+  whenIdle() {
+    if (this.queue.length === 0 && this.running.size === 0) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.push(resolve));
+  }
+}
+
 const paintingBatchPromptSemaphore = new PaintingBatchSemaphore(PAINTING_BATCH_PROMPT_CONCURRENCY);
-const paintingBatchSeedanceSubmitSemaphore = new PaintingBatchSemaphore(1);
+// 同一模型串行提交，避免触发单供应商限流；千问与 Seedance 使用不同通道，可以同时提交。
+const paintingBatchSubmitSemaphores = new Map();
 const paintingBatchRenderSemaphore = new PaintingBatchSemaphore(PAINTING_BATCH_MAX_RENDERING_TASKS);
+
+function getPaintingBatchSubmitSemaphore(model) {
+  const key = model === WAN3_VIDEO_MODEL ? 'wan3' : model === MINIMAX_H3_MODEL ? 'minimax-h3' : 'seedance';
+  if (!paintingBatchSubmitSemaphores.has(key)) paintingBatchSubmitSemaphores.set(key, new PaintingBatchSemaphore(1));
+  return paintingBatchSubmitSemaphores.get(key);
+}
 
 function normalizePaintingPromptForCompare(text) {
   const source = String(text || '');
@@ -16769,7 +16836,8 @@ async function processBatchTask(taskId) {
       dbUpdatePaintingBatchTask(task.id, { status: 'seedance_submitted' });
     } else {
       dbUpdatePaintingBatchTask(task.id, { status: 'submitting_seedance', errorMessage: '' });
-      await paintingBatchSeedanceSubmitSemaphore.acquire();
+      const submitSemaphore = getPaintingBatchSubmitSemaphore(batchRun.model || PAINTING_BATCH_MODEL);
+      await submitSemaphore.acquire();
       try {
         task = dbGetPaintingBatchTask(task.id);
         if (!task || terminalStatuses.has(task.status)) return;
@@ -16814,7 +16882,7 @@ async function processBatchTask(taskId) {
         }
         return;
       } finally {
-        paintingBatchSeedanceSubmitSemaphore.release();
+        submitSemaphore.release();
       }
     }
   }
@@ -17026,7 +17094,8 @@ async function processBatchRun(batchRunId) {
           finalizeBatchRun(batchRunId);
           break;
         } else {
-          await sleepMs(1500);
+          // 暂停批次没有收尾任务时释放批次并发槽；点击恢复会重新入队。
+          return;
         }
         continue;
       }
@@ -17065,27 +17134,17 @@ async function processBatchRun(batchRunId) {
 }
 
 function enqueueBatchRun(batchRunId) {
-  if (!paintingBatchRunQueue.includes(batchRunId)) {
-    paintingBatchRunQueue.push(batchRunId);
-  }
-  if (!paintingBatchRunProcessorActive) {
-    paintingBatchRunProcessorActive = true;
-    void runPaintingBatchRunProcessor();
-  }
+  paintingBatchRunScheduler.enqueue(batchRunId);
 }
 
-async function runPaintingBatchRunProcessor() {
-  while (paintingBatchRunQueue.length > 0) {
-    const batchRunId = paintingBatchRunQueue.shift();
-    try {
-      await processBatchRun(batchRunId);
-    } catch (error) {
-      console.error('[painting batch] processor run failed', { batchRunId, message: error?.message });
-      dbUpdatePaintingBatchRun(batchRunId, { status: 'failed', controlStatus: 'stopped' });
-    }
-  }
-  paintingBatchRunProcessorActive = false;
-}
+const paintingBatchRunScheduler = new PaintingBatchRunScheduler(
+  PAINTING_BATCH_RUN_CONCURRENCY,
+  processBatchRun,
+  (error, batchRunId) => {
+    console.error('[painting batch] processor run failed', { batchRunId, message: error?.message });
+    dbUpdatePaintingBatchRun(batchRunId, { status: 'failed', controlStatus: 'stopped' });
+  },
+);
 
 async function resumePaintingBatchRunsOnStartup() {
   try {
@@ -20843,6 +20902,8 @@ export {
   rewritePromptForDiversity,
   extractPaintingDiversitySummary,
   PaintingBatchSemaphore,
+  PaintingBatchRunScheduler,
+  PAINTING_BATCH_RUN_CONCURRENCY,
   PAINTING_BATCH_MODEL,
   PAINTING_BATCH_MODELS,
   PAINTING_BATCH_RESOLUTIONS,
