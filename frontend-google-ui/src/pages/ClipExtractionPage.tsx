@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { Check, Download, Film, LoaderCircle, Play, Scissors, Sparkles, Upload, WandSparkles, X } from 'lucide-react';
+import { Check, Copy, Download, Film, KeyRound, Link2, LoaderCircle, Play, Scissors, Settings, ShieldCheck, Sparkles, Upload, WandSparkles, X } from 'lucide-react';
 import HomeBackButton from '@/src/components/HomeBackButton';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import CreativeSubNav from '@/src/components/CreativeSubNav';
+import { extractCpTranscript, extractCpTranscriptStream, resolveCpExtract, type DouyinDownloadCandidate, type DouyinResolveResult } from '@/src/lib/douyin';
 import { cn } from '@/src/lib/utils';
 
 export type ClipCreativeMode = 'direct' | 'replace';
@@ -23,6 +24,24 @@ interface UploadedClipSource {
   durationSeconds: number;
   width: number;
   height: number;
+  sourceType?: 'online';
+}
+
+function collectOnlineVideoCandidates(result: DouyinResolveResult) {
+  const seen = new Set<string>();
+  const candidates: DouyinDownloadCandidate[] = [];
+  const add = (value: string | DouyinDownloadCandidate | undefined, source = 'clip-page') => {
+    const url = typeof value === 'string' ? value : value?.url;
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    candidates.push(typeof value === 'string' ? { url, source } : value);
+  };
+  add(result.downloadUrl, 'downloadUrl');
+  for (const candidate of result.downloadUrlCandidates || []) add(candidate);
+  for (const candidate of result.videoUrlCandidates || []) add(candidate);
+  add(result.previewUrl, 'previewUrl');
+  for (const url of result.videoUrls || []) add(url, 'videoUrls');
+  return candidates;
 }
 
 interface TrimmedClip {
@@ -33,6 +52,22 @@ interface TrimmedClip {
   durationSeconds: number;
   startSeconds: number;
   endSeconds: number;
+}
+
+interface DetectedShot {
+  number: number;
+  startSeconds: number;
+  endSeconds: number;
+  durationSeconds: number;
+}
+
+interface WechatCookieStatus {
+  configured: boolean;
+  source?: 'page' | 'environment' | 'none';
+  preview?: string;
+  updatedAt?: string | null;
+  lastTestAt?: string | null;
+  lastTestResult?: string | null;
 }
 
 function formatTime(value: number) {
@@ -74,6 +109,7 @@ export default function ClipExtractionPage({
   const [endSeconds, setEndSeconds] = useState(0);
   const [trimming, setTrimming] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const [detectedShots, setDetectedShots] = useState<DetectedShot[]>([]);
   const [previewingRange, setPreviewingRange] = useState(false);
   const [currentSeconds, setCurrentSeconds] = useState(0);
   const [result, setResult] = useState<TrimmedClip | null>(null);
@@ -81,6 +117,21 @@ export default function ClipExtractionPage({
   const [error, setError] = useState('');
   const [showModePicker, setShowModePicker] = useState(false);
   const [preparingCreative, setPreparingCreative] = useState(false);
+  const [sourceMode, setSourceMode] = useState<'link' | 'upload'>('link');
+  const [linkInput, setLinkInput] = useState('');
+  const [onlineLoading, setOnlineLoading] = useState(false);
+  const [onlineResult, setOnlineResult] = useState<DouyinResolveResult | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptStatus, setTranscriptStatus] = useState('');
+  const [transcriptText, setTranscriptText] = useState('');
+  const [transcriptCopied, setTranscriptCopied] = useState(false);
+  const [showWechatConfig, setShowWechatConfig] = useState(false);
+  const [wechatConfigLoading, setWechatConfigLoading] = useState(false);
+  const [wechatCookieStatus, setWechatCookieStatus] = useState<WechatCookieStatus | null>(null);
+  const [wechatCookieInput, setWechatCookieInput] = useState('');
+  const [wechatTestUrl, setWechatTestUrl] = useState('');
+  const [wechatConfigMessage, setWechatConfigMessage] = useState('');
+  const [wechatConfigError, setWechatConfigError] = useState('');
 
   useEffect(() => {
     videoRef.current?.pause();
@@ -124,17 +175,38 @@ export default function ClipExtractionPage({
     setStartSeconds(0);
     setEndSeconds(0);
     setCurrentSeconds(0);
+    setDetectedShots([]);
     setUploading(false);
     setNotice('');
     setError('');
     setUploadProgress(0);
+    setOnlineLoading(false);
+    setOnlineResult(null);
+    setTranscriptLoading(false);
+    setTranscriptStatus('');
+    setTranscriptText('');
+    setTranscriptCopied(false);
     if (inputRef.current) inputRef.current.value = '';
+  }
+
+  function activateSource(next: UploadedClipSource, message: string) {
+    sourceRef.current = next;
+    setSource(next);
+    setResult(null);
+    resultRef.current = null;
+    setStartSeconds(0);
+    setEndSeconds(Math.min(15, next.durationSeconds));
+    setCurrentSeconds(0);
+    setDetectedShots([]);
+    setNotice(message);
+    void detectFirstCutForSource(next, true);
   }
 
   function uploadFile(file: File) {
     setError('');
     setNotice('');
     setResult(null);
+    setDetectedShots([]);
     if (!file.type.startsWith('video/')) {
       setError('请选择视频文件。');
       return;
@@ -163,13 +235,10 @@ export default function ClipExtractionPage({
         return;
       }
       const next = data as UploadedClipSource;
-      sourceRef.current = next;
-      setSource(next);
-      setStartSeconds(0);
-      setEndSeconds(Math.min(15, next.durationSeconds));
       setUploadProgress(100);
-      setNotice('视频上传完成，正在自动识别第一个切镜点…');
-      void detectFirstCutForSource(next, true);
+      setOnlineResult(null);
+      setTranscriptText('');
+      activateSource(next, '视频上传完成，正在自动识别开头前5个镜头…');
     };
     request.onerror = () => {
       uploadRequestRef.current = null;
@@ -179,6 +248,168 @@ export default function ClipExtractionPage({
     setUploading(true);
     setUploadProgress(0);
     request.send(file);
+  }
+
+  async function parseAndLoadOnlineVideo() {
+    const input = linkInput.trim();
+    if (!input) {
+      setError('请先粘贴视频链接或完整分享文字。');
+      return;
+    }
+    setOnlineLoading(true);
+    setError('');
+    setNotice('正在解析视频地址…');
+    setOnlineResult(null);
+    setTranscriptText('');
+    setTranscriptStatus('');
+    try {
+      const parsed = await resolveCpExtract(input);
+      if (Number(parsed.duration || 0) > 600.25) throw new Error('源视频时长不能超过 10 分钟');
+      const candidates = collectOnlineVideoCandidates(parsed);
+      if (candidates.length === 0) throw new Error('没有解析到可用视频，请改用本地上传。');
+      setNotice('解析成功，正在把视频载入镜头截取…');
+      const response = await fetch('/api/clips/import-url', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          downloadUrl: candidates[0]?.url,
+          downloadUrlCandidates: candidates,
+          videoUrls: parsed.videoUrls || [],
+          title: parsed.title || `${parsed.authorName || '在线'}视频`,
+          sourceUrl: parsed.sourceUrl || input,
+          platform: parsed.platform || '',
+        }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, '视频载入失败'));
+      const next = await response.json() as UploadedClipSource;
+      setOnlineResult(parsed);
+      activateSource(next, '在线视频已载入，正在自动识别开头前5个镜头…');
+    } catch (caught) {
+      setNotice('');
+      const message = caught instanceof Error ? caught.message : '视频解析失败，请重试或改用本地上传。';
+      setError(message);
+      if (/Cookie.*未配置|Cookie.*过期|元宝 Cookie/i.test(message)) void openWechatConfig();
+    } finally {
+      setOnlineLoading(false);
+    }
+  }
+
+  async function extractOnlineTranscript() {
+    if (!onlineResult || !linkInput.trim()) return;
+    const candidates = collectOnlineVideoCandidates(onlineResult);
+    setTranscriptLoading(true);
+    setTranscriptText('');
+    setTranscriptCopied(false);
+    setTranscriptStatus('正在准备视频音频…');
+    setError('');
+    const options = {
+      sourceData: onlineResult.videoData || null,
+      videoUrl: candidates[0]?.url || '',
+      videoUrls: candidates.map((candidate) => candidate.url).slice(0, 8),
+      downloadUrlCandidates: candidates,
+    };
+    try {
+      let transcript;
+      try {
+        transcript = await extractCpTranscriptStream(linkInput.trim(), {
+          ...options,
+          onStatus: (message) => { if (message) setTranscriptStatus(message); },
+          onDelta: (text) => setTranscriptText(text),
+        });
+      } catch {
+        setTranscriptStatus('正在切换稳妥模式…');
+        transcript = await extractCpTranscript(linkInput.trim(), options);
+      }
+      if (!transcript.transcriptOk || !transcript.transcript.trim()) {
+        throw new Error(transcript.transcriptError || '没有识别到逐字稿内容');
+      }
+      setTranscriptText(transcript.transcript.trim());
+      setTranscriptStatus('逐字稿提取完成');
+    } catch (caught) {
+      setTranscriptStatus('');
+      setError(caught instanceof Error ? caught.message : '逐字稿提取失败，请稍后重试。');
+    } finally {
+      setTranscriptLoading(false);
+    }
+  }
+
+  async function copyTranscript() {
+    if (!transcriptText.trim()) return;
+    await navigator.clipboard.writeText(transcriptText);
+    setTranscriptCopied(true);
+    window.setTimeout(() => setTranscriptCopied(false), 1600);
+  }
+
+  async function loadWechatCookieStatus() {
+    const response = await fetch('/api/wechat-channel/config', { credentials: 'include' });
+    if (!response.ok) throw new Error(await readApiError(response, '读取视频号配置失败'));
+    const data = await response.json();
+    setWechatCookieStatus(data as WechatCookieStatus);
+  }
+
+  async function openWechatConfig() {
+    setShowWechatConfig(true);
+    setWechatConfigMessage('');
+    setWechatConfigError('');
+    setWechatConfigLoading(true);
+    try {
+      await loadWechatCookieStatus();
+    } catch (caught) {
+      setWechatConfigError(caught instanceof Error ? caught.message : '读取视频号配置失败');
+    } finally {
+      setWechatConfigLoading(false);
+    }
+  }
+
+  async function saveWechatCookie() {
+    if (!wechatCookieInput.trim()) {
+      setWechatConfigError('请先粘贴完整的腾讯元宝 Cookie。');
+      return;
+    }
+    setWechatConfigLoading(true);
+    setWechatConfigError('');
+    setWechatConfigMessage('');
+    try {
+      const response = await fetch('/api/wechat-channel/config', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookie: wechatCookieInput }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, '保存 Cookie 失败'));
+      const data = await response.json();
+      setWechatCookieInput('');
+      setWechatConfigMessage(String(data.message || '保存成功，视频号解析 Cookie 已更新。'));
+      await loadWechatCookieStatus();
+    } catch (caught) {
+      setWechatConfigError(caught instanceof Error ? caught.message : '保存 Cookie 失败');
+    } finally {
+      setWechatConfigLoading(false);
+    }
+  }
+
+  async function testWechatCookie() {
+    if (!wechatTestUrl.trim()) {
+      setWechatConfigError('请粘贴一个视频号链接用于测试。');
+      return;
+    }
+    setWechatConfigLoading(true);
+    setWechatConfigError('');
+    setWechatConfigMessage('');
+    try {
+      const response = await fetch('/api/wechat-channel/config/test', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: wechatTestUrl }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data?.ok === false) throw new Error(String(data?.message || data?.error || '测试失败'));
+      setWechatConfigMessage(String(data.message || '测试成功，当前 Cookie 可用。'));
+      await loadWechatCookieStatus();
+    } catch (caught) {
+      setWechatConfigError(caught instanceof Error ? caught.message : '测试失败，Cookie 可能已过期。');
+      await loadWechatCookieStatus().catch(() => {});
+    } finally {
+      setWechatConfigLoading(false);
+    }
   }
 
   function setPoint(kind: 'start' | 'end') {
@@ -230,6 +461,7 @@ export default function ClipExtractionPage({
 
   async function detectFirstCutForSource(targetSource: UploadedClipSource, automatic = false) {
     setDetecting(true);
+    setDetectedShots([]);
     setError('');
     if (!automatic) setNotice('');
     try {
@@ -239,12 +471,17 @@ export default function ClipExtractionPage({
       });
       if (!response.ok) throw new Error(await readApiError(response, '自动识别失败'));
       const data = await response.json();
+      const shots = Array.isArray(data.shots)
+        ? data.shots.filter((item: DetectedShot) => Number.isFinite(Number(item?.endSeconds))).slice(0, 5)
+        : [];
+      setDetectedShots(shots);
       const nextEnd = Math.max(0.1, Math.min(Number(data.endSeconds), targetSource.durationSeconds, 60));
       setStartSeconds(0);
       setEndSeconds(nextEnd);
       seekTo(nextEnd);
       setNotice(String(data.message || '已给出建议范围，请预览确认。'));
     } catch (caught) {
+      setDetectedShots([]);
       setError(automatic ? '自动识别切镜点失败，你仍然可以直接拖动两条裁切线。' : (caught instanceof Error ? caught.message : '自动识别失败'));
     } finally {
       setDetecting(false);
@@ -253,6 +490,14 @@ export default function ClipExtractionPage({
 
   function detectFirstCut() {
     if (source) void detectFirstCutForSource(source);
+  }
+
+  function selectFirstShots(shot: DetectedShot) {
+    const nextEnd = Math.min(60, shot.endSeconds, source?.durationSeconds || shot.endSeconds);
+    setStartSeconds(0);
+    setEndSeconds(nextEnd);
+    seekTo(nextEnd);
+    setNotice(`已选择前 ${shot.number} 个镜头，共 ${nextEnd.toFixed(1)} 秒，请点击“预览裁切片段”确认。`);
   }
 
   function timeFromTimelinePointer(clientX: number) {
@@ -373,21 +618,35 @@ export default function ClipExtractionPage({
         <div className="mb-6">
           <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-cyan-600"><Scissors className="size-4" />镜头截取</div>
           <h1 className="mt-2 text-2xl font-black tracking-tight md:text-3xl">把需要复刻的镜头单独切出来</h1>
-          <p className="mt-2 text-sm leading-6 text-slate-500">上传原视频，定位开始点和结束点。截取在服务器完成，不占用这台电脑的剪辑性能。</p>
+          <p className="mt-2 text-sm leading-6 text-slate-500">粘贴短视频链接或上传本地视频，自动识别开头前 5 个镜头，再精准选择需要复刻的片段。</p>
         </div>
 
         {!source ? (
-          <button type="button" disabled={uploading} onClick={() => inputRef.current?.click()} className="group flex min-h-[360px] w-full flex-col items-center justify-center rounded-[30px] border-2 border-dashed border-cyan-200 bg-white px-6 shadow-[0_20px_60px_-40px_rgba(14,116,144,0.45)] transition hover:border-cyan-400 hover:bg-cyan-50/30 disabled:cursor-wait">
-            <div className="flex size-20 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-xl shadow-cyan-200"><Upload className="size-9" /></div>
-            <div className="mt-6 text-xl font-black">{uploading ? `正在上传 ${uploadProgress}%` : '上传需要截取的视频'}</div>
-            <div className="mt-2 text-sm text-slate-500">支持最长 10 分钟、最大 1GB 的常见视频</div>
-            {uploading && <div className="mt-6 h-2 w-full max-w-md overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-cyan-500 transition-all" style={{ width: `${uploadProgress}%` }} /></div>}
-          </button>
+          <section className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_20px_60px_-40px_rgba(14,116,144,0.45)]">
+            <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50 p-2">
+              <button type="button" disabled={onlineLoading || uploading} onClick={() => setSourceMode('link')} className={cn('flex h-12 items-center justify-center gap-2 rounded-2xl text-sm font-black transition', sourceMode === 'link' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-500 hover:text-slate-800')}><Link2 className="size-4" />粘贴链接解析</button>
+              <button type="button" disabled={onlineLoading || uploading} onClick={() => setSourceMode('upload')} className={cn('flex h-12 items-center justify-center gap-2 rounded-2xl text-sm font-black transition', sourceMode === 'upload' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-500 hover:text-slate-800')}><Upload className="size-4" />本地上传</button>
+            </div>
+            {sourceMode === 'link' ? <div className="mx-auto max-w-3xl px-6 py-10 md:px-10 md:py-14">
+              <div className="mb-4 flex justify-end"><button type="button" disabled={onlineLoading} onClick={() => void openWechatConfig()} className="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-black text-emerald-700 transition hover:bg-emerald-100"><Settings className="size-3.5" />视频号 Cookie 配置</button></div>
+              <div className="mx-auto flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-xl shadow-cyan-200"><Link2 className="size-7" /></div>
+              <h2 className="mt-5 text-center text-xl font-black">粘贴视频链接或完整分享文字</h2>
+              <p className="mt-2 text-center text-sm leading-6 text-slate-500">支持抖音、快手和微信视频号。解析后直接载入裁切页面，不需要先下载到电脑再上传。</p>
+              <textarea value={linkInput} disabled={onlineLoading} onChange={(event) => setLinkInput(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void parseAndLoadOnlineVideo(); }} placeholder="支持直接粘贴短视频平台链接，也可以粘贴带文案的整段分享文字" className="mt-6 min-h-28 w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 outline-none transition focus:border-cyan-400 focus:bg-white focus:ring-4 focus:ring-cyan-100 disabled:opacity-60" />
+              <button type="button" disabled={onlineLoading || !linkInput.trim()} onClick={() => void parseAndLoadOnlineVideo()} className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-cyan-600 text-sm font-black text-white shadow-lg shadow-cyan-200 hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">{onlineLoading ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}{onlineLoading ? '正在解析并载入视频…' : '解析并载入视频'}</button>
+              <div className="mt-4 text-center text-xs text-slate-400">解析不成功时，可切换“本地上传”继续使用。</div>
+            </div> : <button type="button" disabled={uploading} onClick={() => inputRef.current?.click()} className="group flex min-h-[360px] w-full flex-col items-center justify-center px-6 transition hover:bg-cyan-50/30 disabled:cursor-wait">
+              <div className="flex size-20 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-xl shadow-cyan-200"><Upload className="size-9" /></div>
+              <div className="mt-6 text-xl font-black">{uploading ? `正在上传 ${uploadProgress}%` : '上传需要截取的视频'}</div>
+              <div className="mt-2 text-sm text-slate-500">支持最长 10 分钟、最大 1GB 的常见视频</div>
+              {uploading && <div className="mt-6 h-2 w-full max-w-md overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-cyan-500 transition-all" style={{ width: `${uploadProgress}%` }} /></div>}
+            </button>}
+          </section>
         ) : (
           <div className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
             <section className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-[0_18px_50px_-36px_rgba(15,23,42,0.45)] md:p-5">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <div className="min-w-0"><div className="truncate text-sm font-black">{source.fileName}</div><div className="mt-1 text-xs text-slate-500">{formatSize(source.size)} · {source.width}×{source.height} · {formatTime(source.durationSeconds)}</div></div>
+                <div className="min-w-0"><div className="truncate text-sm font-black">{source.fileName}</div><div className="mt-1 text-xs text-slate-500">{source.sourceType === 'online' ? '在线解析 · ' : ''}{formatSize(source.size)} · {source.width}×{source.height} · {formatTime(source.durationSeconds)}</div></div>
                 <button type="button" onClick={reset} className="shrink-0 rounded-full border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">更换视频</button>
               </div>
               <div className="overflow-hidden rounded-2xl bg-black"><video ref={videoRef} src={source.url} controls playsInline preload="metadata" onTimeUpdate={handleSourcePreviewTimeUpdate} onPause={() => setPreviewingRange(false)} onEnded={() => setPreviewingRange(false)} className="mx-auto max-h-[56vh] w-full object-contain" /></div>
@@ -421,7 +680,7 @@ export default function ClipExtractionPage({
                   <div className="pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 rounded-full bg-emerald-500 shadow-[0_0_0_2px_white,0_3px_10px_rgba(5,150,105,0.5)]" style={{ left: `${startPercent}%` }}><span className="absolute left-1/2 top-0 size-4 -translate-x-1/2 rounded-full border-2 border-white bg-emerald-500" /></div>
                   <div className="pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 rounded-full bg-violet-500 shadow-[0_0_0_2px_white,0_3px_10px_rgba(124,58,237,0.5)]" style={{ left: `${endPercent}%` }}><span className="absolute left-1/2 top-0 size-4 -translate-x-1/2 rounded-full border-2 border-white bg-violet-500" /></div>
                 </div>
-                {detecting && <div className="mt-1 flex items-center gap-2 text-xs font-bold text-cyan-700"><LoaderCircle className="size-3.5 animate-spin" />正在自动识别第一个切镜点，识别后紫色结束线会自动移动</div>}
+                {detecting && <div className="mt-1 flex items-center gap-2 text-xs font-bold text-cyan-700"><LoaderCircle className="size-3.5 animate-spin" />正在自动识别开头前5个镜头，识别后紫色结束线会自动移动</div>}
               </div>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <button type="button" onClick={() => setPoint('start')} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700 hover:bg-emerald-100">把当前画面设为开始点</button>
@@ -436,11 +695,33 @@ export default function ClipExtractionPage({
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3"><div className="text-[10px] font-black uppercase tracking-wider text-emerald-600">开始线</div><div className="mt-1 font-black text-emerald-900">{formatTime(startSeconds)}</div></div>
                   <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-3"><div className="text-[10px] font-black uppercase tracking-wider text-violet-600">结束线</div><div className="mt-1 font-black text-violet-900">{formatTime(endSeconds)}</div></div>
                 </div>
-                <button type="button" disabled={detecting} onClick={detectFirstCut} className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 text-sm font-black text-cyan-700 hover:bg-cyan-100 disabled:opacity-60">{detecting ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}自动找第一个切镜点</button>
+                {detectedShots.length > 0 && <div className="mt-5">
+                  <div className="mb-2 text-xs font-black text-slate-600">快速选择截取前几个镜头</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {detectedShots.map((shot) => {
+                      const selected = Math.abs(endSeconds - shot.endSeconds) < 0.06 && startSeconds < 0.06;
+                      return <button key={shot.number} type="button" onClick={() => selectFirstShots(shot)} className={cn('rounded-xl border px-3 py-2.5 text-left transition-colors', selected ? 'border-cyan-500 bg-cyan-500 text-white shadow-md shadow-cyan-200' : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-cyan-300 hover:bg-cyan-50')}><div className="text-xs font-black">前 {shot.number} 个镜头</div><div className={cn('mt-0.5 text-[10px] font-bold', selected ? 'text-white/80' : 'text-slate-400')}>截至 {formatTime(shot.endSeconds)}</div></button>;
+                    })}
+                  </div>
+                </div>}
+                <button type="button" disabled={detecting} onClick={detectFirstCut} className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 text-sm font-black text-cyan-700 hover:bg-cyan-100 disabled:opacity-60">{detecting ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}重新识别前5个镜头</button>
                 <button type="button" disabled={detecting || selectedDuration <= 0.1} onClick={previewSelectedRange} className={cn('mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border text-sm font-black transition-colors disabled:opacity-50', previewingRange ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100')}><Play className={cn('size-4', previewingRange && 'fill-current')} />{previewingRange ? '停止预览' : '预览裁切片段'}</button>
                 <button type="button" disabled={trimming || selectedDuration <= 0.1 || selectedDuration > 60} onClick={trimClip} className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white shadow-lg hover:bg-slate-800 disabled:opacity-50">{trimming ? <LoaderCircle className="size-4 animate-spin" /> : <Scissors className="size-4" />}{trimming ? '正在精准截取…' : '开始截取'}</button>
                 <p className="mt-3 text-center text-xs leading-5 text-slate-400">建议单个镜头控制在 15 秒内，单次最多 60 秒。</p>
               </section>
+
+              {onlineResult && <section className="rounded-[26px] border border-blue-200 bg-white p-5 shadow-[0_18px_50px_-36px_rgba(37,99,235,0.35)]">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0"><div className="flex items-center gap-2 text-sm font-black text-blue-700"><Link2 className="size-4" />在线解析结果</div><div className="mt-2 truncate text-xs font-bold text-slate-700">{onlineResult.title || '未命名视频'}</div>{onlineResult.authorName && <div className="mt-1 text-xs text-slate-400">作者：{onlineResult.authorName}</div>}</div>
+                  {collectOnlineVideoCandidates(onlineResult)[0]?.url && <a href={`/api/proxy/download?url=${encodeURIComponent(collectOnlineVideoCandidates(onlineResult)[0].url)}`} className="shrink-0 rounded-full border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><Download className="mr-1 inline size-3.5" />原视频</a>}
+                </div>
+                <button type="button" disabled={transcriptLoading} onClick={() => void extractOnlineTranscript()} className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 text-sm font-black text-blue-700 hover:bg-blue-100 disabled:opacity-60">{transcriptLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}{transcriptLoading ? (transcriptStatus || '正在提取逐字稿…') : transcriptText ? '重新提取逐字稿' : '提取视频逐字稿'}</button>
+                {transcriptText && <div className="mt-4">
+                  <div className="mb-2 flex items-center justify-between"><span className="text-xs font-black text-slate-600">逐字稿（可直接修改）</span><button type="button" onClick={() => void copyTranscript()} className="flex items-center gap-1 text-xs font-bold text-blue-600 hover:text-blue-800"><Copy className="size-3.5" />{transcriptCopied ? '已复制' : '复制'}</button></div>
+                  <textarea value={transcriptText} onChange={(event) => setTranscriptText(event.target.value)} className="min-h-36 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs leading-6 text-slate-700 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                </div>}
+                {!transcriptText && !transcriptLoading && <p className="mt-3 text-center text-xs leading-5 text-slate-400">逐字稿按需提取，不会在解析视频时自动产生额外转写费用。</p>}
+              </section>}
 
               {result && <section className="rounded-[26px] border border-emerald-200 bg-white p-5 shadow-[0_18px_50px_-36px_rgba(5,150,105,0.45)]">
                 <div className="mb-3 flex items-center gap-2 text-sm font-black text-emerald-700"><Check className="size-4" />截取完成</div>
@@ -457,6 +738,32 @@ export default function ClipExtractionPage({
 
         {(error || notice) && <div className={cn('mt-5 rounded-2xl border px-4 py-3 text-sm font-bold', error ? 'border-red-200 bg-red-50 text-red-700' : 'border-cyan-200 bg-cyan-50 text-cyan-800')}>{error || notice}</div>}
       </main>
+
+      {showWechatConfig && <div className="fixed inset-0 z-[60] grid place-items-center overflow-y-auto bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !wechatConfigLoading) setShowWechatConfig(false); }}>
+        <section role="dialog" aria-modal="true" aria-label="视频号 Cookie 配置" className="my-6 w-full max-w-2xl rounded-[28px] bg-white p-6 shadow-2xl md:p-7">
+          <div className="flex items-start justify-between gap-4">
+            <div><div className="flex items-center gap-2 text-lg font-black text-slate-900"><KeyRound className="size-5 text-emerald-600" />视频号解析配置</div><p className="mt-1 text-sm leading-6 text-slate-500">维护腾讯元宝 Cookie，用于解析微信视频号链接。</p></div>
+            <button type="button" disabled={wechatConfigLoading} onClick={() => setShowWechatConfig(false)} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 disabled:opacity-50"><X className="size-5" /></button>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="text-xs font-bold text-slate-400">Cookie 状态</div><div className={cn('mt-1 flex items-center gap-2 font-black', wechatCookieStatus?.configured ? 'text-emerald-700' : 'text-amber-700')}>{wechatCookieStatus?.configured ? <ShieldCheck className="size-4" /> : <KeyRound className="size-4" />}{wechatConfigLoading && !wechatCookieStatus ? '读取中…' : wechatCookieStatus?.configured ? '已配置' : '未配置'}</div></div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="text-xs font-bold text-slate-400">脱敏预览</div><div className="mt-1 truncate font-mono text-sm font-black text-slate-700">{wechatCookieStatus?.preview || '暂无'}</div></div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="text-xs font-bold text-slate-400">最近更新</div><div className="mt-1 text-sm font-black text-slate-700">{wechatCookieStatus?.updatedAt ? new Date(wechatCookieStatus.updatedAt).toLocaleString('zh-CN') : wechatCookieStatus?.source === 'environment' ? '服务器环境配置' : '暂无'}</div></div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="text-xs font-bold text-slate-400">最近测试结果</div><div className="mt-1 line-clamp-2 text-sm font-black text-slate-700">{wechatCookieStatus?.lastTestResult || '暂无'}</div></div>
+          </div>
+
+          <label className="mt-5 block"><span className="text-sm font-black text-slate-700">腾讯元宝 Cookie</span><textarea value={wechatCookieInput} onChange={(event) => setWechatCookieInput(event.target.value)} disabled={wechatConfigLoading} rows={5} autoComplete="off" spellCheck={false} placeholder="粘贴完整 Cookie。保存后输入框会清空，页面不会回显完整内容。" className="mt-2 w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs leading-5 outline-none focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-100 disabled:opacity-60" /></label>
+          <button type="button" disabled={wechatConfigLoading || !wechatCookieInput.trim()} onClick={() => void saveWechatCookie()} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-black text-white hover:bg-emerald-700 disabled:opacity-50">{wechatConfigLoading ? <LoaderCircle className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}保存 Cookie</button>
+
+          <div className="my-5 h-px bg-slate-200" />
+          <label className="block"><span className="text-sm font-black text-slate-700">测试视频号链接</span><input value={wechatTestUrl} onChange={(event) => setWechatTestUrl(event.target.value)} disabled={wechatConfigLoading} placeholder="https://weixin.qq.com/sph/..." className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none focus:border-cyan-400 focus:bg-white focus:ring-4 focus:ring-cyan-100 disabled:opacity-60" /></label>
+          <button type="button" disabled={wechatConfigLoading || !wechatCookieStatus?.configured || !wechatTestUrl.trim()} onClick={() => void testWechatCookie()} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 text-sm font-black text-cyan-700 hover:bg-cyan-100 disabled:opacity-50">{wechatConfigLoading ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}测试 Cookie 是否可用</button>
+
+          {(wechatConfigError || wechatConfigMessage) && <div className={cn('mt-4 rounded-xl border px-4 py-3 text-sm font-bold', wechatConfigError ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{wechatConfigError || wechatConfigMessage}</div>}
+          <p className="mt-4 text-xs leading-5 text-slate-400">Cookie 仅保存在服务器运行目录中，页面只显示脱敏预览，不会写入浏览器本地存储。</p>
+        </section>
+      </div>}
 
       {showModePicker && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !preparingCreative) setShowModePicker(false); }}>
         <div className="w-full max-w-md rounded-[28px] bg-white p-6 shadow-2xl">

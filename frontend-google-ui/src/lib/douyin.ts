@@ -144,7 +144,7 @@ function extractTitleFromData(data: any): string {
 
 function extractAuthorFromData(data: any): string {
   const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data;
-  return detail?.author?.nickname || detail?.author?.unique_id || detail?.author_name || data?.author?.nickname || data?.note?.user?.nickname || '';
+  return detail?.author?.nickname || detail?.author?.unique_id || detail?.author_name || (typeof data?.author === 'string' ? data.author : data?.author?.nickname) || data?.authorName || data?.note?.user?.nickname || '';
 }
 
 function extractDurationFromData(data: any): number {
@@ -413,7 +413,8 @@ function convertCpTranscribeToResult(data: any): DouyinTranscriptResult {
 }
 
 export async function resolveCpExtract(url: string): Promise<DouyinResolveResult> {
-  const response = await fetch('/api/cp/extract', {
+  const isWechatChannel = /https?:\/\/[^\s]*weixin\.qq\.com\/sph\//i.test(url);
+  const response = await fetch(isWechatChannel ? '/api/wechat-channel/extract' : '/api/cp/extract', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -425,7 +426,12 @@ export async function resolveCpExtract(url: string): Promise<DouyinResolveResult
     throw new Error(json?.message || json?.error || '视频解析失败');
   }
 
-  return convertCpExtractToResolveResult(json?.data);
+  const result = convertCpExtractToResolveResult(json?.data);
+  if (isWechatChannel) {
+    result.platform = 'wechat_channels';
+    result.sourceUrl = String(json?.data?.sourceUrl || url.match(/https?:\/\/[^\s]+/i)?.[0] || '');
+  }
+  return result;
 }
 
 export async function extractCpTranscript(

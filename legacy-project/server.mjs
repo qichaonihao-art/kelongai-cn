@@ -16,6 +16,7 @@ import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
 import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, inspectStickerPromptIssues, stickerProfileFromPrompt } from './sticker-creative.mjs';
 import { setVideoLibraryShotRole } from './video-library-shot-role.mjs';
 import { deleteEmptyVideoLibraryFolder } from './video-library-folder-delete.mjs';
+import { parseWechatChannelWithYuanbao } from './wechat-channels.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,6 +55,7 @@ const APIMART_CHAT_FETCH_TIMEOUT_MS = 8 * 60 * 1000;
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const CLIP_SOURCE_MAX_BYTES = 1024 * 1024 * 1024;
 const CLIP_SOURCE_MAX_DURATION_SECONDS = 10 * 60;
+const CLIP_REMOTE_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const CLIP_OUTPUT_MAX_DURATION_SECONDS = 60;
 const CLIP_MEDIA_TTL_MS = 15 * 60 * 1000;
 const clipSourceMimeTypes = new Map();
@@ -94,6 +96,7 @@ const TEAM_TIMELINE_FILE = path.join(RUNTIME_STATE_DIR, 'team-timeline.json');
 const CREATIVE_FEEDING_SETTINGS_FILE = path.join(RUNTIME_STATE_DIR, 'creative-feeding-settings.json');
 const CREATIVE_OPENING_LIBRARY_FILE = path.join(RUNTIME_STATE_DIR, 'creative-opening-library.json');
 const CREATIVE_COPY_LIBRARY_FILE = path.join(RUNTIME_STATE_DIR, 'creative-copy-library.json');
+const WECHAT_CHANNEL_CONFIG_FILE = path.join(RUNTIME_STATE_DIR, 'wechat-channel-config.json');
 const VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS = 15 * 1000;
 const COLLECTION_DB_PATH = path.join(RUNTIME_STATE_DIR, 'collection.db');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
@@ -890,6 +893,231 @@ function getClipSourcePath(sourceId) {
   return path.join(UPLOAD_TEMP_DIR, `${normalizedId}_clip_source`);
 }
 
+function normalizeClipRemoteCandidates(body) {
+  const seen = new Set();
+  const candidates = [];
+  const add = (value) => {
+    const rawUrl = typeof value === 'string' ? value : value?.url;
+    if (!rawUrl) return;
+    try {
+      const parsed = new URL(String(rawUrl).trim());
+      if (!['http:', 'https:'].includes(parsed.protocol)) return;
+      const hostname = parsed.hostname.toLowerCase();
+      if (
+        hostname === 'localhost' || hostname.endsWith('.local') || hostname === '::1' ||
+        /^127\./.test(hostname) || /^10\./.test(hostname) || /^192\.168\./.test(hostname) ||
+        /^169\.254\./.test(hostname) || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
+      ) return;
+      const normalized = parsed.toString();
+      if (seen.has(normalized)) return;
+      seen.add(normalized);
+      candidates.push(normalized);
+    } catch {}
+  };
+  add(body?.downloadUrl);
+  for (const candidate of Array.isArray(body?.downloadUrlCandidates) ? body.downloadUrlCandidates : []) add(candidate);
+  for (const candidate of Array.isArray(body?.videoUrls) ? body.videoUrls : []) add(candidate);
+  return candidates.slice(0, 10);
+}
+
+async function downloadClipRemoteSource(url, targetPath) {
+  const partialPath = `${targetPath}.part`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CLIP_REMOTE_DOWNLOAD_TIMEOUT_MS);
+  let downloadedBytes = 0;
+  try {
+    const response = await fetch(url, {
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': DOUYIN_USER_AGENT,
+        'Referer': resolveProxyReferer(url),
+        'Accept': 'video/*,application/octet-stream;q=0.9,*/*;q=0.5',
+      },
+    });
+    if (!response.ok || !response.body) throw new Error(`远程视频下载失败（${response.status}）`);
+    const declaredSize = Number(response.headers.get('content-length') || 0);
+    if (declaredSize > CLIP_SOURCE_MAX_BYTES) throw new Error('源视频不能超过 1GB');
+    const sizeGuard = new Transform({
+      transform(chunk, _encoding, callback) {
+        downloadedBytes += chunk.length;
+        if (downloadedBytes > CLIP_SOURCE_MAX_BYTES) {
+          callback(new Error('CLIP_UPLOAD_TOO_LARGE'));
+          return;
+        }
+        callback(null, chunk);
+      },
+    });
+    await pipeline(Readable.fromWeb(response.body), sizeGuard, createWriteStream(partialPath, { flags: 'wx' }));
+    if (downloadedBytes <= 0) throw new Error('远程视频内容为空');
+    await rename(partialPath, targetPath);
+    return downloadedBytes;
+  } catch (error) {
+    await unlink(partialPath).catch(() => {});
+    if (error?.message === 'CLIP_UPLOAD_TOO_LARGE') throw new Error('源视频不能超过 1GB');
+    if (error?.name === 'AbortError') throw new Error('远程视频下载超时，请重试或改用本地上传');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function handleClipRemoteImport(req, res) {
+  const body = await readRequestBody(req);
+  const candidates = normalizeClipRemoteCandidates(body);
+  if (candidates.length === 0) {
+    sendJson(res, 400, { error: '没有可用的视频地址，请重新解析或改用本地上传' });
+    return;
+  }
+
+  await ensureUploadTempDir();
+  await ensureVideoCompressionTools();
+  const sourceId = randomBytes(12).toString('hex');
+  const filePath = getClipSourcePath(sourceId);
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      const size = await downloadClipRemoteSource(candidate, filePath);
+      const metadata = await probeVideoMetadata(filePath);
+      if (!metadata.durationSeconds || metadata.durationSeconds > CLIP_SOURCE_MAX_DURATION_SECONDS + 0.25) {
+        throw new Error('源视频时长不能超过 10 分钟');
+      }
+      const storedFileName = path.basename(filePath);
+      clipSourceMimeTypes.set(storedFileName, 'video/mp4');
+      setTimeout(() => clipSourceMimeTypes.delete(storedFileName), CLIP_MEDIA_TTL_MS + 2000).unref?.();
+      scheduleClipMediaCleanup(filePath);
+      sendJson(res, 200, {
+        ok: true,
+        sourceId,
+        fileName: sanitizeFileName(String(body?.title || '在线解析视频').trim() || '在线解析视频'),
+        url: `/uploads/${storedFileName}`,
+        size,
+        sourceType: 'online',
+        ...metadata,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      await unlink(filePath).catch(() => {});
+    }
+  }
+
+  sendJson(res, 400, {
+    error: lastError?.message || '视频载入失败，请重试或改用本地上传',
+  });
+}
+
+async function handleWechatChannelExtract(req, res) {
+  const body = await readRequestBody(req);
+  try {
+    const config = await readWechatChannelConfig();
+    const cookie = String(config.cookie || process.env.WECHAT_SPH_COOKIE || '').trim();
+    const data = await parseWechatChannelWithYuanbao(body?.url, cookie);
+    sendJson(res, 200, { ok: true, data });
+  } catch (error) {
+    sendJson(res, Number(error?.status || 500), {
+      ok: false,
+      error: error?.code || 'WECHAT_CHANNEL_ERROR',
+      message: error?.message || '微信视频号解析失败。',
+    });
+  }
+}
+
+function maskWechatCookie(cookie) {
+  const text = String(cookie || '').trim();
+  if (!text) return '';
+  if (text.length <= 18) return `${text.slice(0, 4)}...${text.slice(-4)}`;
+  return `${text.slice(0, 10)}...${text.slice(-8)}`;
+}
+
+async function readWechatChannelConfig() {
+  try {
+    const parsed = JSON.parse(await readFile(WECHAT_CHANNEL_CONFIG_FILE, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeWechatChannelConfig(config) {
+  await mkdir(RUNTIME_STATE_DIR, { recursive: true });
+  const temporaryPath = `${WECHAT_CHANNEL_CONFIG_FILE}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  await writeFile(temporaryPath, JSON.stringify(config, null, 2), { encoding: 'utf8', mode: 0o600 });
+  await rename(temporaryPath, WECHAT_CHANNEL_CONFIG_FILE);
+}
+
+async function handleGetWechatChannelConfig(_req, res) {
+  const config = await readWechatChannelConfig();
+  const cookie = String(config.cookie || process.env.WECHAT_SPH_COOKIE || '').trim();
+  sendJson(res, 200, {
+    ok: true,
+    configured: Boolean(cookie),
+    source: config.cookie ? 'page' : cookie ? 'environment' : 'none',
+    preview: maskWechatCookie(cookie),
+    updatedAt: config.updatedAt || null,
+    lastTestAt: config.lastTestAt || null,
+    lastTestResult: config.lastTestResult || null,
+  });
+}
+
+async function handleSaveWechatChannelConfig(req, res) {
+  const body = await readRequestBody(req);
+  const cookie = String(body?.cookie || '').trim();
+  if (!cookie || cookie.length < 20 || !cookie.includes('=')) {
+    sendJson(res, 400, { ok: false, error: 'Cookie 格式不完整，请重新从腾讯元宝复制完整 Cookie。' });
+    return;
+  }
+  const previous = await readWechatChannelConfig();
+  const updatedAt = new Date().toISOString();
+  await writeWechatChannelConfig({
+    ...previous,
+    cookie,
+    updatedAt,
+    lastTestResult: '未测试',
+  });
+  sendJson(res, 200, {
+    ok: true,
+    configured: true,
+    preview: maskWechatCookie(cookie),
+    updatedAt,
+    message: '保存成功，视频号解析 Cookie 已更新。',
+  });
+}
+
+async function handleTestWechatChannelConfig(req, res) {
+  const body = await readRequestBody(req);
+  const config = await readWechatChannelConfig();
+  const cookie = String(config.cookie || process.env.WECHAT_SPH_COOKIE || '').trim();
+  const testedAt = new Date().toISOString();
+  try {
+    const data = await parseWechatChannelWithYuanbao(body?.url, cookie);
+    await writeWechatChannelConfig({
+      ...config,
+      lastTestAt: testedAt,
+      lastTestResult: '成功：Cookie 可用',
+    });
+    sendJson(res, 200, {
+      ok: true,
+      message: '测试成功，当前 Cookie 可用。',
+      title: data.title || '',
+      lastTestAt: testedAt,
+      lastTestResult: '成功：Cookie 可用',
+    });
+  } catch (error) {
+    await writeWechatChannelConfig({
+      ...config,
+      lastTestAt: testedAt,
+      lastTestResult: `失败：${error?.message || 'Cookie 不可用'}`,
+    }).catch(() => {});
+    sendJson(res, Number(error?.status || 400), {
+      ok: false,
+      error: error?.code || 'WECHAT_COOKIE_TEST_FAILED',
+      message: error?.message || '测试失败，Cookie 可能已过期或格式不完整。',
+      lastTestAt: testedAt,
+    });
+  }
+}
+
 async function handleClipSourceUpload(req, res) {
   await ensureUploadTempDir();
   const declaredSize = Number(req.headers['content-length'] || 0);
@@ -1037,16 +1265,38 @@ async function handleDetectFirstClipCut(req, res) {
       '-hide_banner', '-ss', '0.35', '-i', sourcePath, '-t', String(scanDuration),
       '-vf', "scale=320:-2,select='gt(scene,0.32)',showinfo", '-an', '-f', 'null', '-',
     ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024 });
-    const matches = [...String(stderr || '').matchAll(/pts_time:([0-9.]+)/g)]
+    const rawMatches = [...String(stderr || '').matchAll(/pts_time:([0-9.]+)/g)]
       .map((match) => Number(match[1]) + 0.35)
-      .filter((value) => Number.isFinite(value) && value >= 0.8);
-    const suggestedEnd = matches[0] || Math.min(15, metadata.durationSeconds);
+      .filter((value) => Number.isFinite(value) && value >= 0.8 && value < metadata.durationSeconds - 0.1)
+      .sort((left, right) => left - right);
+    const cutPoints = [];
+    for (const value of rawMatches) {
+      if (cutPoints.length && value - cutPoints[cutPoints.length - 1] < 0.6) continue;
+      cutPoints.push(Math.round(value * 100) / 100);
+      if (cutPoints.length >= 5) break;
+    }
+    const shotEnds = [...cutPoints];
+    const scannedToVideoEnd = metadata.durationSeconds <= scanDuration + 0.1;
+    if (scannedToVideoEnd && shotEnds.length < 5 && (!shotEnds.length || metadata.durationSeconds - shotEnds[shotEnds.length - 1] >= 0.1)) {
+      shotEnds.push(Math.round(metadata.durationSeconds * 100) / 100);
+    }
+    const shots = shotEnds.slice(0, 5).map((endSeconds, index) => {
+      const startSeconds = index === 0 ? 0 : shotEnds[index - 1];
+      return {
+        number: index + 1,
+        startSeconds,
+        endSeconds,
+        durationSeconds: Math.round((endSeconds - startSeconds) * 100) / 100,
+      };
+    });
+    const suggestedEnd = cutPoints[0] || Math.min(15, metadata.durationSeconds);
     sendJson(res, 200, {
       ok: true,
-      detected: matches.length > 0,
+      detected: cutPoints.length > 0,
       endSeconds: Math.round(suggestedEnd * 100) / 100,
-      message: matches.length > 0
-        ? '已找到第一个明显切镜点，请预览确认'
+      shots,
+      message: cutPoints.length > 0
+        ? `已识别开头 ${shots.length} 个镜头，可直接选择截取前几个镜头`
         : `没有识别到明显切镜，已先取开头 ${Math.round(suggestedEnd * 10) / 10} 秒`,
     });
   } catch (error) {
@@ -20423,6 +20673,31 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/clips/import-url') {
+    await handleClipRemoteImport(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wechat-channel/extract') {
+    await handleWechatChannelExtract(req, res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/wechat-channel/config') {
+    await handleGetWechatChannelConfig(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wechat-channel/config') {
+    await handleSaveWechatChannelConfig(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/wechat-channel/config/test') {
+    await handleTestWechatChannelConfig(req, res);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/clips/trim') {
     await handleClipTrim(req, res);
     return;
@@ -21199,6 +21474,7 @@ export {
   normalizeEnhancedVideoToStandard1080p,
   parseClipRange,
   handleClipSourceUpload,
+  handleClipRemoteImport,
   handleClipTrim,
   handleDetectFirstClipCut,
   handleClipCleanup,
