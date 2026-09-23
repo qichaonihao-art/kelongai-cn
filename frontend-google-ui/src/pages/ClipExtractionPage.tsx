@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Check, Download, Film, LoaderCircle, Play, Scissors, Sparkles, Upload, WandSparkles, X } from 'lucide-react';
 import HomeBackButton from '@/src/components/HomeBackButton';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
@@ -62,6 +62,8 @@ export default function ClipExtractionPage({
   const inputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const resultVideoRef = useRef<HTMLVideoElement>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const draggingCutLineRef = useRef<'start' | 'end' | null>(null);
   const uploadRequestRef = useRef<XMLHttpRequest | null>(null);
   const sourceRef = useRef<UploadedClipSource | null>(null);
   const resultRef = useRef<TrimmedClip | null>(null);
@@ -73,6 +75,7 @@ export default function ClipExtractionPage({
   const [trimming, setTrimming] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [previewingRange, setPreviewingRange] = useState(false);
+  const [currentSeconds, setCurrentSeconds] = useState(0);
   const [result, setResult] = useState<TrimmedClip | null>(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -120,6 +123,7 @@ export default function ClipExtractionPage({
     setResult(null);
     setStartSeconds(0);
     setEndSeconds(0);
+    setCurrentSeconds(0);
     setUploading(false);
     setNotice('');
     setError('');
@@ -164,7 +168,8 @@ export default function ClipExtractionPage({
       setStartSeconds(0);
       setEndSeconds(Math.min(15, next.durationSeconds));
       setUploadProgress(100);
-      setNotice(next.durationSeconds > 15 ? '已默认选择前 15 秒，你可以继续调整起止位置。' : '已选择完整视频范围。');
+      setNotice('视频上传完成，正在自动识别第一个切镜点…');
+      void detectFirstCutForSource(next, true);
     };
     request.onerror = () => {
       uploadRequestRef.current = null;
@@ -202,7 +207,9 @@ export default function ClipExtractionPage({
 
   function handleSourcePreviewTimeUpdate() {
     const video = videoRef.current;
-    if (!video || !previewingRange) return;
+    if (!video) return;
+    setCurrentSeconds(video.currentTime);
+    if (!previewingRange) return;
     if (video.currentTime >= endSeconds - 0.03) {
       video.pause();
       video.currentTime = endSeconds;
@@ -211,31 +218,82 @@ export default function ClipExtractionPage({
   }
 
   function seekTo(value: number) {
-    if (videoRef.current) videoRef.current.currentTime = value;
+    setCurrentSeconds(value);
+    if (videoRef.current) {
+      try {
+        videoRef.current.currentTime = value;
+      } catch {
+        // 视频元数据尚未就绪时，时间轴仍先显示目标位置。
+      }
+    }
   }
 
-  async function detectFirstCut() {
-    if (!source) return;
+  async function detectFirstCutForSource(targetSource: UploadedClipSource, automatic = false) {
     setDetecting(true);
     setError('');
-    setNotice('');
+    if (!automatic) setNotice('');
     try {
       const response = await fetch('/api/clips/detect-first-cut', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceId: source.sourceId }),
+        body: JSON.stringify({ sourceId: targetSource.sourceId }),
       });
       if (!response.ok) throw new Error(await readApiError(response, '自动识别失败'));
       const data = await response.json();
-      const nextEnd = Math.max(0.1, Math.min(Number(data.endSeconds), source.durationSeconds, 60));
+      const nextEnd = Math.max(0.1, Math.min(Number(data.endSeconds), targetSource.durationSeconds, 60));
       setStartSeconds(0);
       setEndSeconds(nextEnd);
       seekTo(nextEnd);
       setNotice(String(data.message || '已给出建议范围，请预览确认。'));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '自动识别失败');
+      setError(automatic ? '自动识别切镜点失败，你仍然可以直接拖动两条裁切线。' : (caught instanceof Error ? caught.message : '自动识别失败'));
     } finally {
       setDetecting(false);
     }
+  }
+
+  function detectFirstCut() {
+    if (source) void detectFirstCutForSource(source);
+  }
+
+  function timeFromTimelinePointer(clientX: number) {
+    if (!source || !timelineRef.current) return 0;
+    const bounds = timelineRef.current.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - bounds.left) / Math.max(1, bounds.width)));
+    return Math.round(ratio * source.durationSeconds * 20) / 20;
+  }
+
+  function moveCutLine(kind: 'start' | 'end', value: number) {
+    if (!source) return;
+    if (kind === 'start') {
+      const next = Math.max(endSeconds - 60, Math.min(value, endSeconds - 0.1));
+      const clamped = Math.max(0, next);
+      setStartSeconds(clamped);
+      seekTo(clamped);
+      return;
+    }
+    const next = Math.min(startSeconds + 60, Math.max(value, startSeconds + 0.1));
+    const clamped = Math.min(source.durationSeconds, next);
+    setEndSeconds(clamped);
+    seekTo(clamped);
+  }
+
+  function beginCutLineDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!source) return;
+    const time = timeFromTimelinePointer(event.clientX);
+    const kind = Math.abs(time - startSeconds) <= Math.abs(time - endSeconds) ? 'start' : 'end';
+    draggingCutLineRef.current = kind;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    moveCutLine(kind, time);
+  }
+
+  function continueCutLineDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!draggingCutLineRef.current) return;
+    moveCutLine(draggingCutLineRef.current, timeFromTimelinePointer(event.clientX));
+  }
+
+  function endCutLineDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    draggingCutLineRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
   async function trimClip() {
@@ -292,6 +350,9 @@ export default function ClipExtractionPage({
   }
 
   const selectedDuration = Math.max(0, endSeconds - startSeconds);
+  const startPercent = source?.durationSeconds ? (startSeconds / source.durationSeconds) * 100 : 0;
+  const endPercent = source?.durationSeconds ? (endSeconds / source.durationSeconds) * 100 : 0;
+  const currentPercent = source?.durationSeconds ? (currentSeconds / source.durationSeconds) * 100 : 0;
 
   return (
     <div className="flex min-h-screen flex-col bg-[#f4f7fb] text-slate-900">
@@ -330,6 +391,38 @@ export default function ClipExtractionPage({
                 <button type="button" onClick={reset} className="shrink-0 rounded-full border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">更换视频</button>
               </div>
               <div className="overflow-hidden rounded-2xl bg-black"><video ref={videoRef} src={source.url} controls playsInline preload="metadata" onTimeUpdate={handleSourcePreviewTimeUpdate} onPause={() => setPreviewingRange(false)} onEnded={() => setPreviewingRange(false)} className="mx-auto max-h-[56vh] w-full object-contain" /></div>
+              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3 flex items-center justify-between gap-4">
+                  <div><div className="text-sm font-black text-slate-800">裁切时间轴</div><div className="mt-0.5 text-xs text-slate-500">拖动绿色和紫色裁切线调整镜头范围</div></div>
+                  <div className="shrink-0 rounded-full bg-white px-3 py-1.5 text-xs font-black text-cyan-700 shadow-sm">{selectedDuration.toFixed(1)} 秒</div>
+                </div>
+                <div className="mb-2 flex items-center justify-between text-xs font-black">
+                  <span className="text-emerald-700">开始 {formatTime(startSeconds)}</span>
+                  <span className="text-violet-700">结束 {formatTime(endSeconds)}</span>
+                </div>
+                <div
+                  ref={timelineRef}
+                  role="slider"
+                  aria-label="视频裁切范围"
+                  aria-valuetext={`${formatTime(startSeconds)} 至 ${formatTime(endSeconds)}`}
+                  className="relative h-16 touch-none select-none cursor-ew-resize"
+                  onPointerDown={beginCutLineDrag}
+                  onPointerMove={continueCutLineDrag}
+                  onPointerUp={endCutLineDrag}
+                  onPointerCancel={endCutLineDrag}
+                >
+                  <div className="absolute inset-x-0 top-3 h-10 overflow-hidden rounded-xl border border-slate-300 bg-slate-300 shadow-inner">
+                    <div className="absolute inset-y-0 bg-gradient-to-r from-cyan-500 to-blue-500" style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }} />
+                    <div className="absolute inset-y-0 left-0 bg-slate-900/45" style={{ width: `${startPercent}%` }} />
+                    <div className="absolute inset-y-0 right-0 bg-slate-900/45" style={{ width: `${Math.max(0, 100 - endPercent)}%` }} />
+                    {Array.from({ length: 11 }, (_, index) => <span key={index} className="absolute inset-y-0 w-px bg-white/25" style={{ left: `${index * 10}%` }} />)}
+                    <div className="absolute inset-y-0 z-20 w-0.5 bg-white shadow-[0_0_4px_rgba(15,23,42,0.8)]" style={{ left: `${Math.max(0, Math.min(100, currentPercent))}%` }} />
+                  </div>
+                  <div className="pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 rounded-full bg-emerald-500 shadow-[0_0_0_2px_white,0_3px_10px_rgba(5,150,105,0.5)]" style={{ left: `${startPercent}%` }}><span className="absolute left-1/2 top-0 size-4 -translate-x-1/2 rounded-full border-2 border-white bg-emerald-500" /></div>
+                  <div className="pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 rounded-full bg-violet-500 shadow-[0_0_0_2px_white,0_3px_10px_rgba(124,58,237,0.5)]" style={{ left: `${endPercent}%` }}><span className="absolute left-1/2 top-0 size-4 -translate-x-1/2 rounded-full border-2 border-white bg-violet-500" /></div>
+                </div>
+                {detecting && <div className="mt-1 flex items-center gap-2 text-xs font-bold text-cyan-700"><LoaderCircle className="size-3.5 animate-spin" />正在自动识别第一个切镜点，识别后紫色结束线会自动移动</div>}
+              </div>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <button type="button" onClick={() => setPoint('start')} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700 hover:bg-emerald-100">把当前画面设为开始点</button>
                 <button type="button" onClick={() => setPoint('end')} className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-black text-violet-700 hover:bg-violet-100">把当前画面设为结束点</button>
@@ -339,9 +432,9 @@ export default function ClipExtractionPage({
             <aside className="space-y-5">
               <section className="rounded-[26px] border border-slate-200 bg-white p-5 shadow-[0_18px_50px_-36px_rgba(15,23,42,0.45)]">
                 <div className="flex items-center justify-between"><h2 className="font-black">截取范围</h2><span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-black text-cyan-700">共 {selectedDuration.toFixed(1)} 秒</span></div>
-                <div className="mt-5 space-y-5">
-                  <label className="block"><div className="mb-2 flex justify-between text-xs font-bold text-slate-500"><span>开始点</span><span>{formatTime(startSeconds)}</span></div><input type="range" min={0} max={Math.max(0.1, source.durationSeconds - 0.1)} step="0.05" value={startSeconds} onChange={(event) => { const value = Number(event.target.value); if (value < endSeconds - 0.1) { setStartSeconds(value); seekTo(value); } }} className="w-full accent-emerald-600" /></label>
-                  <label className="block"><div className="mb-2 flex justify-between text-xs font-bold text-slate-500"><span>结束点</span><span>{formatTime(endSeconds)}</span></div><input type="range" min={0.1} max={source.durationSeconds} step="0.05" value={endSeconds} onChange={(event) => { const value = Number(event.target.value); if (value > startSeconds + 0.1 && value - startSeconds <= 60) { setEndSeconds(value); seekTo(value); } }} className="w-full accent-violet-600" /></label>
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3"><div className="text-[10px] font-black uppercase tracking-wider text-emerald-600">开始线</div><div className="mt-1 font-black text-emerald-900">{formatTime(startSeconds)}</div></div>
+                  <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-3"><div className="text-[10px] font-black uppercase tracking-wider text-violet-600">结束线</div><div className="mt-1 font-black text-violet-900">{formatTime(endSeconds)}</div></div>
                 </div>
                 <button type="button" disabled={detecting} onClick={detectFirstCut} className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 text-sm font-black text-cyan-700 hover:bg-cyan-100 disabled:opacity-60">{detecting ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}自动找第一个切镜点</button>
                 <button type="button" disabled={detecting || selectedDuration <= 0.1} onClick={previewSelectedRange} className={cn('mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border text-sm font-black transition-colors disabled:opacity-50', previewingRange ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100')}><Play className={cn('size-4', previewingRange && 'fill-current')} />{previewingRange ? '停止预览' : '预览裁切片段'}</button>
