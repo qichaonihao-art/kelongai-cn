@@ -70,6 +70,16 @@ interface WechatCookieStatus {
   lastTestResult?: string | null;
 }
 
+type OnlineLoadStage = 'parsing' | 'downloading' | 'checking' | 'loading';
+
+interface OnlineLoadProgress {
+  stage: OnlineLoadStage;
+  percent: number;
+  message: string;
+  downloadedBytes?: number;
+  totalBytes?: number;
+}
+
 function formatTime(value: number) {
   const safe = Math.max(0, Number.isFinite(value) ? value : 0);
   const minutes = Math.floor(safe / 60);
@@ -120,6 +130,8 @@ export default function ClipExtractionPage({
   const [sourceMode, setSourceMode] = useState<'link' | 'upload'>('link');
   const [linkInput, setLinkInput] = useState('');
   const [onlineLoading, setOnlineLoading] = useState(false);
+  const [onlineProgress, setOnlineProgress] = useState<OnlineLoadProgress | null>(null);
+  const [onlineElapsedSeconds, setOnlineElapsedSeconds] = useState(0);
   const [onlineResult, setOnlineResult] = useState<DouyinResolveResult | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptStatus, setTranscriptStatus] = useState('');
@@ -132,6 +144,20 @@ export default function ClipExtractionPage({
   const [wechatTestUrl, setWechatTestUrl] = useState('');
   const [wechatConfigMessage, setWechatConfigMessage] = useState('');
   const [wechatConfigError, setWechatConfigError] = useState('');
+
+  useEffect(() => {
+    if (!onlineLoading) return;
+    const timer = window.setInterval(() => {
+      setOnlineElapsedSeconds((value) => value + 1);
+      setOnlineProgress((current) => {
+        if (!current) return current;
+        const cap = current.stage === 'parsing' ? 22 : current.stage === 'downloading' ? 78 : current.stage === 'checking' ? 92 : 97;
+        if (current.percent >= cap) return current;
+        return { ...current, percent: Math.min(cap, current.percent + (current.stage === 'downloading' ? 0.7 : 0.35)) };
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [onlineLoading]);
 
   useEffect(() => {
     videoRef.current?.pause();
@@ -181,6 +207,8 @@ export default function ClipExtractionPage({
     setError('');
     setUploadProgress(0);
     setOnlineLoading(false);
+    setOnlineProgress(null);
+    setOnlineElapsedSeconds(0);
     setOnlineResult(null);
     setTranscriptLoading(false);
     setTranscriptStatus('');
@@ -257,6 +285,8 @@ export default function ClipExtractionPage({
       return;
     }
     setOnlineLoading(true);
+    setOnlineElapsedSeconds(0);
+    setOnlineProgress({ stage: 'parsing', percent: 4, message: '正在识别平台并解析视频地址…' });
     setError('');
     setNotice('正在解析视频地址…');
     setOnlineResult(null);
@@ -268,7 +298,8 @@ export default function ClipExtractionPage({
       const candidates = collectOnlineVideoCandidates(parsed);
       if (candidates.length === 0) throw new Error('没有解析到可用视频，请改用本地上传。');
       setNotice('解析成功，正在把视频载入镜头截取…');
-      const response = await fetch('/api/clips/import-url', {
+      setOnlineProgress({ stage: 'downloading', percent: 25, message: '链接解析成功，正在下载视频…' });
+      const response = await fetch('/api/clips/import-url-stream', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -282,7 +313,38 @@ export default function ClipExtractionPage({
         }),
       });
       if (!response.ok) throw new Error(await readApiError(response, '视频载入失败'));
-      const next = await response.json() as UploadedClipSource;
+      if (!response.body) throw new Error('浏览器无法读取载入进度，请刷新后重试。');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let next: UploadedClipSource | null = null;
+      const handleEvent = (event: any) => {
+        if (event?.type === 'error') throw new Error(String(event.message || '视频载入失败'));
+        if (event?.type === 'done' && event.source) {
+          next = event.source as UploadedClipSource;
+          setOnlineProgress({ stage: 'loading', percent: 100, message: '视频已载入，正在打开裁切页面…' });
+          return;
+        }
+        if (event?.type !== 'progress') return;
+        const stage: OnlineLoadStage = event.stage === 'checking' ? 'checking' : event.stage === 'loading' ? 'loading' : 'downloading';
+        setOnlineProgress((current) => ({
+          stage,
+          percent: Math.max(current?.percent || 0, Math.max(0, Math.min(99, Number(event.percent) || (stage === 'checking' ? 84 : 25)))),
+          message: String(event.message || '正在载入视频…'),
+          downloadedBytes: Number(event.downloadedBytes) || undefined,
+          totalBytes: Number(event.totalBytes) || undefined,
+        }));
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) if (line.trim()) handleEvent(JSON.parse(line));
+        if (done) break;
+      }
+      if (buffer.trim()) handleEvent(JSON.parse(buffer));
+      if (!next) throw new Error('视频载入未完成，请重试或改用本地上传。');
       setOnlineResult(parsed);
       activateSource(next, '在线视频已载入，正在自动识别开头前5个镜头…');
     } catch (caught) {
@@ -598,6 +660,10 @@ export default function ClipExtractionPage({
   const startPercent = source?.durationSeconds ? (startSeconds / source.durationSeconds) * 100 : 0;
   const endPercent = source?.durationSeconds ? (endSeconds / source.durationSeconds) * 100 : 0;
   const currentPercent = source?.durationSeconds ? (currentSeconds / source.durationSeconds) * 100 : 0;
+  const onlineStageIndex = onlineProgress
+    ? ({ parsing: 0, downloading: 1, checking: 2, loading: 3 } as const)[onlineProgress.stage]
+    : -1;
+  const onlineStages = ['解析链接', '下载视频', '校验视频', '载入裁切'];
 
   return (
     <div className="flex min-h-screen flex-col bg-[#f4f7fb] text-slate-900">
@@ -634,6 +700,20 @@ export default function ClipExtractionPage({
               <p className="mt-2 text-center text-sm leading-6 text-slate-500">支持抖音、快手和微信视频号。解析后直接载入裁切页面，不需要先下载到电脑再上传。</p>
               <textarea value={linkInput} disabled={onlineLoading} onChange={(event) => setLinkInput(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void parseAndLoadOnlineVideo(); }} placeholder="支持直接粘贴短视频平台链接，也可以粘贴带文案的整段分享文字" className="mt-6 min-h-28 w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 outline-none transition focus:border-cyan-400 focus:bg-white focus:ring-4 focus:ring-cyan-100 disabled:opacity-60" />
               <button type="button" disabled={onlineLoading || !linkInput.trim()} onClick={() => void parseAndLoadOnlineVideo()} className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-cyan-600 text-sm font-black text-white shadow-lg shadow-cyan-200 hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">{onlineLoading ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}{onlineLoading ? '正在解析并载入视频…' : '解析并载入视频'}</button>
+              {onlineLoading && onlineProgress && <div className="mt-5 overflow-hidden rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-50 p-4 shadow-sm" role="status" aria-live="polite">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="relative flex size-10 shrink-0 items-center justify-center rounded-full bg-cyan-600 text-white shadow-lg shadow-cyan-200"><LoaderCircle className="size-5 animate-spin" /><span className="absolute inset-0 animate-ping rounded-full border border-cyan-400 opacity-30" /></div>
+                    <div className="min-w-0"><div className="truncate text-sm font-black text-slate-800">{onlineProgress.message}</div><div className="mt-1 text-xs font-bold text-slate-500">已等待 {onlineElapsedSeconds} 秒{onlineProgress.downloadedBytes ? ` · 已下载 ${formatSize(onlineProgress.downloadedBytes)}${onlineProgress.totalBytes ? ` / ${formatSize(onlineProgress.totalBytes)}` : ''}` : ''}</div></div>
+                  </div>
+                  <div className="shrink-0 text-lg font-black tabular-nums text-cyan-700">{Math.round(onlineProgress.percent)}%</div>
+                </div>
+                <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-white shadow-inner"><div className="relative h-full rounded-full bg-gradient-to-r from-cyan-500 via-blue-500 to-violet-500 transition-[width] duration-500 ease-out" style={{ width: `${onlineProgress.percent}%` }}><span className="absolute inset-0 animate-pulse bg-white/30" /></div></div>
+                <div className="mt-4 grid grid-cols-4 gap-1.5">
+                  {onlineStages.map((label, index) => <div key={label} className={cn('rounded-lg px-1.5 py-2 text-center text-[10px] font-black transition-colors', index < onlineStageIndex ? 'bg-emerald-100 text-emerald-700' : index === onlineStageIndex ? 'bg-cyan-600 text-white shadow-sm' : 'bg-white/75 text-slate-400')}>{index < onlineStageIndex ? '✓ ' : ''}{label}</div>)}
+                </div>
+                <p className="mt-3 text-center text-[11px] font-bold text-slate-400">请保持页面打开，较长视频需要更多下载和校验时间</p>
+              </div>}
               <div className="mt-4 text-center text-xs text-slate-400">解析不成功时，可切换“本地上传”继续使用。</div>
             </div> : <button type="button" disabled={uploading} onClick={() => inputRef.current?.click()} className="group flex min-h-[360px] w-full flex-col items-center justify-center px-6 transition hover:bg-cyan-50/30 disabled:cursor-wait">
               <div className="flex size-20 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-xl shadow-cyan-200"><Upload className="size-9" /></div>

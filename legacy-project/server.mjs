@@ -920,7 +920,7 @@ function normalizeClipRemoteCandidates(body) {
   return candidates.slice(0, 10);
 }
 
-async function downloadClipRemoteSource(url, targetPath) {
+async function downloadClipRemoteSource(url, targetPath, onProgress = () => {}) {
   const partialPath = `${targetPath}.part`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CLIP_REMOTE_DOWNLOAD_TIMEOUT_MS);
@@ -938,6 +938,8 @@ async function downloadClipRemoteSource(url, targetPath) {
     if (!response.ok || !response.body) throw new Error(`远程视频下载失败（${response.status}）`);
     const declaredSize = Number(response.headers.get('content-length') || 0);
     if (declaredSize > CLIP_SOURCE_MAX_BYTES) throw new Error('源视频不能超过 1GB');
+    let lastProgressAt = 0;
+    onProgress({ downloadedBytes: 0, totalBytes: declaredSize || 0 });
     const sizeGuard = new Transform({
       transform(chunk, _encoding, callback) {
         downloadedBytes += chunk.length;
@@ -945,12 +947,18 @@ async function downloadClipRemoteSource(url, targetPath) {
           callback(new Error('CLIP_UPLOAD_TOO_LARGE'));
           return;
         }
+        const now = Date.now();
+        if (now - lastProgressAt >= 250 || (declaredSize > 0 && downloadedBytes >= declaredSize)) {
+          lastProgressAt = now;
+          onProgress({ downloadedBytes, totalBytes: declaredSize || 0 });
+        }
         callback(null, chunk);
       },
     });
     await pipeline(Readable.fromWeb(response.body), sizeGuard, createWriteStream(partialPath, { flags: 'wx' }));
     if (downloadedBytes <= 0) throw new Error('远程视频内容为空');
     await rename(partialPath, targetPath);
+    onProgress({ downloadedBytes, totalBytes: declaredSize || downloadedBytes });
     return downloadedBytes;
   } catch (error) {
     await unlink(partialPath).catch(() => {});
@@ -962,22 +970,37 @@ async function downloadClipRemoteSource(url, targetPath) {
   }
 }
 
-async function handleClipRemoteImport(req, res) {
-  const body = await readRequestBody(req);
+async function importClipRemoteSource(body, onProgress = () => {}) {
   const candidates = normalizeClipRemoteCandidates(body);
   if (candidates.length === 0) {
-    sendJson(res, 400, { error: '没有可用的视频地址，请重新解析或改用本地上传' });
-    return;
+    throw new Error('没有可用的视频地址，请重新解析或改用本地上传');
   }
 
+  onProgress({ stage: 'downloading', percent: 24, message: '正在准备视频下载…' });
   await ensureUploadTempDir();
   await ensureVideoCompressionTools();
   const sourceId = randomBytes(12).toString('hex');
   const filePath = getClipSourcePath(sourceId);
   let lastError = null;
-  for (const candidate of candidates) {
+  for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+    const candidate = candidates[candidateIndex];
     try {
-      const size = await downloadClipRemoteSource(candidate, filePath);
+      onProgress({
+        stage: 'downloading',
+        percent: 25,
+        message: candidateIndex === 0 ? '正在下载原视频…' : `正在尝试备用视频地址（${candidateIndex + 1}/${candidates.length}）…`,
+      });
+      const size = await downloadClipRemoteSource(candidate, filePath, ({ downloadedBytes, totalBytes }) => {
+        const ratio = totalBytes > 0 ? Math.min(1, downloadedBytes / totalBytes) : 0;
+        onProgress({
+          stage: 'downloading',
+          percent: totalBytes > 0 ? Math.round(25 + ratio * 53) : 32,
+          message: totalBytes > 0 ? '正在下载原视频…' : '正在下载原视频，文件大小暂时未知…',
+          downloadedBytes,
+          totalBytes,
+        });
+      });
+      onProgress({ stage: 'checking', percent: 84, message: '下载完成，正在校验视频时长和画面…', downloadedBytes: size, totalBytes: size });
       const metadata = await probeVideoMetadata(filePath);
       if (!metadata.durationSeconds || metadata.durationSeconds > CLIP_SOURCE_MAX_DURATION_SECONDS + 0.25) {
         throw new Error('源视频时长不能超过 10 分钟');
@@ -986,7 +1009,8 @@ async function handleClipRemoteImport(req, res) {
       clipSourceMimeTypes.set(storedFileName, 'video/mp4');
       setTimeout(() => clipSourceMimeTypes.delete(storedFileName), CLIP_MEDIA_TTL_MS + 2000).unref?.();
       scheduleClipMediaCleanup(filePath);
-      sendJson(res, 200, {
+      onProgress({ stage: 'loading', percent: 96, message: '校验通过，正在载入裁切页面…', downloadedBytes: size, totalBytes: size });
+      return {
         ok: true,
         sourceId,
         fileName: sanitizeFileName(String(body?.title || '在线解析视频').trim() || '在线解析视频'),
@@ -994,17 +1018,44 @@ async function handleClipRemoteImport(req, res) {
         size,
         sourceType: 'online',
         ...metadata,
-      });
-      return;
+      };
     } catch (error) {
       lastError = error;
       await unlink(filePath).catch(() => {});
     }
   }
 
-  sendJson(res, 400, {
-    error: lastError?.message || '视频载入失败，请重试或改用本地上传',
+  throw lastError || new Error('视频载入失败，请重试或改用本地上传');
+}
+
+async function handleClipRemoteImport(req, res) {
+  const body = await readRequestBody(req);
+  try {
+    sendJson(res, 200, await importClipRemoteSource(body));
+  } catch (error) {
+    sendJson(res, 400, { error: error?.message || '视频载入失败，请重试或改用本地上传' });
+  }
+}
+
+async function handleClipRemoteImportStream(req, res) {
+  const body = await readRequestBody(req);
+  res.writeHead(200, {
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'X-Accel-Buffering': 'no',
   });
+  res.flushHeaders?.();
+  const writeEvent = (payload) => {
+    if (!res.destroyed && !res.writableEnded) res.write(`${JSON.stringify(payload)}\n`);
+  };
+  try {
+    const source = await importClipRemoteSource(body, (progress) => writeEvent({ type: 'progress', ...progress }));
+    writeEvent({ type: 'done', source });
+  } catch (error) {
+    writeEvent({ type: 'error', message: error?.message || '视频载入失败，请重试或改用本地上传' });
+  } finally {
+    if (!res.writableEnded) res.end();
+  }
 }
 
 async function handleWechatChannelExtract(req, res) {
@@ -20678,6 +20729,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/clips/import-url-stream') {
+    await handleClipRemoteImportStream(req, res);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/wechat-channel/extract') {
     await handleWechatChannelExtract(req, res);
     return;
@@ -21475,6 +21531,7 @@ export {
   parseClipRange,
   handleClipSourceUpload,
   handleClipRemoteImport,
+  handleClipRemoteImportStream,
   handleClipTrim,
   handleDetectFirstClipCut,
   handleClipCleanup,
