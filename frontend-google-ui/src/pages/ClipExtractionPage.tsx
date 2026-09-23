@@ -72,6 +72,7 @@ export default function ClipExtractionPage({
   const [endSeconds, setEndSeconds] = useState(0);
   const [trimming, setTrimming] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const [previewingRange, setPreviewingRange] = useState(false);
   const [result, setResult] = useState<TrimmedClip | null>(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -79,6 +80,8 @@ export default function ClipExtractionPage({
   const [preparingCreative, setPreparingCreative] = useState(false);
 
   useEffect(() => {
+    videoRef.current?.pause();
+    setPreviewingRange(false);
     if (resultRef.current?.outputId) {
       void cleanupTemporaryFiles(undefined, resultRef.current.outputId);
       resultRef.current = null;
@@ -182,6 +185,29 @@ export default function ClipExtractionPage({
     } else if (current <= startSeconds + 0.1) setError('结束点必须在开始点之后。');
     else if (current - startSeconds > 60) setError('单次最多截取 60 秒。');
     else { setEndSeconds(current); setError(''); }
+  }
+
+  function previewSelectedRange() {
+    const video = videoRef.current;
+    if (!video || endSeconds <= startSeconds + 0.1) return;
+    if (previewingRange) {
+      video.pause();
+      setPreviewingRange(false);
+      return;
+    }
+    video.currentTime = startSeconds;
+    setPreviewingRange(true);
+    void video.play().catch(() => setPreviewingRange(false));
+  }
+
+  function handleSourcePreviewTimeUpdate() {
+    const video = videoRef.current;
+    if (!video || !previewingRange) return;
+    if (video.currentTime >= endSeconds - 0.03) {
+      video.pause();
+      video.currentTime = endSeconds;
+      setPreviewingRange(false);
+    }
   }
 
   function seekTo(value: number) {
@@ -303,7 +329,7 @@ export default function ClipExtractionPage({
                 <div className="min-w-0"><div className="truncate text-sm font-black">{source.fileName}</div><div className="mt-1 text-xs text-slate-500">{formatSize(source.size)} · {source.width}×{source.height} · {formatTime(source.durationSeconds)}</div></div>
                 <button type="button" onClick={reset} className="shrink-0 rounded-full border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">更换视频</button>
               </div>
-              <div className="overflow-hidden rounded-2xl bg-black"><video ref={videoRef} src={source.url} controls playsInline preload="metadata" className="mx-auto max-h-[56vh] w-full object-contain" /></div>
+              <div className="overflow-hidden rounded-2xl bg-black"><video ref={videoRef} src={source.url} controls playsInline preload="metadata" onTimeUpdate={handleSourcePreviewTimeUpdate} onPause={() => setPreviewingRange(false)} onEnded={() => setPreviewingRange(false)} className="mx-auto max-h-[56vh] w-full object-contain" /></div>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <button type="button" onClick={() => setPoint('start')} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700 hover:bg-emerald-100">把当前画面设为开始点</button>
                 <button type="button" onClick={() => setPoint('end')} className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-black text-violet-700 hover:bg-violet-100">把当前画面设为结束点</button>
@@ -318,6 +344,7 @@ export default function ClipExtractionPage({
                   <label className="block"><div className="mb-2 flex justify-between text-xs font-bold text-slate-500"><span>结束点</span><span>{formatTime(endSeconds)}</span></div><input type="range" min={0.1} max={source.durationSeconds} step="0.05" value={endSeconds} onChange={(event) => { const value = Number(event.target.value); if (value > startSeconds + 0.1 && value - startSeconds <= 60) { setEndSeconds(value); seekTo(value); } }} className="w-full accent-violet-600" /></label>
                 </div>
                 <button type="button" disabled={detecting} onClick={detectFirstCut} className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 text-sm font-black text-cyan-700 hover:bg-cyan-100 disabled:opacity-60">{detecting ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}自动找第一个切镜点</button>
+                <button type="button" disabled={detecting || selectedDuration <= 0.1} onClick={previewSelectedRange} className={cn('mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border text-sm font-black transition-colors disabled:opacity-50', previewingRange ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100')}><Play className={cn('size-4', previewingRange && 'fill-current')} />{previewingRange ? '停止预览' : '预览裁切片段'}</button>
                 <button type="button" disabled={trimming || selectedDuration <= 0.1 || selectedDuration > 60} onClick={trimClip} className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white shadow-lg hover:bg-slate-800 disabled:opacity-50">{trimming ? <LoaderCircle className="size-4 animate-spin" /> : <Scissors className="size-4" />}{trimming ? '正在精准截取…' : '开始截取'}</button>
                 <p className="mt-3 text-center text-xs leading-5 text-slate-400">建议单个镜头控制在 15 秒内，单次最多 60 秒。</p>
               </section>
