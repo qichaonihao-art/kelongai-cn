@@ -130,6 +130,9 @@ interface CreativeCreationPageProps {
   onBack: () => void;
   onNavigate: (page: ModuleId) => void;
   onSwitchToCopy?: () => void;
+  onSwitchToClip?: () => void;
+  incomingClip?: { file: File; mode: 'direct' | 'replace'; token: number } | null;
+  onIncomingClipConsumed?: () => void;
 }
 
 interface PersistedCreativeMessage {
@@ -1709,7 +1712,7 @@ function renderAssistantMessageContent(content: string) {
   );
 }
 
-export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCopy }: CreativeCreationPageProps) {
+export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCopy, onSwitchToClip, incomingClip, onIncomingClipConsumed }: CreativeCreationPageProps) {
   const initialSessionState = useMemo(() => {
     const sessions = loadSavedCreativeSessions();
     return {
@@ -1947,6 +1950,30 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const normalSeedanceSettingsRef = useRef({
     ...seedanceManualPreferenceRef.current,
   });
+  const consumedIncomingClipTokenRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!incomingClip || consumedIncomingClipTokenRef.current === incomingClip.token) return;
+    consumedIncomingClipTokenRef.current = incomingClip.token;
+    if (!incomingClip.file.type.startsWith('video/')) {
+      setRequestError('镜头截取结果不是有效的视频文件。');
+      onIncomingClipConsumed?.();
+      return;
+    }
+    switchReverseMode(incomingClip.mode);
+    const previewUrl = createMediaPreviewUrl(incomingClip.file);
+    setSelectedMedia((previous) => {
+      if (previous) URL.revokeObjectURL(previous.previewUrl);
+      return {
+        kind: 'video',
+        file: incomingClip.file,
+        previewUrl,
+        fileName: incomingClip.file.name,
+      };
+    });
+    setRequestError('');
+    onIncomingClipConsumed?.();
+  }, [incomingClip?.token]);
 
   function rememberManualSeedancePreference(patch: Partial<SeedanceManualPreference>) {
     const preference = { ...seedanceManualPreferenceRef.current, ...patch };
@@ -5385,6 +5412,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
           <CreativeSubNav
             current="video"
             onSwitchVideo={() => {}}
+            onSwitchClip={onSwitchToClip ?? (() => {})}
             onSwitchCopy={onSwitchToCopy ?? (() => {})}
           />
         </div>

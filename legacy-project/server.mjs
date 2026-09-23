@@ -1,11 +1,11 @@
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -52,6 +52,11 @@ const APIMART_IMAGE_FETCH_TIMEOUT_MS = 45 * 1000;
 const APIMART_IMAGE_RETRY_DELAYS_MS = [1000];
 const APIMART_CHAT_FETCH_TIMEOUT_MS = 8 * 60 * 1000;
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
+const CLIP_SOURCE_MAX_BYTES = 1024 * 1024 * 1024;
+const CLIP_SOURCE_MAX_DURATION_SECONDS = 10 * 60;
+const CLIP_OUTPUT_MAX_DURATION_SECONDS = 60;
+const CLIP_MEDIA_TTL_MS = 15 * 60 * 1000;
+const clipSourceMimeTypes = new Map();
 const RUNTIME_STATE_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || path.join(__dirname, '.runtime-state'));
 const VIDEO_LIBRARY_DIR = path.resolve(process.env.VIDEO_LIBRARY_DIR || path.join(path.dirname(RUNTIME_STATE_DIR), 'kelongai-media', 'video-library'));
 const VIDEO_LIBRARY_MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -498,7 +503,10 @@ async function cleanupExpiredUploadTempFilesOnStartup() {
 
       scannedCount += 1;
       const ageMs = now - info.mtimeMs;
-      if (ageMs <= STARTUP_UPLOAD_TEMP_FILE_MAX_AGE_MS) {
+      const maxAgeMs = name.endsWith('_clip_source') || name.endsWith('_clip.mp4')
+        ? CLIP_MEDIA_TTL_MS
+        : STARTUP_UPLOAD_TEMP_FILE_MAX_AGE_MS;
+      if (ageMs <= maxAgeMs) {
         continue;
       }
 
@@ -549,6 +557,14 @@ function scheduleMediaCleanup(filePath) {
       await unlink(filePath);
     } catch {}
   }, MEDIA_TTL_MS + 1000).unref?.();
+}
+
+function scheduleClipMediaCleanup(filePath) {
+  setTimeout(async () => {
+    try {
+      await unlink(filePath);
+    } catch {}
+  }, CLIP_MEDIA_TTL_MS + 1000).unref?.();
 }
 
 async function getVideoDurationSeconds(filePath) {
@@ -863,6 +879,194 @@ async function createPublicMediaUrl({ file, req }) {
   };
 }
 
+function normalizeClipSourceId(value) {
+  const text = String(value || '').trim();
+  return /^[a-f0-9]{24}$/.test(text) ? text : '';
+}
+
+function getClipSourcePath(sourceId) {
+  const normalizedId = normalizeClipSourceId(sourceId);
+  if (!normalizedId) return '';
+  return path.join(UPLOAD_TEMP_DIR, `${normalizedId}_clip_source`);
+}
+
+async function handleClipSourceUpload(req, res) {
+  await ensureUploadTempDir();
+  const declaredSize = Number(req.headers['content-length'] || 0);
+  if (!Number.isFinite(declaredSize) || declaredSize <= 0) {
+    sendJson(res, 411, { error: '无法读取文件大小，请重新选择视频后再试' });
+    return;
+  }
+  if (declaredSize > CLIP_SOURCE_MAX_BYTES) {
+    sendJson(res, 413, { error: '源视频不能超过 1GB' });
+    return;
+  }
+
+  const contentType = String(req.headers['content-type'] || '').toLowerCase();
+  if (!contentType.startsWith('video/') && contentType !== 'application/octet-stream') {
+    sendJson(res, 400, { error: '请选择视频文件' });
+    return;
+  }
+
+  const sourceId = randomBytes(12).toString('hex');
+  const filePath = getClipSourcePath(sourceId);
+  let receivedBytes = 0;
+  const sizeGuard = new Transform({
+    transform(chunk, _encoding, callback) {
+      receivedBytes += chunk.length;
+      if (receivedBytes > CLIP_SOURCE_MAX_BYTES) {
+        callback(new Error('CLIP_UPLOAD_TOO_LARGE'));
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+
+  try {
+    await pipeline(req, sizeGuard, createWriteStream(filePath, { flags: 'wx' }));
+    await ensureVideoCompressionTools();
+    const metadata = await probeVideoMetadata(filePath);
+    if (!metadata.durationSeconds || metadata.durationSeconds > CLIP_SOURCE_MAX_DURATION_SECONDS + 0.25) {
+      throw new Error('CLIP_DURATION_TOO_LONG');
+    }
+    const storedFileName = path.basename(filePath);
+    clipSourceMimeTypes.set(storedFileName, contentType.startsWith('video/') ? contentType : 'video/mp4');
+    setTimeout(() => clipSourceMimeTypes.delete(storedFileName), CLIP_MEDIA_TTL_MS + 2000).unref?.();
+    scheduleClipMediaCleanup(filePath);
+    sendJson(res, 200, {
+      ok: true,
+      sourceId,
+      fileName: sanitizeFileName(decodeURIComponent(String(req.headers['x-file-name'] || 'source-video'))),
+      url: `/uploads/${storedFileName}`,
+      size: receivedBytes,
+      ...metadata,
+    });
+  } catch (error) {
+    await unlink(filePath).catch(() => {});
+    if (error?.message === 'CLIP_UPLOAD_TOO_LARGE') {
+      sendJson(res, 413, { error: '源视频不能超过 1GB' });
+      return;
+    }
+    if (error?.message === 'CLIP_DURATION_TOO_LONG') {
+      sendJson(res, 400, { error: '源视频时长不能超过 10 分钟' });
+      return;
+    }
+    sendJson(res, 400, { error: error?.message?.includes('ffmpeg') ? error.message : '无法读取这个视频，请换一个常见格式的视频再试' });
+  }
+}
+
+function parseClipRange(body, sourceDuration) {
+  const start = Number(body?.startSeconds);
+  const end = Number(body?.endSeconds);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+    throw new Error('请设置正确的开始和结束时间');
+  }
+  const safeEnd = Math.min(end, sourceDuration);
+  const duration = safeEnd - start;
+  if (start >= sourceDuration || duration < 0.1) throw new Error('截取范围超出了源视频');
+  if (duration > CLIP_OUTPUT_MAX_DURATION_SECONDS + 0.01) throw new Error('单次最多截取 60 秒');
+  return {
+    start: Math.round(start * 1000) / 1000,
+    end: Math.round(safeEnd * 1000) / 1000,
+    duration: Math.round(duration * 1000) / 1000,
+  };
+}
+
+async function handleClipTrim(req, res) {
+  const body = await readRequestBody(req);
+  const sourceId = normalizeClipSourceId(body?.sourceId);
+  const sourcePath = getClipSourcePath(sourceId);
+  if (!sourcePath || !existsSync(sourcePath)) {
+    sendJson(res, 404, { error: '源视频已过期，请重新上传' });
+    return;
+  }
+
+  const outputId = randomBytes(12).toString('hex');
+  const outputPath = path.join(UPLOAD_TEMP_DIR, `${outputId}_clip.mp4`);
+  try {
+    await ensureVideoCompressionTools();
+    const metadata = await probeVideoMetadata(sourcePath);
+    const range = parseClipRange(body, metadata.durationSeconds);
+    await execFileAsync('ffmpeg', [
+      '-y',
+      '-ss', String(range.start),
+      '-i', sourcePath,
+      '-t', String(range.duration),
+      '-map', '0:v:0',
+      '-map', '0:a?',
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '18',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-movflags', '+faststart',
+      '-avoid_negative_ts', 'make_zero',
+      outputPath,
+    ], { timeout: 5 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
+    const outputInfo = await stat(outputPath);
+    const outputMetadata = await probeVideoMetadata(outputPath);
+    scheduleClipMediaCleanup(outputPath);
+    sendJson(res, 200, {
+      ok: true,
+      outputId,
+      fileName: `镜头_${range.start.toFixed(1)}-${range.end.toFixed(1)}秒.mp4`,
+      url: `/uploads/${path.basename(outputPath)}`,
+      size: outputInfo.size,
+      startSeconds: range.start,
+      endSeconds: range.end,
+      ...outputMetadata,
+    });
+  } catch (error) {
+    await unlink(outputPath).catch(() => {});
+    sendJson(res, 400, { error: error?.message || '截取失败，请重新设置时间后再试' });
+  }
+}
+
+async function handleDetectFirstClipCut(req, res) {
+  const body = await readRequestBody(req);
+  const sourcePath = getClipSourcePath(body?.sourceId);
+  if (!sourcePath || !existsSync(sourcePath)) {
+    sendJson(res, 404, { error: '源视频已过期，请重新上传' });
+    return;
+  }
+  try {
+    await ensureVideoCompressionTools();
+    const metadata = await probeVideoMetadata(sourcePath);
+    const scanDuration = Math.min(metadata.durationSeconds, 60);
+    const { stderr } = await execFileAsync('ffmpeg', [
+      '-hide_banner', '-ss', '0.35', '-i', sourcePath, '-t', String(scanDuration),
+      '-vf', "scale=320:-2,select='gt(scene,0.32)',showinfo", '-an', '-f', 'null', '-',
+    ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024 });
+    const matches = [...String(stderr || '').matchAll(/pts_time:([0-9.]+)/g)]
+      .map((match) => Number(match[1]) + 0.35)
+      .filter((value) => Number.isFinite(value) && value >= 0.8);
+    const suggestedEnd = matches[0] || Math.min(15, metadata.durationSeconds);
+    sendJson(res, 200, {
+      ok: true,
+      detected: matches.length > 0,
+      endSeconds: Math.round(suggestedEnd * 100) / 100,
+      message: matches.length > 0
+        ? '已找到第一个明显切镜点，请预览确认'
+        : `没有识别到明显切镜，已先取开头 ${Math.round(suggestedEnd * 10) / 10} 秒`,
+    });
+  } catch (error) {
+    sendJson(res, 400, { error: error?.message || '自动识别切镜点失败' });
+  }
+}
+
+async function handleClipCleanup(req, res) {
+  const body = await readRequestBody(req);
+  const sourceId = normalizeClipSourceId(body?.sourceId);
+  const outputId = normalizeClipSourceId(body?.outputId);
+  const targets = [];
+  if (sourceId) targets.push(getClipSourcePath(sourceId));
+  if (outputId) targets.push(path.join(UPLOAD_TEMP_DIR, `${outputId}_clip.mp4`));
+
+  await Promise.all(targets.map((target) => unlink(target).catch(() => {})));
+  if (sourceId) clipSourceMimeTypes.delete(`${sourceId}_clip_source`);
+  sendJson(res, 200, { ok: true, deleted: targets.length });
+}
+
 async function handlePublicMediaRequest(req, res, requestedFileName) {
   const safeFileName = sanitizeStoredFileName(requestedFileName);
   if (!safeFileName) {
@@ -887,15 +1091,37 @@ async function handlePublicMediaRequest(req, res, requestedFileName) {
       return;
     }
 
-    const content = await readFile(filePath);
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, {
-      'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
-      'Content-Length': content.length,
+    const contentType = clipSourceMimeTypes.get(safeFileName) || (safeFileName.endsWith('_clip_source') ? 'video/mp4' : (MIME_TYPES[ext] || 'application/octet-stream'));
+    const rangeHeader = String(req.headers.range || '');
+    const baseHeaders = {
+      'Content-Type': contentType,
       'Cache-Control': `public, max-age=${Math.max(1, Math.floor(maxAgeMs / 1000))}`,
-      'Content-Disposition': `inline; filename="${safeFileName}"`
-    });
-    res.end(content);
+      'Content-Disposition': `inline; filename="${safeFileName}"`,
+      'Accept-Ranges': 'bytes',
+    };
+    const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
+    if (match) {
+      const suffixLength = !match[1] && match[2] ? Number(match[2]) : 0;
+      const start = suffixLength > 0 ? Math.max(0, info.size - suffixLength) : (match[1] ? Number(match[1]) : 0);
+      const end = suffixLength > 0 ? info.size - 1 : (match[2] ? Math.min(Number(match[2]), info.size - 1) : info.size - 1);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= info.size) {
+        res.writeHead(416, { 'Content-Range': `bytes */${info.size}` });
+        res.end();
+        return;
+      }
+      res.writeHead(206, {
+        ...baseHeaders,
+        'Content-Length': end - start + 1,
+        'Content-Range': `bytes ${start}-${end}/${info.size}`,
+      });
+      if (req.method === 'HEAD') res.end();
+      else createReadStream(filePath, { start, end }).pipe(res);
+      return;
+    }
+    res.writeHead(200, { ...baseHeaders, 'Content-Length': info.size });
+    if (req.method === 'HEAD') res.end();
+    else createReadStream(filePath).pipe(res);
   } catch {
     sendJson(res, 404, { error: '媒体文件不存在或已过期' });
   }
@@ -937,8 +1163,8 @@ function setCorsHeaders(req, res) {
   const allowedOrigin = getAllowedOrigin(origin);
   res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,PUT,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-File-Name');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
 }
 
@@ -20173,7 +20399,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'GET' && url.pathname.startsWith('/uploads/')) {
+  if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/uploads/')) {
     await handlePublicMediaRequest(req, res, url.pathname.slice('/uploads/'.length));
     return;
   }
@@ -20189,6 +20415,26 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname.startsWith('/api/') && !isAuthRoute && !isAuthenticated(req) && !(isDebugDownloadBypass && isDownloadDebugRoute)) {
     sendJson(res, 401, { error: '未登录或登录已失效' });
+    return;
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/clips/source') {
+    await handleClipSourceUpload(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/clips/trim') {
+    await handleClipTrim(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/clips/detect-first-cut') {
+    await handleDetectFirstClipCut(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/clips/cleanup') {
+    await handleClipCleanup(req, res);
     return;
   }
 
@@ -20951,6 +21197,11 @@ export {
   isVideo480pOrLower,
   getStandard1080pCanvas,
   normalizeEnhancedVideoToStandard1080p,
+  parseClipRange,
+  handleClipSourceUpload,
+  handleClipTrim,
+  handleDetectFirstClipCut,
+  handleClipCleanup,
   extractEnhancementOutputUrl,
   normalizeEnhancementRemoteStatus,
   normalizeMediaKitUploadHeaders,

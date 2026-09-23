@@ -10,6 +10,7 @@ import VoiceCloningPage from './pages/VoiceCloningPage';
 import CreativeCreationPage from './pages/CreativeCreationPage';
 import CreativeSelectPage from './pages/CreativeSelectPage';
 import CopywritingPage from './pages/CopywritingPage';
+import ClipExtractionPage, { type ClipCreativeMode } from './pages/ClipExtractionPage';
 import DouyinDownloaderPage from './pages/DouyinDownloaderPage';
 import StoreOverviewPage from './pages/StoreOverviewPage';
 import ImageGenerationPage from './pages/ImageGenerationPage';
@@ -21,7 +22,7 @@ import VideoLibraryPage from './pages/VideoLibraryPage';
 import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
 import type { ModuleId } from './components/ModuleQuickNav';
 
-type Page = 'login' | 'home' | 'universal' | 'creative-video' | 'creative-copy' | ModuleId;
+type Page = 'login' | 'home' | 'universal' | 'creative-video' | 'creative-clip' | 'creative-copy' | ModuleId;
 
 class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
@@ -59,6 +60,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: bo
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
   const [authChecked, setAuthChecked] = useState(false);
+  const [incomingCreativeClip, setIncomingCreativeClip] = useState<{ file: File; mode: ClipCreativeMode; token: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,6 +139,7 @@ export default function App() {
           onBack={handleBackToHome}
           onNavigate={handleNavigate}
           onSelectVideo={() => setCurrentPage('creative-video')}
+          onSelectClip={() => setCurrentPage('creative-clip')}
           onSelectCopy={() => setCurrentPage('creative-copy')}
         />
       )}
@@ -144,7 +147,22 @@ export default function App() {
         <CreativeCreationPage
           onBack={handleBackToCreative}
           onNavigate={handleNavigate}
+          onSwitchToClip={() => setCurrentPage('creative-clip')}
           onSwitchToCopy={() => setCurrentPage('creative-copy')}
+          incomingClip={incomingCreativeClip}
+          onIncomingClipConsumed={() => setIncomingCreativeClip(null)}
+        />
+      )}
+      {currentPage === 'creative-clip' && (
+        <ClipExtractionPage
+          onBack={handleBackToCreative}
+          onNavigate={handleNavigate}
+          onSwitchToVideo={() => setCurrentPage('creative-video')}
+          onSwitchToCopy={() => setCurrentPage('creative-copy')}
+          onUseInCreative={(file, mode) => {
+            setIncomingCreativeClip({ file, mode, token: Date.now() });
+            setCurrentPage('creative-video');
+          }}
         />
       )}
       {currentPage === 'creative-copy' && (
@@ -152,6 +170,7 @@ export default function App() {
           onBack={handleBackToCreative}
           onNavigate={handleNavigate}
           onSwitchToVideo={() => setCurrentPage('creative-video')}
+          onSwitchToClip={() => setCurrentPage('creative-clip')}
         />
       )}
       {currentPage === 'douyin' && (

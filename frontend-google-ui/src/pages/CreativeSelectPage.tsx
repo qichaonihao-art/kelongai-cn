@@ -1,4 +1,4 @@
-import { ArrowUpRight, FileText, Video } from 'lucide-react';
+import { ArrowUpRight, FileText, Scissors, Video } from 'lucide-react';
 import { motion } from 'motion/react';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import HomeBackButton from '@/src/components/HomeBackButton';
@@ -7,6 +7,7 @@ interface CreativeSelectPageProps {
   onBack: () => void;
   onNavigate: (page: ModuleId) => void;
   onSelectVideo: () => void;
+  onSelectClip: () => void;
   onSelectCopy: () => void;
 }
 
@@ -22,6 +23,16 @@ const entries = [
     lineClass: 'from-transparent via-emerald-400/70 to-transparent',
   },
   {
+    id: 'clip' as const,
+    title: '镜头截取',
+    icon: Scissors,
+    shellClass: 'border-cyan-200/80 bg-gradient-to-br from-white via-white to-cyan-50/80 hover:border-cyan-300',
+    glowClass: 'bg-cyan-300/40',
+    iconClass: 'from-cyan-500 to-blue-600 shadow-cyan-200/80',
+    buttonClass: 'border-cyan-100 bg-cyan-50 text-cyan-600 group-hover:border-cyan-500 group-hover:bg-cyan-600 group-hover:text-white',
+    lineClass: 'from-transparent via-cyan-400/70 to-transparent',
+  },
+  {
     id: 'copy' as const,
     title: '文案创作',
     icon: FileText,
@@ -33,7 +44,7 @@ const entries = [
   },
 ];
 
-export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, onSelectCopy }: CreativeSelectPageProps) {
+export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, onSelectClip, onSelectCopy }: CreativeSelectPageProps) {
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#f5f7fb] px-4 py-5 sm:px-6 sm:py-6">
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
@@ -49,10 +60,10 @@ export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, 
       </div>
 
       <main className="relative z-10 flex w-full flex-1 items-center justify-center py-12 sm:py-16">
-        <div className="grid w-full max-w-[58rem] grid-cols-1 gap-5 sm:grid-cols-2 sm:gap-6">
+        <div className="grid w-full max-w-[76rem] grid-cols-1 gap-5 sm:grid-cols-3 sm:gap-6">
           {entries.map((entry, index) => {
             const Icon = entry.icon;
-            const onClick = entry.id === 'video' ? onSelectVideo : onSelectCopy;
+            const onClick = entry.id === 'video' ? onSelectVideo : entry.id === 'clip' ? onSelectClip : onSelectCopy;
             return (
               <motion.button
                 key={entry.id}

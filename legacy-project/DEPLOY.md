@@ -213,7 +213,8 @@ server {
     listen 80;
     server_name your-domain.com;
 
-    client_max_body_size 200m;
+    # 镜头截取支持最长 10 分钟、最大 1GB 的源视频；略留请求头和传输余量。
+    client_max_body_size 1100m;
 
     # 全局 TCP 优化
     tcp_nopush on;
