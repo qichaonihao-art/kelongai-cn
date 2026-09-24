@@ -2007,6 +2007,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         serverMediaToken: incomingClip.serverMediaToken,
       };
     });
+    // 镜头截取结果使用服务器令牌秒开创作页；历史视频在后台补存真实文件，
+    // 不等待下载完成，也不保存用于满足模型附件要求的辅助图片。
+    void fetch(previewUrl, { credentials: 'include' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('截取视频历史文件读取失败');
+        const blob = await response.blob();
+        const historyFile = new File([blob], incomingClip.file.name, {
+          type: blob.type || 'video/mp4',
+          lastModified: Date.now(),
+        });
+        await saveUploadHistory(historyFile, 'video');
+        await refreshUploadHistories();
+      })
+      .catch((error) => console.warn('[clip history] background save failed', error));
     setSeedanceReferences((previous) => {
       const retained = previous.filter((reference) => {
         const isPreviousClipAsset = reference.source === 'clip-audio' || reference.source === 'clip-required-image';
