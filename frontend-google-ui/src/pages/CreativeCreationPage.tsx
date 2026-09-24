@@ -131,7 +131,7 @@ interface CreativeCreationPageProps {
   onNavigate: (page: ModuleId) => void;
   onSwitchToCopy?: () => void;
   onSwitchToClip?: () => void;
-  incomingClip?: { file: File; mode: 'direct' | 'replace'; token: number } | null;
+  incomingClip?: { file: File; previewUrl: string; serverMediaToken: string; mode: 'direct' | 'replace'; token: number } | null;
   onIncomingClipConsumed?: () => void;
 }
 
@@ -1961,7 +1961,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
     switchReverseMode(incomingClip.mode);
-    const previewUrl = createMediaPreviewUrl(incomingClip.file);
+    const previewUrl = incomingClip.previewUrl;
     setSelectedMedia((previous) => {
       if (previous) URL.revokeObjectURL(previous.previewUrl);
       return {
@@ -1969,6 +1969,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         file: incomingClip.file,
         previewUrl,
         fileName: incomingClip.file.name,
+        serverMediaToken: incomingClip.serverMediaToken,
       };
     });
     setRequestError('');

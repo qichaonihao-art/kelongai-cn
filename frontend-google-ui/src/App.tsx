@@ -60,7 +60,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: bo
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
   const [authChecked, setAuthChecked] = useState(false);
-  const [incomingCreativeClip, setIncomingCreativeClip] = useState<{ file: File; mode: ClipCreativeMode; token: number } | null>(null);
+  const [incomingCreativeClip, setIncomingCreativeClip] = useState<{ file: File; previewUrl: string; serverMediaToken: string; mode: ClipCreativeMode; token: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,8 +159,8 @@ export default function App() {
           onNavigate={handleNavigate}
           onSwitchToVideo={() => setCurrentPage('creative-video')}
           onSwitchToCopy={() => setCurrentPage('creative-copy')}
-          onUseInCreative={(file, mode) => {
-            setIncomingCreativeClip({ file, mode, token: Date.now() });
+          onUseInCreative={(clip, mode) => {
+            setIncomingCreativeClip({ ...clip, mode, token: Date.now() });
             setCurrentPage('creative-video');
           }}
         />

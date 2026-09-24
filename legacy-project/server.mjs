@@ -16,7 +16,7 @@ import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
 import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, inspectStickerPromptIssues, stickerProfileFromPrompt } from './sticker-creative.mjs';
 import { setVideoLibraryShotRole } from './video-library-shot-role.mjs';
 import { deleteEmptyVideoLibraryFolder } from './video-library-folder-delete.mjs';
-import { parseWechatChannelWithYuanbao } from './wechat-channels.mjs';
+import { normalizeWechatCookie, parseWechatChannelWithYuanbao } from './wechat-channels.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -893,6 +893,31 @@ function getClipSourcePath(sourceId) {
   return path.join(UPLOAD_TEMP_DIR, `${normalizedId}_clip_source`);
 }
 
+function getClipOutputPath(outputId) {
+  const normalizedId = normalizeClipSourceId(outputId);
+  if (!normalizedId) return '';
+  return path.join(UPLOAD_TEMP_DIR, `${normalizedId}_clip.mp4`);
+}
+
+async function resolveClipMediaUrl(token, req) {
+  const filePath = getClipOutputPath(token);
+  if (!filePath || !existsSync(filePath)) throw new Error('截取视频已过期，请返回镜头截取页面重新生成');
+  const fileInfo = await stat(filePath);
+  const publicBaseUrl = resolvePublicBaseUrl(req);
+  if (publicBaseUrl) {
+    return {
+      url: `${publicBaseUrl}/uploads/${path.basename(filePath)}`,
+      size: fileInfo.size,
+      source: 'server_url',
+    };
+  }
+  const bytes = await readFile(filePath);
+  const file = new File([bytes], `clip_${normalizeClipSourceId(token)}.mp4`, { type: 'video/mp4' });
+  const compressedFile = await compressMediaForArk(file, 'video');
+  const normalized = await normalizeUploadedMediaInput(compressedFile, 'video');
+  return { url: normalized.videoUrl, size: fileInfo.size, source: 'server_inline' };
+}
+
 function normalizeClipRemoteCandidates(body) {
   const seen = new Set();
   const candidates = [];
@@ -1060,12 +1085,23 @@ async function handleClipRemoteImportStream(req, res) {
 
 async function handleWechatChannelExtract(req, res) {
   const body = await readRequestBody(req);
+  const config = await readWechatChannelConfig();
+  const testedAt = new Date().toISOString();
   try {
-    const config = await readWechatChannelConfig();
     const cookie = String(config.cookie || process.env.WECHAT_SPH_COOKIE || '').trim();
     const data = await parseWechatChannelWithYuanbao(body?.url, cookie);
+    await writeWechatChannelConfig({
+      ...config,
+      lastTestAt: testedAt,
+      lastTestResult: '成功：Cookie 可用',
+    }).catch(() => {});
     sendJson(res, 200, { ok: true, data });
   } catch (error) {
+    await writeWechatChannelConfig({
+      ...config,
+      lastTestAt: testedAt,
+      lastTestResult: `失败：${error?.message || '视频号解析失败'}`,
+    }).catch(() => {});
     sendJson(res, Number(error?.status || 500), {
       ok: false,
       error: error?.code || 'WECHAT_CHANNEL_ERROR',
@@ -1113,7 +1149,7 @@ async function handleGetWechatChannelConfig(_req, res) {
 
 async function handleSaveWechatChannelConfig(req, res) {
   const body = await readRequestBody(req);
-  const cookie = String(body?.cookie || '').trim();
+  const cookie = normalizeWechatCookie(body?.cookie);
   if (!cookie || cookie.length < 20 || !cookie.includes('=')) {
     sendJson(res, 400, { ok: false, error: 'Cookie 格式不完整，请重新从腾讯元宝复制完整 Cookie。' });
     return;
@@ -11544,6 +11580,8 @@ async function readMultipartFormBody(req) {
     enableThinking: readValue(formData.get('enable_thinking')).toLowerCase() === 'true',
     model: readValue(formData.get('model')),
     mediaKind: readValue(formData.get('media_kind')),
+    clipMediaToken: readValue(formData.get('clip_media_token')),
+    clipMediaKind: readValue(formData.get('clip_media_kind')),
     productType: readValue(formData.get('productType')),
     widthCm: readValue(formData.get('widthCm')),
     heightCm: readValue(formData.get('heightCm')),
@@ -14088,7 +14126,7 @@ async function handleDoubaoMultimodal(req, res) {
     const body = isMultipartFormRequest(req)
       ? await readMultipartFormBody(req)
       : await readRequestBody(req);
-    const { model, image, imageMimeType, video, videoMimeType, question, history, mediaKind, file, files, filesKinds } = body;
+    const { model, image, imageMimeType, video, videoMimeType, question, history, mediaKind, file, files, filesKinds, clipMediaToken } = body;
     shouldStream = wantsDoubaoStream(body, req);
     const resolvedApiKey = readValue(SERVER_CONFIG.arkApiKey);
     const resolvedQuestion = readValue(question);
@@ -14106,6 +14144,7 @@ async function handleDoubaoMultimodal(req, res) {
       hasVideoField: !!readValue(video),
       hasUploadedFile,
       hasMultipleFiles: hasMultipleFiles ? files.length : false,
+      hasServerClip: Boolean(clipMediaToken),
       mediaKind: mediaKind || '',
       fileName: file?.name || '',
       fileType: file?.type || '',
@@ -14160,6 +14199,23 @@ async function handleDoubaoMultimodal(req, res) {
         type: 'input_video',
         video_url: normalizedVideo.videoUrl
       });
+    }
+
+    if (clipMediaToken) {
+      stage = 'resolve_server_clip';
+      try {
+        const clipMedia = await resolveClipMediaUrl(clipMediaToken, req);
+        content.push({ type: 'input_video', video_url: clipMedia.url });
+        console.log('[doubao multimodal] using server clip directly', {
+          requestId,
+          stage,
+          fileSize: clipMedia.size,
+          source: clipMedia.source,
+        });
+      } catch (error) {
+        sendJson(res, 400, { error: error?.message || '读取截取视频失败', debug: { stage } });
+        return;
+      }
     }
 
     if (hasMultipleFiles) {
@@ -18596,7 +18652,7 @@ async function handleQwenCreativeMultimodal(req, res) {
     const body = isMultipartFormRequest(req)
       ? await readMultipartFormBody(req)
       : await readRequestBody(req);
-    const { question, history, mediaKind, file, files, filesKinds } = body;
+    const { question, history, mediaKind, file, files, filesKinds, clipMediaToken } = body;
     shouldStream = wantsDoubaoStream(body, req);
     const apiKey = readValue(SERVER_CONFIG.dashscopeApiKey);
     const resolvedQuestion = readValue(question);
@@ -18625,6 +18681,23 @@ async function handleQwenCreativeMultimodal(req, res) {
       : hasUploadedFile
         ? [{ file, kind: mediaKind === 'image' ? 'image' : 'video' }]
         : [];
+
+    if (clipMediaToken) {
+      stage = 'resolve_server_clip';
+      try {
+        const clipMedia = await resolveClipMediaUrl(clipMediaToken, req);
+        content.push({ type: 'video_url', video_url: { url: clipMedia.url }, fps: 2 });
+        console.log('[qwen creative multimodal] using server clip directly', {
+          requestId,
+          stage,
+          fileSize: clipMedia.size,
+          source: clipMedia.source,
+        });
+      } catch (error) {
+        sendJson(res, 400, { error: error?.message || '读取截取视频失败', debug: { stage } });
+        return;
+      }
+    }
 
     stage = 'normalize_uploaded_media';
     for (const media of uploadedMedia) {
@@ -18663,8 +18736,8 @@ async function handleQwenCreativeMultimodal(req, res) {
       requestId,
       model: QWEN_CREATIVE_MULTIMODAL_MODEL,
       stream: shouldStream,
-      mediaCount: uploadedMedia.length,
-      mediaKinds: uploadedMedia.map((item) => item.kind),
+      mediaCount: uploadedMedia.length + (clipMediaToken ? 1 : 0),
+      mediaKinds: [...(clipMediaToken ? ['video'] : []), ...uploadedMedia.map((item) => item.kind)],
       thinking: enableThinking ? 'enabled' : 'disabled',
       elapsedMs: Date.now() - requestStartedAt
     });

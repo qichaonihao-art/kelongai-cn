@@ -3,17 +3,27 @@ const WECHAT_FEED_INFO_URL = 'https://channels.weixin.qq.com/finder-preview/api/
 const WECHAT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
 
 export function extractWechatChannelUrl(value) {
-  return String(value || '').match(/https?:\/\/[^\s]*weixin\.qq\.com\/sph\/[^\s]+/i)?.[0] || '';
+  const matched = String(value || '').match(/https?:\/\/[^\s]*weixin\.qq\.com\/sph\/[^\s]+/i)?.[0] || '';
+  return matched.replace(/[，。；！!？?、）)】\]》>"'“”‘’]+$/g, '');
+}
+
+export function normalizeWechatCookie(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^cookie\s*:\s*/i, '')
+    .replace(/[\r\n]+/g, ' ')
+    .trim();
 }
 
 export async function parseWechatChannelWithYuanbao(value, cookie = process.env.WECHAT_SPH_COOKIE) {
   const shareUrl = extractWechatChannelUrl(value);
   if (!shareUrl) throw createWechatError('WECHAT_URL_INVALID', '不是有效的微信视频号分享链接，请粘贴 weixin.qq.com/sph/ 开头的链接。', 400);
-  if (!String(cookie || '').trim()) {
+  const normalizedCookie = normalizeWechatCookie(cookie);
+  if (!normalizedCookie) {
     throw createWechatError('WECHAT_COOKIE_MISSING', '视频号解析 Cookie 未配置，请先更新腾讯元宝 Cookie。', 400);
   }
 
-  const parseData = await parseShareUrl(shareUrl, String(cookie).trim());
+  const parseData = await parseShareUrl(shareUrl, normalizedCookie);
   const playableUrl = String(parseData.playable_url || parseData.playableUrl || '');
   let generalToken = '';
   let exportId = String(parseData.wx_export_id || parseData.wxExportId || '');
@@ -87,6 +97,9 @@ async function getFeedInfo(exportId, generalToken) {
       'Content-Type': 'application/json',
       Origin: 'https://channels.weixin.qq.com',
       Referer: referer,
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
       'User-Agent': WECHAT_USER_AGENT,
     },
     body: JSON.stringify({ baseReq: { generalToken }, exportId }),

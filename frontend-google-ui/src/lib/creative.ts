@@ -8,6 +8,7 @@ export interface SelectedCreativeMedia {
   file: File;
   previewUrl: string;
   fileName: string;
+  serverMediaToken?: string;
 }
 
 export interface SeedanceReferenceFile {
@@ -631,12 +632,20 @@ export async function sendCreativeMessage(options: {
         formData.append('model', options.model);
       }
       formData.append('enable_thinking', 'false');
+      const serverMedia = mediaArray.find((media) => media.serverMediaToken);
+      if (serverMedia?.serverMediaToken) {
+        formData.append('clip_media_token', serverMedia.serverMediaToken);
+        formData.append('clip_media_kind', serverMedia.kind);
+      }
       if (mediaArray.length === 1) {
         formData.append('media_kind', mediaArray[0].kind);
-        formData.append('file', mediaArray[0].file, mediaArray[0].fileName);
+        if (!mediaArray[0].serverMediaToken) {
+          formData.append('file', mediaArray[0].file, mediaArray[0].fileName);
+        }
       } else {
         const kinds: string[] = [];
         for (const media of mediaArray) {
+          if (media.serverMediaToken) continue;
           formData.append('files', media.file, media.fileName);
           kinds.push(media.kind);
         }
