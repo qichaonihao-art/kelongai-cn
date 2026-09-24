@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { Check, ChevronDown, Copy, Download, Film, KeyRound, Link2, LoaderCircle, Play, Scissors, Settings, ShieldCheck, Sparkles, Upload, WandSparkles, X } from 'lucide-react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { Check, ChevronDown, Copy, Download, Film, KeyRound, Link2, LoaderCircle, Pause, Play, Scissors, Settings, ShieldCheck, Sparkles, Upload, WandSparkles, X } from 'lucide-react';
 import HomeBackButton from '@/src/components/HomeBackButton';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import CreativeSubNav from '@/src/components/CreativeSubNav';
@@ -16,6 +16,7 @@ export interface ClipCreativePayload {
   audioMode: ClipAudioMode;
   audioFile?: File;
   requiredImageFile?: File;
+  audioDurationSeconds?: number;
 }
 
 interface ClipExtractionPageProps {
@@ -34,6 +35,7 @@ interface UploadedClipSource {
   durationSeconds: number;
   width: number;
   height: number;
+  fps?: number;
   sourceType?: 'online';
 }
 
@@ -97,6 +99,17 @@ function formatTime(value: number) {
   return `${String(minutes).padStart(2, '0')}:${seconds.toFixed(1).padStart(4, '0')}`;
 }
 
+function formatTimecode(value: number, fps: number) {
+  const safeFps = Math.max(1, Math.round(fps || 30));
+  const totalFrames = Math.max(0, Math.round(value * safeFps));
+  const frames = totalFrames % safeFps;
+  const totalSeconds = Math.floor(totalFrames / safeFps);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  return [hours, minutes, seconds, frames].map((part) => String(part).padStart(2, '0')).join(':');
+}
+
 function formatSize(bytes: number) {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(bytes >= 100 * 1024 * 1024 ? 0 : 1)} MB`;
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -118,7 +131,10 @@ export default function ClipExtractionPage({
   const videoRef = useRef<HTMLVideoElement>(null);
   const resultVideoRef = useRef<HTMLVideoElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
+  const audioTimelineRef = useRef<HTMLDivElement>(null);
+  const audioPreviewRef = useRef<HTMLAudioElement>(null);
   const draggingCutLineRef = useRef<'start' | 'end' | null>(null);
+  const draggingAudioLineRef = useRef<'start' | 'end' | null>(null);
   const uploadRequestRef = useRef<XMLHttpRequest | null>(null);
   const sourceRef = useRef<UploadedClipSource | null>(null);
   const resultRef = useRef<TrimmedClip | null>(null);
@@ -140,6 +156,16 @@ export default function ClipExtractionPage({
   const [preparingCreative, setPreparingCreative] = useState(false);
   const [selectedCreativeMode, setSelectedCreativeMode] = useState<ClipCreativeMode>('direct');
   const [selectedAudioMode, setSelectedAudioMode] = useState<ClipAudioMode>('none');
+  const [audioStartSeconds, setAudioStartSeconds] = useState(0);
+  const [audioEndSeconds, setAudioEndSeconds] = useState(0);
+  const [activeAudioLine, setActiveAudioLine] = useState<'start' | 'end'>('end');
+  const [audioCurrentSeconds, setAudioCurrentSeconds] = useState(0);
+  const [audioZoomStart, setAudioZoomStart] = useState(0);
+  const [audioZoomEnd, setAudioZoomEnd] = useState(15);
+  const [previewingAudio, setPreviewingAudio] = useState(false);
+  const [audioWaveformUrl, setAudioWaveformUrl] = useState('');
+  const [audioWaveformLoading, setAudioWaveformLoading] = useState(false);
+  const [audioShotLoading, setAudioShotLoading] = useState(0);
   const [sourceMode, setSourceMode] = useState<'link' | 'upload'>('link');
   const [linkInput, setLinkInput] = useState('');
   const [onlineLoading, setOnlineLoading] = useState(false);
@@ -181,6 +207,29 @@ export default function ClipExtractionPage({
     }
     setResult(null);
   }, [startSeconds, endSeconds]);
+
+  useEffect(() => {
+    if (!showModePicker || selectedAudioMode === 'none' || !source || audioWaveformUrl || audioWaveformLoading) return;
+    let cancelled = false;
+    setAudioWaveformLoading(true);
+    void fetch('/api/clips/audio-waveform', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceId: source.sourceId }),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error(await readApiError(response, '音频波形生成失败'));
+      return response.json();
+    }).then((data) => {
+      if (!cancelled) setAudioWaveformUrl(String(data.url || ''));
+    }).catch((caught) => {
+      if (!cancelled) setError(caught instanceof Error ? caught.message : '音频波形生成失败');
+    }).finally(() => {
+      if (!cancelled) setAudioWaveformLoading(false);
+    });
+    return () => {
+      cancelled = true;
+      setAudioWaveformLoading(false);
+    };
+  }, [showModePicker, selectedAudioMode, source?.sourceId, audioWaveformUrl]);
 
   useEffect(() => () => {
     uploadRequestRef.current?.abort();
@@ -228,6 +277,15 @@ export default function ClipExtractionPage({
     setTranscriptStatus('');
     setTranscriptText('');
     setTranscriptCopied(false);
+    setAudioStartSeconds(0);
+    setAudioEndSeconds(0);
+    setAudioCurrentSeconds(0);
+    setAudioZoomStart(0);
+    setAudioZoomEnd(15);
+    setPreviewingAudio(false);
+    setAudioWaveformUrl('');
+    setAudioWaveformLoading(false);
+    setAudioShotLoading(0);
     if (inputRef.current) inputRef.current.value = '';
   }
 
@@ -241,6 +299,12 @@ export default function ClipExtractionPage({
     setCurrentSeconds(0);
     setDetectedShots([]);
     setSelectedShotCount(1);
+    setAudioStartSeconds(0);
+    setAudioEndSeconds(Math.min(15, next.durationSeconds));
+    setAudioCurrentSeconds(0);
+    setAudioZoomStart(0);
+    setAudioZoomEnd(Math.min(next.durationSeconds, 18));
+    setAudioWaveformUrl('');
     setNotice(message);
     void detectFirstCutForSource(next, 1, true);
   }
@@ -645,6 +709,142 @@ export default function ClipExtractionPage({
     }
   }
 
+  function getAudioFrameStep() {
+    return 1 / Math.max(1, source?.fps || 30);
+  }
+
+  function snapAudioTime(value: number) {
+    const step = getAudioFrameStep();
+    return Math.round(Math.max(0, value) / step) * step;
+  }
+
+  function zoomAudioAround(start: number, end: number) {
+    if (!source) return;
+    const selected = Math.max(getAudioFrameStep(), end - start);
+    const windowDuration = Math.min(source.durationSeconds, Math.max(4, selected * 1.35));
+    let nextStart = Math.max(0, start - (windowDuration - selected) / 2);
+    let nextEnd = Math.min(source.durationSeconds, nextStart + windowDuration);
+    nextStart = Math.max(0, nextEnd - windowDuration);
+    setAudioZoomStart(nextStart);
+    setAudioZoomEnd(nextEnd);
+  }
+
+  function seekAudio(value: number) {
+    const next = Math.max(0, Math.min(source?.durationSeconds || 0, value));
+    setAudioCurrentSeconds(next);
+    if (audioPreviewRef.current) audioPreviewRef.current.currentTime = next;
+  }
+
+  function moveAudioLine(kind: 'start' | 'end', value: number) {
+    if (!source) return;
+    const frameStep = getAudioFrameStep();
+    if (kind === 'start') {
+      const next = Math.max(0, audioEndSeconds - 60, Math.min(snapAudioTime(value), audioEndSeconds - frameStep));
+      setAudioStartSeconds(next);
+      seekAudio(next);
+    } else {
+      const next = Math.min(source.durationSeconds, audioStartSeconds + 60, Math.max(snapAudioTime(value), audioStartSeconds + frameStep));
+      setAudioEndSeconds(next);
+      seekAudio(next);
+    }
+    setActiveAudioLine(kind);
+    setPreviewingAudio(false);
+    audioPreviewRef.current?.pause();
+  }
+
+  function timeFromAudioPointer(clientX: number) {
+    if (!source || !audioTimelineRef.current) return 0;
+    const bounds = audioTimelineRef.current.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - bounds.left) / Math.max(1, bounds.width)));
+    return audioZoomStart + ratio * Math.max(getAudioFrameStep(), audioZoomEnd - audioZoomStart);
+  }
+
+  function beginAudioLineDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!source) return;
+    const time = timeFromAudioPointer(event.clientX);
+    const kind = Math.abs(time - audioStartSeconds) <= Math.abs(time - audioEndSeconds) ? 'start' : 'end';
+    draggingAudioLineRef.current = kind;
+    audioTimelineRef.current?.focus();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    moveAudioLine(kind, time);
+  }
+
+  function continueAudioLineDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!draggingAudioLineRef.current) return;
+    moveAudioLine(draggingAudioLineRef.current, timeFromAudioPointer(event.clientX));
+  }
+
+  function endAudioLineDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    draggingAudioLineRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function handleAudioTimelineKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === ' ') {
+      event.preventDefault();
+      previewAudioRange();
+      return;
+    }
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const direction = event.key === 'ArrowLeft' ? -1 : 1;
+    const frameCount = event.shiftKey ? 10 : 1;
+    const current = activeAudioLine === 'start' ? audioStartSeconds : audioEndSeconds;
+    moveAudioLine(activeAudioLine, current + direction * frameCount * getAudioFrameStep());
+  }
+
+  function previewAudioRange() {
+    const player = audioPreviewRef.current;
+    if (!player || audioEndSeconds <= audioStartSeconds) return;
+    if (previewingAudio) {
+      player.pause();
+      setPreviewingAudio(false);
+      return;
+    }
+    player.currentTime = audioStartSeconds;
+    setAudioCurrentSeconds(audioStartSeconds);
+    setPreviewingAudio(true);
+    void player.play().catch(() => setPreviewingAudio(false));
+  }
+
+  function handleAudioPreviewTimeUpdate() {
+    const player = audioPreviewRef.current;
+    if (!player) return;
+    setAudioCurrentSeconds(player.currentTime);
+    if (previewingAudio && player.currentTime >= audioEndSeconds - 0.015) {
+      player.pause();
+      player.currentTime = audioEndSeconds;
+      setAudioCurrentSeconds(audioEndSeconds);
+      setPreviewingAudio(false);
+    }
+  }
+
+  async function chooseAudioShotCount(count: number) {
+    if (!source) return;
+    setAudioShotLoading(count);
+    setError('');
+    try {
+      const response = await fetch('/api/clips/detect-first-cut', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceId: source.sourceId, shotCount: count }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, '音频镜头范围识别失败'));
+      const data = await response.json();
+      const shots = Array.isArray(data.shots) ? data.shots : [];
+      const target = shots[Math.min(count, shots.length) - 1];
+      const nextEnd = Math.min(source.durationSeconds, 60, Math.max(getAudioFrameStep(), Number(target?.endSeconds || data.endSeconds || audioEndSeconds)));
+      setAudioStartSeconds(0);
+      setAudioEndSeconds(nextEnd);
+      setActiveAudioLine('end');
+      seekAudio(nextEnd);
+      zoomAudioAround(0, nextEnd);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '音频镜头范围识别失败');
+    } finally {
+      setAudioShotLoading(0);
+    }
+  }
+
   async function useInCreative(mode: ClipCreativeMode, audioMode: ClipAudioMode) {
     if (!result) return;
     setPreparingCreative(true);
@@ -654,10 +854,16 @@ export default function ClipExtractionPage({
       const file = new File([], result.fileName, { type: 'video/mp4', lastModified: Date.now() });
       let audioFile: File | undefined;
       let requiredImageFile: File | undefined;
+      let audioDurationSeconds: number | undefined;
       if (audioMode !== 'none') {
         const response = await fetch('/api/clips/prepare-audio-assets', {
           method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ outputId: result.outputId }),
+          body: JSON.stringify({
+            outputId: result.outputId,
+            sourceId,
+            audioStartSeconds,
+            audioEndSeconds,
+          }),
         });
         if (!response.ok) throw new Error(await readApiError(response, '音频准备失败'));
         const assets = await response.json();
@@ -669,10 +875,11 @@ export default function ClipExtractionPage({
         const [audioBlob, imageBlob] = await Promise.all([audioResponse.blob(), imageResponse.blob()]);
         audioFile = new File([audioBlob], String(assets.audio?.fileName || '镜头原声.mp3'), { type: 'audio/mpeg', lastModified: Date.now() });
         requiredImageFile = new File([imageBlob], String(assets.image?.fileName || '音频辅助图.jpg'), { type: 'image/jpeg', lastModified: Date.now() });
+        audioDurationSeconds = Number(assets.audio?.durationSeconds) || Math.max(0, audioEndSeconds - audioStartSeconds);
       }
       sourceRef.current = null;
       resultRef.current = null;
-      onUseInCreative({ file, previewUrl: result.url, serverMediaToken: result.outputId, audioMode, audioFile, requiredImageFile }, mode);
+      onUseInCreative({ file, previewUrl: result.url, serverMediaToken: result.outputId, audioMode, audioFile, requiredImageFile, audioDurationSeconds }, mode);
       void cleanupTemporaryFiles(sourceId);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '载入视频创作失败。');
@@ -686,6 +893,12 @@ export default function ClipExtractionPage({
   const startPercent = source?.durationSeconds ? (startSeconds / source.durationSeconds) * 100 : 0;
   const endPercent = source?.durationSeconds ? (endSeconds / source.durationSeconds) * 100 : 0;
   const currentPercent = source?.durationSeconds ? (currentSeconds / source.durationSeconds) * 100 : 0;
+  const audioZoomDuration = Math.max(0.001, audioZoomEnd - audioZoomStart);
+  const audioStartPercent = ((audioStartSeconds - audioZoomStart) / audioZoomDuration) * 100;
+  const audioEndPercent = ((audioEndSeconds - audioZoomStart) / audioZoomDuration) * 100;
+  const audioCurrentPercent = ((audioCurrentSeconds - audioZoomStart) / audioZoomDuration) * 100;
+  const waveformWidthPercent = source?.durationSeconds ? (source.durationSeconds / audioZoomDuration) * 100 : 100;
+  const waveformLeftPercent = -(audioZoomStart / audioZoomDuration) * 100;
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#eef3f8] text-slate-900">
       <div className="pointer-events-none absolute inset-x-0 top-14 h-[420px] bg-[radial-gradient(circle_at_15%_10%,rgba(6,182,212,0.12),transparent_34%),radial-gradient(circle_at_85%_20%,rgba(139,92,246,0.12),transparent_34%)]" />
@@ -791,7 +1004,16 @@ export default function ClipExtractionPage({
                 <div className="flex items-center gap-2 text-sm font-black text-emerald-700"><Check className="size-4" />截取完成</div>
                 <video ref={resultVideoRef} src={result.url} controls playsInline className="mt-3 aspect-video w-full rounded-xl bg-black object-contain" />
                 <div className="mt-2 text-xs font-bold text-slate-500">{formatTime(result.startSeconds)} 至 {formatTime(result.endSeconds)} · {formatSize(result.size)}</div>
-                <button type="button" onClick={() => { setSelectedAudioMode('none'); setShowModePicker(true); }} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-black text-white hover:bg-emerald-700"><Play className="size-4 fill-current" />进入视频创作</button>
+                <button type="button" onClick={() => {
+                  setSelectedAudioMode('none');
+                  setAudioStartSeconds(result.startSeconds);
+                  setAudioEndSeconds(result.endSeconds);
+                  setAudioCurrentSeconds(result.startSeconds);
+                  setActiveAudioLine('end');
+                  setPreviewingAudio(false);
+                  zoomAudioAround(result.startSeconds, result.endSeconds);
+                  setShowModePicker(true);
+                }} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-black text-white hover:bg-emerald-700"><Play className="size-4 fill-current" />进入视频创作</button>
                 <a href={result.url} download={result.fileName} className="mt-2 flex h-9 items-center justify-center gap-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50"><Download className="size-4" />下载到电脑</a>
               </section>}
             </aside>
@@ -825,9 +1047,9 @@ export default function ClipExtractionPage({
         </section>
       </div>}
 
-      {showModePicker && <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !preparingCreative) setShowModePicker(false); }}>
-        <div className="my-5 w-full max-w-xl overflow-hidden rounded-3xl bg-white shadow-2xl">
-          <div className="flex items-start justify-between bg-slate-950 px-6 py-5 text-white"><div><h2 className="text-xl font-black">进入视频创作</h2><p className="mt-1 text-sm text-slate-400">原视频只进入左侧反推，右侧不会上传原视频。</p></div><button type="button" disabled={preparingCreative} onClick={() => setShowModePicker(false)} className="rounded-full bg-white/10 p-2 text-slate-300 hover:bg-white/20"><X className="size-5" /></button></div>
+      {showModePicker && <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !preparingCreative) { audioPreviewRef.current?.pause(); setPreviewingAudio(false); setShowModePicker(false); } }}>
+        <div className={cn('my-5 w-full overflow-hidden rounded-3xl bg-white shadow-2xl', selectedAudioMode === 'none' ? 'max-w-xl' : 'max-w-3xl')}>
+          <div className="flex items-start justify-between bg-slate-950 px-6 py-5 text-white"><div><h2 className="text-xl font-black">进入视频创作</h2><p className="mt-1 text-sm text-slate-400">原视频只进入左侧反推，右侧不会上传原视频。</p></div><button type="button" disabled={preparingCreative} onClick={() => { audioPreviewRef.current?.pause(); setPreviewingAudio(false); setShowModePicker(false); }} className="rounded-full bg-white/10 p-2 text-slate-300 hover:bg-white/20"><X className="size-5" /></button></div>
           <div className="space-y-5 p-6">
             <div><div className="mb-2 text-sm font-black text-slate-800">1. 创作方式</div><div className="grid grid-cols-2 gap-2">
               <button type="button" disabled={preparingCreative} onClick={() => setSelectedCreativeMode('direct')} className={cn('rounded-xl border-2 p-3 text-left transition', selectedCreativeMode === 'direct' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 hover:border-emerald-200')}><div className="flex items-center gap-2 font-black text-slate-900"><Sparkles className="size-4 text-emerald-600" />直接反推</div><div className="mt-1 text-xs text-slate-500">完整复刻镜头与动作</div></button>
@@ -838,8 +1060,54 @@ export default function ClipExtractionPage({
                 ['none', '不使用音频', '保持原来的创作流程，不生成MP3'],
                 ['original', '沿用原声音频', '自动提取MP3，成片完全使用原台词和节奏'],
                 ['voice', '参考原音色说新台词', '自动提取MP3，新台词从“额外调整”读取'],
-              ] as const).map(([value, title, detail]) => <button key={value} type="button" disabled={preparingCreative} onClick={() => setSelectedAudioMode(value)} className={cn('flex w-full items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition', selectedAudioMode === value ? 'border-cyan-500 bg-cyan-50' : 'border-slate-200 hover:border-cyan-200')}><span className={cn('size-4 shrink-0 rounded-full border-2', selectedAudioMode === value ? 'border-cyan-600 bg-cyan-600 shadow-[inset_0_0_0_3px_white]' : 'border-slate-300')} /><span><span className="block text-sm font-black text-slate-900">{title}</span><span className="mt-0.5 block text-xs text-slate-500">{detail}</span></span></button>)}
+              ] as const).map(([value, title, detail]) => <button key={value} type="button" disabled={preparingCreative} onClick={() => { setSelectedAudioMode(value); if (value === 'none') { audioPreviewRef.current?.pause(); setPreviewingAudio(false); } }} className={cn('flex w-full items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition', selectedAudioMode === value ? 'border-cyan-500 bg-cyan-50' : 'border-slate-200 hover:border-cyan-200')}><span className={cn('size-4 shrink-0 rounded-full border-2', selectedAudioMode === value ? 'border-cyan-600 bg-cyan-600 shadow-[inset_0_0_0_3px_white]' : 'border-slate-300')} /><span><span className="block text-sm font-black text-slate-900">{title}</span><span className="mt-0.5 block text-xs text-slate-500">{detail}</span></span></button>)}
             </div></div>
+            {selectedAudioMode !== 'none' && source && <section className="rounded-2xl border border-violet-200 bg-violet-50/50 p-4">
+              <audio ref={audioPreviewRef} src={source.url} preload="metadata" onTimeUpdate={handleAudioPreviewTimeUpdate} onPause={() => setPreviewingAudio(false)} onEnded={() => setPreviewingAudio(false)} />
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div><div className="text-sm font-black text-slate-900">3. 精细截取MP3</div><div className="mt-1 text-xs text-slate-500">画面范围和MP3范围彼此独立。点击开始线或结束线后，用键盘左右键逐帧调整。</div></div>
+                <button type="button" onClick={() => { const nextStart = result?.startSeconds || 0; const nextEnd = result?.endSeconds || 0; setAudioStartSeconds(nextStart); setAudioEndSeconds(nextEnd); setActiveAudioLine('end'); seekAudio(nextEnd); zoomAudioAround(nextStart, nextEnd); }} className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-black text-violet-700 hover:bg-violet-50">跟随画面范围</button>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <span className="shrink-0 text-[11px] font-black text-slate-500">快速选择</span>
+                <div className="grid flex-1 grid-cols-5 gap-1.5">
+                  {[1, 2, 3, 4, 5].map((count) => <button key={count} type="button" disabled={audioShotLoading > 0} onClick={() => void chooseAudioShotCount(count)} className="h-8 rounded-lg border border-violet-100 bg-white text-[11px] font-black text-violet-700 hover:border-violet-300 disabled:opacity-50">{audioShotLoading === count ? <LoaderCircle className="mx-auto size-3.5 animate-spin" /> : `前${count}镜`}</button>)}
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => { setActiveAudioLine('start'); requestAnimationFrame(() => audioTimelineRef.current?.focus()); }} className={cn('rounded-xl border-2 px-3 py-2 text-left', activeAudioLine === 'start' ? 'border-fuchsia-500 bg-white' : 'border-transparent bg-white/70')}><span className="block text-[10px] font-black text-fuchsia-600">音频开始</span><span className="font-mono text-sm font-black text-slate-800">{formatTimecode(audioStartSeconds, source.fps || 30)}</span><span className="ml-2 text-[10px] text-slate-400">{audioStartSeconds.toFixed(3)}秒</span></button>
+                <button type="button" onClick={() => { setActiveAudioLine('end'); requestAnimationFrame(() => audioTimelineRef.current?.focus()); }} className={cn('rounded-xl border-2 px-3 py-2 text-left', activeAudioLine === 'end' ? 'border-violet-500 bg-white' : 'border-transparent bg-white/70')}><span className="block text-[10px] font-black text-violet-600">音频结束</span><span className="font-mono text-sm font-black text-slate-800">{formatTimecode(audioEndSeconds, source.fps || 30)}</span><span className="ml-2 text-[10px] text-slate-400">{audioEndSeconds.toFixed(3)}秒</span></button>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3 text-[10px] font-bold text-slate-500"><span>当前显示 {formatTime(audioZoomStart)}—{formatTime(audioZoomEnd)}</span><span className="flex gap-1.5"><button type="button" onClick={() => zoomAudioAround(audioStartSeconds, audioEndSeconds)} className="rounded-md bg-violet-100 px-2 py-1 text-violet-700">放大到选区</button><button type="button" onClick={() => { setAudioZoomStart(0); setAudioZoomEnd(source.durationSeconds); }} className="rounded-md bg-white px-2 py-1 text-slate-600">查看全片</button></span></div>
+              <div
+                ref={audioTimelineRef}
+                role="slider"
+                tabIndex={0}
+                aria-label="MP3精细截取范围"
+                aria-valuetext={`${formatTimecode(audioStartSeconds, source.fps || 30)} 至 ${formatTimecode(audioEndSeconds, source.fps || 30)}`}
+                onKeyDown={handleAudioTimelineKeyDown}
+                onPointerDown={beginAudioLineDrag}
+                onPointerMove={continueAudioLineDrag}
+                onPointerUp={endAudioLineDrag}
+                onPointerCancel={endAudioLineDrag}
+                className="relative mt-3 h-24 touch-none select-none overflow-hidden rounded-xl border border-violet-200 bg-white outline-none ring-violet-300 focus:ring-2"
+              >
+                {audioWaveformLoading ? <div className="absolute inset-0 flex items-center justify-center gap-2 text-xs font-bold text-violet-500"><LoaderCircle className="size-4 animate-spin" />正在生成轻量波形…</div> : audioWaveformUrl ? <img src={audioWaveformUrl} alt="音频波形" draggable={false} className="pointer-events-none absolute top-0 h-full max-w-none opacity-80" style={{ width: `${waveformWidthPercent}%`, left: `${waveformLeftPercent}%` }} /> : <div className="absolute inset-0 grid place-items-center text-xs font-bold text-slate-400">波形不可用，仍可通过播放和逐帧调整</div>}
+                <div className="pointer-events-none absolute inset-y-0 left-0 bg-slate-900/25" style={{ width: `${Math.max(0, Math.min(100, audioStartPercent))}%` }} />
+                <div className="pointer-events-none absolute inset-y-0 right-0 bg-slate-900/25" style={{ width: `${Math.max(0, Math.min(100, 100 - audioEndPercent))}%` }} />
+                <div className="pointer-events-none absolute inset-y-0 bg-violet-400/10" style={{ left: `${Math.max(0, Math.min(100, audioStartPercent))}%`, width: `${Math.max(0, Math.min(100, audioEndPercent) - Math.max(0, audioStartPercent))}%` }} />
+                {audioCurrentPercent >= 0 && audioCurrentPercent <= 100 && <div className="pointer-events-none absolute inset-y-0 z-20 w-0.5 bg-slate-900" style={{ left: `${audioCurrentPercent}%` }} />}
+                <div className={cn('pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 bg-fuchsia-500', activeAudioLine === 'start' && 'shadow-[0_0_0_2px_white]')} style={{ left: `${Math.max(0, Math.min(100, audioStartPercent))}%` }}><span className="absolute -top-1 left-1/2 size-4 -translate-x-1/2 rounded-full border-2 border-white bg-fuchsia-500" /></div>
+                <div className={cn('pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 bg-violet-600', activeAudioLine === 'end' && 'shadow-[0_0_0_2px_white]')} style={{ left: `${Math.max(0, Math.min(100, audioEndPercent))}%` }}><span className="absolute -top-1 left-1/2 size-4 -translate-x-1/2 rounded-full border-2 border-white bg-violet-600" /></div>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button type="button" onClick={previewAudioRange} className={cn('flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-black', previewingAudio ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-violet-200 bg-white text-violet-700')} >{previewingAudio ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 fill-current" />}{previewingAudio ? '停止试听' : '试听MP3范围'}</button>
+                <button type="button" onClick={() => moveAudioLine('start', audioPreviewRef.current?.currentTime || 0)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-slate-600">当前播放点设为开始</button>
+                <button type="button" onClick={() => moveAudioLine('end', audioPreviewRef.current?.currentTime || 0)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-slate-600">当前播放点设为结束</button>
+                <span className="ml-auto text-[11px] font-bold text-slate-500">{Math.round(source.fps || 30)}fps · ←/→ 1帧 · Shift+←/→ 10帧 · 空格试听</span>
+              </div>
+              <div className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-[11px] font-bold leading-5 text-slate-500">{selectedAudioMode === 'original' ? `沿用原声：成片时长会按这段MP3自动设为 ${Math.max(1, Math.ceil(audioEndSeconds - audioStartSeconds))} 秒，画面仍只参考左侧截取的镜头。` : '参考音色：这段MP3只提供音色，不改变画面或成片时长。'}</div>
+            </section>}
             <button type="button" disabled={preparingCreative} onClick={() => void useInCreative(selectedCreativeMode, selectedAudioMode)} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-60">{preparingCreative ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4 fill-current" />}{preparingCreative ? (selectedAudioMode === 'none' ? '正在载入视频…' : '正在提取音频并载入…') : '进入视频创作'}</button>
           </div>
         </div>

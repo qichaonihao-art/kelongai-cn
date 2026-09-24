@@ -139,6 +139,7 @@ interface CreativeCreationPageProps {
     audioMode: ClipAudioMode;
     audioFile?: File;
     requiredImageFile?: File;
+    audioDurationSeconds?: number;
     token: number;
   } | null;
   onIncomingClipConsumed?: () => void;
@@ -1778,6 +1779,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [seedanceWatermark, setSeedanceWatermark] = useState(() => seedanceManualPreferenceRef.current.watermark);
   const [seedanceReferences, setSeedanceReferences] = useState<SeedanceReferenceFile[]>([]);
   const [clipAudioMode, setClipAudioMode] = useState<ClipAudioMode>('none');
+  const [clipAudioDurationSeconds, setClipAudioDurationSeconds] = useState<number | null>(null);
   const [playingAudioReferenceId, setPlayingAudioReferenceId] = useState<string | null>(null);
   const [audioReferenceDurations, setAudioReferenceDurations] = useState<Record<string, number>>({});
   const [videoEditTarget, setVideoEditTarget] = useState('人物手中或场景中出现的原挂画/装饰画');
@@ -1993,6 +1995,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
     switchReverseMode(incomingClip.mode);
     setClipAudioMode(incomingClip.audioMode);
+    setClipAudioDurationSeconds(Number(incomingClip.audioDurationSeconds) > 0 ? Number(incomingClip.audioDurationSeconds) : null);
     const previewUrl = incomingClip.previewUrl;
     setSelectedMedia((previous) => {
       if (previous) URL.revokeObjectURL(previous.previewUrl);
@@ -2922,7 +2925,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       // 同步只取时长，不碰 seedanceRatio。
       const sourceDuration = await readVideoDuration(sourceVideo.file, sourceVideo.serverMediaToken ? sourceVideo.previewUrl : undefined);
       sourceDurationSeconds = Math.round(sourceDuration);
-      durationSeconds = extractRequestedVideoDurationFromText(additionalChange) ?? sourceDurationSeconds;
+      const requestedDuration = extractRequestedVideoDurationFromText(additionalChange);
+      durationSeconds = activeClipAudioMode === 'original' && clipAudioDurationSeconds
+        ? Math.max(1, Math.ceil(clipAudioDurationSeconds))
+        : requestedDuration ?? sourceDurationSeconds;
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : '无法读取源视频时长，请更换视频后重试。');
       return;
@@ -3198,6 +3204,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   function clearSeedanceReferences() {
     stopSeedanceAudioPreview();
     setClipAudioMode('none');
+    setClipAudioDurationSeconds(null);
     setAudioReferenceDurations({});
     setSeedanceReferences((previous) => {
       previous.forEach((item) => {
@@ -3836,6 +3843,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   function clearClipAudioFlow() {
     stopSeedanceAudioPreview();
     setClipAudioMode('none');
+    setClipAudioDurationSeconds(null);
     setSeedancePrompt((previous) => appendClipAudioDirective(previous, 'none', []));
     setSeedanceReferences((previous) => previous.filter((item) => {
       const managed = item.source === 'clip-audio' || item.source === 'clip-required-image';

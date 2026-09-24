@@ -1350,6 +1350,7 @@ async function handleClipTrim(req, res) {
 async function handlePrepareClipAudioAssets(req, res) {
   const body = await readRequestBody(req);
   const outputId = normalizeClipSourceId(body?.outputId);
+  const sourceId = normalizeClipSourceId(body?.sourceId);
   const clipPath = getClipOutputPath(outputId);
   if (!clipPath || !existsSync(clipPath)) {
     sendJson(res, 404, { error: '截取视频已过期，请重新截取后再试' });
@@ -1360,9 +1361,27 @@ async function handlePrepareClipAudioAssets(req, res) {
   const imagePath = path.join(UPLOAD_TEMP_DIR, `${outputId}_clip_audio_cover.jpg`);
   try {
     await ensureVideoCompressionTools();
+    let audioInputPath = clipPath;
+    let audioStartSeconds = 0;
+    let audioEndSeconds = 0;
+    if (sourceId) {
+      const sourcePath = getClipSourcePath(sourceId);
+      if (!sourcePath || !existsSync(sourcePath)) throw new Error('音频源视频已过期，请重新上传');
+      const sourceMetadata = await probeVideoMetadata(sourcePath);
+      audioStartSeconds = Math.max(0, Number(body?.audioStartSeconds) || 0);
+      audioEndSeconds = Math.min(sourceMetadata.durationSeconds, Number(body?.audioEndSeconds) || 0);
+      const audioDuration = audioEndSeconds - audioStartSeconds;
+      if (audioDuration < 0.1) throw new Error('音频截取范围必须大于0.1秒');
+      if (audioDuration > CLIP_OUTPUT_MAX_DURATION_SECONDS + 0.01) throw new Error('单次最多提取60秒音频');
+      audioInputPath = sourcePath;
+    }
+    const audioFilter = sourceId
+      ? `atrim=start=${audioStartSeconds}:end=${audioEndSeconds},asetpts=N/SR/TB`
+      : 'asetpts=N/SR/TB';
     await execFileAsync('ffmpeg', [
-      '-y', '-i', clipPath,
+      '-y', '-i', audioInputPath,
       '-map', '0:a:0', '-vn',
+      '-af', audioFilter,
       '-c:a', 'libmp3lame', '-b:a', '192k',
       audioPath,
     ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
@@ -1387,6 +1406,9 @@ async function handlePrepareClipAudioAssets(req, res) {
         url: `/uploads/${path.basename(audioPath)}`,
         size: audioInfo.size,
         contentType: 'audio/mpeg',
+        startSeconds: sourceId ? audioStartSeconds : 0,
+        endSeconds: sourceId ? audioEndSeconds : undefined,
+        durationSeconds: sourceId ? Math.round((audioEndSeconds - audioStartSeconds) * 1000) / 1000 : undefined,
       },
       image: {
         fileName: `音频辅助图_${outputId.slice(0, 6)}.jpg`,
@@ -1402,6 +1424,38 @@ async function handlePrepareClipAudioAssets(req, res) {
       error: /matches no streams|does not contain any stream|0:a:0/i.test(message)
         ? '这个镜头没有可提取的音频，请选择“不使用音频”后继续'
         : '音频和辅助图片生成失败，请重新截取后再试',
+    });
+  }
+}
+
+async function handleClipAudioWaveform(req, res) {
+  const body = await readRequestBody(req);
+  const sourceId = normalizeClipSourceId(body?.sourceId);
+  const sourcePath = getClipSourcePath(sourceId);
+  if (!sourcePath || !existsSync(sourcePath)) {
+    sendJson(res, 404, { error: '源视频已过期，请重新上传' });
+    return;
+  }
+  const waveformPath = path.join(UPLOAD_TEMP_DIR, `${sourceId}_clip_waveform.png`);
+  try {
+    await ensureVideoCompressionTools();
+    if (!existsSync(waveformPath)) {
+      await execFileAsync('ffmpeg', [
+        '-y', '-i', sourcePath,
+        '-filter_complex', 'aformat=channel_layouts=mono,showwavespic=s=1200x160:colors=7c3aed',
+        '-frames:v', '1',
+        waveformPath,
+      ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
+    }
+    scheduleClipMediaCleanup(waveformPath);
+    sendJson(res, 200, { ok: true, url: `/uploads/${path.basename(waveformPath)}` });
+  } catch (error) {
+    await unlink(waveformPath).catch(() => {});
+    const message = String(error?.message || '');
+    sendJson(res, 400, {
+      error: /matches no streams|does not contain any stream|0:a|showwavespic/i.test(message)
+        ? '这个视频没有可显示的音轨'
+        : '音频波形生成失败，请稍后重试',
     });
   }
 }
@@ -1470,6 +1524,7 @@ async function handleClipCleanup(req, res) {
   if (outputId) targets.push(path.join(UPLOAD_TEMP_DIR, `${outputId}_clip.mp4`));
   if (outputId) targets.push(path.join(UPLOAD_TEMP_DIR, `${outputId}_clip_audio.mp3`));
   if (outputId) targets.push(path.join(UPLOAD_TEMP_DIR, `${outputId}_clip_audio_cover.jpg`));
+  if (sourceId) targets.push(path.join(UPLOAD_TEMP_DIR, `${sourceId}_clip_waveform.png`));
 
   await Promise.all(targets.map((target) => unlink(target).catch(() => {})));
   if (sourceId) clipSourceMimeTypes.delete(`${sourceId}_clip_source`);
@@ -20906,6 +20961,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/clips/prepare-audio-assets') {
     await handlePrepareClipAudioAssets(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/clips/audio-waveform') {
+    await handleClipAudioWaveform(req, res);
     return;
   }
 

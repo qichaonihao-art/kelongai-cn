@@ -68,6 +68,7 @@ export default function App() {
     audioMode: ClipAudioMode;
     audioFile?: File;
     requiredImageFile?: File;
+    audioDurationSeconds?: number;
     token: number;
   } | null>(null);
 
