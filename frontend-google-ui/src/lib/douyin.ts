@@ -196,10 +196,10 @@ function addVideoCandidate(
   seen: Set<string>,
   rawUrl: unknown,
   source: string,
-  meta: Partial<DouyinDownloadCandidate> = {},
+  meta: Partial<DouyinDownloadCandidate> & { trustedVideoField?: boolean } = {},
 ) {
   const url = normalizeMediaUrl(rawUrl);
-  if (!url || !looksLikeVideoUrl(url) || seen.has(url)) return;
+  if (!url || (!meta.trustedVideoField && !looksLikeVideoUrl(url)) || seen.has(url)) return;
   seen.add(url);
   candidates.push({
     url,
@@ -255,6 +255,16 @@ function extractCandidatesFromData(data: any): DouyinDownloadCandidate[] {
   const video = detail.video || data?.video || {};
   const candidates: DouyinDownloadCandidate[] = [];
   const seen = new Set<string>();
+
+  // Video Channels playback URLs often have no media extension and therefore
+  // cannot be recognized by the Douyin/Kuaishou URL heuristics below. These
+  // fields come from our own normalized extraction endpoint, so their meaning
+  // is explicit and they can be accepted without guessing from the hostname.
+  addVideoCandidate(candidates, seen, data?.originVideoUrl, 'data.originVideoUrl', { trustedVideoField: true });
+  addVideoCandidate(candidates, seen, data?.videoUrl, 'data.videoUrl', { trustedVideoField: true });
+  for (const url of Array.isArray(data?.videoUrls) ? data.videoUrls : []) {
+    addVideoCandidate(candidates, seen, url, 'data.videoUrls', { trustedVideoField: true });
+  }
 
   for (const url of video.play_addr_h264?.url_list || []) {
     addVideoCandidate(candidates, seen, url, 'video.play_addr_h264', { hasAudio: true });

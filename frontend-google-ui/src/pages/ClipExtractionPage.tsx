@@ -94,7 +94,7 @@ function formatSize(bytes: number) {
 
 async function readApiError(response: Response, fallback: string) {
   const data = await response.json().catch(() => ({}));
-  return String(data?.error || fallback);
+  return String(data?.message || data?.error || fallback);
 }
 
 export default function ClipExtractionPage({

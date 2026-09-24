@@ -96,7 +96,12 @@ const TEAM_TIMELINE_FILE = path.join(RUNTIME_STATE_DIR, 'team-timeline.json');
 const CREATIVE_FEEDING_SETTINGS_FILE = path.join(RUNTIME_STATE_DIR, 'creative-feeding-settings.json');
 const CREATIVE_OPENING_LIBRARY_FILE = path.join(RUNTIME_STATE_DIR, 'creative-opening-library.json');
 const CREATIVE_COPY_LIBRARY_FILE = path.join(RUNTIME_STATE_DIR, 'creative-copy-library.json');
-const WECHAT_CHANNEL_CONFIG_FILE = path.join(RUNTIME_STATE_DIR, 'wechat-channel-config.json');
+const LEGACY_WECHAT_CHANNEL_CONFIG_FILE = path.join(RUNTIME_STATE_DIR, 'wechat-channel-config.json');
+// Keep credentials outside the tracked runtime snapshot so a code update or
+// working-tree cleanup cannot silently erase a Cookie saved from the page.
+const WECHAT_CHANNEL_CONFIG_FILE = path.resolve(
+  process.env.WECHAT_CHANNEL_CONFIG_FILE || path.join(RUNTIME_STATE_DIR, 'wechat-channel-config.local.json'),
+);
 const VOLC_SPEAKER_REMOTE_STATUS_CACHE_TTL_MS = 15 * 1000;
 const COLLECTION_DB_PATH = path.join(RUNTIME_STATE_DIR, 'collection.db');
 const MEDIA_TTL_MS = 30 * 60 * 1000;
@@ -1122,7 +1127,12 @@ async function readWechatChannelConfig() {
     const parsed = JSON.parse(await readFile(WECHAT_CHANNEL_CONFIG_FILE, 'utf8'));
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
-    return {};
+    try {
+      const legacy = JSON.parse(await readFile(LEGACY_WECHAT_CHANNEL_CONFIG_FILE, 'utf8'));
+      return legacy && typeof legacy === 'object' ? legacy : {};
+    } catch {
+      return {};
+    }
   }
 }
 
