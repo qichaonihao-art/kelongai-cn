@@ -17,6 +17,7 @@ export interface SeedanceReferenceFile {
   file: File;
   previewUrl?: string;
   fileName: string;
+  source?: 'manual' | 'reverse-image' | 'clip-audio' | 'clip-required-image';
 }
 
 interface CreativeConfigStatus {

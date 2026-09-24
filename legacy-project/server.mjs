@@ -1347,8 +1347,68 @@ async function handleClipTrim(req, res) {
   }
 }
 
+async function handlePrepareClipAudioAssets(req, res) {
+  const body = await readRequestBody(req);
+  const outputId = normalizeClipSourceId(body?.outputId);
+  const clipPath = getClipOutputPath(outputId);
+  if (!clipPath || !existsSync(clipPath)) {
+    sendJson(res, 404, { error: '截取视频已过期，请重新截取后再试' });
+    return;
+  }
+
+  const audioPath = path.join(UPLOAD_TEMP_DIR, `${outputId}_clip_audio.mp3`);
+  const imagePath = path.join(UPLOAD_TEMP_DIR, `${outputId}_clip_audio_cover.jpg`);
+  try {
+    await ensureVideoCompressionTools();
+    await execFileAsync('ffmpeg', [
+      '-y', '-i', clipPath,
+      '-map', '0:a:0', '-vn',
+      '-c:a', 'libmp3lame', '-b:a', '192k',
+      audioPath,
+    ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
+
+    // The image only satisfies Seedance's audio-upload requirement. Use a
+    // heavily blurred lower-frame crop so facial features cannot be retained.
+    await execFileAsync('ffmpeg', [
+      '-y', '-ss', '0.15', '-i', clipPath,
+      '-frames:v', '1',
+      '-vf', 'crop=iw:ih*0.22:0:ih*0.78,gblur=sigma=18,scale=512:512:force_original_aspect_ratio=increase,crop=512:512',
+      '-q:v', '3',
+      imagePath,
+    ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
+
+    const [audioInfo, imageInfo] = await Promise.all([stat(audioPath), stat(imagePath)]);
+    scheduleClipMediaCleanup(audioPath);
+    scheduleClipMediaCleanup(imagePath);
+    sendJson(res, 200, {
+      ok: true,
+      audio: {
+        fileName: `镜头原声_${outputId.slice(0, 6)}.mp3`,
+        url: `/uploads/${path.basename(audioPath)}`,
+        size: audioInfo.size,
+        contentType: 'audio/mpeg',
+      },
+      image: {
+        fileName: `音频辅助图_${outputId.slice(0, 6)}.jpg`,
+        url: `/uploads/${path.basename(imagePath)}`,
+        size: imageInfo.size,
+        contentType: 'image/jpeg',
+      },
+    });
+  } catch (error) {
+    await Promise.all([unlink(audioPath).catch(() => {}), unlink(imagePath).catch(() => {})]);
+    const message = String(error?.message || '');
+    sendJson(res, 400, {
+      error: /matches no streams|does not contain any stream|0:a:0/i.test(message)
+        ? '这个镜头没有可提取的音频，请选择“不使用音频”后继续'
+        : '音频和辅助图片生成失败，请重新截取后再试',
+    });
+  }
+}
+
 async function handleDetectFirstClipCut(req, res) {
   const body = await readRequestBody(req);
+  const requestedShotCount = Math.max(1, Math.min(5, Math.round(Number(body?.shotCount) || 1)));
   const sourcePath = getClipSourcePath(body?.sourceId);
   if (!sourcePath || !existsSync(sourcePath)) {
     sendJson(res, 404, { error: '源视频已过期，请重新上传' });
@@ -1360,7 +1420,7 @@ async function handleDetectFirstClipCut(req, res) {
     const scanDuration = Math.min(metadata.durationSeconds, 60);
     const { stderr } = await execFileAsync('ffmpeg', [
       '-hide_banner', '-ss', '0.35', '-i', sourcePath, '-t', String(scanDuration),
-      '-vf', "scale=320:-2,select='gt(scene,0.32)',showinfo", '-an', '-f', 'null', '-',
+      '-vf', "scale=320:-2,select='gt(scene,0.32)',showinfo", '-frames:v', String(requestedShotCount), '-an', '-f', 'null', '-',
     ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024 });
     const rawMatches = [...String(stderr || '').matchAll(/pts_time:([0-9.]+)/g)]
       .map((match) => Number(match[1]) + 0.35)
@@ -1370,14 +1430,14 @@ async function handleDetectFirstClipCut(req, res) {
     for (const value of rawMatches) {
       if (cutPoints.length && value - cutPoints[cutPoints.length - 1] < 0.6) continue;
       cutPoints.push(Math.round(value * 100) / 100);
-      if (cutPoints.length >= 5) break;
+      if (cutPoints.length >= requestedShotCount) break;
     }
     const shotEnds = [...cutPoints];
     const scannedToVideoEnd = metadata.durationSeconds <= scanDuration + 0.1;
-    if (scannedToVideoEnd && shotEnds.length < 5 && (!shotEnds.length || metadata.durationSeconds - shotEnds[shotEnds.length - 1] >= 0.1)) {
+    if (scannedToVideoEnd && shotEnds.length < requestedShotCount && (!shotEnds.length || metadata.durationSeconds - shotEnds[shotEnds.length - 1] >= 0.1)) {
       shotEnds.push(Math.round(metadata.durationSeconds * 100) / 100);
     }
-    const shots = shotEnds.slice(0, 5).map((endSeconds, index) => {
+    const shots = shotEnds.slice(0, requestedShotCount).map((endSeconds, index) => {
       const startSeconds = index === 0 ? 0 : shotEnds[index - 1];
       return {
         number: index + 1,
@@ -1386,14 +1446,14 @@ async function handleDetectFirstClipCut(req, res) {
         durationSeconds: Math.round((endSeconds - startSeconds) * 100) / 100,
       };
     });
-    const suggestedEnd = cutPoints[0] || Math.min(15, metadata.durationSeconds);
+    const suggestedEnd = shots[Math.min(requestedShotCount, shots.length) - 1]?.endSeconds || Math.min(15, metadata.durationSeconds);
     sendJson(res, 200, {
       ok: true,
       detected: cutPoints.length > 0,
       endSeconds: Math.round(suggestedEnd * 100) / 100,
       shots,
       message: cutPoints.length > 0
-        ? `已识别开头 ${shots.length} 个镜头，可直接选择截取前几个镜头`
+        ? `已识别前 ${shots.length} 个镜头，结束线已移动到 ${Math.round(suggestedEnd * 10) / 10} 秒`
         : `没有识别到明显切镜，已先取开头 ${Math.round(suggestedEnd * 10) / 10} 秒`,
     });
   } catch (error) {
@@ -1408,6 +1468,8 @@ async function handleClipCleanup(req, res) {
   const targets = [];
   if (sourceId) targets.push(getClipSourcePath(sourceId));
   if (outputId) targets.push(path.join(UPLOAD_TEMP_DIR, `${outputId}_clip.mp4`));
+  if (outputId) targets.push(path.join(UPLOAD_TEMP_DIR, `${outputId}_clip_audio.mp3`));
+  if (outputId) targets.push(path.join(UPLOAD_TEMP_DIR, `${outputId}_clip_audio_cover.jpg`));
 
   await Promise.all(targets.map((target) => unlink(target).catch(() => {})));
   if (sourceId) clipSourceMimeTypes.delete(`${sourceId}_clip_source`);
@@ -20839,6 +20901,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/clips/trim') {
     await handleClipTrim(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/clips/prepare-audio-assets') {
+    await handlePrepareClipAudioAssets(req, res);
     return;
   }
 

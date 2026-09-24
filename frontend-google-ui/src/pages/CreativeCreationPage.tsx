@@ -131,9 +131,20 @@ interface CreativeCreationPageProps {
   onNavigate: (page: ModuleId) => void;
   onSwitchToCopy?: () => void;
   onSwitchToClip?: () => void;
-  incomingClip?: { file: File; previewUrl: string; serverMediaToken: string; mode: 'direct' | 'replace'; token: number } | null;
+  incomingClip?: {
+    file: File;
+    previewUrl: string;
+    serverMediaToken: string;
+    mode: 'direct' | 'replace';
+    audioMode: ClipAudioMode;
+    audioFile?: File;
+    requiredImageFile?: File;
+    token: number;
+  } | null;
   onIncomingClipConsumed?: () => void;
 }
+
+type ClipAudioMode = 'none' | 'original' | 'voice';
 
 interface PersistedCreativeMessage {
   id: string;
@@ -798,6 +809,21 @@ interface ReverseSeedanceSyncSnapshot {
   referenceImages: SelectedCreativeMedia[];
   requestedDuration?: number;
   additionalChange?: string;
+  clipAudioMode?: ClipAudioMode;
+}
+
+const CLIP_AUDIO_DIRECTIVE_START = '【镜头截取音频要求】';
+const CLIP_AUDIO_DIRECTIVE_END = '【/镜头截取音频要求】';
+
+function appendClipAudioDirective(prompt: string, mode: ClipAudioMode, dialogueLines: string[]) {
+  const cleanPrompt = prompt
+    .replace(new RegExp(`\\n*${CLIP_AUDIO_DIRECTIVE_START}[\\s\\S]*?${CLIP_AUDIO_DIRECTIVE_END}`, 'g'), '')
+    .trim();
+  if (mode === 'none') return cleanPrompt;
+  const instruction = mode === 'original'
+    ? '最终视频必须使用 @音频1 作为完整成片音轨。人物说话内容、语速、停顿、情绪和节奏完全以 @音频1 为准，人物口型与音频精准同步。不得改写、重新配音、增删或替换音频中的台词。'
+    : `仅参考 @音频1 中说话人的音色、音质和说话特征，不得复用其中原有台词。人物必须说：“${dialogueLines.join('；')}”，并使用该参考音色生成声音，口型与新台词精准同步。`;
+  return `${cleanPrompt}\n\n${CLIP_AUDIO_DIRECTIVE_START}\n${instruction}\n${CLIP_AUDIO_DIRECTIVE_END}`;
 }
 
 function getSeedanceModelLabel(model: SeedanceModelId) {
@@ -906,11 +932,12 @@ ${PAINTING_WOOD_BAR_RULE}
 ${adjustmentText ? `本次额外调整：${adjustmentText}` : '本次没有额外调整，除替换挂画外，其余内容严格保持原视频。'}`;
 }
 
-function readVideoDuration(file: File): Promise<number> {
+function readVideoDuration(file: File, existingPreviewUrl?: string): Promise<number> {
   return new Promise((resolve, reject) => {
-    const previewUrl = URL.createObjectURL(file);
+    const shouldCreateUrl = !existingPreviewUrl;
+    const previewUrl = existingPreviewUrl || URL.createObjectURL(file);
     const video = document.createElement('video');
-    const cleanup = () => URL.revokeObjectURL(previewUrl);
+    const cleanup = () => { if (shouldCreateUrl) URL.revokeObjectURL(previewUrl); };
     video.preload = 'metadata';
     video.onloadedmetadata = () => {
       const duration = video.duration;
@@ -1750,6 +1777,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [seedanceGenerateAudio, setSeedanceGenerateAudio] = useState(() => seedanceManualPreferenceRef.current.generateAudio);
   const [seedanceWatermark, setSeedanceWatermark] = useState(() => seedanceManualPreferenceRef.current.watermark);
   const [seedanceReferences, setSeedanceReferences] = useState<SeedanceReferenceFile[]>([]);
+  const [clipAudioMode, setClipAudioMode] = useState<ClipAudioMode>('none');
+  const [playingAudioReferenceId, setPlayingAudioReferenceId] = useState<string | null>(null);
+  const [audioReferenceDurations, setAudioReferenceDurations] = useState<Record<string, number>>({});
   const [videoEditTarget, setVideoEditTarget] = useState('人物手中或场景中出现的原挂画/装饰画');
   const [videoEditAdjustments, setVideoEditAdjustments] = useState('');
   const [videoEditSourceDuration, setVideoEditSourceDuration] = useState<number | null>(null);
@@ -1938,6 +1968,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const seedancePromptRef = useRef<HTMLTextAreaElement>(null);
   const seedancePromptPreviewRef = useRef<HTMLDivElement>(null);
+  const seedanceAudioPreviewRef = useRef<HTMLAudioElement>(null);
   const additionalChangeRef = useRef<HTMLTextAreaElement>(null);
   const videoEditTargetRef = useRef<HTMLTextAreaElement>(null);
   const videoEditAdjustmentsRef = useRef<HTMLTextAreaElement>(null);
@@ -1961,6 +1992,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
     switchReverseMode(incomingClip.mode);
+    setClipAudioMode(incomingClip.audioMode);
     const previewUrl = incomingClip.previewUrl;
     setSelectedMedia((previous) => {
       if (previous) URL.revokeObjectURL(previous.previewUrl);
@@ -1972,9 +2004,98 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         serverMediaToken: incomingClip.serverMediaToken,
       };
     });
+    setSeedanceReferences((previous) => {
+      const retained = previous.filter((reference) => {
+        const isPreviousClipAsset = reference.source === 'clip-audio' || reference.source === 'clip-required-image';
+        if (isPreviousClipAsset && reference.previewUrl) URL.revokeObjectURL(reference.previewUrl);
+        return !isPreviousClipAsset;
+      });
+      if (incomingClip.audioMode === 'none' || !incomingClip.audioFile || !incomingClip.requiredImageFile) return retained;
+      return [
+        ...retained,
+        {
+          id: createMessageId('clip_required_image'),
+          kind: 'image',
+          file: incomingClip.requiredImageFile,
+          previewUrl: createMediaPreviewUrl(incomingClip.requiredImageFile),
+          fileName: incomingClip.requiredImageFile.name,
+          source: 'clip-required-image',
+        },
+        {
+          id: createMessageId('clip_audio'),
+          kind: 'audio',
+          file: incomingClip.audioFile,
+          previewUrl: createMediaPreviewUrl(incomingClip.audioFile),
+          fileName: incomingClip.audioFile.name,
+          source: 'clip-audio',
+        },
+      ];
+    });
+    if (incomingClip.audioMode !== 'none') {
+      setSeedanceTaskMode('generate');
+      setSeedanceGenerateAudio(true);
+      if (!String(seedanceModel).startsWith('doubao-seedance-')) {
+        setSeedanceModel('doubao-seedance-2-0-260128');
+        setSeedanceResolution('720p');
+      }
+    }
     setRequestError('');
     onIncomingClipConsumed?.();
   }, [incomingClip?.token]);
+
+  useEffect(() => {
+    const pending = seedanceReferences.filter((reference) => (
+      reference.kind === 'audio'
+      && reference.previewUrl
+      && !audioReferenceDurations[reference.id]
+    ));
+    if (pending.length === 0) return;
+    const probes = pending.map((reference) => {
+      const audio = document.createElement('audio');
+      const onLoaded = () => {
+        if (Number.isFinite(audio.duration) && audio.duration > 0) {
+          setAudioReferenceDurations((previous) => ({ ...previous, [reference.id]: audio.duration }));
+        }
+        audio.removeAttribute('src');
+      };
+      audio.preload = 'metadata';
+      audio.addEventListener('loadedmetadata', onLoaded, { once: true });
+      audio.src = reference.previewUrl || '';
+      return audio;
+    });
+    return () => probes.forEach((audio) => {
+      audio.removeAttribute('src');
+      audio.load();
+    });
+  }, [seedanceReferences, audioReferenceDurations]);
+
+  function stopSeedanceAudioPreview(reset = true) {
+    const player = seedanceAudioPreviewRef.current;
+    if (player) {
+      player.pause();
+      if (reset) player.currentTime = 0;
+    }
+    setPlayingAudioReferenceId(null);
+  }
+
+  function playSeedanceAudioPreview(reference: SeedanceReferenceFile, restart = true) {
+    if (reference.kind !== 'audio' || !reference.previewUrl) return;
+    const player = seedanceAudioPreviewRef.current;
+    if (!player) return;
+    if (player.src !== reference.previewUrl) player.src = reference.previewUrl;
+    if (restart) player.currentTime = 0;
+    void player.play().then(() => setPlayingAudioReferenceId(reference.id)).catch(() => {
+      setPlayingAudioReferenceId(null);
+    });
+  }
+
+  function toggleSeedanceAudioPreview(reference: SeedanceReferenceFile) {
+    if (playingAudioReferenceId === reference.id) {
+      stopSeedanceAudioPreview(false);
+      return;
+    }
+    playSeedanceAudioPreview(reference);
+  }
 
   function rememberManualSeedancePreference(patch: Partial<SeedanceManualPreference>) {
     const preference = { ...seedanceManualPreferenceRef.current, ...patch };
@@ -2788,12 +2909,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setRequestError('请先上传需要反推的视频。');
       return;
     }
+    const activeClipAudioMode: ClipAudioMode = sourceVideo.serverMediaToken ? clipAudioMode : 'none';
+    if (activeClipAudioMode === 'voice' && extractRequestedDialogueLines(additionalChange).length === 0) {
+      setRequestError('你选择了“参考原音色说新台词”，请在额外调整里明确写出人物要说的具体原话。');
+      scrollToRef(additionalChangeRef);
+      return;
+    }
     let sourceDurationSeconds: number;
     let durationSeconds: number;
     try {
       // 画幅不按源视频自适应：产品要求输出固定 9:16（用户明确指示比例不用管），
       // 同步只取时长，不碰 seedanceRatio。
-      const sourceDuration = await readVideoDuration(sourceVideo.file);
+      const sourceDuration = await readVideoDuration(sourceVideo.file, sourceVideo.serverMediaToken ? sourceVideo.previewUrl : undefined);
       sourceDurationSeconds = Math.round(sourceDuration);
       durationSeconds = extractRequestedVideoDurationFromText(additionalChange) ?? sourceDurationSeconds;
     } catch (error) {
@@ -2808,6 +2935,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       referenceImages: reverseMode === 'replace' && replaceImage ? [replaceImage] : [],
       requestedDuration: durationSeconds,
       additionalChange,
+      clipAudioMode: activeClipAudioMode,
     };
     lastReverseDialogueInputRef.current = additionalChange;
 
@@ -2843,6 +2971,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const snapshot = pendingReverseSeedanceSyncRef.current;
     pendingReverseSeedanceSyncRef.current = null;
     const activeMode = snapshot?.mode || reverseMode;
+    const activeClipAudioMode: ClipAudioMode = snapshot?.clipAudioMode
+      ?? (selectedMedia?.serverMediaToken ? clipAudioMode : 'none');
     // 人声标记必须从原始文本里取，不能用 strip 之后的输出——strip 已经把它删掉了。
     const hasSpeech = extractHumanSpeechMarker(latestAssistantText);
     // 台词同样从原始文本取（strip 之后标记就没了），供右侧框标绿用。
@@ -2872,9 +3002,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       ? ensureRequestedDialogueInFinalPrompt(cleanPrompt, requestedDialogueLines)
       : cleanPrompt;
     // 常规生成没有自动上传原视频；把镜头锁明确放在 Seedance 实际收到的提示词最前面。
-    setSeedancePrompt(activeMode === 'direct' || activeMode === 'replace'
+    const syncedPrompt = activeMode === 'direct' || activeMode === 'replace'
       ? `${SEEDANCE_SHOT_FIDELITY_LOCK}\n\n${promptWithRequiredDialogue}`
-      : promptWithRequiredDialogue);
+      : promptWithRequiredDialogue;
+    setSeedancePrompt(appendClipAudioDirective(syncedPrompt, activeClipAudioMode, requestedDialogueLines));
     setSeedanceDialogueLines(dialogueLines);
     if (dialogueLines.length > 0) setIsSeedancePromptEditing(false);
     setSeedanceReplaceHighlight(null);
@@ -2891,7 +3022,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     // nextGenerateAudio 为 null 表示不表态（历史记录、AI 未按格式输出、该模式不适用、H3 模型），
     // 保持用户设置；false 是明确的「关」。所以这里必须判 !== null，不能简写成 if (x)。
     const nextGenerateAudio = resolveAutoAudioSetting({ hasSpeech, explicitPreference: explicitAudio, mode: activeMode, model: seedanceModel });
-    if (nextGenerateAudio !== null) {
+    if (activeClipAudioMode !== 'none') {
+      setSeedanceGenerateAudio(true);
+    } else if (nextGenerateAudio !== null) {
       setSeedanceGenerateAudio(nextGenerateAudio);
     } else if (activeMode !== 'painting' && seedanceModel !== 'MiniMax-H3') {
       setSeedanceError('未能明确判断本条视频是否需要声音，已保留当前声音设置，请在生成前确认。');
@@ -3063,6 +3196,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   }
 
   function clearSeedanceReferences() {
+    stopSeedanceAudioPreview();
+    setClipAudioMode('none');
+    setAudioReferenceDurations({});
     setSeedanceReferences((previous) => {
       previous.forEach((item) => {
         if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
@@ -3572,6 +3708,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
     try {
       validateMediaFile(file);
+      clearClipAudioFlow();
       const isVideo = file.type.startsWith('video/');
       const kind: 'image' | 'video' = isVideo ? 'video' : 'image';
       const previewUrl = createMediaPreviewUrl(file);
@@ -3677,8 +3814,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         id: createMessageId('seedance_ref'),
         kind,
         file,
-        previewUrl: kind === 'audio' ? undefined : createMediaPreviewUrl(file),
+        previewUrl: createMediaPreviewUrl(file),
         fileName: file.name,
+        source: 'manual',
       });
     }
 
@@ -3695,17 +3833,29 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
+  function clearClipAudioFlow() {
+    stopSeedanceAudioPreview();
+    setClipAudioMode('none');
+    setSeedancePrompt((previous) => appendClipAudioDirective(previous, 'none', []));
+    setSeedanceReferences((previous) => previous.filter((item) => {
+      const managed = item.source === 'clip-audio' || item.source === 'clip-required-image';
+      if (managed && item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      return !managed;
+    }));
+  }
+
   function removeSeedanceReference(referenceId: string) {
-    setSeedanceReferences((previous) => {
-      const target = previous.find((item) => item.id === referenceId);
-      if (target?.previewUrl) {
-        URL.revokeObjectURL(target.previewUrl);
-      }
-      if (target?.kind === 'video' && seedanceTaskMode === 'video-edit-painting') {
-        setVideoEditSourceDuration(null);
-      }
-      return previous.filter((item) => item.id !== referenceId);
-    });
+    const target = seedanceReferences.find((item) => item.id === referenceId);
+    if (target?.source === 'clip-audio' || target?.source === 'clip-required-image') {
+      clearClipAudioFlow();
+      return;
+    }
+    if (target?.id === playingAudioReferenceId) stopSeedanceAudioPreview();
+    if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+    if (target?.kind === 'video' && seedanceTaskMode === 'video-edit-painting') {
+      setVideoEditSourceDuration(null);
+    }
+    setSeedanceReferences((previous) => previous.filter((item) => item.id !== referenceId));
   }
 
   function clearSelectedMedia() {
@@ -3713,6 +3863,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       URL.revokeObjectURL(selectedMedia.previewUrl);
     }
     setSelectedMedia(null);
+    clearClipAudioFlow();
     setRequestError("");
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -4728,13 +4879,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         file: image.file,
         previewUrl: createMediaPreviewUrl(image.file),
         fileName: image.fileName,
+        source: 'reverse-image' as const,
       }));
 
     setSeedanceReferences((previous) => {
+      const clipAssets = previous.filter((item) => item.source === 'clip-audio' || item.source === 'clip-required-image');
       previous.forEach((item) => {
-        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        if (!clipAssets.includes(item) && item.previewUrl) URL.revokeObjectURL(item.previewUrl);
       });
-      return nextReferences;
+      return [...nextReferences, ...clipAssets];
     });
   }
 
@@ -7303,28 +7456,40 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     />
                   )}
 
+                  <audio ref={seedanceAudioPreviewRef} className="hidden" onEnded={() => setPlayingAudioReferenceId(null)} />
+
                   {/* 已上传的参考素材列表（放在输入框底部内部） */}
                   {seedanceReferences.length > 0 && (
                     <div className="absolute bottom-2 left-2 right-2 z-20 flex flex-wrap gap-1.5">
-                      {seedanceReferences.map((reference) => (
+                      {seedanceReferences.map((reference, referenceIndex) => (
                         <div
                           key={reference.id}
-                          className="group flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/90 px-2 py-1 shadow-sm backdrop-blur-sm transition-colors hover:border-violet-200"
-                          title={reference.fileName}
+                          className={cn(
+                            "group flex items-center gap-1.5 rounded-lg border bg-white/90 px-2 py-1 shadow-sm backdrop-blur-sm transition-colors hover:border-violet-200",
+                            playingAudioReferenceId === reference.id ? "border-violet-400 ring-2 ring-violet-100" : "border-slate-200",
+                            reference.kind === 'audio' && "cursor-pointer",
+                          )}
+                          title={reference.kind === 'audio' ? '悬停试听；点击播放或暂停' : reference.fileName}
+                          onMouseEnter={() => { if (reference.kind === 'audio') playSeedanceAudioPreview(reference); }}
+                          onMouseLeave={() => { if (reference.kind === 'audio') stopSeedanceAudioPreview(); }}
+                          onClick={() => { if (reference.kind === 'audio') toggleSeedanceAudioPreview(reference); }}
                         >
                           <div className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded bg-slate-100 text-slate-400">
                             {reference.kind === 'image' && reference.previewUrl ? (
                               <img src={reference.previewUrl} alt={reference.fileName} className="size-full object-cover" />
                             ) : reference.kind === 'video' && reference.previewUrl ? (
                               <video src={reference.previewUrl} className="size-full object-cover" muted />
+                            ) : playingAudioReferenceId === reference.id ? (
+                              <Volume2 className="size-3 animate-pulse text-violet-600" />
                             ) : (
                               <Music className="size-3" />
                             )}
                           </div>
-                          <span className="max-w-[80px] truncate text-[10px] font-semibold text-slate-600">{reference.fileName}</span>
+                          <span className="max-w-[128px] truncate text-[10px] font-semibold text-slate-600">{reference.kind === 'audio' ? `${getAtReferenceLabel(reference, referenceIndex)} · ${reference.fileName}` : reference.fileName}</span>
+                          {reference.kind === 'audio' && audioReferenceDurations[reference.id] && <span className="text-[9px] font-bold text-slate-400">{formatVideoDuration(audioReferenceDurations[reference.id])}</span>}
                           <button
                             type="button"
-                            onClick={() => removeSeedanceReference(reference.id)}
+                            onClick={(event) => { event.stopPropagation(); removeSeedanceReference(reference.id); }}
                             className="flex size-4 items-center justify-center rounded text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
                             aria-label="移除参考素材"
                           >

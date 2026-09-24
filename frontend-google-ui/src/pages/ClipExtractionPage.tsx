@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { Check, Copy, Download, Film, KeyRound, Link2, LoaderCircle, Play, Scissors, Settings, ShieldCheck, Sparkles, Upload, WandSparkles, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, Download, Film, KeyRound, Link2, LoaderCircle, Play, Scissors, Settings, ShieldCheck, Sparkles, Upload, WandSparkles, X } from 'lucide-react';
 import HomeBackButton from '@/src/components/HomeBackButton';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import CreativeSubNav from '@/src/components/CreativeSubNav';
@@ -7,13 +7,23 @@ import { extractCpTranscript, extractCpTranscriptStream, resolveCpExtract, type 
 import { cn } from '@/src/lib/utils';
 
 export type ClipCreativeMode = 'direct' | 'replace';
+export type ClipAudioMode = 'none' | 'original' | 'voice';
+
+export interface ClipCreativePayload {
+  file: File;
+  previewUrl: string;
+  serverMediaToken: string;
+  audioMode: ClipAudioMode;
+  audioFile?: File;
+  requiredImageFile?: File;
+}
 
 interface ClipExtractionPageProps {
   onBack: () => void;
   onNavigate: (page: ModuleId) => void;
   onSwitchToVideo: () => void;
   onSwitchToCopy: () => void;
-  onUseInCreative: (clip: { file: File; previewUrl: string; serverMediaToken: string }, mode: ClipCreativeMode) => void;
+  onUseInCreative: (clip: ClipCreativePayload, mode: ClipCreativeMode) => void;
 }
 
 interface UploadedClipSource {
@@ -120,6 +130,7 @@ export default function ClipExtractionPage({
   const [trimming, setTrimming] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [detectedShots, setDetectedShots] = useState<DetectedShot[]>([]);
+  const [selectedShotCount, setSelectedShotCount] = useState(1);
   const [previewingRange, setPreviewingRange] = useState(false);
   const [currentSeconds, setCurrentSeconds] = useState(0);
   const [result, setResult] = useState<TrimmedClip | null>(null);
@@ -127,6 +138,8 @@ export default function ClipExtractionPage({
   const [error, setError] = useState('');
   const [showModePicker, setShowModePicker] = useState(false);
   const [preparingCreative, setPreparingCreative] = useState(false);
+  const [selectedCreativeMode, setSelectedCreativeMode] = useState<ClipCreativeMode>('direct');
+  const [selectedAudioMode, setSelectedAudioMode] = useState<ClipAudioMode>('none');
   const [sourceMode, setSourceMode] = useState<'link' | 'upload'>('link');
   const [linkInput, setLinkInput] = useState('');
   const [onlineLoading, setOnlineLoading] = useState(false);
@@ -202,6 +215,7 @@ export default function ClipExtractionPage({
     setEndSeconds(0);
     setCurrentSeconds(0);
     setDetectedShots([]);
+    setSelectedShotCount(1);
     setUploading(false);
     setNotice('');
     setError('');
@@ -226,8 +240,9 @@ export default function ClipExtractionPage({
     setEndSeconds(Math.min(15, next.durationSeconds));
     setCurrentSeconds(0);
     setDetectedShots([]);
+    setSelectedShotCount(1);
     setNotice(message);
-    void detectFirstCutForSource(next, true);
+    void detectFirstCutForSource(next, 1, true);
   }
 
   function uploadFile(file: File) {
@@ -266,7 +281,7 @@ export default function ClipExtractionPage({
       setUploadProgress(100);
       setOnlineResult(null);
       setTranscriptText('');
-      activateSource(next, '视频上传完成，正在自动识别开头前5个镜头…');
+      activateSource(next, '视频上传完成，正在识别第一个镜头…');
     };
     request.onerror = () => {
       uploadRequestRef.current = null;
@@ -346,7 +361,7 @@ export default function ClipExtractionPage({
       if (buffer.trim()) handleEvent(JSON.parse(buffer));
       if (!next) throw new Error('视频载入未完成，请重试或改用本地上传。');
       setOnlineResult(parsed);
-      activateSource(next, '在线视频已载入，正在自动识别开头前5个镜头…');
+      activateSource(next, '在线视频已载入，正在识别第一个镜头…');
     } catch (caught) {
       setNotice('');
       const message = caught instanceof Error ? caught.message : '视频解析失败，请重试或改用本地上传。';
@@ -521,15 +536,17 @@ export default function ClipExtractionPage({
     }
   }
 
-  async function detectFirstCutForSource(targetSource: UploadedClipSource, automatic = false) {
+  async function detectFirstCutForSource(targetSource: UploadedClipSource, shotCount = 1, automatic = false) {
+    const requestedCount = Math.max(1, Math.min(5, Math.round(shotCount)));
     setDetecting(true);
     setDetectedShots([]);
+    setSelectedShotCount(requestedCount);
     setError('');
     if (!automatic) setNotice('');
     try {
       const response = await fetch('/api/clips/detect-first-cut', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceId: targetSource.sourceId }),
+        body: JSON.stringify({ sourceId: targetSource.sourceId, shotCount: requestedCount }),
       });
       if (!response.ok) throw new Error(await readApiError(response, '自动识别失败'));
       const data = await response.json();
@@ -537,7 +554,8 @@ export default function ClipExtractionPage({
         ? data.shots.filter((item: DetectedShot) => Number.isFinite(Number(item?.endSeconds))).slice(0, 5)
         : [];
       setDetectedShots(shots);
-      const nextEnd = Math.max(0.1, Math.min(Number(data.endSeconds), targetSource.durationSeconds, 60));
+      const selectedShot = shots[Math.min(requestedCount, shots.length) - 1];
+      const nextEnd = Math.max(0.1, Math.min(Number(selectedShot?.endSeconds || data.endSeconds), targetSource.durationSeconds, 60));
       setStartSeconds(0);
       setEndSeconds(nextEnd);
       seekTo(nextEnd);
@@ -550,16 +568,8 @@ export default function ClipExtractionPage({
     }
   }
 
-  function detectFirstCut() {
-    if (source) void detectFirstCutForSource(source);
-  }
-
-  function selectFirstShots(shot: DetectedShot) {
-    const nextEnd = Math.min(60, shot.endSeconds, source?.durationSeconds || shot.endSeconds);
-    setStartSeconds(0);
-    setEndSeconds(nextEnd);
-    seekTo(nextEnd);
-    setNotice(`已选择前 ${shot.number} 个镜头，共 ${nextEnd.toFixed(1)} 秒，请点击“预览裁切片段”确认。`);
+  function detectFirstCut(shotCount = selectedShotCount) {
+    if (source) void detectFirstCutForSource(source, shotCount);
   }
 
   function timeFromTimelinePointer(clientX: number) {
@@ -635,16 +645,34 @@ export default function ClipExtractionPage({
     }
   }
 
-  async function useInCreative(mode: ClipCreativeMode) {
+  async function useInCreative(mode: ClipCreativeMode, audioMode: ClipAudioMode) {
     if (!result) return;
     setPreparingCreative(true);
     setError('');
     try {
       const sourceId = sourceRef.current?.sourceId;
       const file = new File([], result.fileName, { type: 'video/mp4', lastModified: Date.now() });
+      let audioFile: File | undefined;
+      let requiredImageFile: File | undefined;
+      if (audioMode !== 'none') {
+        const response = await fetch('/api/clips/prepare-audio-assets', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ outputId: result.outputId }),
+        });
+        if (!response.ok) throw new Error(await readApiError(response, '音频准备失败'));
+        const assets = await response.json();
+        const [audioResponse, imageResponse] = await Promise.all([
+          fetch(String(assets.audio?.url || ''), { credentials: 'include' }),
+          fetch(String(assets.image?.url || ''), { credentials: 'include' }),
+        ]);
+        if (!audioResponse.ok || !imageResponse.ok) throw new Error('音频附件载入失败，请重新截取后再试。');
+        const [audioBlob, imageBlob] = await Promise.all([audioResponse.blob(), imageResponse.blob()]);
+        audioFile = new File([audioBlob], String(assets.audio?.fileName || '镜头原声.mp3'), { type: 'audio/mpeg', lastModified: Date.now() });
+        requiredImageFile = new File([imageBlob], String(assets.image?.fileName || '音频辅助图.jpg'), { type: 'image/jpeg', lastModified: Date.now() });
+      }
       sourceRef.current = null;
       resultRef.current = null;
-      onUseInCreative({ file, previewUrl: result.url, serverMediaToken: result.outputId }, mode);
+      onUseInCreative({ file, previewUrl: result.url, serverMediaToken: result.outputId, audioMode, audioFile, requiredImageFile }, mode);
       void cleanupTemporaryFiles(sourceId);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '载入视频创作失败。');
@@ -658,17 +686,6 @@ export default function ClipExtractionPage({
   const startPercent = source?.durationSeconds ? (startSeconds / source.durationSeconds) * 100 : 0;
   const endPercent = source?.durationSeconds ? (endSeconds / source.durationSeconds) * 100 : 0;
   const currentPercent = source?.durationSeconds ? (currentSeconds / source.durationSeconds) * 100 : 0;
-  const onlineStageIndex = onlineProgress
-    ? ({ parsing: 0, downloading: 1, checking: 2, loading: 3 } as const)[onlineProgress.stage]
-    : -1;
-  const onlineStages = ['解析链接', '下载视频', '校验视频', '载入裁切'];
-  const workflowStep = !source ? 0 : result ? 2 : 1;
-  const workflowStages = [
-    { number: '01', title: '导入素材', detail: '链接解析或本地上传' },
-    { number: '02', title: '选择镜头', detail: '识别切点并预览范围' },
-    { number: '03', title: '进入创作', detail: '直接反推或元素替换' },
-  ];
-
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#eef3f8] text-slate-900">
       <div className="pointer-events-none absolute inset-x-0 top-14 h-[420px] bg-[radial-gradient(circle_at_15%_10%,rgba(6,182,212,0.12),transparent_34%),radial-gradient(circle_at_85%_20%,rgba(139,92,246,0.12),transparent_34%)]" />
@@ -685,163 +702,101 @@ export default function ClipExtractionPage({
         <div className="hidden text-xs font-bold text-slate-500 sm:block">最长 10 分钟 · 最大 1GB · 临时使用</div>
       </header>
 
-      <main className="relative mx-auto w-full max-w-7xl flex-1 p-4 md:p-7">
-        <section className="relative mb-6 overflow-hidden rounded-[30px] bg-slate-950 px-5 py-6 text-white shadow-[0_24px_70px_-36px_rgba(15,23,42,0.9)] md:px-8 md:py-7">
-          <div className="pointer-events-none absolute -right-20 -top-28 size-80 rounded-full bg-cyan-400/15 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-28 left-1/3 size-64 rounded-full bg-violet-500/15 blur-3xl" />
-          <div className="relative grid gap-6 lg:grid-cols-[1fr_1.25fr] lg:items-end">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-cyan-300"><Scissors className="size-4" />镜头截取工作台</div>
-              <h1 className="mt-3 text-2xl font-black tracking-tight md:text-3xl">截出镜头，直接开始复刻</h1>
-              <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">导入视频后自动识别开头 5 个镜头，确认范围即可进入直接反推或元素替换。</p>
-            </div>
-            <div className="grid grid-cols-3 gap-2 rounded-2xl border border-white/10 bg-white/[0.06] p-2 backdrop-blur-sm">
-              {workflowStages.map((stage, index) => <div key={stage.number} className={cn('rounded-xl px-3 py-3 transition-colors', index === workflowStep ? 'bg-white text-slate-950 shadow-lg' : index < workflowStep ? 'bg-emerald-400/15 text-emerald-200' : 'text-slate-400')}>
-                <div className="flex items-center gap-2"><span className={cn('grid size-6 place-items-center rounded-full text-[10px] font-black', index === workflowStep ? 'bg-cyan-500 text-white' : index < workflowStep ? 'bg-emerald-400 text-slate-950' : 'bg-white/10 text-slate-400')}>{index < workflowStep ? '✓' : stage.number}</span><span className="text-xs font-black md:text-sm">{stage.title}</span></div>
-                <div className={cn('mt-1 hidden pl-8 text-[10px] font-bold sm:block', index === workflowStep ? 'text-slate-500' : 'text-current opacity-70')}>{stage.detail}</div>
-              </div>)}
-            </div>
+      <main className="relative mx-auto w-full max-w-6xl flex-1 p-4 md:p-6">
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="flex items-center gap-2 text-xl font-black tracking-tight text-slate-950"><Scissors className="size-5 text-cyan-600" />镜头截取</h1>
+            <p className="mt-1 text-sm text-slate-500">自动找到第一个镜头，也可按需识别前 2–5 个镜头。</p>
           </div>
-        </section>
+          <div className="text-xs font-semibold text-slate-400">最长 10 分钟 · 最大 1GB · 临时文件自动清理</div>
+        </div>
 
-        {(error || notice) && <div className={cn('mb-5 flex items-start gap-3 rounded-2xl border px-4 py-3.5 text-sm font-bold shadow-sm', error ? 'border-red-200 bg-red-50 text-red-700' : 'border-cyan-200 bg-white text-cyan-900')}><span className={cn('mt-0.5 grid size-5 shrink-0 place-items-center rounded-full text-[10px] text-white', error ? 'bg-red-500' : 'bg-cyan-500')}>{error ? '!' : 'i'}</span><span className="leading-5">{error || notice}</span></div>}
+        {(error || notice) && <div className={cn('mb-4 flex items-start gap-2 rounded-xl border px-4 py-3 text-sm font-bold', error ? 'border-red-200 bg-red-50 text-red-700' : 'border-cyan-200 bg-cyan-50 text-cyan-900')}><span className={cn('mt-0.5 grid size-4 shrink-0 place-items-center rounded-full text-[9px] text-white', error ? 'bg-red-500' : 'bg-cyan-500')}>{error ? '!' : 'i'}</span><span>{error || notice}</span></div>}
 
         {!source ? (
-          <section className="overflow-hidden rounded-[30px] border border-white bg-white shadow-[0_24px_70px_-42px_rgba(15,23,42,0.38)] ring-1 ring-slate-200/80">
-            <div className="flex flex-col gap-4 border-b border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-violet-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between md:px-7">
-              <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-2xl bg-cyan-600 text-sm font-black text-white shadow-lg shadow-cyan-200">01</span><div><h2 className="font-black text-slate-900">导入需要截取的原视频</h2><p className="mt-0.5 text-xs font-semibold text-slate-500">选择一种方式，视频不会保存进正式素材库</p></div></div>
-              <div className="flex items-center gap-2 text-[11px] font-black text-slate-500"><span className="rounded-full bg-white px-3 py-1.5 shadow-sm">最长 10 分钟</span><span className="rounded-full bg-white px-3 py-1.5 shadow-sm">最大 1GB</span></div>
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50 p-1.5">
+              <button type="button" disabled={onlineLoading || uploading} onClick={() => setSourceMode('link')} className={cn('flex h-11 items-center justify-center gap-2 rounded-xl text-sm font-black transition', sourceMode === 'link' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-500 hover:text-slate-800')}><Link2 className="size-4" />链接解析</button>
+              <button type="button" disabled={onlineLoading || uploading} onClick={() => setSourceMode('upload')} className={cn('flex h-11 items-center justify-center gap-2 rounded-xl text-sm font-black transition', sourceMode === 'upload' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-800')}><Upload className="size-4" />本地上传</button>
             </div>
-            <div className="m-4 grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1.5 md:mx-7 md:mt-6">
-              <button type="button" disabled={onlineLoading || uploading} onClick={() => setSourceMode('link')} className={cn('flex h-12 items-center justify-center gap-2 rounded-xl text-sm font-black transition', sourceMode === 'link' ? 'bg-white text-cyan-700 shadow-md ring-1 ring-slate-200' : 'text-slate-500 hover:bg-white/60 hover:text-slate-800')}><Link2 className="size-4" />链接解析</button>
-              <button type="button" disabled={onlineLoading || uploading} onClick={() => setSourceMode('upload')} className={cn('flex h-12 items-center justify-center gap-2 rounded-xl text-sm font-black transition', sourceMode === 'upload' ? 'bg-white text-violet-700 shadow-md ring-1 ring-slate-200' : 'text-slate-500 hover:bg-white/60 hover:text-slate-800')}><Upload className="size-4" />本地上传</button>
-            </div>
-            {sourceMode === 'link' ? <div className="mx-auto max-w-4xl px-5 pb-8 pt-3 md:px-10 md:pb-10">
-              <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-cyan-100 bg-cyan-50/70 p-4 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex items-center gap-2 text-sm font-black text-cyan-950"><Link2 className="size-4 text-cyan-600" />粘贴链接或完整分享文字</div><p className="mt-1 text-xs font-semibold leading-5 text-cyan-800/60">支持抖音、快手、微信视频号，解析后直接进入裁切。</p></div><button type="button" disabled={onlineLoading} onClick={() => void openWechatConfig()} className="flex shrink-0 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-white px-3.5 py-2.5 text-xs font-black text-emerald-700 shadow-sm transition hover:bg-emerald-50"><Settings className="size-3.5" />视频号 Cookie</button></div>
-              <textarea value={linkInput} disabled={onlineLoading} onChange={(event) => setLinkInput(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void parseAndLoadOnlineVideo(); }} placeholder="在这里粘贴链接，例如：https://v.douyin.com/…" className="min-h-32 w-full resize-y rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-4 text-sm font-semibold leading-6 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100 disabled:opacity-60" />
-              <button type="button" disabled={onlineLoading || !linkInput.trim()} onClick={() => void parseAndLoadOnlineVideo()} className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 text-sm font-black text-white shadow-lg shadow-cyan-200 transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50">{onlineLoading ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}{onlineLoading ? '正在解析并载入视频…' : '开始解析视频'}</button>
-              {onlineLoading && onlineProgress && <div className="mt-5 overflow-hidden rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-50 p-4 shadow-sm" role="status" aria-live="polite">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="relative flex size-10 shrink-0 items-center justify-center rounded-full bg-cyan-600 text-white shadow-lg shadow-cyan-200"><LoaderCircle className="size-5 animate-spin" /><span className="absolute inset-0 animate-ping rounded-full border border-cyan-400 opacity-30" /></div>
-                    <div className="min-w-0"><div className="truncate text-sm font-black text-slate-800">{onlineProgress.message}</div><div className="mt-1 text-xs font-bold text-slate-500">已等待 {onlineElapsedSeconds} 秒{onlineProgress.downloadedBytes ? ` · 已下载 ${formatSize(onlineProgress.downloadedBytes)}${onlineProgress.totalBytes ? ` / ${formatSize(onlineProgress.totalBytes)}` : ''}` : ''}</div></div>
-                  </div>
-                  <div className="shrink-0 text-lg font-black tabular-nums text-cyan-700">{Math.round(onlineProgress.percent)}%</div>
-                </div>
-                <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-white shadow-inner"><div className="relative h-full rounded-full bg-gradient-to-r from-cyan-500 via-blue-500 to-violet-500 transition-[width] duration-500 ease-out" style={{ width: `${onlineProgress.percent}%` }}><span className="absolute inset-0 animate-pulse bg-white/30" /></div></div>
-                <div className="mt-4 grid grid-cols-4 gap-1.5">
-                  {onlineStages.map((label, index) => <div key={label} className={cn('rounded-lg px-1.5 py-2 text-center text-[10px] font-black transition-colors', index < onlineStageIndex ? 'bg-emerald-100 text-emerald-700' : index === onlineStageIndex ? 'bg-cyan-600 text-white shadow-sm' : 'bg-white/75 text-slate-400')}>{index < onlineStageIndex ? '✓ ' : ''}{label}</div>)}
-                </div>
-                <p className="mt-3 text-center text-[11px] font-bold text-slate-400">请保持页面打开，较长视频需要更多下载和校验时间</p>
+
+            {sourceMode === 'link' ? <div className="mx-auto max-w-4xl p-5 md:p-7">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div><div className="text-sm font-black text-slate-800">粘贴视频链接或分享文字</div><div className="mt-1 text-xs text-slate-400">支持抖音、快手和微信视频号</div></div>
+                <button type="button" disabled={onlineLoading} onClick={() => void openWechatConfig()} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><Settings className="size-3.5" />视频号 Cookie</button>
+              </div>
+              <textarea value={linkInput} disabled={onlineLoading} onChange={(event) => setLinkInput(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void parseAndLoadOnlineVideo(); }} placeholder="粘贴链接，例如：https://v.douyin.com/…" className="min-h-24 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100 disabled:opacity-60" />
+              <button type="button" disabled={onlineLoading || !linkInput.trim()} onClick={() => void parseAndLoadOnlineVideo()} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 text-sm font-black text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">{onlineLoading ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}{onlineLoading ? '正在解析并载入…' : '解析并开始截取'}</button>
+              {onlineLoading && onlineProgress && <div className="mt-4 rounded-xl border border-cyan-100 bg-cyan-50 p-3" role="status" aria-live="polite">
+                <div className="flex items-center justify-between gap-3 text-xs font-bold"><span className="truncate text-cyan-900">{onlineProgress.message} · {onlineElapsedSeconds} 秒</span><span className="shrink-0 text-cyan-700">{Math.round(onlineProgress.percent)}%</span></div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-cyan-500 transition-[width] duration-500" style={{ width: `${onlineProgress.percent}%` }} /></div>
               </div>}
-              <div className="mt-4 text-center text-xs text-slate-400">解析不成功时，可切换“本地上传”继续使用。</div>
-            </div> : <div className="px-5 pb-8 pt-3 md:px-10 md:pb-10"><button type="button" disabled={uploading} onClick={() => inputRef.current?.click()} className="group flex min-h-[330px] w-full flex-col items-center justify-center rounded-[26px] border-2 border-dashed border-violet-200 bg-violet-50/50 px-6 transition hover:border-violet-400 hover:bg-violet-50 disabled:cursor-wait">
-              <div className="flex size-20 items-center justify-center rounded-3xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-xl shadow-violet-200 transition group-hover:scale-105"><Upload className="size-9" /></div>
-              <div className="mt-6 text-xl font-black">{uploading ? `正在上传 ${uploadProgress}%` : '上传需要截取的视频'}</div>
-              <div className="mt-2 text-sm text-slate-500">支持最长 10 分钟、最大 1GB 的常见视频</div>
-              {uploading && <div className="mt-6 h-2 w-full max-w-md overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${uploadProgress}%` }} /></div>}
+            </div> : <div className="p-5 md:p-7"><button type="button" disabled={uploading} onClick={() => inputRef.current?.click()} className="group flex min-h-52 w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/40 px-6 transition hover:border-violet-400 hover:bg-violet-50 disabled:cursor-wait">
+              <span className="grid size-14 place-items-center rounded-2xl bg-violet-600 text-white shadow-md"><Upload className="size-6" /></span>
+              <div className="mt-4 text-base font-black text-slate-900">{uploading ? `正在上传 ${uploadProgress}%` : '选择本地视频'}</div>
+              <div className="mt-1 text-xs text-slate-400">最长 10 分钟，最大 1GB</div>
+              {uploading && <div className="mt-4 h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${uploadProgress}%` }} /></div>}
             </button></div>}
           </section>
         ) : (
-          <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.55fr)]">
-            <section className="overflow-hidden rounded-[28px] border border-white bg-white p-4 shadow-[0_24px_70px_-44px_rgba(15,23,42,0.5)] ring-1 ring-slate-200/80 md:p-5">
-              <div className="mb-4 flex flex-col gap-3 rounded-2xl bg-gradient-to-r from-slate-950 to-slate-800 px-4 py-4 text-white sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex min-w-0 items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-cyan-500 text-sm font-black">02</span><div className="min-w-0"><div className="truncate text-sm font-black">选择需要保留的镜头</div><div className="mt-1 truncate text-xs font-semibold text-slate-400">{source.fileName} · {source.sourceType === 'online' ? '在线解析 · ' : ''}{formatSize(source.size)} · {source.width}×{source.height}</div></div></div>
-                <button type="button" onClick={reset} className="shrink-0 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-black text-white transition hover:bg-white/20">更换视频</button>
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.65fr)]">
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="min-w-0"><div className="truncate text-sm font-black text-slate-900">{source.fileName}</div><div className="mt-0.5 text-xs text-slate-400">{formatSize(source.size)} · {source.width}×{source.height} · {source.durationSeconds.toFixed(1)} 秒</div></div>
+                <button type="button" onClick={reset} className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">更换视频</button>
               </div>
-              <div className="overflow-hidden rounded-2xl border-4 border-slate-900 bg-black shadow-xl"><video ref={videoRef} src={source.url} controls playsInline preload="metadata" onTimeUpdate={handleSourcePreviewTimeUpdate} onPause={() => setPreviewingRange(false)} onEnded={() => setPreviewingRange(false)} className="mx-auto max-h-[56vh] w-full object-contain" /></div>
-              <div className="mt-5 rounded-2xl border border-cyan-100 bg-cyan-50/55 p-4 ring-1 ring-cyan-100/70">
-                <div className="mb-3 flex items-center justify-between gap-4">
-                  <div><div className="text-sm font-black text-cyan-950">裁切时间轴</div><div className="mt-0.5 text-xs font-semibold text-cyan-800/60">拖动两条彩色裁切线调整镜头范围</div></div>
-                  <div className="shrink-0 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-black text-white shadow-md shadow-cyan-200">已选 {selectedDuration.toFixed(1)} 秒</div>
-                </div>
-                <div className="mb-2 flex items-center justify-between text-xs font-black">
-                  <span className="text-emerald-700">开始 {formatTime(startSeconds)}</span>
-                  <span className="text-violet-700">结束 {formatTime(endSeconds)}</span>
-                </div>
-                <div
-                  ref={timelineRef}
-                  role="slider"
-                  aria-label="视频裁切范围"
-                  aria-valuetext={`${formatTime(startSeconds)} 至 ${formatTime(endSeconds)}`}
-                  className="relative h-16 touch-none select-none cursor-ew-resize"
-                  onPointerDown={beginCutLineDrag}
-                  onPointerMove={continueCutLineDrag}
-                  onPointerUp={endCutLineDrag}
-                  onPointerCancel={endCutLineDrag}
-                >
-                  <div className="absolute inset-x-0 top-3 h-10 overflow-hidden rounded-xl border border-slate-300 bg-slate-300 shadow-inner">
-                    <div className="absolute inset-y-0 bg-gradient-to-r from-cyan-500 to-blue-500" style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }} />
+              <div className="overflow-hidden rounded-xl bg-black"><video ref={videoRef} src={source.url} controls playsInline preload="metadata" onTimeUpdate={handleSourcePreviewTimeUpdate} onPause={() => setPreviewingRange(false)} onEnded={() => setPreviewingRange(false)} className="mx-auto max-h-[58vh] w-full object-contain" /></div>
+
+              <div className="mt-4">
+                <div className="mb-1 flex items-center justify-between text-xs font-bold"><span className="text-emerald-700">开始 {formatTime(startSeconds)}</span><span className="text-slate-400">已选 {selectedDuration.toFixed(1)} 秒</span><span className="text-violet-700">结束 {formatTime(endSeconds)}</span></div>
+                <div ref={timelineRef} role="slider" aria-label="视频裁切范围" aria-valuetext={`${formatTime(startSeconds)} 至 ${formatTime(endSeconds)}`} className="relative h-14 touch-none select-none cursor-ew-resize" onPointerDown={beginCutLineDrag} onPointerMove={continueCutLineDrag} onPointerUp={endCutLineDrag} onPointerCancel={endCutLineDrag}>
+                  <div className="absolute inset-x-0 top-3 h-8 overflow-hidden rounded-lg bg-slate-300 shadow-inner">
+                    <div className="absolute inset-y-0 bg-cyan-500" style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }} />
                     <div className="absolute inset-y-0 left-0 bg-slate-900/45" style={{ width: `${startPercent}%` }} />
                     <div className="absolute inset-y-0 right-0 bg-slate-900/45" style={{ width: `${Math.max(0, 100 - endPercent)}%` }} />
-                    {Array.from({ length: 11 }, (_, index) => <span key={index} className="absolute inset-y-0 w-px bg-white/25" style={{ left: `${index * 10}%` }} />)}
-                    <div className="absolute inset-y-0 z-20 w-0.5 bg-white shadow-[0_0_4px_rgba(15,23,42,0.8)]" style={{ left: `${Math.max(0, Math.min(100, currentPercent))}%` }} />
+                    <div className="absolute inset-y-0 z-20 w-0.5 bg-white" style={{ left: `${Math.max(0, Math.min(100, currentPercent))}%` }} />
                   </div>
-                  <div className="pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 rounded-full bg-emerald-500 shadow-[0_0_0_2px_white,0_3px_10px_rgba(5,150,105,0.5)]" style={{ left: `${startPercent}%` }}><span className="absolute left-1/2 top-0 size-4 -translate-x-1/2 rounded-full border-2 border-white bg-emerald-500" /></div>
-                  <div className="pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 rounded-full bg-violet-500 shadow-[0_0_0_2px_white,0_3px_10px_rgba(124,58,237,0.5)]" style={{ left: `${endPercent}%` }}><span className="absolute left-1/2 top-0 size-4 -translate-x-1/2 rounded-full border-2 border-white bg-violet-500" /></div>
+                  <div className="pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 rounded-full bg-emerald-500 shadow-[0_0_0_2px_white]" style={{ left: `${startPercent}%` }}><span className="absolute left-1/2 top-0 size-4 -translate-x-1/2 rounded-full border-2 border-white bg-emerald-500" /></div>
+                  <div className="pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 rounded-full bg-violet-500 shadow-[0_0_0_2px_white]" style={{ left: `${endPercent}%` }}><span className="absolute left-1/2 top-0 size-4 -translate-x-1/2 rounded-full border-2 border-white bg-violet-500" /></div>
                 </div>
-                {detecting && <div className="mt-1 flex items-center gap-2 text-xs font-bold text-cyan-700"><LoaderCircle className="size-3.5 animate-spin" />正在自动识别开头前5个镜头，识别后紫色结束线会自动移动</div>}
-              </div>
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <button type="button" onClick={() => setPoint('start')} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3.5 text-sm font-black text-emerald-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-emerald-100">把当前画面设为开始点</button>
-                <button type="button" onClick={() => setPoint('end')} className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3.5 text-sm font-black text-violet-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-violet-100">把当前画面设为结束点</button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setPoint('start')} className="rounded-lg border border-emerald-200 py-2.5 text-xs font-black text-emerald-700 hover:bg-emerald-50">当前画面设为开始</button>
+                  <button type="button" onClick={() => setPoint('end')} className="rounded-lg border border-violet-200 py-2.5 text-xs font-black text-violet-700 hover:bg-violet-50">当前画面设为结束</button>
+                </div>
               </div>
             </section>
 
-            <aside className="space-y-5 lg:sticky lg:top-20">
-              <section className="overflow-hidden rounded-[26px] border border-white bg-white shadow-[0_20px_60px_-42px_rgba(15,23,42,0.45)] ring-1 ring-slate-200/80">
-                <div className="flex items-center justify-between bg-gradient-to-r from-cyan-600 to-blue-600 px-5 py-4 text-white"><div><div className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100">Step 02</div><h2 className="mt-0.5 font-black">确认截取范围</h2></div><span className="rounded-xl bg-white/15 px-3 py-2 text-xs font-black backdrop-blur">{selectedDuration.toFixed(1)} 秒</span></div>
-                <div className="p-5">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3"><div className="text-[10px] font-black uppercase tracking-wider text-emerald-600">开始线</div><div className="mt-1 font-black text-emerald-900">{formatTime(startSeconds)}</div></div>
-                  <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-3"><div className="text-[10px] font-black uppercase tracking-wider text-violet-600">结束线</div><div className="mt-1 font-black text-violet-900">{formatTime(endSeconds)}</div></div>
+            <aside className="space-y-4 lg:sticky lg:top-20">
+              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between"><h2 className="text-sm font-black text-slate-900">截取前几个镜头？</h2><span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-600">{selectedDuration.toFixed(1)} 秒</span></div>
+                <p className="mt-1 text-xs leading-5 text-slate-400">默认只识别第一个；选择更多时再继续分析。</p>
+                <div className="mt-3 grid grid-cols-5 gap-1.5 rounded-xl bg-slate-100 p-1.5">
+                  {[1, 2, 3, 4, 5].map((count) => <button key={count} type="button" disabled={detecting} onClick={() => detectFirstCut(count)} className={cn('h-9 rounded-lg text-xs font-black transition', selectedShotCount === count ? 'bg-cyan-600 text-white shadow-sm' : 'bg-white text-slate-600 hover:text-cyan-700', detecting && 'cursor-wait opacity-60')}>{count}</button>)}
                 </div>
-                {detectedShots.length > 0 && <div className="mt-5">
-                  <div className="mb-2 text-xs font-black text-slate-600">快速选择截取前几个镜头</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {detectedShots.map((shot) => {
-                      const selected = Math.abs(endSeconds - shot.endSeconds) < 0.06 && startSeconds < 0.06;
-                      return <button key={shot.number} type="button" onClick={() => selectFirstShots(shot)} className={cn('rounded-xl border px-3 py-2.5 text-left transition-colors', selected ? 'border-cyan-500 bg-cyan-500 text-white shadow-md shadow-cyan-200' : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-cyan-300 hover:bg-cyan-50')}><div className="text-xs font-black">前 {shot.number} 个镜头</div><div className={cn('mt-0.5 text-[10px] font-bold', selected ? 'text-white/80' : 'text-slate-400')}>截至 {formatTime(shot.endSeconds)}</div></button>;
-                    })}
-                  </div>
-                </div>}
-                <button type="button" disabled={detecting} onClick={detectFirstCut} className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 text-sm font-black text-cyan-700 hover:bg-cyan-100 disabled:opacity-60">{detecting ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}重新识别前5个镜头</button>
-                <button type="button" disabled={detecting || selectedDuration <= 0.1} onClick={previewSelectedRange} className={cn('mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border text-sm font-black transition-colors disabled:opacity-50', previewingRange ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100')}><Play className={cn('size-4', previewingRange && 'fill-current')} />{previewingRange ? '停止预览' : '预览裁切片段'}</button>
-                <button type="button" disabled={trimming || selectedDuration <= 0.1 || selectedDuration > 60} onClick={trimClip} className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white shadow-lg transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:opacity-50">{trimming ? <LoaderCircle className="size-4 animate-spin" /> : <Scissors className="size-4" />}{trimming ? '正在精准截取…' : '确认并开始截取'}</button>
-                <p className="mt-3 text-center text-xs leading-5 text-slate-400">建议单个镜头控制在 15 秒内，单次最多 60 秒。</p>
-                </div>
+                <div className="mt-2 min-h-5 text-xs font-bold text-cyan-700">{detecting ? <span className="flex items-center gap-1.5"><LoaderCircle className="size-3.5 animate-spin" />正在识别前 {selectedShotCount} 个镜头…</span> : detectedShots.length > 0 ? `已定位前 ${detectedShots.length} 个镜头` : '也可以直接拖动裁切线'}</div>
+                <button type="button" disabled={detecting || selectedDuration <= 0.1} onClick={previewSelectedRange} className={cn('mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border text-sm font-black disabled:opacity-50', previewingRange ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50')}><Play className={cn('size-4', previewingRange && 'fill-current')} />{previewingRange ? '停止预览' : '预览裁切片段'}</button>
+                <button type="button" disabled={trimming || selectedDuration <= 0.1 || selectedDuration > 60} onClick={trimClip} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-50">{trimming ? <LoaderCircle className="size-4 animate-spin" /> : <Scissors className="size-4" />}{trimming ? '正在截取…' : '确认截取'}</button>
               </section>
 
-              {onlineResult && <section className="overflow-hidden rounded-[26px] border border-indigo-200 bg-white shadow-[0_20px_60px_-42px_rgba(79,70,229,0.5)]">
-                <div className="flex items-center gap-3 bg-indigo-950 px-5 py-4 text-white"><span className="grid size-9 place-items-center rounded-xl bg-indigo-500"><Link2 className="size-4" /></span><div><div className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-300">附加工具</div><div className="text-sm font-black">原视频信息与逐字稿</div></div></div>
-                <div className="p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0"><div className="text-xs font-black text-indigo-600">解析成功</div><div className="mt-1 truncate text-sm font-black text-slate-800">{onlineResult.title || '未命名视频'}</div>{onlineResult.authorName && <div className="mt-1 text-xs text-slate-400">作者：{onlineResult.authorName}</div>}</div>
-                  {collectOnlineVideoCandidates(onlineResult)[0]?.url && <a href={`/api/proxy/download?url=${encodeURIComponent(collectOnlineVideoCandidates(onlineResult)[0].url)}`} className="shrink-0 rounded-full border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><Download className="mr-1 inline size-3.5" />原视频</a>}
+              {onlineResult && <details className="group rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 text-sm font-black text-slate-700"><span className="flex min-w-0 items-center gap-2"><Sparkles className="size-4 shrink-0 text-indigo-500" /><span className="truncate">逐字稿（按需使用）</span></span><ChevronDown className="size-4 shrink-0 text-slate-400 transition group-open:rotate-180" /></summary>
+                <div className="border-t border-slate-100 p-4">
+                  <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="truncate text-xs font-bold text-slate-700">{onlineResult.title || '未命名视频'}</div>{onlineResult.authorName && <div className="mt-1 text-[11px] text-slate-400">作者：{onlineResult.authorName}</div>}</div>{collectOnlineVideoCandidates(onlineResult)[0]?.url && <a href={`/api/proxy/download?url=${encodeURIComponent(collectOnlineVideoCandidates(onlineResult)[0].url)}`} className="shrink-0 text-xs font-bold text-slate-500 hover:text-slate-800"><Download className="mr-1 inline size-3.5" />原视频</a>}</div>
+                  <button type="button" disabled={transcriptLoading} onClick={() => void extractOnlineTranscript()} className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 text-xs font-black text-indigo-700 hover:bg-indigo-100 disabled:opacity-60">{transcriptLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}{transcriptLoading ? (transcriptStatus || '正在提取…') : transcriptText ? '重新提取逐字稿' : '提取逐字稿'}</button>
+                  {transcriptText && <div className="mt-3"><div className="mb-2 flex items-center justify-between"><span className="text-xs font-bold text-slate-500">可直接修改</span><button type="button" onClick={() => void copyTranscript()} className="flex items-center gap-1 text-xs font-bold text-indigo-600"><Copy className="size-3.5" />{transcriptCopied ? '已复制' : '复制'}</button></div><textarea value={transcriptText} onChange={(event) => setTranscriptText(event.target.value)} className="min-h-32 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-6 outline-none focus:border-indigo-400" /></div>}
                 </div>
-                <button type="button" disabled={transcriptLoading} onClick={() => void extractOnlineTranscript()} className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 text-sm font-black text-blue-700 hover:bg-blue-100 disabled:opacity-60">{transcriptLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}{transcriptLoading ? (transcriptStatus || '正在提取逐字稿…') : transcriptText ? '重新提取逐字稿' : '提取视频逐字稿'}</button>
-                {transcriptText && <div className="mt-4">
-                  <div className="mb-2 flex items-center justify-between"><span className="text-xs font-black text-slate-600">逐字稿（可直接修改）</span><button type="button" onClick={() => void copyTranscript()} className="flex items-center gap-1 text-xs font-bold text-blue-600 hover:text-blue-800"><Copy className="size-3.5" />{transcriptCopied ? '已复制' : '复制'}</button></div>
-                  <textarea value={transcriptText} onChange={(event) => setTranscriptText(event.target.value)} className="min-h-36 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs leading-6 text-slate-700 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
-                </div>}
-                {!transcriptText && !transcriptLoading && <p className="mt-3 text-center text-xs leading-5 text-slate-400">逐字稿按需提取，不会在解析视频时自动产生额外转写费用。</p>}
-                </div>
-              </section>}
+              </details>}
 
-              {result && <section className="overflow-hidden rounded-[26px] border border-emerald-200 bg-white shadow-[0_22px_65px_-38px_rgba(5,150,105,0.65)] ring-2 ring-emerald-100">
-                <div className="flex items-center justify-between bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-4 text-white"><div><div className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-100">Step 03</div><div className="mt-0.5 flex items-center gap-2 text-sm font-black"><Check className="size-4" />镜头已经截取完成</div></div><span className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-black">可用于创作</span></div>
-                <div className="p-5"><video ref={resultVideoRef} src={result.url} controls playsInline className="aspect-video w-full rounded-xl border-4 border-slate-900 bg-black object-contain shadow-lg" />
-                <div className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800">{formatTime(result.startSeconds)} 至 {formatTime(result.endSeconds)} · {formatSize(result.size)}</div>
-                <div className="mt-4 grid gap-2">
-                  <button type="button" onClick={() => setShowModePicker(true)} className="flex h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-black text-white shadow-lg shadow-emerald-200 transition hover:-translate-y-0.5 hover:bg-emerald-700"><Play className="size-4 fill-current" />进入视频创作</button>
-                  <a href={result.url} download={result.fileName} className="flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50"><Download className="size-4" />下载到电脑</a>
-                </div>
-                </div>
+              {result && <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-sm font-black text-emerald-700"><Check className="size-4" />截取完成</div>
+                <video ref={resultVideoRef} src={result.url} controls playsInline className="mt-3 aspect-video w-full rounded-xl bg-black object-contain" />
+                <div className="mt-2 text-xs font-bold text-slate-500">{formatTime(result.startSeconds)} 至 {formatTime(result.endSeconds)} · {formatSize(result.size)}</div>
+                <button type="button" onClick={() => { setSelectedAudioMode('none'); setShowModePicker(true); }} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-black text-white hover:bg-emerald-700"><Play className="size-4 fill-current" />进入视频创作</button>
+                <a href={result.url} download={result.fileName} className="mt-2 flex h-9 items-center justify-center gap-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50"><Download className="size-4" />下载到电脑</a>
               </section>}
             </aside>
           </div>
         )}
-
       </main>
 
       {showWechatConfig && <div className="fixed inset-0 z-[60] grid place-items-center overflow-y-auto bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !wechatConfigLoading) setShowWechatConfig(false); }}>
@@ -870,14 +825,23 @@ export default function ClipExtractionPage({
         </section>
       </div>}
 
-      {showModePicker && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !preparingCreative) setShowModePicker(false); }}>
-        <div className="w-full max-w-lg overflow-hidden rounded-[30px] bg-white shadow-2xl">
-          <div className="flex items-start justify-between bg-slate-950 px-6 py-5 text-white"><div><div className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-300">Step 03 · 进入创作</div><h2 className="mt-1 text-xl font-black">这个镜头要怎么使用？</h2><p className="mt-1 text-sm text-slate-400">视频会直接载入对应模块，无需再次上传。</p></div><button type="button" disabled={preparingCreative} onClick={() => setShowModePicker(false)} className="rounded-full bg-white/10 p-2 text-slate-300 hover:bg-white/20"><X className="size-5" /></button></div>
-          <div className="grid gap-3 p-6 sm:grid-cols-2">
-            <button type="button" disabled={preparingCreative} onClick={() => useInCreative('direct')} className="group rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-5 text-left transition hover:-translate-y-1 hover:border-emerald-400 hover:shadow-lg disabled:opacity-60"><span className="grid size-11 place-items-center rounded-2xl bg-emerald-600 text-white shadow-lg shadow-emerald-200"><Sparkles className="size-5" /></span><div className="mt-4 font-black text-emerald-950">直接反推</div><div className="mt-1 text-xs font-semibold leading-5 text-emerald-700/75">完整复刻原镜头、动作和运镜</div><div className="mt-4 text-xs font-black text-emerald-700">进入模块 →</div></button>
-            <button type="button" disabled={preparingCreative} onClick={() => useInCreative('replace')} className="group rounded-2xl border-2 border-violet-200 bg-violet-50 p-5 text-left transition hover:-translate-y-1 hover:border-violet-400 hover:shadow-lg disabled:opacity-60"><span className="grid size-11 place-items-center rounded-2xl bg-violet-600 text-white shadow-lg shadow-violet-200"><Film className="size-5" /></span><div className="mt-4 font-black text-violet-950">元素替换</div><div className="mt-1 text-xs font-semibold leading-5 text-violet-700/75">保留镜头结构，替换指定人物或物体</div><div className="mt-4 text-xs font-black text-violet-700">进入模块 →</div></button>
+      {showModePicker && <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !preparingCreative) setShowModePicker(false); }}>
+        <div className="my-5 w-full max-w-xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+          <div className="flex items-start justify-between bg-slate-950 px-6 py-5 text-white"><div><h2 className="text-xl font-black">进入视频创作</h2><p className="mt-1 text-sm text-slate-400">原视频只进入左侧反推，右侧不会上传原视频。</p></div><button type="button" disabled={preparingCreative} onClick={() => setShowModePicker(false)} className="rounded-full bg-white/10 p-2 text-slate-300 hover:bg-white/20"><X className="size-5" /></button></div>
+          <div className="space-y-5 p-6">
+            <div><div className="mb-2 text-sm font-black text-slate-800">1. 创作方式</div><div className="grid grid-cols-2 gap-2">
+              <button type="button" disabled={preparingCreative} onClick={() => setSelectedCreativeMode('direct')} className={cn('rounded-xl border-2 p-3 text-left transition', selectedCreativeMode === 'direct' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 hover:border-emerald-200')}><div className="flex items-center gap-2 font-black text-slate-900"><Sparkles className="size-4 text-emerald-600" />直接反推</div><div className="mt-1 text-xs text-slate-500">完整复刻镜头与动作</div></button>
+              <button type="button" disabled={preparingCreative} onClick={() => setSelectedCreativeMode('replace')} className={cn('rounded-xl border-2 p-3 text-left transition', selectedCreativeMode === 'replace' ? 'border-violet-500 bg-violet-50' : 'border-slate-200 hover:border-violet-200')}><div className="flex items-center gap-2 font-black text-slate-900"><Film className="size-4 text-violet-600" />元素替换</div><div className="mt-1 text-xs text-slate-500">复刻镜头并替换元素</div></button>
+            </div></div>
+            <div><div className="mb-2 text-sm font-black text-slate-800">2. 声音方式</div><div className="space-y-2">
+              {([
+                ['none', '不使用音频', '保持原来的创作流程，不生成MP3'],
+                ['original', '沿用原声音频', '自动提取MP3，成片完全使用原台词和节奏'],
+                ['voice', '参考原音色说新台词', '自动提取MP3，新台词从“额外调整”读取'],
+              ] as const).map(([value, title, detail]) => <button key={value} type="button" disabled={preparingCreative} onClick={() => setSelectedAudioMode(value)} className={cn('flex w-full items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition', selectedAudioMode === value ? 'border-cyan-500 bg-cyan-50' : 'border-slate-200 hover:border-cyan-200')}><span className={cn('size-4 shrink-0 rounded-full border-2', selectedAudioMode === value ? 'border-cyan-600 bg-cyan-600 shadow-[inset_0_0_0_3px_white]' : 'border-slate-300')} /><span><span className="block text-sm font-black text-slate-900">{title}</span><span className="mt-0.5 block text-xs text-slate-500">{detail}</span></span></button>)}
+            </div></div>
+            <button type="button" disabled={preparingCreative} onClick={() => void useInCreative(selectedCreativeMode, selectedAudioMode)} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-60">{preparingCreative ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4 fill-current" />}{preparingCreative ? (selectedAudioMode === 'none' ? '正在载入视频…' : '正在提取音频并载入…') : '进入视频创作'}</button>
           </div>
-          {preparingCreative && <div className="mx-6 mb-6 flex items-center justify-center gap-2 rounded-xl bg-slate-100 py-3 text-sm font-bold text-slate-600"><LoaderCircle className="size-4 animate-spin" />正在载入视频创作…</div>}
         </div>
       </div>}
     </div>
