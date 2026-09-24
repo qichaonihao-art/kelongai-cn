@@ -193,6 +193,7 @@ interface SeedanceHistoryItem {
 interface SeedanceLibrarySaveTarget {
   taskId: string;
   model: SeedanceModelId;
+  prompt?: string;
   createdAt?: number;
   directionNumber?: number;
   variationRound?: number;
@@ -202,7 +203,7 @@ interface SeedanceLibrarySaveTarget {
   paintingUploadHistoryId?: number;
 }
 
-type VideoLibraryFolderChoiceSource = 'remembered' | 'matched' | 'fallback' | 'manual';
+type VideoLibraryFolderChoiceSource = 'remembered' | 'matched' | 'last-used' | 'fallback' | 'manual';
 
 interface PaintingHistoryItem {
   id: string;
@@ -372,10 +373,11 @@ function scorePaintingFolderText(folderText: string, sourceText: string, baseSco
 
 function suggestPaintingVideoLibraryFolder(
   folders: string[],
-  painting?: { name?: string; subject?: string } | null
+  painting?: { name?: string; subject?: string; prompt?: string } | null
 ): string | null {
   const normalizedName = normalizePaintingFolderMatchText(painting?.name);
   const normalizedSubject = normalizePaintingFolderMatchText(painting?.subject);
+  const normalizedPrompt = normalizePaintingFolderMatchText(painting?.prompt);
   let best: { folder: string; score: number } | null = null;
 
   for (const folder of folders) {
@@ -383,7 +385,8 @@ function suggestPaintingVideoLibraryFolder(
     const normalizedFolder = normalizePaintingFolderMatchText(folder);
     const score = Math.max(
       scorePaintingFolderText(normalizedFolder, normalizedName, 100),
-      scorePaintingFolderText(normalizedFolder, normalizedSubject, 85)
+      scorePaintingFolderText(normalizedFolder, normalizedSubject, 85),
+      scorePaintingFolderText(normalizedFolder, normalizedPrompt, 82)
     );
     if (score < 70) continue;
     if (!best || score > best.score || (score === best.score && folder.length > best.folder.length)) {
@@ -395,16 +398,17 @@ function suggestPaintingVideoLibraryFolder(
 }
 
 function getFallbackVideoLibraryFolder(folders: string[]): string {
-  if (folders.includes('通用素材')) return '通用素材';
-  if (folders.includes('待分类')) return '待分类';
   const lastFolder = loadLastVideoLibraryFolder();
   if (folders.includes(lastFolder)) return lastFolder;
+  if (folders.includes('通用素材')) return '通用素材';
+  if (folders.includes('待分类')) return '待分类';
   return folders[0] || '通用素材';
 }
 
 function getVideoLibraryFolderChoiceLabel(source: VideoLibraryFolderChoiceSource): string {
   if (source === 'remembered') return '已按这幅画的历史记录选择';
-  if (source === 'matched') return '已根据挂画内容自动匹配';
+  if (source === 'matched') return '已根据本次视频内容自动匹配';
+  if (source === 'last-used') return '已沿用你上次实际保存的文件夹';
   if (source === 'manual') return '已手动更换，保存后会记住';
   return '暂未找到明确匹配，已放入默认文件夹';
 }
@@ -3629,6 +3633,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         const matchedFolder = suggestPaintingVideoLibraryFolder(availableFolders, {
           name: target.paintingName,
           subject: target.paintingSubject,
+          prompt: target.prompt,
         });
         if (matchedFolder) {
           nextFolder = matchedFolder;
@@ -3637,13 +3642,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       }
 
       if (!nextFolder) {
-        nextFolder = getFallbackVideoLibraryFolder(availableFolders);
-        nextSource = 'fallback';
+        const recentSavedFolder = seedanceHistory.find((item) => item.libraryFolder && availableFolders.includes(item.libraryFolder))?.libraryFolder || '';
+        const lastFolder = loadLastVideoLibraryFolder();
+        nextFolder = recentSavedFolder || getFallbackVideoLibraryFolder(availableFolders);
+        nextSource = recentSavedFolder || availableFolders.includes(lastFolder) ? 'last-used' : 'fallback';
       }
       setVideoLibraryFolders(availableFolders);
       setSelectedVideoLibraryFolder(nextFolder);
       setVideoLibraryFolderChoiceSource(nextSource);
-      saveLastVideoLibraryFolder(nextFolder);
     } catch (error) {
       setVideoLibrarySaveError(error instanceof Error ? error.message : '读取视频素材库文件夹失败');
     } finally {
@@ -3669,6 +3675,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       if (result.sourceBytes !== result.savedBytes) {
         throw new Error('保存后文件大小校验失败，请重试');
       }
+      saveLastVideoLibraryFolder(result.item.folderName || selectedVideoLibraryFolder);
       if (result.item?.id) markVideoLibraryItemsRead([result.item]);
       if (target.paintingImageHash) {
         try {
@@ -4615,8 +4622,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         }
       }
       if (!prefillFolder) {
+        const lastFolder = loadLastVideoLibraryFolder();
         prefillFolder = getFallbackVideoLibraryFolder(availableFolders);
-        prefillSource = 'fallback';
+        prefillSource = availableFolders.includes(lastFolder) ? 'last-used' : 'fallback';
       }
       setPaintingBatchPrepareStage('正在读取已使用方向');
       if (imageHash) {
@@ -4728,6 +4736,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       // 暂未查到：用同一个幂等编号安全重试创建 POST（后端幂等，不会重复扣费）。
       try {
         const result = await createPaintingBatchRun(buildPaintingBatchCreateOptions(ideas, creationRequestId));
+        saveLastVideoLibraryFolder(paintingBatchFolder);
         enterPaintingBatchProgress(result.batchRunId);
         return;
       } catch (error) {
@@ -4772,6 +4781,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const creationRequestId = batchCreationRequestIdRef.current;
     try {
       const result = await createPaintingBatchRun(buildPaintingBatchCreateOptions(orderedIdeas, creationRequestId));
+      saveLastVideoLibraryFolder(paintingBatchFolder);
       enterPaintingBatchProgress(result.batchRunId);
     } catch (error) {
       setPaintingBatchCreating(false);
@@ -7929,6 +7939,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             onClick={() => void openSeedanceLibrarySave({
                               taskId: seedanceTask.taskId,
                               model: seedanceHistory.find((item) => item.taskId === seedanceTask.taskId)?.model || seedanceModel,
+                              prompt: activeVideoHistoryItem?.prompt || seedancePrompt,
                               createdAt: seedanceTask.createdAt,
                               directionNumber: seedanceTask.directionNumber,
                               variationRound: seedanceTask.variationRound,
@@ -8159,6 +8170,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                                 onClick={() => void openSeedanceLibrarySave({
                                                   taskId: item.taskId,
                                                   model: item.model,
+                                                  prompt: item.prompt,
                                                   createdAt: item.createdAt,
                                                   directionNumber: item.directionNumber,
                                                   variationRound: item.variationRound,
@@ -8344,7 +8356,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                               setSelectedVideoLibraryFolder(folder);
                               setVideoLibraryFolderChoiceSource('manual');
                               setShowVideoLibraryFolderChoices(false);
-                              saveLastVideoLibraryFolder(folder);
                             }}
                             disabled={isSavingToVideoLibrary}
                             className={cn(
@@ -8610,7 +8621,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             setPaintingBatchFolderId(null);
                             setPaintingBatchFolderChoiceSource('manual');
                             setShowPaintingBatchFolderChoices(false);
-                            saveLastVideoLibraryFolder(folder);
                           }}
                           disabled={paintingBatchCreating || paintingBatchConfirming}
                           className={cn(
