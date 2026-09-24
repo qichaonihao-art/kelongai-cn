@@ -73,6 +73,21 @@ interface DetectedShot {
   durationSeconds: number;
 }
 
+interface TimedTranscriptWord {
+  text: string;
+  startSeconds: number;
+  endSeconds: number;
+  sentenceIndex: number;
+  wordIndex: number;
+}
+
+interface TimedTranscriptSentence {
+  text: string;
+  startSeconds: number;
+  endSeconds: number;
+  words: TimedTranscriptWord[];
+}
+
 interface WechatCookieStatus {
   configured: boolean;
   source?: 'page' | 'environment' | 'none';
@@ -135,6 +150,9 @@ export default function ClipExtractionPage({
   const audioPreviewRef = useRef<HTMLAudioElement>(null);
   const draggingCutLineRef = useRef<'start' | 'end' | null>(null);
   const draggingAudioLineRef = useRef<'start' | 'end' | null>(null);
+  const transcriptSelectingRef = useRef(false);
+  const transcriptSelectionAnchorRef = useRef<number | null>(null);
+  const transcriptSelectionFocusRef = useRef<number | null>(null);
   const uploadRequestRef = useRef<XMLHttpRequest | null>(null);
   const sourceRef = useRef<UploadedClipSource | null>(null);
   const resultRef = useRef<TrimmedClip | null>(null);
@@ -166,6 +184,11 @@ export default function ClipExtractionPage({
   const [audioWaveformUrl, setAudioWaveformUrl] = useState('');
   const [audioWaveformLoading, setAudioWaveformLoading] = useState(false);
   const [audioShotLoading, setAudioShotLoading] = useState(0);
+  const [timedTranscriptSentences, setTimedTranscriptSentences] = useState<TimedTranscriptSentence[]>([]);
+  const [timedTranscriptLoading, setTimedTranscriptLoading] = useState(false);
+  const [timedTranscriptError, setTimedTranscriptError] = useState('');
+  const [transcriptSelectionStart, setTranscriptSelectionStart] = useState<number | null>(null);
+  const [transcriptSelectionEnd, setTranscriptSelectionEnd] = useState<number | null>(null);
   const [sourceMode, setSourceMode] = useState<'link' | 'upload'>('link');
   const [linkInput, setLinkInput] = useState('');
   const [onlineLoading, setOnlineLoading] = useState(false);
@@ -231,6 +254,22 @@ export default function ClipExtractionPage({
     };
   }, [showModePicker, selectedAudioMode, source?.sourceId, audioWaveformUrl]);
 
+  useEffect(() => {
+    if (!timedTranscriptSentences.length) return;
+    const words = timedTranscriptSentences.flatMap((sentence) => sentence.words);
+    const selectedIndexes = words
+      .map((word, index) => ({ index, overlaps: word.endSeconds > audioStartSeconds && word.startSeconds < audioEndSeconds }))
+      .filter((item) => item.overlaps)
+      .map((item) => item.index);
+    if (!selectedIndexes.length) {
+      setTranscriptSelectionStart(null);
+      setTranscriptSelectionEnd(null);
+      return;
+    }
+    setTranscriptSelectionStart(selectedIndexes[0]);
+    setTranscriptSelectionEnd(selectedIndexes[selectedIndexes.length - 1]);
+  }, [audioStartSeconds, audioEndSeconds, timedTranscriptSentences]);
+
   useEffect(() => () => {
     uploadRequestRef.current?.abort();
     const payload = {
@@ -286,6 +325,11 @@ export default function ClipExtractionPage({
     setAudioWaveformUrl('');
     setAudioWaveformLoading(false);
     setAudioShotLoading(0);
+    setTimedTranscriptSentences([]);
+    setTimedTranscriptLoading(false);
+    setTimedTranscriptError('');
+    setTranscriptSelectionStart(null);
+    setTranscriptSelectionEnd(null);
     if (inputRef.current) inputRef.current.value = '';
   }
 
@@ -305,6 +349,10 @@ export default function ClipExtractionPage({
     setAudioZoomStart(0);
     setAudioZoomEnd(Math.min(next.durationSeconds, 18));
     setAudioWaveformUrl('');
+    setTimedTranscriptSentences([]);
+    setTimedTranscriptError('');
+    setTranscriptSelectionStart(null);
+    setTranscriptSelectionEnd(null);
     setNotice(message);
     void detectFirstCutForSource(next, 1, true);
   }
@@ -845,6 +893,87 @@ export default function ClipExtractionPage({
     }
   }
 
+  function getTimedTranscriptWords() {
+    return timedTranscriptSentences.flatMap((sentence) => sentence.words);
+  }
+
+  function applyTimedTranscriptSelection(fromIndex: number, toIndex: number) {
+    if (!source) return;
+    const words = getTimedTranscriptWords();
+    if (!words.length) return;
+    const startIndex = Math.max(0, Math.min(words.length - 1, Math.min(fromIndex, toIndex)));
+    const endIndex = Math.max(startIndex, Math.min(words.length - 1, Math.max(fromIndex, toIndex)));
+    const nextStart = Math.max(0, words[startIndex].startSeconds - 0.12);
+    const nextEnd = Math.min(source.durationSeconds, 30, words[endIndex].endSeconds + 0.18);
+    setTranscriptSelectionStart(startIndex);
+    setTranscriptSelectionEnd(endIndex);
+    setAudioStartSeconds(nextStart);
+    setAudioEndSeconds(nextEnd);
+    setActiveAudioLine('end');
+    seekAudio(nextEnd);
+    zoomAudioAround(nextStart, nextEnd);
+  }
+
+  function beginTimedTranscriptSelection(index: number, event: ReactPointerEvent<HTMLSpanElement>) {
+    event.preventDefault();
+    transcriptSelectingRef.current = true;
+    transcriptSelectionAnchorRef.current = index;
+    transcriptSelectionFocusRef.current = index;
+    setTranscriptSelectionStart(index);
+    setTranscriptSelectionEnd(index);
+  }
+
+  function extendTimedTranscriptSelection(index: number) {
+    if (!transcriptSelectingRef.current) return;
+    transcriptSelectionFocusRef.current = index;
+    const anchor = transcriptSelectionAnchorRef.current ?? index;
+    setTranscriptSelectionStart(Math.min(anchor, index));
+    setTranscriptSelectionEnd(Math.max(anchor, index));
+  }
+
+  function finishTimedTranscriptSelection() {
+    if (!transcriptSelectingRef.current) return;
+    transcriptSelectingRef.current = false;
+    const anchor = transcriptSelectionAnchorRef.current;
+    const focus = transcriptSelectionFocusRef.current;
+    if (anchor !== null && focus !== null) applyTimedTranscriptSelection(anchor, focus);
+  }
+
+  async function loadTimedTranscript() {
+    if (!source || timedTranscriptLoading) return;
+    setTimedTranscriptLoading(true);
+    setTimedTranscriptError('');
+    try {
+      const response = await fetch('/api/clips/timed-transcript', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceId: source.sourceId }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, '带时间轴逐字稿识别失败'));
+      const data = await response.json();
+      const sentences = Array.isArray(data.sentences) ? data.sentences as TimedTranscriptSentence[] : [];
+      if (!sentences.length) throw new Error('开头30秒没有识别到可选择的人声文字');
+      setTimedTranscriptSentences(sentences);
+      setTranscriptSelectionStart(null);
+      setTranscriptSelectionEnd(null);
+    } catch (caught) {
+      setTimedTranscriptError(caught instanceof Error ? caught.message : '带时间轴逐字稿识别失败');
+    } finally {
+      setTimedTranscriptLoading(false);
+    }
+  }
+
+  function openCreativePicker(audioMode: ClipAudioMode) {
+    if (!result) return;
+    setSelectedAudioMode(audioMode);
+    setAudioStartSeconds(result.startSeconds);
+    setAudioEndSeconds(result.endSeconds);
+    setAudioCurrentSeconds(result.startSeconds);
+    setActiveAudioLine('end');
+    setPreviewingAudio(false);
+    zoomAudioAround(result.startSeconds, result.endSeconds);
+    setShowModePicker(true);
+  }
+
   async function useInCreative(mode: ClipCreativeMode, audioMode: ClipAudioMode) {
     if (!result) return;
     setPreparingCreative(true);
@@ -899,6 +1028,7 @@ export default function ClipExtractionPage({
   const audioCurrentPercent = ((audioCurrentSeconds - audioZoomStart) / audioZoomDuration) * 100;
   const waveformWidthPercent = source?.durationSeconds ? (source.durationSeconds / audioZoomDuration) * 100 : 100;
   const waveformLeftPercent = -(audioZoomStart / audioZoomDuration) * 100;
+  const timedTranscriptWords = getTimedTranscriptWords();
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#eef3f8] text-slate-900">
       <div className="pointer-events-none absolute inset-x-0 top-14 h-[420px] bg-[radial-gradient(circle_at_15%_10%,rgba(6,182,212,0.12),transparent_34%),radial-gradient(circle_at_85%_20%,rgba(139,92,246,0.12),transparent_34%)]" />
@@ -1004,16 +1134,12 @@ export default function ClipExtractionPage({
                 <div className="flex items-center gap-2 text-sm font-black text-emerald-700"><Check className="size-4" />截取完成</div>
                 <video ref={resultVideoRef} src={result.url} controls playsInline className="mt-3 aspect-video w-full rounded-xl bg-black object-contain" />
                 <div className="mt-2 text-xs font-bold text-slate-500">{formatTime(result.startSeconds)} 至 {formatTime(result.endSeconds)} · {formatSize(result.size)}</div>
-                <button type="button" onClick={() => {
-                  setSelectedAudioMode('none');
-                  setAudioStartSeconds(result.startSeconds);
-                  setAudioEndSeconds(result.endSeconds);
-                  setAudioCurrentSeconds(result.startSeconds);
-                  setActiveAudioLine('end');
-                  setPreviewingAudio(false);
-                  zoomAudioAround(result.startSeconds, result.endSeconds);
-                  setShowModePicker(true);
-                }} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-black text-white hover:bg-emerald-700"><Play className="size-4 fill-current" />进入视频创作</button>
+                <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
+                  <div className="text-xs font-black text-violet-900">需要单独使用原视频声音？</div>
+                  <div className="mt-1 text-[11px] leading-5 text-violet-600">MP3可以和画面选择不同长度，并支持波形、逐帧微调和区间试听。</div>
+                  <button type="button" onClick={() => openCreativePicker('original')} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 text-sm font-black text-white hover:bg-violet-700"><Scissors className="size-4" />精细截取MP3（可选）</button>
+                </div>
+                <button type="button" onClick={() => openCreativePicker('none')} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-black text-white hover:bg-emerald-700"><Play className="size-4 fill-current" />不截音频，进入视频创作</button>
                 <a href={result.url} download={result.fileName} className="mt-2 flex h-9 items-center justify-center gap-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50"><Download className="size-4" />下载到电脑</a>
               </section>}
             </aside>
@@ -1073,6 +1199,33 @@ export default function ClipExtractionPage({
                 <div className="grid flex-1 grid-cols-5 gap-1.5">
                   {[1, 2, 3, 4, 5].map((count) => <button key={count} type="button" disabled={audioShotLoading > 0} onClick={() => void chooseAudioShotCount(count)} className="h-8 rounded-lg border border-violet-100 bg-white text-[11px] font-black text-violet-700 hover:border-violet-300 disabled:opacity-50">{audioShotLoading === count ? <LoaderCircle className="mx-auto size-3.5 animate-spin" /> : `前${count}镜`}</button>)}
                 </div>
+              </div>
+              <div className="mt-3 rounded-xl border border-indigo-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div><div className="text-xs font-black text-indigo-900">按逐字稿选择音频</div><div className="mt-0.5 text-[10px] leading-4 text-slate-400">只识别视频开头30秒；文字与紫色音频线双向联动。黄色文字表示裁切线落在这个字内部，需要继续微调。</div></div>
+                  <button type="button" disabled={timedTranscriptLoading} onClick={() => void loadTimedTranscript()} className="flex h-8 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 text-[11px] font-black text-white hover:bg-indigo-700 disabled:opacity-60">{timedTranscriptLoading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}{timedTranscriptLoading ? '正在识别时间轴…' : timedTranscriptSentences.length ? '重新载入时间轴' : '识别开头30秒逐字稿'}</button>
+                </div>
+                {timedTranscriptError && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-[11px] font-bold text-red-600">{timedTranscriptError}</div>}
+                {timedTranscriptSentences.length > 0 && <div className="mt-3">
+                  <div className="max-h-44 space-y-2 overflow-y-auto rounded-lg bg-slate-50 p-2.5" onPointerUp={finishTimedTranscriptSelection} onPointerCancel={finishTimedTranscriptSelection} onPointerLeave={finishTimedTranscriptSelection}>
+                    {timedTranscriptSentences.map((sentence, sentenceIndex) => {
+                      const firstIndex = timedTranscriptWords.indexOf(sentence.words[0]);
+                      const lastIndex = timedTranscriptWords.indexOf(sentence.words[sentence.words.length - 1]);
+                      return <div key={`${sentenceIndex}-${sentence.startSeconds}`} className="group flex items-start gap-2 rounded-lg px-1.5 py-1 hover:bg-white">
+                        <button type="button" onClick={() => applyTimedTranscriptSelection(firstIndex, lastIndex)} className="mt-0.5 shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 font-mono text-[9px] font-black text-indigo-600" title="选择整句话">{formatTime(sentence.startSeconds)}</button>
+                        <div className="min-w-0 flex-1 select-none text-sm leading-7 text-slate-700">
+                          {sentence.words.map((word) => {
+                            const globalIndex = timedTranscriptWords.indexOf(word);
+                            const selected = transcriptSelectionStart !== null && transcriptSelectionEnd !== null && globalIndex >= transcriptSelectionStart && globalIndex <= transcriptSelectionEnd;
+                            const boundaryCutsWord = selected && ((audioStartSeconds > word.startSeconds && audioStartSeconds < word.endSeconds) || (audioEndSeconds > word.startSeconds && audioEndSeconds < word.endSeconds));
+                            return <span key={`${sentenceIndex}-${word.wordIndex}-${globalIndex}`} onPointerDown={(event) => beginTimedTranscriptSelection(globalIndex, event)} onPointerEnter={() => extendTimedTranscriptSelection(globalIndex)} className={cn('cursor-crosshair rounded px-0.5 transition-colors', boundaryCutsWord ? 'bg-amber-400 font-black text-amber-950' : selected ? 'bg-indigo-500 font-black text-white' : 'hover:bg-indigo-100')} title={boundaryCutsWord ? '音频线切在这个字内部，建议继续微调' : undefined}>{word.text}</span>;
+                          })}
+                        </div>
+                      </div>;
+                    })}
+                  </div>
+                  {transcriptSelectionStart !== null && transcriptSelectionEnd !== null && <div className="mt-2 rounded-lg bg-indigo-50 px-3 py-2 text-[11px] leading-5 text-indigo-700"><span className="font-black">当前音频对应文字：</span>{timedTranscriptWords.slice(transcriptSelectionStart, transcriptSelectionEnd + 1).map((word) => word.text).join('')}<span className="ml-2 font-bold text-indigo-400">拖动波形线时这里会实时变化</span></div>}
+                </div>}
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => { setActiveAudioLine('start'); requestAnimationFrame(() => audioTimelineRef.current?.focus()); }} className={cn('rounded-xl border-2 px-3 py-2 text-left', activeAudioLine === 'start' ? 'border-fuchsia-500 bg-white' : 'border-transparent bg-white/70')}><span className="block text-[10px] font-black text-fuchsia-600">音频开始</span><span className="font-mono text-sm font-black text-slate-800">{formatTimecode(audioStartSeconds, source.fps || 30)}</span><span className="ml-2 text-[10px] text-slate-400">{audioStartSeconds.toFixed(3)}秒</span></button>

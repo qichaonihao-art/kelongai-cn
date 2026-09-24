@@ -59,6 +59,7 @@ const CLIP_REMOTE_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const CLIP_OUTPUT_MAX_DURATION_SECONDS = 60;
 const CLIP_MEDIA_TTL_MS = 15 * 60 * 1000;
 const clipSourceMimeTypes = new Map();
+const clipTimedTranscriptCache = new Map();
 const RUNTIME_STATE_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || path.join(__dirname, '.runtime-state'));
 const VIDEO_LIBRARY_DIR = path.resolve(process.env.VIDEO_LIBRARY_DIR || path.join(path.dirname(RUNTIME_STATE_DIR), 'kelongai-media', 'video-library'));
 const VIDEO_LIBRARY_MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -1460,6 +1461,69 @@ async function handleClipAudioWaveform(req, res) {
   }
 }
 
+function normalizeClipTimedTranscript(sentences) {
+  return (Array.isArray(sentences) ? sentences : []).map((sentence, sentenceIndex) => {
+    const words = (Array.isArray(sentence?.words) ? sentence.words : []).map((word, wordIndex) => ({
+      text: String(word?.text || '').trim(),
+      startSeconds: Math.max(0, Number(word?.begin_time) / 1000),
+      endSeconds: Math.max(0, Number(word?.end_time) / 1000),
+      sentenceIndex,
+      wordIndex,
+    })).filter((word) => word.text && Number.isFinite(word.startSeconds) && Number.isFinite(word.endSeconds) && word.endSeconds > word.startSeconds);
+    return {
+      text: String(sentence?.text || words.map((word) => word.text).join('')).trim(),
+      startSeconds: words[0]?.startSeconds ?? Math.max(0, Number(sentence?.begin_time) / 1000),
+      endSeconds: words[words.length - 1]?.endSeconds ?? Math.max(0, Number(sentence?.end_time) / 1000),
+      words,
+    };
+  }).filter((sentence) => sentence.text && sentence.words.length > 0);
+}
+
+async function handleClipTimedTranscript(req, res) {
+  const body = await readRequestBody(req);
+  const sourceId = normalizeClipSourceId(body?.sourceId);
+  const sourcePath = getClipSourcePath(sourceId);
+  if (!sourcePath || !existsSync(sourcePath)) {
+    sendJson(res, 404, { error: '源视频已过期，请重新上传' });
+    return;
+  }
+  const cached = clipTimedTranscriptCache.get(sourceId);
+  if (cached && cached.expiresAt > Date.now()) {
+    sendJson(res, 200, { ok: true, cached: true, limitSeconds: 30, sentences: cached.sentences });
+    return;
+  }
+  const audioPath = path.join(UPLOAD_TEMP_DIR, `${sourceId}_clip_transcript_30s.wav`);
+  try {
+    await ensureVideoCompressionTools();
+    const metadata = await probeVideoMetadata(sourcePath);
+    const limitSeconds = Math.min(30, metadata.durationSeconds);
+    await execFileAsync('ffmpeg', [
+      '-y', '-i', sourcePath,
+      '-t', String(limitSeconds), '-vn', '-ac', '1', '-ar', '16000',
+      '-c:a', 'pcm_s16le',
+      audioPath,
+    ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
+    const rawSentences = await transcribeAudioWithAliyunWordTimestamps({
+      audioPath,
+      parentDeadlineAt: Date.now() + SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS,
+    });
+    const sentences = normalizeClipTimedTranscript(rawSentences);
+    if (!sentences.length) throw new Error('开头30秒没有识别到可选择的人声文字');
+    clipTimedTranscriptCache.set(sourceId, { sentences, expiresAt: Date.now() + CLIP_MEDIA_TTL_MS });
+    setTimeout(() => clipTimedTranscriptCache.delete(sourceId), CLIP_MEDIA_TTL_MS + 1000).unref?.();
+    sendJson(res, 200, { ok: true, cached: false, limitSeconds, sentences });
+  } catch (error) {
+    const message = String(error?.message || '');
+    sendJson(res, 502, {
+      error: /matches no streams|does not contain any stream|0:a/i.test(message)
+        ? '视频开头30秒没有可识别的音轨'
+        : message || '带时间轴逐字稿识别失败',
+    });
+  } finally {
+    await unlink(audioPath).catch(() => {});
+  }
+}
+
 async function handleDetectFirstClipCut(req, res) {
   const body = await readRequestBody(req);
   const requestedShotCount = Math.max(1, Math.min(5, Math.round(Number(body?.shotCount) || 1)));
@@ -1528,6 +1592,7 @@ async function handleClipCleanup(req, res) {
 
   await Promise.all(targets.map((target) => unlink(target).catch(() => {})));
   if (sourceId) clipSourceMimeTypes.delete(`${sourceId}_clip_source`);
+  if (sourceId) clipTimedTranscriptCache.delete(sourceId);
   sendJson(res, 200, { ok: true, deleted: targets.length });
 }
 
@@ -20966,6 +21031,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/clips/audio-waveform') {
     await handleClipAudioWaveform(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/clips/timed-transcript') {
+    await handleClipTimedTranscript(req, res);
     return;
   }
 
