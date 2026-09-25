@@ -147,20 +147,47 @@ function extractAuthorFromData(data: any): string {
   return detail?.author?.nickname || detail?.author?.unique_id || detail?.author_name || (typeof data?.author === 'string' ? data.author : data?.author?.nickname) || data?.authorName || data?.note?.user?.nickname || '';
 }
 
+function readPositiveNumber(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+// A bare `duration` field with no unit hint is only treated as milliseconds once
+// reading it as seconds would imply a clip longer than this.
+const DURATION_AMBIGUOUS_SECONDS_CEILING = 3600;
+
 function extractDurationFromData(data: any): number {
   const detail = data?.aweme_detail || data?.itemInfo?.itemStruct || data;
   const video = detail?.video || data?.video || {};
-  const candidates = [
-    data?.lengthSeconds, data?.durationSeconds, data?.duration, data?.duration_sec,
-    detail?.lengthSeconds, detail?.durationSeconds, detail?.duration, detail?.duration_sec,
-    video?.duration, video?.duration_ms, video?.lengthSeconds
-  ];
-  for (const value of candidates) {
-    if (value === undefined || value === null || value === '') continue;
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric) || numeric <= 0) continue;
-    return numeric > 10000 ? numeric / 1000 : numeric;
+
+  // Field names that carry their own unit: these are seconds.
+  for (const value of [
+    data?.lengthSeconds, data?.durationSeconds, data?.duration_sec,
+    detail?.lengthSeconds, detail?.durationSeconds, detail?.duration_sec,
+    video?.lengthSeconds,
+  ]) {
+    const seconds = readPositiveNumber(value);
+    if (seconds !== null) return seconds;
   }
+
+  // Douyin/TikTok aweme reports video.duration in milliseconds, exactly like
+  // duration_ms. The unit must come from the field name and never from the
+  // magnitude: a 10s clip is exactly 10000ms, so any single threshold either
+  // misreads it as 10000s or mangles longer clips.
+  for (const value of [video?.duration_ms, video?.duration, detail?.duration_ms]) {
+    const milliseconds = readPositiveNumber(value);
+    if (milliseconds !== null) return milliseconds / 1000;
+  }
+
+  // Unit-unknown bare `duration` fields. Read as seconds unless that implies an
+  // implausible clip length. The server re-probes the downloaded file with
+  // ffprobe, so a wrong guess here cannot corrupt the clip itself.
+  for (const value of [data?.duration, detail?.duration]) {
+    const numeric = readPositiveNumber(value);
+    if (numeric !== null) return numeric <= DURATION_AMBIGUOUS_SECONDS_CEILING ? numeric : numeric / 1000;
+  }
+
   return 0;
 }
 
