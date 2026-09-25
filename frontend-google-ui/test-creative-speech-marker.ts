@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, extractDialogueLines, stripDialogueMarkers, stripReverseMarkers, DIALOGUE_MARKER_TOKENS, resolveAutoAudioSetting, extractExplicitAudioPreference, extractFinalVideoPromptSection, findFinalVideoPromptRange, extractRequestedDialogueLines, ensureRequestedDialogueInFinalPrompt, hasRequestedDialogueIntent, findDialogueOccurrencesInFinalPrompt, type AutoAudioReverseMode } from './src/lib/creative';
+import { extractHumanSpeechMarker, stripHumanSpeechMarker, HUMAN_SPEECH_MARKER_TOKENS, extractDialogueLines, stripDialogueMarkers, stripReverseMarkers, DIALOGUE_MARKER_TOKENS, resolveAutoAudioSetting, extractExplicitAudioPreference, extractFinalVideoPromptSection, findFinalVideoPromptRange, extractRequestedDialogueLines, ensureRequestedDialogueInFinalPrompt, removeInferredDialogueForExternalAudio, removeSpokenDialogueForSilentVideo, hasRequestedDialogueIntent, findDialogueOccurrencesInFinalPrompt, type AutoAudioReverseMode } from './src/lib/creative';
 
 // extractHumanSpeechMarker：三态
 assert.equal(extractHumanSpeechMarker('【人物说话：是】\n一、核心主体信息'), true);
@@ -105,6 +105,30 @@ const restoredCompactPrompt = ensureRequestedDialogueInFinalPrompt(compactPrompt
 assert.equal(findDialogueOccurrencesInFinalPrompt(restoredCompactPrompt, ['挂上十年你都不会后悔。']).length, 1, '精简版提示词漏掉的用户原话也必须补回正向生成部分');
 assert.equal(extractFinalVideoPromptSection(restoredCompactPrompt)?.includes('禁止切镜'), false, '精简版负面提示词不得混入正向参数和台词核对范围');
 assert.equal(extractFinalVideoPromptSection(restoredCompactPrompt)?.trimEnd().endsWith('总时长：6秒'), true, '补回台词后总时长仍必须是正向提示词最后一行');
+const contaminatedAudioPrompt = `一、最终可直接用于视频生成模型的完整复刻提示词
+屏幕标题显示“家里有儿子的看这里”，老人面对镜头说出“挂上十年不会后悔”，随后继续自然说话。
+0-2秒人物口型逐字匹配“不要把画面说明读出来”。
+2-3秒老人说：这一句没有引号也不能留下。
+声音与逐字台词：人物说“屏幕右上角的说明文字也读出来”。
+总时长：6秒
+
+二、负面提示词
+禁止切镜`;
+const originalAudioPrompt = removeInferredDialogueForExternalAudio(contaminatedAudioPrompt, 'original');
+assert.ok(originalAudioPrompt.includes('屏幕标题显示“家里有儿子的看这里”'), '屏幕文字是视觉信息，清理推测台词时不能误删');
+assert.ok(!originalAudioPrompt.includes('挂上十年不会后悔') && !originalAudioPrompt.includes('不要把画面说明读出来') && !originalAudioPrompt.includes('这一句没有引号也不能留下') && !originalAudioPrompt.includes('屏幕右上角的说明文字也读出来'), '沿用原音频时不得保留 AI 推测的具体台词');
+const voiceAudioPrompt = ensureRequestedDialogueInFinalPrompt(
+  removeInferredDialogueForExternalAudio(contaminatedAudioPrompt, 'voice'),
+  ['只说我手动输入的这一句。'],
+);
+assert.equal(findDialogueOccurrencesInFinalPrompt(voiceAudioPrompt, ['只说我手动输入的这一句。']).length, 1, '参考音色模式只补回用户输入的准确台词');
+assert.ok(!voiceAudioPrompt.includes('挂上十年不会后悔') && !voiceAudioPrompt.includes('屏幕右上角的说明文字也读出来'), '参考音色模式不得混入 AI 从画面猜测的文字');
+const silentVideoPrompt = removeSpokenDialogueForSilentVideo(contaminatedAudioPrompt, ['挂上十年不会后悔']);
+assert.ok(silentVideoPrompt.includes('屏幕标题显示“家里有儿子的看这里”'), '一键静音仍须保留屏幕文字和画面信息');
+assert.ok(!silentVideoPrompt.includes('挂上十年不会后悔') && !silentVideoPrompt.includes('这一句没有引号也不能留下'), '一键静音必须清掉具体台词');
+assert.ok(silentVideoPrompt.includes('全片不生成任何人物台词、对白、旁白、口播、配音或其他人声，保持静音'), '一键静音必须给视频模型明确的无人声约束');
+assert.equal(silentVideoPrompt.split('【本条视频静音要求】').length - 1, 1, '一键静音规则不能重复追加');
+assert.equal(removeSpokenDialogueForSilentVideo(silentVideoPrompt).split('【本条视频静音要求】').length - 1, 1, '重复执行一键静音仍须保持幂等');
 // 第四个模块不参与
 assert.equal(resolveAutoAudioSetting({ hasSpeech: true, mode: 'painting', model: MODEL }), null);
 assert.equal(resolveAutoAudioSetting({ hasSpeech: false, mode: 'painting', model: MODEL }), null);
@@ -175,7 +199,8 @@ assert.ok(
 );
 assert.ok(
   pageSource.includes('const cleanPrompt = stripReverseMarkers(formatted);')
-    && pageSource.includes('ensureRequestedDialogueInFinalPrompt(cleanPrompt, requestedDialogueLines)')
+    && pageSource.includes('removeInferredDialogueForExternalAudio(cleanPrompt, activeClipAudioMode)')
+    && pageSource.includes('ensureRequestedDialogueInFinalPrompt(audioAuthorityPrompt, requestedDialogueLines)')
     && pageSource.includes('SEEDANCE_SHOT_FIDELITY_LOCK}\\n\\n${promptWithRequiredDialogue}'),
   '填框前必须清掉全部标记行（人声判定 + 台词），不能把标记发给视频模型',
 );
@@ -188,6 +213,20 @@ assert.ok(
     && pageSource.includes('extractRequestedDialogueLines(userAdjustments)')
     && (pageSource.match(/lastReverseDialogueInputRef\.current = additionalChange/g) || []).length === 2,
   '用户明确指定的台词必须来自当次提交的额外调整，自动或手动同步都不能依赖 AI 转述',
+);
+assert.ok(
+  pageSource.includes("const activeClipAudioMode: ClipAudioMode = sourceVideo.serverMediaToken ? clipAudioMode : 'none';")
+    && pageSource.includes("const audioAuthorityPrompt = activeClipAudioMode === 'none'\n      ? cleanPrompt"),
+  '普通本地上传必须固定走原有台词流程，只有镜头截取传入的服务端素材才允许启用 MP3 权威规则',
+);
+assert.ok(
+  pageSource.includes('// 这是当前视频的特殊处理，不写入全局偏好')
+    && !pageSource.slice(pageSource.indexOf('function handleRemoveSeedanceDialogue'), pageSource.indexOf('function handleSeedanceKeyDown')).includes('rememberManualSeedancePreference'),
+  '一键删除台词只能修改当前视频，不能污染后续手动生成任务的声音默认值',
+);
+assert.ok(
+  (pageSource.match(/resetClipAudioState\(\);/g) || []).length >= 4,
+  '上传普通素材以及新建、切换、删除会话时必须清掉上一条 MP3 流程状态',
 );
 const syncSource = pageSource.slice(pageSource.indexOf('function syncLatestPromptToSeedance()'), pageSource.indexOf('function syncReverseMediaToSeedance('));
 assert.ok(

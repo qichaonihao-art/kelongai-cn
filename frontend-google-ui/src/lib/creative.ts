@@ -125,6 +125,63 @@ export function ensureRequestedDialogueInFinalPrompt(prompt: string, lines: stri
   return `${source.slice(0, insertAt).trimEnd()}\n\n${lock}\n\n${source.slice(insertAt).trimStart()}`;
 }
 
+export type ExternalAudioDialogueMode = 'original' | 'voice';
+
+/**
+ * 使用外部 MP3 时，反推模型识别出的台词不再具有决定权。
+ * 这里只清理明确处在“说话/台词”语境里的文字；屏幕标题、贴纸、字幕等视觉文字保留。
+ */
+export function removeInferredDialogueForExternalAudio(
+  prompt: string,
+  mode: ExternalAudioDialogueMode,
+): string {
+  const authority = mode === 'original' ? '外部原音频' : '用户指定台词';
+  const replacement = `（具体说话内容仅以${authority}为准）`;
+  const speechCue = /(?:声音与逐字台词|逐字台词|人物台词|说话内容|台词内容|对白内容|口播内容|旁白内容|配音内容|台词|对白|口播|旁白|配音|口型(?:逐字)?匹配|开口说|说出|说道|念出|读出|朗读|(?:人物|老人|老年人|女士|女性|女人|男士|男性|男人|说话人)[^，。；;\n]{0,12}(?:说|讲|念|读))/;
+  const visualCue = /(?:屏幕|画面|字幕|标题|贴纸|横幅|水印|标牌|牌匾|文字叠加|屏显)(?:上|中|内|内容)?(?:显示|出现|写有|写着|文字|文案|字幕|标题)?/;
+  let source = String(prompt || '');
+
+  // 常见的独立字段会把无引号台词整段写在冒号后；整字段改为权威来源说明。
+  source = source.replace(
+    /(^|\n)([ \t]*(?:[-*\d.、][ \t]*)?(?:声音与逐字台词|逐字台词|人物台词|说话内容|台词内容|对白内容|口播内容|旁白内容|配音内容)[ \t]*[：:])[^\n]*/g,
+    (_match, lineStart: string, label: string) => `${lineStart}${label}${replacement}`,
+  );
+
+  // 时间轴里也可能写成“0-2秒老人说：……”而没有引号，只清掉冒号后的这一句。
+  source = source.replace(
+    /((?:人物|老人|老年人|女士|女性|女人|男士|男性|男人|说话人)[^，。；;\n]{0,12}(?:说|讲|念|读)(?:出)?[ \t]*[：:])[ \t]*[^。；;\n]{1,500}/g,
+    (_match, cue: string) => `${cue}${replacement}`,
+  );
+
+  // 散落在动作或时间轴里的引号文字，只在最近语境属于说话时清理。
+  // 最近语境若是屏幕文字则保留，避免误删需要保留的视觉字幕、标题和贴纸。
+  source = source.replace(/[“「『"]([^”」』"\n]{1,500})[”」』"]/g, (quoted, _content, offset: number, full: string) => {
+    const context = full.slice(Math.max(0, offset - 48), offset);
+    const lastSpeech = Math.max(...[...context.matchAll(new RegExp(speechCue.source, 'g'))].map((match) => match.index ?? -1), -1);
+    const lastVisual = Math.max(...[...context.matchAll(new RegExp(visualCue.source, 'g'))].map((match) => match.index ?? -1), -1);
+    return lastSpeech > lastVisual ? replacement : quoted;
+  });
+
+  return source.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+const SILENT_DIALOGUE_DIRECTIVE_START = '【本条视频静音要求】';
+const SILENT_DIALOGUE_DIRECTIVE_END = '【/本条视频静音要求】';
+
+/** 普通视频复刻的可选静音操作：保留画面、镜头和动作，只移除人声台词。 */
+export function removeSpokenDialogueForSilentVideo(prompt: string, knownDialogueLines: string[] = []): string {
+  let cleanPrompt = removeInferredDialogueForExternalAudio(prompt, 'original')
+    .replaceAll('（具体说话内容仅以外部原音频为准）', '（无台词、无人声）')
+    .replace(new RegExp(`\\n*${SILENT_DIALOGUE_DIRECTIVE_START}[\\s\\S]*?${SILENT_DIALOGUE_DIRECTIVE_END}`, 'g'), '')
+    .replace(/\n*【用户指定人物台词，必须逐字说出】[\s\S]*?(?=\n{2,}|$)/g, '');
+  for (const line of [...new Set(knownDialogueLines.map((item) => item.trim()).filter(Boolean))]) {
+    cleanPrompt = cleanPrompt.split(line).join('');
+  }
+  cleanPrompt = cleanPrompt.replace(/\n{3,}/g, '\n\n').trim();
+  const directive = `${SILENT_DIALOGUE_DIRECTIVE_START}\n全片不生成任何人物台词、对白、旁白、口播、配音或其他人声，保持静音；屏幕字幕、标题、贴纸、横幅和说明文字都只属于画面，禁止朗读。严格保留原提示词中的镜头、构图、人物动作、节奏和画面内容，不得因为去掉人声而删改镜头或动作。\n${SILENT_DIALOGUE_DIRECTIVE_END}`;
+  return `${cleanPrompt}\n\n${directive}`;
+}
+
 export function hasRequestedDialogueIntent(text: string): boolean {
   return /(?:台词|对白|口播内容|旁白内容|配音内容|(?:说|念|读|朗读)\s*[：:])/i.test(String(text || ''));
 }

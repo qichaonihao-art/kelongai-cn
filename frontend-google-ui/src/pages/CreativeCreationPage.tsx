@@ -66,6 +66,8 @@ import {
   extractExplicitAudioPreference,
   extractRequestedDialogueLines,
   ensureRequestedDialogueInFinalPrompt,
+  removeInferredDialogueForExternalAudio,
+  removeSpokenDialogueForSilentVideo,
   hasRequestedDialogueIntent,
   findDialogueOccurrencesInFinalPrompt,
   extractRequestedVideoDurationFromText,
@@ -704,6 +706,15 @@ interface VideoClonePromptOptions {
   additionalChange?: string;
   includeSubtitles?: boolean;
   characterRemix?: string;
+  clipAudioMode?: ClipAudioMode;
+}
+
+function buildClipAudioReverseAuthority(mode: ClipAudioMode, requestedDialogueLines: string[]) {
+  if (mode === 'none') return '';
+  if (mode === 'original') {
+    return '\n\n【外部原音频是唯一台词来源·高于前文台词规则】最终成片将直接使用单独提供的 MP3 作为完整音轨。前文关于“逐字保留原片台词”或输出台词标记的通用要求在本模式下不执行，只需判断是否有人声。不要根据画面字幕、标题、贴纸、横幅、说明文字、水印或人物口型猜测、补写、改写台词；这些画面文字只能作为视觉元素，绝不能变成人声。最终提示词只描述人物自然说话、口型和表演需与外部音频同步，不得写任何推测出的具体台词原文，也不得让人物朗读画面文字。';
+  }
+  return `\n\n【用户输入是唯一台词来源·高于前文台词规则】外部 MP3 只提供音色，不提供要说的内容。前文关于“逐字保留原片台词”或从素材输出台词标记的通用要求在本模式下不执行。人物只允许逐字说出下面由用户在“额外调整”中输入的原话：\n${requestedDialogueLines.map((line, index) => `${index + 1}. “${line}”`).join('\n')}\n不得根据原音频、画面字幕、标题、贴纸、横幅、说明文字、水印或人物口型增加、补全、改写任何字；这些画面文字只能作为视觉元素，绝不能变成人声。`;
 }
 
 function buildVideoClonePrompt(options: VideoClonePromptOptions, replacement?: { target: string; value: string }) {
@@ -711,6 +722,8 @@ function buildVideoClonePrompt(options: VideoClonePromptOptions, replacement?: {
   const includeSubtitles = options?.includeSubtitles ?? false;
   const characterRemix = options?.characterRemix?.trim();
   const characterRemixClause = buildCharacterRemixClause(characterRemix);
+  const requestedDialogueLines = extractRequestedDialogueLines(additionalChange || '');
+  const clipAudioAuthority = buildClipAudioReverseAuthority(options.clipAudioMode ?? 'none', requestedDialogueLines);
   const subtitleClause = includeSubtitles
     ? '字幕规则：逐字识别并保留原片实际出现的有效字幕，锁定内容、位置、字号、颜色、出现与消失时段；水印、平台标识和 AI 生成标记仍必须去除。'
     : '字幕规则：去除原片字幕、文字叠加、水印、平台标识和 AI 生成标记；不得生成新的画面文字。';
@@ -725,9 +738,9 @@ function buildVideoClonePrompt(options: VideoClonePromptOptions, replacement?: {
     includeSubtitles ? '保留有效字幕并去除水印、平台标识和 AI 生成标记' : '去除字幕、文字叠加、水印、平台标识和 AI 生成标记',
   ].filter(Boolean);
   const allowedChanges = `只允许以下变化：${allowedChangeItems.join('；')}。除此之外，原片内容全部冻结。`;
-  const userAdjustments = additionalChange?.trim()
-    ? `${buildRequestedDialogueLock(additionalChange)}\n\n【本次额外调整】\n${additionalChange.trim()}`
-    : '';
+  const userAdjustments = `${additionalChange?.trim()
+    ? `${options.clipAudioMode === 'original' ? '' : buildRequestedDialogueLock(additionalChange)}\n\n【本次额外调整】\n${additionalChange.trim()}`
+    : ''}${clipAudioAuthority}`;
 
   return `请把当前视频当作“待复刻样片”，先在内部逐帧核对，再输出一份可直接交给视频生成模型执行的单一复刻规格。目标是几何、镜头、时序和内容尽可能 1:1，不是改编、润色或根据台词再创作。不要输出你的观察过程，也不要把同一内容先分析后复述。\n\n${taskRule}\n\n【证据与变更优先级】\n1. 原视频实际可见画面与真实剪辑点，是镜头、构图、人物、场景、动作和时间轴的最高依据。\n2. 用户本次明确要求的变化，只覆盖被明确点名的内容。\n3. ${replacement ? '参考图片只决定替换元素本身的内容和视觉特征，不得覆盖原视频的镜头与布局。' : '不得使用历史任务或常识补充原片没拍到的内容。'}\n4. 台词与旁白只决定声音和口型，不能作为新增物体、插镜、特写、运镜或动作的依据。\n5. 看不清的细节写成中性、不扩张画面的约束，不得猜测或补拍。\n\n${buildReverseDurationRule(options.durationSeconds, options.sourceDurationSeconds)}\n\n${HUMAN_SPEECH_MARKER_RULE(HUMAN_SPEECH_CRITERION_VIDEO)}\n\n${VIDEO_CONTEXT_ISOLATION_RULE}\n\n${VIDEO_SHOT_FIDELITY_RULE}\n\n【内部核对清单，不要单独输出】\n- 逐段确认真实镜头数、每个切点、是否一镜到底；区分真实运镜与人物运动、画面抖动。目标时长变化时，保持镜头数量和先后顺序，按原片各镜头及关键动作的相对时长比例重排目标时间轴，不得死守已经失效的原始秒点。\n- 锁定原片画幅方向和宽高比，以及每个镜头的机位高度与方向、俯仰角、景别、主体边界框位置和占比、留白、透视、焦段观感、景深；无法测量时用相对关系准确表达。\n- 列全人物身份与外观、服装发型、姿态视线、表情、手指和道具接触，及背景物体的数量、位置、尺寸和遮挡；保持跨帧连续。\n- 按原片事件顺序覆盖 0-${options.durationSeconds} 秒，时间段连续、不重叠、不留空。目标时长变长时，保持核心动作与事件顺序，在同一镜头内补全直接相连的起手、过渡、收势和自然微动作，不得机械慢放、循环或新增独立剧情；目标时长缩短时，只压缩动作间隙，不得删除核心动作。\n- 精确分离画面事实与声音内容，逐字保留人声台词；台词提到但画面未出现的物体必须写入禁止生成项。分别核对原片的人声、背景音乐、环境音和动作音效，只写实际存在的声音及其出现时段，不得擅自增加配乐或音效。\n- 核对动作快慢、停顿、情绪、气质和环境氛围，以及主光方向、软硬、色温、曝光、对比、材质和环境动态，全部以原片为准，避免自动电影化和美化。\n- ${allowedChanges}\n- ${subtitleClause}\n- ${VIDEO_LIVE_EYE_GAZE_RULE}\n- 人物手部可见时，写清手指、手腕、手掌与物体的接触位置、发力方向和动作先后，避免笼统写“展示”或“操作”。\n- 挂画、海报、屏幕等平面元素保持原始比例、边界框、透视和空间占比，不得拉伸。出现卷轴滚动展开时，写清沿轴旋转、画布逐步释放；${PAINTING_WOOD_BAR_OUTPUT_RULE}\n- 明确抑制塑料感、过度磨皮、虚假光泽、僵硬表情、异常肢体、穿模、物体漂移、过度电影化和其他明显 AI 痕迹。\n${characterRemixClause}${userAdjustments}\n\n【唯一允许的输出结构】\n一、最终可直接用于视频生成模型的完整复刻提示词\n生成指令：按“复刻目标与允许变化、镜头硬锁、画面与空间、逐秒时间轴、人物动作与表演、节奏情绪与氛围、声音与逐字台词、光影材质与连续性”的顺序写成一份完整规格。必须使用具体、可执行的描述，避免“高级感、电影感、氛围感”等无法复刻原片的空泛词。必须包含目标时间轴上的准确镜头数和切点；固定机位一镜到底必须在镜头硬锁中明确，并在时间轴中落实为连续动作。除必要的镜头硬锁在时间轴中的落实外，每项事实只写一次，不要附加分析摘要或再次复述。第一部分最后单独写“总时长：${options.durationSeconds}秒”。\n\n二、负面提示词\n只集中列出会破坏本片 1:1 复刻的禁项，包括擅自新增或删除的镜头、运镜、人物、物体、独立动作或剧情事件、台词联想画面、构图漂移、比例透视错误、时序错误、连续性错误和 AI 瑕疵；自然补时所需的连续过渡与微动作不属于禁项。不要复制第一部分的正向描述。`;
 }
@@ -826,8 +839,8 @@ function appendClipAudioDirective(prompt: string, mode: ClipAudioMode, dialogueL
     .trim();
   if (mode === 'none') return cleanPrompt;
   const instruction = mode === 'original'
-    ? '最终视频必须使用 @音频1 作为完整成片音轨。人物说话内容、语速、停顿、情绪和节奏完全以 @音频1 为准，人物口型与音频精准同步。不得改写、重新配音、增删或替换音频中的台词。'
-    : `仅参考 @音频1 中说话人的音色、音质和说话特征，不得复用其中原有台词。人物必须说：“${dialogueLines.join('；')}”，并使用该参考音色生成声音，口型与新台词精准同步。`;
+    ? '最终视频必须使用 @音频1 作为完整成片音轨，@音频1 是人物说话内容的唯一依据。人物说话内容、语速、停顿、情绪和节奏完全以 @音频1 为准，人物口型与音频精准同步。忽略提示词其他位置可能残留的任何台词原文；屏幕字幕、标题、贴纸、横幅、说明文字、水印都只属于画面，禁止朗读。不得改写、重新配音、增删、补充或替换音频中的任何字。'
+    : `仅参考 @音频1 中说话人的音色、音质和说话特征，不得复用其中原有台词。唯一允许说出的内容是用户指定原话：“${dialogueLines.join('；')}”。必须逐字使用该原话生成声音，不得增加、删减、改写或补全；忽略提示词其他位置可能残留的任何台词，屏幕字幕、标题、贴纸、横幅、说明文字、水印都只属于画面，禁止朗读。人物口型与新台词精准同步。`;
   return `${cleanPrompt}\n\n${CLIP_AUDIO_DIRECTIVE_START}\n${instruction}\n${CLIP_AUDIO_DIRECTIVE_END}`;
 }
 
@@ -2195,6 +2208,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const showSeedancePromptPreview = seedanceTaskMode === 'generate'
     && seedanceDialogueLines.length > 0
     && !isSeedancePromptEditing;
+  const canRemoveSeedanceDialogue = seedanceTaskMode === 'generate'
+    && clipAudioMode === 'none'
+    && !seedanceReferences.some((reference) => reference.kind === 'audio')
+    && seedanceModel !== 'MiniMax-H3'
+    && !seedancePrompt.includes('【本条视频静音要求】')
+    && /(?:台词|对白|旁白|口播|配音|说话|说出|说道|开口说)/.test(seedancePrompt);
 
   useEffect(() => {
     if (!showSeedancePromptPreview) return;
@@ -2633,6 +2652,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   function handleCreateNewSession() {
     lastReverseDialogueInputRef.current = '';
     pendingReverseSeedanceSyncRef.current = null;
+    resetClipAudioState();
     if (selectedMedia) {
       URL.revokeObjectURL(selectedMedia.previewUrl);
     }
@@ -2673,6 +2693,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
     lastReverseDialogueInputRef.current = '';
     pendingReverseSeedanceSyncRef.current = null;
+    resetClipAudioState();
 
     if (selectedMedia) {
       URL.revokeObjectURL(selectedMedia.previewUrl);
@@ -2752,6 +2773,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
     lastReverseDialogueInputRef.current = '';
     pendingReverseSeedanceSyncRef.current = null;
+    resetClipAudioState();
 
     const fallbackSession = remainingSessions[0] || null;
 
@@ -2964,7 +2986,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     lastReverseDialogueInputRef.current = additionalChange;
 
     if (reverseMode === 'replace') {
-      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText });
+      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText, clipAudioMode: activeClipAudioMode });
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
@@ -2972,7 +2994,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       scrollToRef(textareaRef);
       handleSend(prompt);
     } else {
-      const prompt = VIDEO_REVERSE_PROMPT({ durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText });
+      const prompt = VIDEO_REVERSE_PROMPT({ durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText, clipAudioMode: activeClipAudioMode });
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
@@ -3008,9 +3030,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       ?? (requestedDialogueLines.length > 0 ? true : null);
     const needsDialogueClarification = requestedDialogueLines.length === 0
       && hasRequestedDialogueIntent(userAdjustments);
-    const dialogueLines = requestedDialogueLines.length > 0
-      ? requestedDialogueLines
-      : needsDialogueClarification ? [] : extractDialogueLines(latestAssistantText);
+    const dialogueLines = activeClipAudioMode === 'original'
+      ? []
+      : activeClipAudioMode === 'voice'
+        ? requestedDialogueLines
+        : requestedDialogueLines.length > 0
+          ? requestedDialogueLines
+          : needsDialogueClarification ? [] : extractDialogueLines(latestAssistantText);
 
     // 格式化：在每个章节标题前插入一个空行，标题后紧跟正文不空行
     const formatted = latestAssistantText
@@ -3022,9 +3048,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       .trim();
 
     const cleanPrompt = stripReverseMarkers(formatted);
+    const audioAuthorityPrompt = activeClipAudioMode === 'none'
+      ? cleanPrompt
+      : removeInferredDialogueForExternalAudio(cleanPrompt, activeClipAudioMode);
     const promptWithRequiredDialogue = (activeMode === 'direct' || activeMode === 'replace')
-      ? ensureRequestedDialogueInFinalPrompt(cleanPrompt, requestedDialogueLines)
-      : cleanPrompt;
+      ? activeClipAudioMode === 'original'
+        ? audioAuthorityPrompt
+        : ensureRequestedDialogueInFinalPrompt(audioAuthorityPrompt, requestedDialogueLines)
+      : audioAuthorityPrompt;
     // 常规生成没有自动上传原视频；把镜头锁明确放在 Seedance 实际收到的提示词最前面。
     const syncedPrompt = activeMode === 'direct' || activeMode === 'replace'
       ? `${SEEDANCE_SHOT_FIDELITY_LOCK}\n\n${promptWithRequiredDialogue}`
@@ -3161,6 +3192,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setReplaceResult(null);
       setShowSearchReplaceModal(false);
     }, 1200);
+  }
+
+  function handleRemoveSeedanceDialogue() {
+    if (!canRemoveSeedanceDialogue) return;
+    const nextPrompt = removeSpokenDialogueForSilentVideo(seedancePrompt, seedanceDialogueLines);
+    setSeedancePrompt(nextPrompt);
+    clearSeedanceDialogueReview();
+    setSeedanceReplaceHighlight(null);
+    setIsSeedancePromptEditing(false);
+    // 这是当前视频的特殊处理，不写入全局偏好，下一次复刻仍按原素材自动判断声音。
+    setSeedanceGenerateAudio(false);
+    setSeedanceError('');
+    setSeedancePromptHighlight(true);
+    setTimeout(() => setSeedancePromptHighlight(false), 1200);
   }
 
   function handleSeedanceKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -3861,10 +3906,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
-  function clearClipAudioFlow() {
+  function resetClipAudioState() {
     stopSeedanceAudioPreview();
     setClipAudioMode('none');
     setClipAudioDurationSeconds(null);
+  }
+
+  function clearClipAudioFlow() {
+    resetClipAudioState();
     setSeedancePrompt((previous) => appendClipAudioDirective(previous, 'none', []));
     setSeedanceReferences((previous) => previous.filter((item) => {
       const managed = item.source === 'clip-audio' || item.source === 'clip-required-image';
@@ -7439,7 +7488,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
                 {/* 提示词输入框 + 内部参考素材 */}
                 <div className="relative">
-                  {seedanceDialogueLines.length > 0 && (
+                  {(seedanceDialogueLines.length > 0 || canRemoveSeedanceDialogue) && (
                     <div
                       className="absolute right-3 top-3 z-20 flex items-center gap-2"
                     >
@@ -7448,18 +7497,31 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           台词待核对
                         </span>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const nextEditing = !isSeedancePromptEditing;
-                          setIsSeedancePromptEditing(nextEditing);
-                          if (nextEditing) requestAnimationFrame(() => seedancePromptRef.current?.focus());
-                        }}
-                        className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-2.5 py-1 text-[10px] font-black text-slate-600 shadow-sm hover:border-emerald-300 hover:text-emerald-700"
-                      >
-                        <BookText className="size-3" />
-                        {isSeedancePromptEditing ? '查看台词位置' : '编辑提示词'}
-                      </button>
+                      {canRemoveSeedanceDialogue && (
+                        <button
+                          type="button"
+                          onClick={handleRemoveSeedanceDialogue}
+                          className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-white/95 px-2.5 py-1 text-[10px] font-black text-rose-600 shadow-sm transition-colors hover:border-rose-300 hover:bg-rose-50"
+                          title="删除当前提示词中的人声台词，并将本条视频设为静音"
+                        >
+                          <Trash2 className="size-3" />
+                          一键删除台词
+                        </button>
+                      )}
+                      {seedanceDialogueLines.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextEditing = !isSeedancePromptEditing;
+                            setIsSeedancePromptEditing(nextEditing);
+                            if (nextEditing) requestAnimationFrame(() => seedancePromptRef.current?.focus());
+                          }}
+                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-2.5 py-1 text-[10px] font-black text-slate-600 shadow-sm hover:border-emerald-300 hover:text-emerald-700"
+                        >
+                          <BookText className="size-3" />
+                          {isSeedancePromptEditing ? '查看台词位置' : '编辑提示词'}
+                        </button>
+                      )}
                     </div>
                   )}
                   {showSeedancePromptPreview ? (
@@ -7482,7 +7544,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       placeholder={seedanceTaskMode === 'video-edit-painting' ? '上传原视频和目标挂画后即可提交视频编辑任务' : '等待模块一反推出视频提示词...'}
                       className={cn(
                         "relative min-h-[280px] w-full resize-none rounded-xl border bg-white p-4 pb-20 text-sm leading-7 text-slate-700 outline-none transition-[border-color,box-shadow] focus:border-violet-300 whitespace-pre-wrap",
-                        seedanceDialogueLines.length > 0 ? "pt-12" : "",
+                        seedanceDialogueLines.length > 0 || canRemoveSeedanceDialogue ? "pt-12" : "",
                         seedancePromptHighlight ? "border-violet-400 ring-2 ring-violet-300" : "border-slate-300",
                       )}
                     />
