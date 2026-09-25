@@ -21,6 +21,7 @@ const {
   normalizeEnhancementRemoteStatus,
   normalizeMediaKitUploadHeaders,
   buildVideoEnhancementRetryUpdates,
+  calculateVideoEnhancementWorkerCapacity,
   cleanupCompletedVideoEnhancementSources,
 } = await import('./server.mjs');
 
@@ -59,6 +60,10 @@ assert.deepEqual(buildVideoEnhancementRetryUpdates(123), {
   errorMessage: '',
   nextPollAt: 123,
 });
+assert.equal(calculateVideoEnhancementWorkerCapacity(0, 20), 20);
+assert.equal(calculateVideoEnhancementWorkerCapacity(7, 20), 13);
+assert.equal(calculateVideoEnhancementWorkerCapacity(20, 20), 0);
+assert.equal(calculateVideoEnhancementWorkerCapacity(25, 20), 0);
 
 const nonstandardEnhancedPath = path.join(process.env.VIDEO_LIBRARY_DIR, 'nonstandard-1080p.mp4');
 await new Promise((resolve, reject) => {

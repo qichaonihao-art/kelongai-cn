@@ -70,6 +70,8 @@ interface DetectedShot {
   number: number;
   startSeconds: number;
   endSeconds: number;
+  /** 下一个镜头第一帧的原始检测时间；endSeconds 已安全回退到该帧之前。 */
+  cutSeconds?: number;
   durationSeconds: number;
 }
 

@@ -71,6 +71,10 @@ const VIDEO_LIBRARY_ACCEL_REDIRECT_PREFIX = String(process.env.VIDEO_LIBRARY_ACC
 const MEDIAKIT_API_BASE_URL = String(process.env.MEDIAKIT_API_BASE_URL || 'https://mediakit.cn-beijing.volces.com').trim().replace(/\/+$/g, '');
 const MEDIAKIT_ENHANCEMENT_POLL_INTERVAL_MS = 10 * 1000;
 const MEDIAKIT_ENHANCEMENT_MAX_ATTEMPTS = 5;
+// AI MediaKit 账户允许同时处理 20 个任务。云端提交/轮询可充分并发；本地下载后还要跑
+// ffmpeg 标准化，单独限制为 2 路，避免 20 个转码同时抢 CPU、内存和磁盘。
+const MEDIAKIT_ENHANCEMENT_CLOUD_CONCURRENCY = Math.max(1, Math.min(20, Number(process.env.MEDIAKIT_ENHANCEMENT_CLOUD_CONCURRENCY) || 20));
+const MEDIAKIT_ENHANCEMENT_FINALIZE_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.MEDIAKIT_ENHANCEMENT_FINALIZE_CONCURRENCY) || 2));
 // 生成平台的“480P”常因编码宏块对齐输出为 496×864 等尺寸；512 可覆盖该档位且不会误收 540P/720P。
 const VIDEO_ENHANCEMENT_480P_MAX_SHORT_EDGE = 512;
 const VIDEO_LIBRARY_MIME_BY_EXTENSION = new Map([
@@ -86,7 +90,10 @@ const videoLibraryThumbnailPromises = new Map();
 const videoLibraryPreviewPromises = new Map();
 let activeVideoLibraryThumbnailJobs = 0;
 let videoEnhancementWorkerTimer = null;
-let videoEnhancementWorkerActive = false;
+let videoEnhancementWorkerRunning = 0;
+const videoEnhancementTasksInFlight = new Set();
+let videoEnhancementFinalizeRunning = 0;
+const videoEnhancementFinalizeWaiters = [];
 const VOLC_SPEAKER_OWNERSHIP_FILE = path.join(RUNTIME_STATE_DIR, 'volc-speaker-ownership.json');
 const VOICE_ARCHIVE_FILE = path.join(RUNTIME_STATE_DIR, 'voice-archive.json');
 // 本地批量剪辑软件专用的镜头音色库。它与 AI 工作平台常用音色档案完全隔离，
@@ -1298,6 +1305,17 @@ function parseClipRange(body, sourceDuration) {
   };
 }
 
+/**
+ * 场景检测给出的 cutSeconds 是下一个镜头第一帧的时间。
+ * 自动截取上一镜头时把结束线放到切点前半帧：既能包含上一镜头最后一帧，
+ * 又不会因为时间戳取整把下一镜头第一帧编码进结果。
+ */
+function getClipEndBeforeDetectedCut(cutSeconds, fps = 30) {
+  const cut = Math.max(0, Number(cutSeconds) || 0);
+  const safeFps = Number.isFinite(Number(fps)) && Number(fps) > 0 ? Number(fps) : 30;
+  return Math.max(0, Math.round((cut - 0.5 / safeFps) * 1000) / 1000);
+}
+
 async function handleClipTrim(req, res) {
   const body = await readRequestBody(req);
   const sourceId = normalizeClipSourceId(body?.sourceId);
@@ -1547,28 +1565,32 @@ async function handleDetectFirstClipCut(req, res) {
     const cutPoints = [];
     for (const value of rawMatches) {
       if (cutPoints.length && value - cutPoints[cutPoints.length - 1] < 0.6) continue;
-      cutPoints.push(Math.round(value * 100) / 100);
+      cutPoints.push(Math.round(value * 1000) / 1000);
       if (cutPoints.length >= requestedShotCount) break;
     }
-    const shotEnds = [...cutPoints];
+    const shotBoundaries = cutPoints.map((cutSeconds) => ({ cutSeconds, videoEnd: false }));
     const scannedToVideoEnd = metadata.durationSeconds <= scanDuration + 0.1;
-    if (scannedToVideoEnd && shotEnds.length < requestedShotCount && (!shotEnds.length || metadata.durationSeconds - shotEnds[shotEnds.length - 1] >= 0.1)) {
-      shotEnds.push(Math.round(metadata.durationSeconds * 100) / 100);
+    if (scannedToVideoEnd && shotBoundaries.length < requestedShotCount && (!cutPoints.length || metadata.durationSeconds - cutPoints[cutPoints.length - 1] >= 0.1)) {
+      shotBoundaries.push({ cutSeconds: Math.round(metadata.durationSeconds * 1000) / 1000, videoEnd: true });
     }
-    const shots = shotEnds.slice(0, requestedShotCount).map((endSeconds, index) => {
-      const startSeconds = index === 0 ? 0 : shotEnds[index - 1];
+    const shots = shotBoundaries.slice(0, requestedShotCount).map((boundary, index) => {
+      const startSeconds = index === 0 ? 0 : shotBoundaries[index - 1].cutSeconds;
+      const endSeconds = boundary.videoEnd
+        ? boundary.cutSeconds
+        : getClipEndBeforeDetectedCut(boundary.cutSeconds, metadata.fps);
       return {
         number: index + 1,
         startSeconds,
         endSeconds,
-        durationSeconds: Math.round((endSeconds - startSeconds) * 100) / 100,
+        cutSeconds: boundary.cutSeconds,
+        durationSeconds: Math.round((endSeconds - startSeconds) * 1000) / 1000,
       };
     });
     const suggestedEnd = shots[Math.min(requestedShotCount, shots.length) - 1]?.endSeconds || Math.min(15, metadata.durationSeconds);
     sendJson(res, 200, {
       ok: true,
       detected: cutPoints.length > 0,
-      endSeconds: Math.round(suggestedEnd * 100) / 100,
+      endSeconds: Math.round(suggestedEnd * 1000) / 1000,
       shots,
       message: cutPoints.length > 0
         ? `已识别前 ${shots.length} 个镜头，结束线已移动到 ${Math.round(suggestedEnd * 10) / 10} 秒`
@@ -2787,12 +2809,12 @@ function dbUpdateVideoEnhancementTask(id, updates = {}) {
   return dbGetVideoEnhancementTask(id);
 }
 
-function getPendingVideoEnhancementTask() {
+function getPendingVideoEnhancementTasks(limit = MEDIAKIT_ENHANCEMENT_CLOUD_CONCURRENCY * 4) {
   return getCollectionDb().prepare(`
     SELECT * FROM video_enhancement_tasks
     WHERE status IN ('queued', 'submitted', 'processing', 'downloading') AND next_poll_at <= unixepoch()
-    ORDER BY created_at ASC, id ASC LIMIT 1
-  `).get();
+    ORDER BY created_at ASC, id ASC LIMIT ?
+  `).all(Math.max(1, Number(limit) || 1));
 }
 
 function extractEnhancementOutputUrl(payload) {
@@ -3001,54 +3023,76 @@ async function uploadVideoToMediaKit(taskRow, source, apiKey) {
   return mediaUri;
 }
 
+function acquireVideoEnhancementFinalizeSlot() {
+  if (videoEnhancementFinalizeRunning < MEDIAKIT_ENHANCEMENT_FINALIZE_CONCURRENCY) {
+    videoEnhancementFinalizeRunning += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => videoEnhancementFinalizeWaiters.push(resolve));
+}
+
+function releaseVideoEnhancementFinalizeSlot() {
+  const next = videoEnhancementFinalizeWaiters.shift();
+  if (next) {
+    next();
+    return;
+  }
+  videoEnhancementFinalizeRunning = Math.max(0, videoEnhancementFinalizeRunning - 1);
+}
+
 async function downloadEnhancedVideo(row, outputUrl) {
-  dbUpdateVideoEnhancementTask(row.id, { status: 'downloading', nextPollAt: Math.floor(Date.now() / 1000) + 30 });
-  const source = getCollectionDb().prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(row.source_item_id));
-  if (!source) throw new Error('原视频已被删除');
-  const response = await fetch(outputUrl, { signal: AbortSignal.timeout(3 * 60 * 1000) });
-  if (!response.ok) throw new Error(`增强视频下载失败（HTTP ${response.status}）`);
-  const buffer = await readVideoLibraryRemoteBuffer(response);
-  const downloadedPath = path.join(VIDEO_LIBRARY_DIR, `.enhancement-${row.id}-${randomBytes(6).toString('hex')}.mp4`);
-  let outputItem;
+  await acquireVideoEnhancementFinalizeSlot();
   try {
-    await writeFile(downloadedPath, buffer);
-    const metadata = await normalizeEnhancedVideoToStandard1080p(downloadedPath);
-    const normalizedBuffer = await readFile(downloadedPath);
-    const sha256 = createHash('sha256').update(normalizedBuffer).digest('hex');
-    outputItem = dbFindVideoLibraryByHash(sha256);
-    if (!outputItem) {
-      const storedName = `${sha256}.mp4`;
-      const filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
-      await rename(downloadedPath, filePath);
-      outputItem = dbInsertVideoLibraryItem({
-        folderName: source.folder_name,
-        originalName: source.original_name || '视频.mp4',
-        storedName,
-        mimeType: 'video/mp4',
-        fileSize: normalizedBuffer.length,
-        sha256,
-        note: source.note || '',
-        ...metadata,
-        variant: 'enhanced',
-        sourceItemId: null,
-        shotRole: Number(source.shot_role) === 1 ? 1 : 0,
-      });
-      void ensureVideoLibraryPreview({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
-      void ensureVideoLibraryThumbnail({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
+    dbUpdateVideoEnhancementTask(row.id, { status: 'downloading', nextPollAt: Math.floor(Date.now() / 1000) + 30 });
+    const source = getCollectionDb().prepare('SELECT * FROM video_library_items WHERE id = ?').get(Number(row.source_item_id));
+    if (!source) throw new Error('原视频已被删除');
+    const response = await fetch(outputUrl, { signal: AbortSignal.timeout(3 * 60 * 1000) });
+    if (!response.ok) throw new Error(`增强视频下载失败（HTTP ${response.status}）`);
+    const buffer = await readVideoLibraryRemoteBuffer(response);
+    const downloadedPath = path.join(VIDEO_LIBRARY_DIR, `.enhancement-${row.id}-${randomBytes(6).toString('hex')}.mp4`);
+    let outputItem;
+    try {
+      await writeFile(downloadedPath, buffer);
+      const metadata = await normalizeEnhancedVideoToStandard1080p(downloadedPath);
+      const normalizedBuffer = await readFile(downloadedPath);
+      const sha256 = createHash('sha256').update(normalizedBuffer).digest('hex');
+      outputItem = dbFindVideoLibraryByHash(sha256);
+      if (!outputItem) {
+        const storedName = `${sha256}.mp4`;
+        const filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
+        await rename(downloadedPath, filePath);
+        outputItem = dbInsertVideoLibraryItem({
+          folderName: source.folder_name,
+          originalName: source.original_name || '视频.mp4',
+          storedName,
+          mimeType: 'video/mp4',
+          fileSize: normalizedBuffer.length,
+          sha256,
+          note: source.note || '',
+          ...metadata,
+          variant: 'enhanced',
+          sourceItemId: null,
+          shotRole: Number(source.shot_role) === 1 ? 1 : 0,
+        });
+        void ensureVideoLibraryPreview({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
+        void ensureVideoLibraryThumbnail({ id: outputItem.id, stored_name: storedName, sha256 }).catch(() => {});
+      }
+    } finally {
+      await unlink(downloadedPath).catch(() => {});
+    }
+    if (readValue(source.note)) {
+      outputItem = dbUpdateVideoLibraryNote(outputItem.id, source.note);
+    }
+    dbUpdateVideoEnhancementTask(row.id, {
+      status: 'completed', outputItemId: outputItem.id, errorMessage: '',
+      nextPollAt: 0, completedAt: Math.floor(Date.now() / 1000),
+    });
+    if (Number(outputItem.id) !== Number(source.id)) {
+      const deletedSource = dbDeleteVideoLibraryItem(source.id);
+      if (deletedSource) await deleteVideoLibraryItemFiles(deletedSource);
     }
   } finally {
-    await unlink(downloadedPath).catch(() => {});
-  }
-  if (readValue(source.note)) {
-    outputItem = dbUpdateVideoLibraryNote(outputItem.id, source.note);
-  }
-  dbUpdateVideoEnhancementTask(row.id, {
-    status: 'completed', outputItemId: outputItem.id, errorMessage: '',
-    nextPollAt: 0, completedAt: Math.floor(Date.now() / 1000),
-  });
-  if (Number(outputItem.id) !== Number(source.id)) {
-    const deletedSource = dbDeleteVideoLibraryItem(source.id);
-    if (deletedSource) await deleteVideoLibraryItemFiles(deletedSource);
+    releaseVideoEnhancementFinalizeSlot();
   }
 }
 
@@ -3073,35 +3117,58 @@ async function pollVideoEnhancement(row) {
   dbUpdateVideoEnhancementTask(row.id, { status: 'processing', nextPollAt: Math.floor(Date.now() / 1000) + 10 });
 }
 
-async function runVideoEnhancementWorker() {
-  if (videoEnhancementWorkerActive) return;
-  videoEnhancementWorkerActive = true;
+async function processVideoEnhancementTask(row) {
   try {
-    const row = getPendingVideoEnhancementTask();
-    if (!row) return;
-    try {
-      if (!row.external_task_id) await submitVideoEnhancement(row);
-      else await pollVideoEnhancement(row);
-    } catch (error) {
-      const attempts = Number(row.attempt_count || 0) + 1;
-      const terminal = attempts >= MEDIAKIT_ENHANCEMENT_MAX_ATTEMPTS;
-      dbUpdateVideoEnhancementTask(row.id, {
-        status: terminal ? 'failed' : (row.external_task_id ? 'processing' : 'queued'),
-        attemptCount: attempts,
-        errorMessage: error?.message || '画质增强失败',
-        nextPollAt: terminal ? 0 : Math.floor(Date.now() / 1000) + Math.min(60, attempts * 10),
-      });
-      console.error('[video enhancement] worker_failed', { id: row.id, attempts, terminal, message: error?.message || '' });
-    }
+    if (!row.external_task_id) await submitVideoEnhancement(row);
+    else await pollVideoEnhancement(row);
+  } catch (error) {
+    const attempts = Number(row.attempt_count || 0) + 1;
+    const terminal = attempts >= MEDIAKIT_ENHANCEMENT_MAX_ATTEMPTS;
+    dbUpdateVideoEnhancementTask(row.id, {
+      status: terminal ? 'failed' : (row.external_task_id ? 'processing' : 'queued'),
+      attemptCount: attempts,
+      errorMessage: error?.message || '画质增强失败',
+      nextPollAt: terminal ? 0 : Math.floor(Date.now() / 1000) + Math.min(60, attempts * 10),
+    });
+    console.error('[video enhancement] worker_failed', { id: row.id, attempts, terminal, message: error?.message || '' });
   } finally {
-    videoEnhancementWorkerActive = false;
-    scheduleVideoEnhancementWorker(MEDIAKIT_ENHANCEMENT_POLL_INTERVAL_MS);
+    videoEnhancementTasksInFlight.delete(Number(row.id));
+    videoEnhancementWorkerRunning = Math.max(0, videoEnhancementWorkerRunning - 1);
+    // 当前批次完成一格后立刻补位，不再等待下一个 10 秒轮询周期。
+    scheduleVideoEnhancementWorker(50);
   }
+}
+
+function calculateVideoEnhancementWorkerCapacity(running, concurrency = MEDIAKIT_ENHANCEMENT_CLOUD_CONCURRENCY) {
+  return Math.max(0, Math.max(1, Number(concurrency) || 1) - Math.max(0, Number(running) || 0));
+}
+
+function getVideoEnhancementWorkerCapacity() {
+  return calculateVideoEnhancementWorkerCapacity(videoEnhancementWorkerRunning);
+}
+
+function runVideoEnhancementWorker() {
+  const capacity = getVideoEnhancementWorkerCapacity();
+  if (capacity <= 0) {
+    scheduleVideoEnhancementWorker(MEDIAKIT_ENHANCEMENT_POLL_INTERVAL_MS);
+    return;
+  }
+  const rows = getPendingVideoEnhancementTasks(MEDIAKIT_ENHANCEMENT_CLOUD_CONCURRENCY * 4)
+    .filter((row) => !videoEnhancementTasksInFlight.has(Number(row.id)))
+    .slice(0, capacity);
+  for (const row of rows) {
+    const id = Number(row.id);
+    videoEnhancementTasksInFlight.add(id);
+    videoEnhancementWorkerRunning += 1;
+    void processVideoEnhancementTask(row);
+  }
+  // 即使当前没有到期任务，也继续定时检查远端处理中任务。
+  scheduleVideoEnhancementWorker(MEDIAKIT_ENHANCEMENT_POLL_INTERVAL_MS);
 }
 
 function scheduleVideoEnhancementWorker(delayMs = MEDIAKIT_ENHANCEMENT_POLL_INTERVAL_MS) {
   if (videoEnhancementWorkerTimer) clearTimeout(videoEnhancementWorkerTimer);
-  videoEnhancementWorkerTimer = setTimeout(() => void runVideoEnhancementWorker(), Math.max(50, delayMs));
+  videoEnhancementWorkerTimer = setTimeout(runVideoEnhancementWorker, Math.max(50, delayMs));
   videoEnhancementWorkerTimer.unref?.();
 }
 
@@ -21809,6 +21876,7 @@ export {
   getStandard1080pCanvas,
   normalizeEnhancedVideoToStandard1080p,
   parseClipRange,
+  getClipEndBeforeDetectedCut,
   handleClipSourceUpload,
   handleClipRemoteImport,
   handleClipRemoteImportStream,
@@ -21819,5 +21887,6 @@ export {
   normalizeEnhancementRemoteStatus,
   normalizeMediaKitUploadHeaders,
   buildVideoEnhancementRetryUpdates,
+  calculateVideoEnhancementWorkerCapacity,
   cleanupCompletedVideoEnhancementSources,
 };
