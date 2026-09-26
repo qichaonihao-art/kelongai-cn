@@ -158,6 +158,8 @@ export default function ClipExtractionPage({
   const uploadRequestRef = useRef<XMLHttpRequest | null>(null);
   const sourceRef = useRef<UploadedClipSource | null>(null);
   const resultRef = useRef<TrimmedClip | null>(null);
+  const clipRangeRevisionRef = useRef(0);
+  const trimmingRef = useRef(false);
   const [source, setSource] = useState<UploadedClipSource | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -224,6 +226,7 @@ export default function ClipExtractionPage({
   }, [onlineLoading]);
 
   useEffect(() => {
+    clipRangeRevisionRef.current++;
     videoRef.current?.pause();
     setPreviewingRange(false);
     if (resultRef.current?.outputId) {
@@ -231,7 +234,16 @@ export default function ClipExtractionPage({
       resultRef.current = null;
     }
     setResult(null);
-  }, [startSeconds, endSeconds]);
+  }, [startSeconds, endSeconds, source?.sourceId]);
+
+  useEffect(() => {
+    if (!previewingRange || !result) return;
+    const video = resultVideoRef.current;
+    if (!video) return;
+    video.currentTime = 0;
+    video.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    void video.play().catch(() => setPreviewingRange(false));
+  }, [previewingRange, result]);
 
   useEffect(() => {
     if (!showModePicker || selectedAudioMode === 'none' || !source || audioWaveformUrl || audioWaveformLoading) return;
@@ -273,6 +285,7 @@ export default function ClipExtractionPage({
   }, [audioStartSeconds, audioEndSeconds, timedTranscriptSentences]);
 
   useEffect(() => () => {
+    clipRangeRevisionRef.current++;
     uploadRequestRef.current?.abort();
     const payload = {
       sourceId: sourceRef.current?.sourceId,
@@ -295,6 +308,7 @@ export default function ClipExtractionPage({
   }
 
   function reset() {
+    clipRangeRevisionRef.current++;
     uploadRequestRef.current?.abort();
     void cleanupTemporaryFiles(sourceRef.current?.sourceId, resultRef.current?.outputId);
     sourceRef.current = null;
@@ -614,29 +628,23 @@ export default function ClipExtractionPage({
     else { setEndSeconds(current); setError(''); }
   }
 
-  function previewSelectedRange() {
-    const video = videoRef.current;
-    if (!video || endSeconds <= startSeconds + 0.1) return;
+  async function previewSelectedRange() {
+    if (endSeconds <= startSeconds + 0.1 || trimmingRef.current) return;
     if (previewingRange) {
-      video.pause();
+      resultVideoRef.current?.pause();
       setPreviewingRange(false);
       return;
     }
-    video.currentTime = startSeconds;
-    setPreviewingRange(true);
-    void video.play().catch(() => setPreviewingRange(false));
+    videoRef.current?.pause();
+    // 预览与下载使用同一个裁切文件，原视频的 timeupdate 停播可能越过切点。
+    const clip = await trimClip();
+    if (clip) setPreviewingRange(true);
   }
 
   function handleSourcePreviewTimeUpdate() {
     const video = videoRef.current;
     if (!video) return;
     setCurrentSeconds(video.currentTime);
-    if (!previewingRange) return;
-    if (video.currentTime >= endSeconds - 0.03) {
-      video.pause();
-      video.currentTime = endSeconds;
-      setPreviewingRange(false);
-    }
   }
 
   function seekTo(value: number) {
@@ -728,33 +736,37 @@ export default function ClipExtractionPage({
   }
 
   async function trimClip() {
-    if (!source) return;
+    if (!source || trimmingRef.current) return;
     const duration = endSeconds - startSeconds;
     if (duration <= 0.1 || duration > 60) {
       setError(duration > 60 ? '单次最多截取 60 秒。' : '请先设置正确的截取范围。');
       return;
     }
+    if (resultRef.current) return resultRef.current;
+    const rangeRevision = clipRangeRevisionRef.current;
+    trimmingRef.current = true;
     setTrimming(true);
     setError('');
     setNotice('');
     try {
-      if (resultRef.current?.outputId) {
-        await cleanupTemporaryFiles(undefined, resultRef.current.outputId);
-        resultRef.current = null;
-        setResult(null);
-      }
       const response = await fetch('/api/clips/trim', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sourceId: source.sourceId, startSeconds, endSeconds }),
       });
       if (!response.ok) throw new Error(await readApiError(response, '截取失败'));
       const nextResult = await response.json() as TrimmedClip;
+      if (rangeRevision !== clipRangeRevisionRef.current || sourceRef.current?.sourceId !== source.sourceId) {
+        await cleanupTemporaryFiles(undefined, nextResult.outputId);
+        return;
+      }
       resultRef.current = nextResult;
       setResult(nextResult);
       setNotice('镜头已截取完成，可以预览、下载或直接用于视频创作。');
+      return nextResult;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '截取失败，请重试。');
     } finally {
+      trimmingRef.current = false;
       setTrimming(false);
     }
   }
@@ -1072,22 +1084,22 @@ export default function ClipExtractionPage({
               </div>
               <textarea value={linkInput} disabled={onlineLoading} onChange={(event) => setLinkInput(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void parseAndLoadOnlineVideo(); }} placeholder="粘贴链接，例如：https://v.douyin.com/…" className="min-h-24 w-full resize-y rounded-xl border border-slate-300 bg-slate-50/80 px-4 py-3 text-sm font-semibold leading-6 shadow-inner shadow-slate-200/40 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100 disabled:opacity-60" />
               <button type="button" disabled={onlineLoading || !linkInput.trim()} onClick={() => void parseAndLoadOnlineVideo()} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-sky-600 text-sm font-black text-white shadow-[0_8px_20px_-12px_rgba(8,145,178,0.9)] transition hover:from-cyan-700 hover:to-sky-700 disabled:cursor-not-allowed disabled:from-cyan-300 disabled:to-sky-300 disabled:shadow-none">{onlineLoading ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}{onlineLoading ? '解析引擎运行中…' : '解析并开始截取'}</button>
-              {onlineLoading && onlineProgress && <div className="relative mt-4 overflow-hidden rounded-2xl border border-cyan-400/40 bg-slate-950 p-4 text-white shadow-[0_16px_35px_-20px_rgba(6,182,212,0.8)]" role="status" aria-live="polite">
-                <div className="pointer-events-none absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(34,211,238,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(34,211,238,0.18)_1px,transparent_1px)] [background-size:22px_22px]" />
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-px animate-pulse bg-gradient-to-r from-transparent via-cyan-300 to-transparent shadow-[0_0_14px_3px_rgba(34,211,238,0.75)]" style={{ top: `${Math.max(4, Math.min(96, onlineProgress.percent))}%` }} />
+              {onlineLoading && onlineProgress && <div className="relative mt-4 overflow-hidden rounded-2xl border border-cyan-200/80 bg-gradient-to-br from-cyan-50 via-white to-sky-50 p-4 text-slate-700 shadow-[0_8px_24px_-16px_rgba(8,145,178,0.25)]" role="status" aria-live="polite">
+                <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(8,145,178,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(8,145,178,0.08)_1px,transparent_1px)] [background-size:22px_22px]" />
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-px motion-safe:animate-pulse bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent shadow-[0_0_12px_2px_rgba(6,182,212,0.12)] transition-[top] duration-700" style={{ top: `${Math.max(4, Math.min(96, onlineProgress.percent))}%` }} />
                 <div className="relative flex items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-center gap-3"><span className="relative grid size-9 shrink-0 place-items-center rounded-xl border border-cyan-400/40 bg-cyan-400/10"><span className="absolute inset-1 animate-ping rounded-lg border border-cyan-300/30" /><LoaderCircle className="size-4 animate-spin text-cyan-300" /></span><div className="min-w-0"><div className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-400">LINK PROCESSOR</div><div className="mt-1 truncate text-xs font-black text-white">{onlineProgress.message}</div></div></div>
-                  <div className="shrink-0 text-right"><div className="font-mono text-lg font-black text-cyan-300">{Math.round(onlineProgress.percent)}%</div><div className="text-[10px] font-bold text-slate-400">耗时 {onlineElapsedSeconds} 秒</div></div>
+                  <div className="flex min-w-0 items-center gap-3"><span className="relative grid size-9 shrink-0 place-items-center rounded-xl border border-cyan-200 bg-white/90 shadow-sm shadow-cyan-100"><span className="absolute inset-1 motion-safe:animate-ping rounded-lg border border-cyan-300/40" /><LoaderCircle className="size-4 motion-safe:animate-spin text-cyan-600" /></span><div className="min-w-0"><div className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-600">LINK PROCESSOR</div><div className="mt-1 truncate text-xs font-black text-slate-800">{onlineProgress.message}</div></div></div>
+                  <div className="shrink-0 text-right"><div className="font-mono text-lg font-black text-cyan-700">{Math.round(onlineProgress.percent)}%</div><div className="text-[10px] font-bold text-slate-500">耗时 {onlineElapsedSeconds} 秒</div></div>
                 </div>
                 <div className="relative mt-4 grid grid-cols-4 gap-1.5">
                   {([['parsing', '解析链接'], ['downloading', '下载视频'], ['checking', '校验素材'], ['loading', '载入页面']] as const).map(([stage, label], index, stages) => {
                     const activeIndex = stages.findIndex(([value]) => value === onlineProgress.stage);
                     const done = index < activeIndex;
                     const active = stage === onlineProgress.stage;
-                    return <div key={stage} className={cn('rounded-lg border px-2 py-1.5 text-center text-[9px] font-black transition-colors', done ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300' : active ? 'border-cyan-300/50 bg-cyan-300/15 text-cyan-200' : 'border-slate-700 bg-slate-900/60 text-slate-500')}>{done ? '✓ ' : active ? '● ' : ''}{label}</div>;
+                    return <div key={stage} className={cn('rounded-lg border px-2 py-1.5 text-center text-[9px] font-black transition-colors', done ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : active ? 'border-cyan-300 bg-cyan-100/80 text-cyan-800' : 'border-slate-200 bg-white/75 text-slate-500')}>{done ? '✓ ' : active ? '● ' : ''}{label}</div>;
                   })}
                 </div>
-                <div className="relative mt-3 h-1.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-sky-300 to-violet-400 shadow-[0_0_12px_rgba(34,211,238,0.8)] transition-[width] duration-500" style={{ width: `${onlineProgress.percent}%` }} /></div>
+                <div className="relative mt-3 h-1.5 overflow-hidden rounded-full bg-cyan-100/80"><div className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-sky-400 to-sky-500 shadow-[0_0_8px_rgba(6,182,212,0.2)] transition-[width] duration-500" style={{ width: `${onlineProgress.percent}%` }} /></div>
               </div>}
             </div> : <div className="p-5 md:p-7"><button type="button" disabled={uploading} onClick={() => inputRef.current?.click()} className="group flex min-h-52 w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/40 px-6 transition hover:border-violet-400 hover:bg-violet-50 disabled:cursor-wait">
               <span className="grid size-14 place-items-center rounded-2xl bg-violet-600 text-white shadow-md"><Upload className="size-6" /></span>
@@ -1103,7 +1115,7 @@ export default function ClipExtractionPage({
                 <div className="min-w-0"><div className="truncate text-sm font-black text-slate-900">{source.fileName}</div><div className="mt-0.5 text-xs text-slate-400">{formatSize(source.size)} · {source.width}×{source.height} · {source.durationSeconds.toFixed(1)} 秒</div></div>
                 <button type="button" onClick={reset} className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">更换视频</button>
               </div>
-              <div className="overflow-hidden rounded-xl bg-black"><video ref={videoRef} src={source.url} controls playsInline preload="metadata" onTimeUpdate={handleSourcePreviewTimeUpdate} onPause={() => setPreviewingRange(false)} onEnded={() => setPreviewingRange(false)} className="mx-auto max-h-[58vh] w-full object-contain" /></div>
+              <div className="overflow-hidden rounded-xl bg-black"><video ref={videoRef} src={source.url} controls playsInline preload="metadata" onTimeUpdate={handleSourcePreviewTimeUpdate} className="mx-auto max-h-[58vh] w-full object-contain" /></div>
 
               <div className="mt-4">
                 <div className="mb-1 flex items-center justify-between text-xs font-bold"><span className="text-emerald-700">开始 {formatTime(startSeconds)}</span><span className="text-slate-400">已选 {selectedDuration.toFixed(1)} 秒</span><span className="text-violet-700">结束 {formatTime(endSeconds)}</span></div>
@@ -1132,8 +1144,8 @@ export default function ClipExtractionPage({
                   {[1, 2, 3, 4, 5].map((count) => <button key={count} type="button" disabled={detecting} onClick={() => detectFirstCut(count)} className={cn('h-9 rounded-lg text-xs font-black transition', selectedShotCount === count ? 'bg-cyan-600 text-white shadow-sm' : 'bg-white text-slate-600 hover:text-cyan-700', detecting && 'cursor-wait opacity-60')}>{count}</button>)}
                 </div>
                 <div className="mt-2 min-h-5 text-xs font-bold text-cyan-700">{detecting ? <span className="flex items-center gap-1.5"><LoaderCircle className="size-3.5 animate-spin" />正在识别前 {selectedShotCount} 个镜头…</span> : detectedShots.length > 0 ? `已定位前 ${detectedShots.length} 个镜头` : '也可以直接拖动裁切线'}</div>
-                <button type="button" disabled={detecting || selectedDuration <= 0.1} onClick={previewSelectedRange} className={cn('mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border text-sm font-black disabled:opacity-50', previewingRange ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50')}><Play className={cn('size-4', previewingRange && 'fill-current')} />{previewingRange ? '停止预览' : '预览裁切片段'}</button>
-                <button type="button" disabled={trimming || selectedDuration <= 0.1 || selectedDuration > 60} onClick={trimClip} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-50">{trimming ? <LoaderCircle className="size-4 animate-spin" /> : <Scissors className="size-4" />}{trimming ? '正在截取…' : '确认截取'}</button>
+                <button type="button" disabled={detecting || trimming || selectedDuration <= 0.1} onClick={() => void previewSelectedRange()} className={cn('mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border text-sm font-black disabled:opacity-50', previewingRange ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50')}><Play className={cn('size-4', previewingRange && 'fill-current')} />{trimming ? '正在准备片段…' : previewingRange ? '停止预览' : '预览裁切片段'}</button>
+                <button type="button" disabled={trimming || selectedDuration <= 0.1 || selectedDuration > 60} onClick={() => void trimClip()} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-50">{trimming ? <LoaderCircle className="size-4 animate-spin" /> : <Scissors className="size-4" />}{trimming ? '正在截取…' : '确认截取'}</button>
               </section>
 
               {onlineResult && <details className="group rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -1147,7 +1159,7 @@ export default function ClipExtractionPage({
 
               {result && <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
                 <div className="flex items-center gap-2 text-sm font-black text-emerald-700"><Check className="size-4" />截取完成</div>
-                <video ref={resultVideoRef} src={result.url} controls playsInline className="mt-3 aspect-video w-full rounded-xl bg-black object-contain" />
+                <video ref={resultVideoRef} src={result.url} controls playsInline onPause={() => setPreviewingRange(false)} onEnded={() => setPreviewingRange(false)} className="mt-3 aspect-video w-full rounded-xl bg-black object-contain" />
                 <div className="mt-2 text-xs font-bold text-slate-500">{formatTime(result.startSeconds)} 至 {formatTime(result.endSeconds)} · {formatSize(result.size)}</div>
                 <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
                   <div className="text-xs font-black text-violet-900">需要单独使用原视频声音？</div>

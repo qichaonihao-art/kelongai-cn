@@ -821,7 +821,8 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       queued: '已排队，等待提交增强',
       submitted: '已提交 AI MediaKit',
       processing: 'AI MediaKit 正在增强',
-      downloading: '增强完成，正在保存1080P版本',
+      downloading: '增强完成，正在下载1080P版本',
+      normalizing: '增强完成，正在校准尺寸并保存',
       failed: '画质增强失败',
     };
     return (

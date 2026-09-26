@@ -56,6 +56,7 @@ assert.deepEqual(buildVideoEnhancementRetryUpdates(123), {
   externalTaskId: '',
   requestId: '',
   inputMediaUri: '',
+  outputMediaUrl: '',
   attemptCount: 0,
   errorMessage: '',
   nextPollAt: 123,
