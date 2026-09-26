@@ -945,8 +945,16 @@ function getClipOutputPath(outputId) {
 }
 
 async function resolveClipMediaUrl(token, req) {
-  const filePath = getClipOutputPath(token);
-  if (!filePath || !existsSync(filePath)) throw new Error('截取视频已过期，请返回镜头截取页面重新生成');
+  // 精准复刻也会直接上传参考视频，令牌对应的是 *_clip_source；镜头截取结果则对应 *_clip.mp4。
+  // 两种临时媒体都允许送入多模态分析，不能把源视频误判成“截取视频已过期”。
+  const outputPath = getClipOutputPath(token);
+  const sourcePath = getClipSourcePath(token);
+  const filePath = outputPath && existsSync(outputPath)
+    ? outputPath
+    : sourcePath && existsSync(sourcePath)
+      ? sourcePath
+      : '';
+  if (!filePath) throw new Error('参考视频已过期，请重新上传或重新截取');
   const fileInfo = await stat(filePath);
   const publicBaseUrl = resolvePublicBaseUrl(req);
   if (publicBaseUrl) {
