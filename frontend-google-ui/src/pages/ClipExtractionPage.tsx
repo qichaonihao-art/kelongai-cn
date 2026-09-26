@@ -9,6 +9,8 @@ import { cn } from '@/src/lib/utils';
 export type ClipCreativeMode = 'direct' | 'replace';
 export type ClipAudioMode = 'none' | 'original' | 'voice';
 
+const MAX_DETECTABLE_SHOTS = 20;
+
 export interface ClipCreativePayload {
   file: File;
   previewUrl: string;
@@ -24,6 +26,7 @@ interface ClipExtractionPageProps {
   onNavigate: (page: ModuleId) => void;
   onSwitchToVideo: () => void;
   onSwitchToCopy: () => void;
+  onSwitchToReplica?: () => void;
   onUseInCreative: (clip: ClipCreativePayload, mode: ClipCreativeMode) => void;
 }
 
@@ -142,6 +145,7 @@ export default function ClipExtractionPage({
   onNavigate,
   onSwitchToVideo,
   onSwitchToCopy,
+  onSwitchToReplica,
   onUseInCreative,
 }: ClipExtractionPageProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -169,6 +173,7 @@ export default function ClipExtractionPage({
   const [detecting, setDetecting] = useState(false);
   const [detectedShots, setDetectedShots] = useState<DetectedShot[]>([]);
   const [selectedShotCount, setSelectedShotCount] = useState(1);
+  const [manualShotCount, setManualShotCount] = useState('6');
   const [previewingRange, setPreviewingRange] = useState(false);
   const [currentSeconds, setCurrentSeconds] = useState(0);
   const [result, setResult] = useState<TrimmedClip | null>(null);
@@ -659,7 +664,7 @@ export default function ClipExtractionPage({
   }
 
   async function detectFirstCutForSource(targetSource: UploadedClipSource, shotCount = 1, automatic = false) {
-    const requestedCount = Math.max(1, Math.min(5, Math.round(shotCount)));
+    const requestedCount = Math.max(1, Math.min(MAX_DETECTABLE_SHOTS, Math.round(shotCount)));
     setDetecting(true);
     setDetectedShots([]);
     setSelectedShotCount(requestedCount);
@@ -673,7 +678,7 @@ export default function ClipExtractionPage({
       if (!response.ok) throw new Error(await readApiError(response, '自动识别失败'));
       const data = await response.json();
       const shots = Array.isArray(data.shots)
-        ? data.shots.filter((item: DetectedShot) => Number.isFinite(Number(item?.endSeconds))).slice(0, 5)
+        ? data.shots.filter((item: DetectedShot) => Number.isFinite(Number(item?.endSeconds))).slice(0, requestedCount)
         : [];
       setDetectedShots(shots);
       const selectedShot = shots[Math.min(requestedCount, shots.length) - 1];
@@ -693,6 +698,15 @@ export default function ClipExtractionPage({
 
   function detectFirstCut(shotCount = selectedShotCount) {
     if (source) void detectFirstCutForSource(source, shotCount);
+  }
+
+  function detectManualShotCount() {
+    const count = Number.parseInt(manualShotCount, 10);
+    if (!Number.isInteger(count) || count < 6 || count > MAX_DETECTABLE_SHOTS) {
+      setError(`手动镜头数量请输入 6-${MAX_DETECTABLE_SHOTS} 之间的整数`);
+      return;
+    }
+    detectFirstCut(count);
   }
 
   function timeFromTimelinePointer(clientX: number) {
@@ -1055,7 +1069,7 @@ export default function ClipExtractionPage({
         <div className="flex items-center gap-3">
           <HomeBackButton onClick={onBack} />
           <ModuleQuickNav current="creative" onNavigate={onNavigate} />
-          <CreativeSubNav current="clip" onSwitchVideo={onSwitchToVideo} onSwitchClip={() => {}} onSwitchCopy={onSwitchToCopy} />
+          <CreativeSubNav current="clip" onSwitchVideo={onSwitchToVideo} onSwitchClip={() => {}} onSwitchCopy={onSwitchToCopy} onSwitchReplica={onSwitchToReplica} />
         </div>
         <div className="hidden text-xs font-bold text-slate-500 sm:block">最长 10 分钟 · 最大 1GB · 临时使用</div>
       </header>
@@ -1144,6 +1158,25 @@ export default function ClipExtractionPage({
                 <div className="mt-3 grid grid-cols-5 gap-1.5 rounded-xl bg-slate-100 p-1.5">
                   {[1, 2, 3, 4, 5].map((count) => <button key={count} type="button" disabled={detecting} onClick={() => detectFirstCut(count)} className={cn('h-9 rounded-lg text-xs font-black transition', selectedShotCount === count ? 'bg-cyan-600 text-white shadow-sm' : 'bg-white text-slate-600 hover:text-cyan-700', detecting && 'cursor-wait opacity-60')}>{count}</button>)}
                 </div>
+                <details className="mt-2 rounded-xl border border-slate-200 bg-white">
+                  <summary className="cursor-pointer list-none px-3 py-2 text-xs font-black text-slate-500">手动输入更多镜头</summary>
+                  <div className="flex items-center gap-2 border-t border-slate-100 p-2">
+                    <input
+                      type="number"
+                      min={6}
+                      max={MAX_DETECTABLE_SHOTS}
+                      step={1}
+                      value={manualShotCount}
+                      onChange={(event) => setManualShotCount(event.target.value)}
+                      onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); detectManualShotCount(); } }}
+                      aria-label="手动输入镜头数量"
+                      className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-sm font-black text-slate-700 outline-none focus:border-cyan-400"
+                    />
+                    <span className="shrink-0 text-xs font-bold text-slate-400">个</span>
+                    <button type="button" disabled={detecting} onClick={detectManualShotCount} className="h-9 shrink-0 rounded-lg bg-cyan-600 px-3 text-xs font-black text-white hover:bg-cyan-700 disabled:cursor-wait disabled:opacity-60">开始识别</button>
+                  </div>
+                  <div className="px-3 pb-2 text-[11px] font-bold text-slate-400">可输入 6–{MAX_DETECTABLE_SHOTS} 个，识别时间会随数量增加。</div>
+                </details>
                 <div className="mt-2 min-h-5 text-xs font-bold text-cyan-700">{detecting ? <span className="flex items-center gap-1.5"><LoaderCircle className="size-3.5 animate-spin" />正在识别前 {selectedShotCount} 个镜头…</span> : detectedShots.length > 0 ? `已定位前 ${detectedShots.length} 个镜头` : '也可以直接拖动裁切线'}</div>
                 <button type="button" disabled={detecting || trimming || selectedDuration <= 0.1} onClick={() => void previewSelectedRange()} className={cn('mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border text-sm font-black disabled:opacity-50', previewingRange ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50')}><Play className={cn('size-4', previewingRange && 'fill-current')} />{trimming ? '正在准备片段…' : previewingRange ? '停止预览' : '预览裁切片段'}</button>
                 <button type="button" disabled={trimming || selectedDuration <= 0.1 || selectedDuration > 60} onClick={() => void trimClip()} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-50">{trimming ? <LoaderCircle className="size-4 animate-spin" /> : <Scissors className="size-4" />}{trimming ? '正在截取…' : '确认截取'}</button>

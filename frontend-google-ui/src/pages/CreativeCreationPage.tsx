@@ -133,6 +133,7 @@ interface CreativeCreationPageProps {
   onNavigate: (page: ModuleId) => void;
   onSwitchToCopy?: () => void;
   onSwitchToClip?: () => void;
+  onSwitchToReplica?: () => void;
   incomingClip?: {
     file: File;
     previewUrl: string;
@@ -145,6 +146,8 @@ interface CreativeCreationPageProps {
     token: number;
   } | null;
   onIncomingClipConsumed?: () => void;
+  incomingReplicaPrompt?: { prompt: string; token: number } | null;
+  onIncomingReplicaPromptConsumed?: () => void;
 }
 
 type ClipAudioMode = 'none' | 'original' | 'voice';
@@ -1757,7 +1760,7 @@ function renderAssistantMessageContent(content: string) {
   );
 }
 
-export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCopy, onSwitchToClip, incomingClip, onIncomingClipConsumed }: CreativeCreationPageProps) {
+export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCopy, onSwitchToClip, onSwitchToReplica, incomingClip, onIncomingClipConsumed, incomingReplicaPrompt, onIncomingReplicaPromptConsumed }: CreativeCreationPageProps) {
   const initialSessionState = useMemo(() => {
     const sessions = loadSavedCreativeSessions();
     return {
@@ -2001,6 +2004,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     ...seedanceManualPreferenceRef.current,
   });
   const consumedIncomingClipTokenRef = useRef<number | null>(null);
+  const consumedIncomingReplicaTokenRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!incomingClip || consumedIncomingClipTokenRef.current === incomingClip.token) return;
@@ -2076,6 +2080,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setRequestError('');
     onIncomingClipConsumed?.();
   }, [incomingClip?.token]);
+
+  useEffect(() => {
+    if (!incomingReplicaPrompt || consumedIncomingReplicaTokenRef.current === incomingReplicaPrompt.token) return;
+    consumedIncomingReplicaTokenRef.current = incomingReplicaPrompt.token;
+    const prompt = String(incomingReplicaPrompt.prompt || '').trim();
+    if (prompt) {
+      setSeedancePrompt(prompt);
+      setRequestError('');
+    }
+    onIncomingReplicaPromptConsumed?.();
+  }, [incomingReplicaPrompt?.token]);
 
   useEffect(() => {
     const pending = seedanceReferences.filter((reference) => (
@@ -5649,6 +5664,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
             onSwitchVideo={() => {}}
             onSwitchClip={onSwitchToClip ?? (() => {})}
             onSwitchCopy={onSwitchToCopy ?? (() => {})}
+            onSwitchReplica={onSwitchToReplica}
           />
         </div>
         <div className="flex items-center gap-4">

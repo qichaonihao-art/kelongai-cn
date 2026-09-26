@@ -1,20 +1,22 @@
-import { Video, FileText, Scissors } from 'lucide-react';
+import { Video, FileText, Scissors, ScanSearch } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 
-export type CreativeSubMode = 'video' | 'clip' | 'copy';
+export type CreativeSubMode = 'video' | 'clip' | 'copy' | 'replica';
 
 interface CreativeSubNavProps {
   current: CreativeSubMode;
   onSwitchVideo: () => void;
   onSwitchClip: () => void;
   onSwitchCopy: () => void;
+  onSwitchReplica?: () => void;
 }
 
-export default function CreativeSubNav({ current, onSwitchVideo, onSwitchClip, onSwitchCopy }: CreativeSubNavProps) {
+export default function CreativeSubNav({ current, onSwitchVideo, onSwitchClip, onSwitchCopy, onSwitchReplica }: CreativeSubNavProps) {
   const items = [
     { id: 'video' as const, label: '视频创作', icon: Video, onClick: onSwitchVideo },
     { id: 'clip' as const, label: '镜头截取', icon: Scissors, onClick: onSwitchClip },
     { id: 'copy' as const, label: '文案创作', icon: FileText, onClick: onSwitchCopy },
+    ...(onSwitchReplica ? [{ id: 'replica' as const, label: '精准复刻', icon: ScanSearch, onClick: onSwitchReplica }] : []),
   ];
 
   return (

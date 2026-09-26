@@ -1,4 +1,4 @@
-import { ArrowUpRight, FileText, Scissors, Video } from 'lucide-react';
+import { ArrowUpRight, FileText, Scissors, ScanSearch, Video } from 'lucide-react';
 import { motion } from 'motion/react';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import HomeBackButton from '@/src/components/HomeBackButton';
@@ -9,6 +9,7 @@ interface CreativeSelectPageProps {
   onSelectVideo: () => void;
   onSelectClip: () => void;
   onSelectCopy: () => void;
+  onSelectReplica: () => void;
 }
 
 const entries = [
@@ -42,9 +43,19 @@ const entries = [
     buttonClass: 'border-violet-100 bg-violet-50 text-violet-600 group-hover:border-violet-500 group-hover:bg-violet-600 group-hover:text-white',
     lineClass: 'from-transparent via-violet-400/70 to-transparent',
   },
+  {
+    id: 'replica' as const,
+    title: '精准复刻',
+    icon: ScanSearch,
+    shellClass: 'border-indigo-200/80 bg-gradient-to-br from-white via-white to-indigo-50/80 hover:border-indigo-300',
+    glowClass: 'bg-indigo-300/40',
+    iconClass: 'from-indigo-500 to-blue-600 shadow-indigo-200/80',
+    buttonClass: 'border-indigo-100 bg-indigo-50 text-indigo-600 group-hover:border-indigo-500 group-hover:bg-indigo-600 group-hover:text-white',
+    lineClass: 'from-transparent via-indigo-400/70 to-transparent',
+  },
 ];
 
-export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, onSelectClip, onSelectCopy }: CreativeSelectPageProps) {
+export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, onSelectClip, onSelectCopy, onSelectReplica }: CreativeSelectPageProps) {
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#f5f7fb] px-4 py-5 sm:px-6 sm:py-6">
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
@@ -60,10 +71,10 @@ export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, 
       </div>
 
       <main className="relative z-10 flex w-full flex-1 items-center justify-center py-12 sm:py-16">
-        <div className="grid w-full max-w-[76rem] grid-cols-1 gap-5 sm:grid-cols-3 sm:gap-6">
+        <div className="grid w-full max-w-[90rem] grid-cols-1 gap-5 sm:grid-cols-2 sm:gap-6 xl:grid-cols-4">
           {entries.map((entry, index) => {
             const Icon = entry.icon;
-            const onClick = entry.id === 'video' ? onSelectVideo : entry.id === 'clip' ? onSelectClip : onSelectCopy;
+            const onClick = entry.id === 'video' ? onSelectVideo : entry.id === 'clip' ? onSelectClip : entry.id === 'copy' ? onSelectCopy : onSelectReplica;
             return (
               <motion.button
                 key={entry.id}

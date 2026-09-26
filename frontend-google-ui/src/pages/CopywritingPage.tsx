@@ -65,6 +65,7 @@ interface CopywritingPageProps {
   onNavigate: (page: ModuleId) => void;
   onSwitchToVideo?: () => void;
   onSwitchToClip?: () => void;
+  onSwitchToReplica?: () => void;
 }
 
 interface OriginalResultItem extends CopyOriginalItem {
@@ -381,7 +382,7 @@ function ResultCard({
   );
 }
 
-export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo, onSwitchToClip }: CopywritingPageProps) {
+export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo, onSwitchToClip, onSwitchToReplica }: CopywritingPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [paintingFile, setPaintingFile] = useState<File | null>(null);
@@ -855,7 +856,7 @@ export default function CopywritingPage({ onBack, onNavigate, onSwitchToVideo, o
         <div className="flex items-center gap-3">
           <HomeBackButton onClick={onBack} />
           <ModuleQuickNav current="creative" onNavigate={onNavigate} />
-          <CreativeSubNav current="copy" onSwitchVideo={onSwitchToVideo ?? (() => {})} onSwitchClip={onSwitchToClip ?? (() => {})} onSwitchCopy={() => {}} />
+          <CreativeSubNav current="copy" onSwitchVideo={onSwitchToVideo ?? (() => {})} onSwitchClip={onSwitchToClip ?? (() => {})} onSwitchCopy={() => {}} onSwitchReplica={onSwitchToReplica} />
         </div>
       </header>
 

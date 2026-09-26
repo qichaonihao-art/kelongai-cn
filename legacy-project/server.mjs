@@ -1608,7 +1608,7 @@ async function handleClipTimedTranscript(req, res) {
 
 async function handleDetectFirstClipCut(req, res) {
   const body = await readRequestBody(req);
-  const requestedShotCount = Math.max(1, Math.min(5, Math.round(Number(body?.shotCount) || 1)));
+  const requestedShotCount = Math.max(1, Math.min(20, Math.round(Number(body?.shotCount) || 1)));
   const sourcePath = getClipSourcePath(body?.sourceId);
   if (!sourcePath || !existsSync(sourcePath)) {
     sendJson(res, 404, { error: '源视频已过期，请重新上传' });
