@@ -684,7 +684,8 @@ export default function ClipExtractionPage({
       setNotice(String(data.message || '已给出建议范围，请预览确认。'));
     } catch (caught) {
       setDetectedShots([]);
-      setError(automatic ? '自动识别切镜点失败，你仍然可以直接拖动两条裁切线。' : (caught instanceof Error ? caught.message : '自动识别失败'));
+      const message = caught instanceof Error ? caught.message : '自动识别失败';
+      setError(automatic ? `自动识别切镜点失败：${message}。你仍然可以直接拖动两条裁切线。` : message);
     } finally {
       setDetecting(false);
     }

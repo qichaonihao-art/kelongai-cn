@@ -556,16 +556,44 @@ async function cleanupExpiredUploadTempFilesOnStartup() {
   });
 }
 
+let videoCompressionToolsPromise = null;
+let ffmpegFrameSyncOption = '';
+
+async function inspectVideoCompressionTools() {
+  const [{ stdout = '', stderr = '' }] = await Promise.all([
+    execFileAsync('ffmpeg', ['-hide_banner', '-h', 'full'], { maxBuffer: 4 * 1024 * 1024 }),
+    execFileAsync('ffprobe', ['-version']),
+  ]);
+  const ffmpegHelp = `${stdout}\n${stderr}`;
+  if (ffmpegHelp.includes('-fps_mode')) {
+    ffmpegFrameSyncOption = '-fps_mode';
+    return;
+  }
+  if (ffmpegHelp.includes('-vsync')) {
+    ffmpegFrameSyncOption = '-vsync';
+    return;
+  }
+  throw new Error('服务器 ffmpeg 不支持可变帧率输出参数，请升级 ffmpeg');
+}
+
 async function ensureVideoCompressionTools() {
   try {
-    await execFileAsync('ffmpeg', ['-version']);
-    await execFileAsync('ffprobe', ['-version']);
+    if (!videoCompressionToolsPromise) {
+      videoCompressionToolsPromise = inspectVideoCompressionTools();
+    }
+    await videoCompressionToolsPromise;
   } catch (error) {
+    videoCompressionToolsPromise = null;
     if (error && (error.code === 'ENOENT' || /not found/i.test(String(error.message || '')))) {
       throw new Error('服务器未安装 ffmpeg，无法自动压缩大视频');
     }
     throw error;
   }
+}
+
+async function getFfmpegFrameSyncArgs(mode = 'vfr') {
+  await ensureVideoCompressionTools();
+  return [ffmpegFrameSyncOption, mode];
 }
 
 function scheduleMediaCleanup(filePath) {
@@ -1362,6 +1390,7 @@ async function handleClipTrim(req, res) {
     await ensureVideoCompressionTools();
     const metadata = await probeVideoMetadata(sourcePath);
     const range = parseClipRange(body, metadata.durationSeconds);
+    const frameSyncArgs = await getFfmpegFrameSyncArgs('vfr');
     await execFileAsync('ffmpeg', [
       '-y',
       '-ss', String(range.start),
@@ -1372,7 +1401,7 @@ async function handleClipTrim(req, res) {
       // 先从解码帧中排除结束边界及之后的画面，再编码，避免输出帧率取整带入下一镜头。
       '-vf', `trim=end=${range.duration}`,
       '-af', `atrim=end=${range.duration}`,
-      '-fps_mode', 'vfr',
+      ...frameSyncArgs,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '18',
@@ -1592,7 +1621,8 @@ async function handleDetectFirstClipCut(req, res) {
     const { stderr } = await execFileAsync('ffmpeg', [
       '-hide_banner', '-t', String(scanDuration), '-i', sourcePath,
       '-vf', `scale=320:-2,select='gte(scene,0)',metadata=print:key=lavfi.scene_score,select='gt(scene,0.32)*gte(t,0.8)*lt(t,${scanDuration})*(isnan(prev_selected_t)+gte(t-prev_selected_t,0.6))',showinfo`,
-      '-frames:v', String(requestedShotCount), '-fps_mode', 'vfr', '-an', '-f', 'null', '-',
+      // null 输出只用于驱动滤镜分析，不需要帧同步参数；避免 FFmpeg 新旧版本选项不兼容。
+      '-frames:v', String(requestedShotCount), '-an', '-f', 'null', '-',
     ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024 });
     const rawMatches = parseDetectedClipBoundaries(stderr, metadata.fps)
       .filter(({ cutSeconds }) => Number.isFinite(cutSeconds) && cutSeconds >= 0.8 && cutSeconds < metadata.durationSeconds - 0.1);
@@ -1631,6 +1661,11 @@ async function handleDetectFirstClipCut(req, res) {
         : `没有识别到明显切镜，已先取开头 ${Math.round(suggestedEnd * 10) / 10} 秒`,
     });
   } catch (error) {
+    console.error('[clip detect] failed', {
+      sourceId: body?.sourceId || '',
+      message: error?.message || '',
+      stderr: String(error?.stderr || '').slice(-4000),
+    });
     sendJson(res, 400, { error: error?.message || '自动识别切镜点失败' });
   }
 }
@@ -21967,6 +22002,7 @@ export {
   parseFpsFraction,
   isVideo480pOrLower,
   getStandard1080pCanvas,
+  getFfmpegFrameSyncArgs,
   normalizeEnhancedVideoToStandard1080p,
   parseClipRange,
   getClipEndBeforeDetectedCut,

@@ -14,7 +14,7 @@ process.env.VIDEO_LIBRARY_DIR = path.join(temporaryRoot, 'video-library');
 await mkdir(process.env.RUNTIME_STATE_DIR, { recursive: true });
 await mkdir(process.env.VIDEO_LIBRARY_DIR, { recursive: true });
 const { getClipEndBeforeDetectedCut, parseClipRange, handleClipSourceUpload,
-  handleDetectFirstClipCut, handleClipTrim, handleClipCleanup } = await import('./server.mjs');
+  getFfmpegFrameSyncArgs, handleDetectFirstClipCut, handleClipTrim, handleClipCleanup } = await import('./server.mjs');
 
 async function invoke(handler, data, headers = {}) {
   const req = Readable.from([Buffer.isBuffer(data) ? data : Buffer.from(JSON.stringify(data))]);
@@ -26,8 +26,9 @@ async function invoke(handler, data, headers = {}) {
   return body;
 }
 async function pixels(file) {
+  const frameSyncArgs = await getFfmpegFrameSyncArgs('passthrough');
   const { stdout } = await exec('ffmpeg', ['-v', 'error', '-i', file, '-vf', 'scale=1:1',
-    '-fps_mode', 'passthrough', '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-'], { encoding: 'buffer' });
+    ...frameSyncArgs, '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-'], { encoding: 'buffer' });
   return stdout;
 }
 const outputPath = (clip) => path.join(import.meta.dirname, '.runtime-uploads', path.basename(clip.url));
@@ -56,9 +57,10 @@ try {
       `drawbox=color=white:t=fill:enable='gte(n,${sample.count + (sample.transition ? 1 : 0)})'`,
       ...(sample.vfr ? ["select='if(lt(n,60),not(mod(n,2)),1)'"] : []),
     ];
+    const frameSyncArgs = await getFfmpegFrameSyncArgs('vfr');
     await exec('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', `color=black:s=160x160:r=${sample.fps}:d=5`,
       '-f', 'lavfi', '-i', 'sine=frequency=440:duration=5', '-vf', filters.join(','),
-      '-fps_mode', 'vfr', '-c:v', 'libx264', '-c:a', 'aac', file]);
+      ...frameSyncArgs, '-c:v', 'libx264', '-c:a', 'aac', file]);
     const data = await readFile(file);
     const source = await invoke(handleClipSourceUpload, data, { 'content-type': 'video/mp4', 'content-length': data.length });
     const outputs = [];
