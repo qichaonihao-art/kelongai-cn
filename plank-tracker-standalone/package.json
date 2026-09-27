@@ -1,0 +1,14 @@
+{
+  "name": "personal-plank-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=.env server.mjs",
+    "dev": "PLANK_PASSWORD=dev-password SESSION_SECRET=local-development-secret node server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

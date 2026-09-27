@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#047857">
+  <meta name="description" content="私人平板支撑训练记录">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/styles.css">
+  <title>平板支撑记录</title>
+</head>
+<body>
+  <main class="shell">
+    <section id="loginView" class="login-card hidden">
+      <div class="brand-mark">稳</div>
+      <p class="eyebrow">PRIVATE TRAINING LOG</p>
+      <h1>平板支撑记录</h1>
+      <p class="muted">个人训练数据保存在专属服务器中。</p>
+      <form id="loginForm">
+        <label for="password">个人密码</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button class="primary" type="submit">进入记录</button>
+        <p id="loginError" class="error"></p>
+      </form>
+    </section>
+
+    <section id="appView" class="hidden">
+      <header class="topbar">
+        <div><p class="eyebrow">QI CHAO · MORNING ROUTINE</p><h1>平板支撑</h1></div>
+        <button id="logoutButton" class="ghost small">退出</button>
+      </header>
+
+      <section class="timer-card">
+        <p id="timerState" class="status">准备开始</p>
+        <div id="timer" class="timer">00:00</div>
+        <div class="timer-actions">
+          <button id="resetButton" class="ghost">重置</button>
+          <button id="toggleButton" class="primary round">开始</button>
+          <button id="saveButton" class="ghost" disabled>保存</button>
+        </div>
+        <p id="syncState" class="sync-state">数据已同步</p>
+      </section>
+
+      <section class="stats-grid">
+        <article><span>累计次数</span><strong id="totalCount">0</strong></article>
+        <article><span>最佳成绩</span><strong id="bestTime">0秒</strong></article>
+        <article><span>本月训练</span><strong id="monthCount">0</strong></article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">PROGRESS</p><h2>最近训练趋势</h2></div></div>
+        <div id="chart" class="chart"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div><p class="eyebrow">HISTORY</p><h2>训练记录</h2></div>
+          <div class="menu-actions">
+            <button id="exportButton" class="ghost small">导出</button>
+            <label class="ghost small file-button">导入<input id="importInput" type="file" accept="application/json"></label>
+          </div>
+        </div>
+        <div id="emptyState" class="empty">还没有记录，今天开始第一组吧。</div>
+        <div id="history" class="history"></div>
+      </section>
+      <footer><a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">鄂ICP备2026013942号-1</a></footer>
+    </section>
+  </main>
+  <div id="toast" class="toast hidden"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

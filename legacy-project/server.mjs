@@ -945,7 +945,7 @@ function getClipOutputPath(outputId) {
 }
 
 async function resolveClipMediaUrl(token, req) {
-  // 精准复刻也会直接上传参考视频，令牌对应的是 *_clip_source；镜头截取结果则对应 *_clip.mp4。
+  // 镜头截取上传的源视频令牌对应 *_clip_source，截取结果对应 *_clip.mp4。
   // 两种临时媒体都允许送入多模态分析，不能把源视频误判成“截取视频已过期”。
   const outputPath = getClipOutputPath(token);
   const sourcePath = getClipSourcePath(token);

@@ -133,7 +133,6 @@ interface CreativeCreationPageProps {
   onNavigate: (page: ModuleId) => void;
   onSwitchToCopy?: () => void;
   onSwitchToClip?: () => void;
-  onSwitchToReplica?: () => void;
   incomingClip?: {
     file: File;
     previewUrl: string;
@@ -146,8 +145,6 @@ interface CreativeCreationPageProps {
     token: number;
   } | null;
   onIncomingClipConsumed?: () => void;
-  incomingReplicaPrompt?: { prompt: string; token: number } | null;
-  onIncomingReplicaPromptConsumed?: () => void;
 }
 
 type ClipAudioMode = 'none' | 'original' | 'voice';
@@ -1760,7 +1757,7 @@ function renderAssistantMessageContent(content: string) {
   );
 }
 
-export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCopy, onSwitchToClip, onSwitchToReplica, incomingClip, onIncomingClipConsumed, incomingReplicaPrompt, onIncomingReplicaPromptConsumed }: CreativeCreationPageProps) {
+export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCopy, onSwitchToClip, incomingClip, onIncomingClipConsumed }: CreativeCreationPageProps) {
   const initialSessionState = useMemo(() => {
     const sessions = loadSavedCreativeSessions();
     return {
@@ -1923,6 +1920,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchPrepareError, setPaintingBatchPrepareError] = useState('');
   const [paintingBatchConfirming, setPaintingBatchConfirming] = useState(false);
   const [paintingBatchUnconfirmed, setPaintingBatchUnconfirmed] = useState(false);
+  const [paintingBatchSubmitError, setPaintingBatchSubmitError] = useState('');
   const [replaceImage, setReplaceImage] = useState<SelectedCreativeMedia | null>(null);
   const [replaceTarget, setReplaceTarget] = useState('');
   const [replaceWith, setReplaceWith] = useState('');
@@ -2004,7 +2002,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     ...seedanceManualPreferenceRef.current,
   });
   const consumedIncomingClipTokenRef = useRef<number | null>(null);
-  const consumedIncomingReplicaTokenRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!incomingClip || consumedIncomingClipTokenRef.current === incomingClip.token) return;
@@ -2080,17 +2077,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setRequestError('');
     onIncomingClipConsumed?.();
   }, [incomingClip?.token]);
-
-  useEffect(() => {
-    if (!incomingReplicaPrompt || consumedIncomingReplicaTokenRef.current === incomingReplicaPrompt.token) return;
-    consumedIncomingReplicaTokenRef.current = incomingReplicaPrompt.token;
-    const prompt = String(incomingReplicaPrompt.prompt || '').trim();
-    if (prompt) {
-      setSeedancePrompt(prompt);
-      setRequestError('');
-    }
-    onIncomingReplicaPromptConsumed?.();
-  }, [incomingReplicaPrompt?.token]);
 
   useEffect(() => {
     const pending = seedanceReferences.filter((reference) => (
@@ -3993,6 +3979,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingBatchConfirmOpen(false);
     setPaintingBatchPrepareFailed(false);
     setPaintingBatchPrepareError('');
+    setPaintingBatchSubmitError('');
     setPaintingBatchPreparedBatches(0);
     batchCreationRequestIdRef.current = null;
     if (paintingSeedanceSourceRef.current?.prompt.trim() === seedancePrompt.trim()) {
@@ -4648,6 +4635,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingError('');
     setPaintingBatchPrepareFailed(false);
     setPaintingBatchPrepareError('');
+    setPaintingBatchSubmitError('');
     setPaintingBatchPreparing(true);
     setPaintingBatchPrepareStage('正在检查已有创意方向');
     try {
@@ -4768,6 +4756,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingBatchCreating(false);
     setPaintingBatchConfirming(false);
     setPaintingBatchUnconfirmed(false);
+    setPaintingBatchSubmitError('');
     setPaintingBatchPrepareStage('');
     setPaintingBatchDetail(null);
     setPaintingBatchActiveRunId(batchRunId);
@@ -4806,7 +4795,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       } catch (error) {
         if (!isPaintingCreationOutcomeUnknown(error)) {
           // 明确的业务/鉴权错误不再盲试。
-          setPaintingError(describePaintingNetworkError(error, '创建批量任务失败，请稍后重试。'));
+          const message = describePaintingNetworkError(error, '创建批量任务失败，请稍后重试。');
+          setPaintingError(message);
+          setPaintingBatchSubmitError(message);
           setPaintingBatchConfirming(false);
           setPaintingBatchPrepareStage('');
           return;
@@ -4817,22 +4808,33 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingBatchConfirming(false);
     setPaintingBatchPrepareStage('');
     setPaintingBatchUnconfirmed(true);
-    setPaintingError('暂时无法确认批次是否创建成功。请先查看批量生成历史，系统不会自动创建第二个批次。');
+    const message = '暂时无法确认批次是否创建成功。请先查看批量生成历史，系统不会自动创建第二个批次。';
+    setPaintingError(message);
+    setPaintingBatchSubmitError(message);
   }
 
   async function handlePaintingConfirmBatch() {
-    if (!paintingImage || !paintingProfile) return;
+    if (!paintingImage || !paintingProfile) {
+      const message = '当前挂画资料已经失效，请关闭弹窗并重新选择图片。';
+      setPaintingError(message);
+      setPaintingBatchSubmitError(message);
+      return;
+    }
     if (paintingBatchCreating || paintingBatchConfirming) return;
+    setPaintingBatchSubmitError('');
     const requestedCount = parsePaintingBatchRequestedCount(paintingBatchRequestedCount);
     if (requestedCount === null) {
-      setPaintingError('生成数量请输入1到40之间的整数，留空则默认生成40条。');
+      const message = '生成数量请输入1到40之间的整数，留空则默认生成40条。';
+      setPaintingError(message);
+      setPaintingBatchSubmitError(message);
       return;
     }
     const orderedIdeas = orderPaintingBatchIdeas(paintingBatchIdeas);
     const selectedIdeas = selectPaintingBatchIdeas(paintingBatchIdeas);
     if (!selectedIdeas.length) {
-      setPaintingError('没有可生成的方向：当前轮次的方向都已使用过。可取消“仅生成未使用方向”或换一轮再试。');
-      setPaintingBatchConfirmOpen(false);
+      const message = '没有可生成的方向：当前轮次的方向都已使用过。可取消“仅生成未使用方向”或换一轮再试。';
+      setPaintingError(message);
+      setPaintingBatchSubmitError(message);
       return;
     }
     setPaintingBatchCreating(true);
@@ -4850,7 +4852,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     } catch (error) {
       setPaintingBatchCreating(false);
       if (!isPaintingCreationOutcomeUnknown(error)) {
-        setPaintingError(describePaintingNetworkError(error, '创建批量任务失败，请稍后重试。'));
+        const message = describePaintingNetworkError(error, '创建批量任务失败，请稍后重试。');
+        setPaintingError(message);
+        setPaintingBatchSubmitError(message);
         return;
       }
       // 网络错误：批次可能已创建但响应丢失，进入自动确认（绝不更换编号）。
@@ -5664,7 +5668,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
             onSwitchVideo={() => {}}
             onSwitchClip={onSwitchToClip ?? (() => {})}
             onSwitchCopy={onSwitchToCopy ?? (() => {})}
-            onSwitchReplica={onSwitchToReplica}
           />
         </div>
         <div className="flex items-center gap-4">
@@ -8770,6 +8773,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
             {paintingBatchUnconfirmed && (
               <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">
                 暂时无法确认批次是否创建成功。请先查看批量生成历史，系统不会自动创建第二个批次。
+              </div>
+            )}
+            {paintingBatchSubmitError && !paintingBatchUnconfirmed && (
+              <div role="alert" className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-bold leading-5 text-red-700">
+                {paintingBatchSubmitError}
               </div>
             )}
 

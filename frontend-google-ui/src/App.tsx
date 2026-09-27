@@ -11,7 +11,6 @@ import CreativeCreationPage from './pages/CreativeCreationPage';
 import CreativeSelectPage from './pages/CreativeSelectPage';
 import CopywritingPage from './pages/CopywritingPage';
 import ClipExtractionPage, { type ClipAudioMode, type ClipCreativeMode } from './pages/ClipExtractionPage';
-import PrecisionReplicaPage from './pages/PrecisionReplicaPage';
 import DouyinDownloaderPage from './pages/DouyinDownloaderPage';
 import StoreOverviewPage from './pages/StoreOverviewPage';
 import ImageGenerationPage from './pages/ImageGenerationPage';
@@ -23,7 +22,7 @@ import VideoLibraryPage from './pages/VideoLibraryPage';
 import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
 import type { ModuleId } from './components/ModuleQuickNav';
 
-type Page = 'login' | 'home' | 'universal' | 'creative-video' | 'creative-clip' | 'creative-copy' | 'creative-replica' | ModuleId;
+type Page = 'login' | 'home' | 'universal' | 'creative-video' | 'creative-clip' | 'creative-copy' | ModuleId;
 
 class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
@@ -72,7 +71,6 @@ export default function App() {
     audioDurationSeconds?: number;
     token: number;
   } | null>(null);
-  const [incomingReplicaPrompt, setIncomingReplicaPrompt] = useState<{ prompt: string; token: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,7 +151,6 @@ export default function App() {
           onSelectVideo={() => setCurrentPage('creative-video')}
           onSelectClip={() => setCurrentPage('creative-clip')}
           onSelectCopy={() => setCurrentPage('creative-copy')}
-          onSelectReplica={() => setCurrentPage('creative-replica')}
         />
       )}
       {currentPage === 'creative-video' && (
@@ -162,11 +159,8 @@ export default function App() {
           onNavigate={handleNavigate}
           onSwitchToClip={() => setCurrentPage('creative-clip')}
           onSwitchToCopy={() => setCurrentPage('creative-copy')}
-          onSwitchToReplica={() => setCurrentPage('creative-replica')}
           incomingClip={incomingCreativeClip}
           onIncomingClipConsumed={() => setIncomingCreativeClip(null)}
-          incomingReplicaPrompt={incomingReplicaPrompt}
-          onIncomingReplicaPromptConsumed={() => setIncomingReplicaPrompt(null)}
         />
       )}
       {currentPage === 'creative-clip' && (
@@ -175,7 +169,6 @@ export default function App() {
           onNavigate={handleNavigate}
           onSwitchToVideo={() => setCurrentPage('creative-video')}
           onSwitchToCopy={() => setCurrentPage('creative-copy')}
-          onSwitchToReplica={() => setCurrentPage('creative-replica')}
           onUseInCreative={(clip, mode) => {
             setIncomingCreativeClip({ ...clip, mode, token: Date.now() });
             setCurrentPage('creative-video');
@@ -188,20 +181,6 @@ export default function App() {
           onNavigate={handleNavigate}
           onSwitchToVideo={() => setCurrentPage('creative-video')}
           onSwitchToClip={() => setCurrentPage('creative-clip')}
-          onSwitchToReplica={() => setCurrentPage('creative-replica')}
-        />
-      )}
-      {currentPage === 'creative-replica' && (
-        <PrecisionReplicaPage
-          onBack={handleBackToCreative}
-          onNavigate={handleNavigate}
-          onSwitchToVideo={() => setCurrentPage('creative-video')}
-          onSwitchToClip={() => setCurrentPage('creative-clip')}
-          onSwitchToCopy={() => setCurrentPage('creative-copy')}
-          onUseInCreative={(prompt) => {
-            setIncomingReplicaPrompt({ prompt, token: Date.now() });
-            setCurrentPage('creative-video');
-          }}
         />
       )}
       {currentPage === 'douyin' && (

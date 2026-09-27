@@ -971,7 +971,7 @@ export function getPaintingHttpStatus(error: unknown): number | null {
 
 export function isPaintingNetworkFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error || '');
-  return /failed to fetch|networkerror|fetch failed|load failed|econnreset|econnrefused|network|网络|连接|中断/i.test(message);
+  return /failed to fetch|networkerror|fetch failed|load failed|econnreset|econnrefused|network|abort|timeout|timed out|网络|连接|中断|超时/i.test(message);
 }
 
 export function isPaintingRetriableHttpStatus(status: number): boolean {
@@ -1495,12 +1495,20 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
   formData.append('onlyUnused', String(options.onlyUnused === true));
   formData.append('autoEnhance480p', String(options.autoEnhance480p === true));
 
-  const response = await fetch('/api/painting/batch-runs', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'X-Device-Id': getKelongDeviceId() },
-    body: formData,
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 45_000);
+  let response: Response;
+  try {
+    response = await fetch('/api/painting/batch-runs', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-Device-Id': getKelongDeviceId() },
+      body: formData,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
 
   const json = await response.json().catch(() => null);
   if (!response.ok) {

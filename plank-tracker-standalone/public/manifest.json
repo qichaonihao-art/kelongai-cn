@@ -1,0 +1,9 @@
+{
+  "name": "平板支撑记录",
+  "short_name": "平板支撑",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#edf7f1",
+  "theme_color": "#047857",
+  "icons": []
+}
