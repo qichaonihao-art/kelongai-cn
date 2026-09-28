@@ -1406,9 +1406,10 @@ async function handleClipTrim(req, res) {
       '-t', String(range.duration),
       '-map', '0:v:0',
       '-map', '0:a?',
-      // 先从解码帧中排除结束边界及之后的画面，再编码，避免输出帧率取整带入下一镜头。
-      '-vf', `trim=end=${range.duration}`,
-      '-af', `atrim=end=${range.duration}`,
+      // 先从解码帧中排除结束边界及之后的画面，再把音视频时间戳统一从 0 开始。
+      // 精确边界继续保留，同时避免部分手机可变帧率视频在浏览器里出现卡顿或起播延迟。
+      '-vf', `trim=end=${range.duration},setpts=PTS-STARTPTS`,
+      '-af', `atrim=end=${range.duration},asetpts=PTS-STARTPTS`,
       ...frameSyncArgs,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
@@ -1416,7 +1417,6 @@ async function handleClipTrim(req, res) {
       '-c:a', 'aac',
       '-b:a', '128k',
       '-movflags', '+faststart',
-      '-avoid_negative_ts', 'make_zero',
       outputPath,
     ], { timeout: 5 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
     const outputInfo = await stat(outputPath);

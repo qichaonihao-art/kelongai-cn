@@ -162,6 +162,8 @@ export default function ClipExtractionPage({
   const resultRef = useRef<TrimmedClip | null>(null);
   const clipRangeRevisionRef = useRef(0);
   const trimmingRef = useRef(false);
+  const rangePreviewStopTimerRef = useRef<number | null>(null);
+  const rangePreviewFrameCallbackRef = useRef<number | null>(null);
   const [source, setSource] = useState<UploadedClipSource | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -230,6 +232,14 @@ export default function ClipExtractionPage({
 
   useEffect(() => {
     clipRangeRevisionRef.current++;
+    if (rangePreviewStopTimerRef.current !== null) {
+      window.clearTimeout(rangePreviewStopTimerRef.current);
+      rangePreviewStopTimerRef.current = null;
+    }
+    if (rangePreviewFrameCallbackRef.current !== null && videoRef.current?.cancelVideoFrameCallback) {
+      videoRef.current.cancelVideoFrameCallback(rangePreviewFrameCallbackRef.current);
+      rangePreviewFrameCallbackRef.current = null;
+    }
     videoRef.current?.pause();
     setPreviewingRange(false);
     if (resultRef.current?.outputId) {
@@ -289,6 +299,10 @@ export default function ClipExtractionPage({
 
   useEffect(() => () => {
     clipRangeRevisionRef.current++;
+    if (rangePreviewStopTimerRef.current !== null) window.clearTimeout(rangePreviewStopTimerRef.current);
+    if (rangePreviewFrameCallbackRef.current !== null && videoRef.current?.cancelVideoFrameCallback) {
+      videoRef.current.cancelVideoFrameCallback(rangePreviewFrameCallbackRef.current);
+    }
     uploadRequestRef.current?.abort();
     const payload = {
       sourceId: sourceRef.current?.sourceId,
@@ -631,23 +645,60 @@ export default function ClipExtractionPage({
     else { setEndSeconds(current); setError(''); }
   }
 
-  async function previewSelectedRange() {
-    if (endSeconds <= startSeconds + 0.1 || trimmingRef.current) return;
+  function stopSourceRangePreview() {
+    if (rangePreviewStopTimerRef.current !== null) {
+      window.clearTimeout(rangePreviewStopTimerRef.current);
+      rangePreviewStopTimerRef.current = null;
+    }
+    const video = videoRef.current;
+    if (rangePreviewFrameCallbackRef.current !== null && video?.cancelVideoFrameCallback) {
+      video.cancelVideoFrameCallback(rangePreviewFrameCallbackRef.current);
+      rangePreviewFrameCallbackRef.current = null;
+    }
+    if (video) {
+      video.pause();
+      // endSeconds 已位于下一镜头首帧之前，停在这里仍显示上一镜头末帧。
+      video.currentTime = endSeconds;
+      setCurrentSeconds(endSeconds);
+    }
+    setPreviewingRange(false);
+  }
+
+  function previewSelectedRange() {
+    const video = videoRef.current;
+    if (!video || endSeconds <= startSeconds + 0.1) return;
     if (previewingRange) {
-      resultVideoRef.current?.pause();
-      setPreviewingRange(false);
+      stopSourceRangePreview();
       return;
     }
-    videoRef.current?.pause();
-    // 预览与下载使用同一个裁切文件，原视频的 timeupdate 停播可能越过切点。
-    const clip = await trimClip();
-    if (clip) setPreviewingRange(true);
+    video.currentTime = startSeconds;
+    setCurrentSeconds(startSeconds);
+    setPreviewingRange(true);
+    const frameSeconds = 1 / Math.max(1, source?.fps || 30);
+    const stopAt = endSeconds - frameSeconds * 0.5;
+    if (video.requestVideoFrameCallback) {
+      const watchFrame = (_now: number, metadata: VideoFrameCallbackMetadata) => {
+        if (metadata.mediaTime >= stopAt) {
+          stopSourceRangePreview();
+          return;
+        }
+        rangePreviewFrameCallbackRef.current = video.requestVideoFrameCallback(watchFrame);
+      };
+      rangePreviewFrameCallbackRef.current = video.requestVideoFrameCallback(watchFrame);
+    } else {
+      const stopAfterMs = Math.max(0, (stopAt - startSeconds) * 1000);
+      rangePreviewStopTimerRef.current = window.setTimeout(stopSourceRangePreview, stopAfterMs);
+    }
+    void video.play().catch(() => stopSourceRangePreview());
   }
 
   function handleSourcePreviewTimeUpdate() {
     const video = videoRef.current;
     if (!video) return;
     setCurrentSeconds(video.currentTime);
+    if (previewingRange && video.currentTime >= endSeconds - 0.5 / Math.max(1, source?.fps || 30)) {
+      stopSourceRangePreview();
+    }
   }
 
   function seekTo(value: number) {
@@ -1176,7 +1227,7 @@ export default function ClipExtractionPage({
                   <div className="px-3 pb-2 text-[11px] font-bold text-slate-400">可输入 6–{MAX_DETECTABLE_SHOTS} 个，识别时间会随数量增加。</div>
                 </details>
                 <div className="mt-2 min-h-5 text-xs font-bold text-cyan-700">{detecting ? <span className="flex items-center gap-1.5"><LoaderCircle className="size-3.5 animate-spin" />正在识别前 {selectedShotCount} 个镜头…</span> : detectedShots.length > 0 ? `已定位前 ${detectedShots.length} 个镜头` : '也可以直接拖动裁切线'}</div>
-                <button type="button" disabled={detecting || trimming || selectedDuration <= 0.1} onClick={() => void previewSelectedRange()} className={cn('mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border text-sm font-black disabled:opacity-50', previewingRange ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50')}><Play className={cn('size-4', previewingRange && 'fill-current')} />{trimming ? '正在准备片段…' : previewingRange ? '停止预览' : '预览裁切片段'}</button>
+                <button type="button" disabled={detecting || selectedDuration <= 0.1} onClick={previewSelectedRange} className={cn('mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border text-sm font-black disabled:opacity-50', previewingRange ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50')}><Play className={cn('size-4', previewingRange && 'fill-current')} />{previewingRange ? '停止预览' : '预览裁切片段'}</button>
                 <button type="button" disabled={trimming || selectedDuration <= 0.1 || selectedDuration > 60} onClick={() => void trimClip()} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-50">{trimming ? <LoaderCircle className="size-4 animate-spin" /> : <Scissors className="size-4" />}{trimming ? '正在截取…' : '确认截取'}</button>
               </section>
 
