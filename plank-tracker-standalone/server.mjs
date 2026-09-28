@@ -42,7 +42,8 @@ async function readJson(req) {
 }
 
 function normalizeSession(input) {
-  const duration = Math.round(Number(input.duration ?? input.duration_seconds));
+  const rawDuration = Number(input.duration ?? input.duration_seconds);
+  const duration = Math.round(rawDuration * 1000) / 1000;
   const performedAt = new Date(input.performedAt ?? input.performed_at ?? input.date ?? Date.now()).getTime();
   const note = String(input.note || '').trim().slice(0, 280);
   if (!Number.isFinite(duration) || duration < 1 || duration > 86_400) throw new Error('训练时长无效');

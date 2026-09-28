@@ -16,13 +16,13 @@ test('login, create, list, and delete a session', async (t) => {
   assert.equal(login.status, 200);
   const cookie = login.headers.get('set-cookie').split(';')[0];
 
-  const created = await fetch(`${base}/api/sessions`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ clientId: 'phone-1', duration: 93, performedAt: 1_700_000_000_000 }) });
+  const created = await fetch(`${base}/api/sessions`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ clientId: 'phone-1', duration: 93.427, performedAt: 1_700_000_000_000 }) });
   assert.equal(created.status, 201);
 
   const listed = await fetch(`${base}/api/sessions`, { headers: { cookie } });
   const body = await listed.json();
   assert.equal(body.sessions.length, 1);
-  assert.equal(body.sessions[0].duration, 93);
+  assert.equal(body.sessions[0].duration, 93.427);
 
   const removed = await fetch(`${base}/api/sessions/${body.sessions[0].id}`, { method: 'DELETE', headers: { cookie, 'content-type': 'application/json' }, body: '{}' });
   assert.equal(removed.status, 200);
