@@ -43,7 +43,7 @@ async function readJson(req) {
 
 function normalizeSession(input) {
   const rawDuration = Number(input.duration ?? input.duration_seconds);
-  const duration = Math.round(rawDuration * 1000) / 1000;
+  const duration = Math.round(rawDuration);
   const performedAt = new Date(input.performedAt ?? input.performed_at ?? input.date ?? Date.now()).getTime();
   const note = String(input.note || '').trim().slice(0, 280);
   if (!Number.isFinite(duration) || duration < 1 || duration > 86_400) throw new Error('训练时长无效');
@@ -180,9 +180,10 @@ export function createPlankServer(options = {}) {
         return json(res, 404, { error: '页面不存在' });
       }
       const extension = path.extname(filePath);
+      const revalidate = extension === '.html' || ['sw.js', 'app.js', 'styles.css'].includes(relative);
       res.writeHead(200, {
         'content-type': mimeTypes.get(extension) || 'application/octet-stream',
-        'cache-control': extension === '.html' ? 'no-cache' : 'public, max-age=3600',
+        'cache-control': revalidate ? 'no-cache' : 'public, max-age=3600',
         'x-content-type-options': 'nosniff',
         'x-frame-options': 'DENY',
         'referrer-policy': 'same-origin',

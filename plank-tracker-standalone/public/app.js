@@ -10,20 +10,16 @@ let intervalId = null;
 let wakeLock = null;
 
 function formatTime(value) {
-  const totalMs = Math.max(0, Math.round(Number(value || 0) * 1000));
-  const mins = Math.floor(totalMs / 60_000);
-  const secs = Math.floor(totalMs % 60_000 / 1000);
-  const millis = totalMs % 1000;
-  return mins
-    ? `${mins}分${String(secs).padStart(2, '0')}秒${String(millis).padStart(3, '0')}毫秒`
-    : `${secs}秒${String(millis).padStart(3, '0')}毫秒`;
+  const totalSeconds = Math.max(0, Math.round(Number(value || 0)));
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return mins ? `${mins}分${String(secs).padStart(2, '0')}秒` : `${secs}秒`;
 }
 function compactTime(value) {
-  const totalMs = Math.max(0, Math.round(Number(value || 0) * 1000));
-  const mins = Math.floor(totalMs / 60_000);
-  const secs = Math.floor(totalMs % 60_000 / 1000);
-  const millis = totalMs % 1000;
-  return `${mins}:${String(secs).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+  const totalSeconds = Math.max(0, Math.round(Number(value || 0)));
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 function timerText(value) {
   const mins = Math.floor(value / 60_000);
@@ -113,10 +109,11 @@ $('#toggleButton').addEventListener('click', async () => {
 $('#resetButton').addEventListener('click', async () => { running = false; clearInterval(intervalId); elapsedMs = 0; accumulatedMs = 0; $('#toggleButton').textContent = '开始'; $('#timerState').textContent = '准备开始'; await wakeLock?.release().catch(() => {}); updateTimer(); });
 $('#saveButton').addEventListener('click', async () => {
   if (elapsedMs < 1000) return;
-  const duration = Math.round(elapsedMs) / 1000;
+  const completedFiveMinutes = elapsedMs >= 300_000;
+  const duration = Math.round(elapsedMs / 1000);
   const item = { clientId: crypto.randomUUID(), duration, performedAt: Date.now(), note: '' };
   sessions.push(item); setPending([...pendingItems(), item]); render(); toast(`已记录 ${formatTime(duration)}`);
-  if (duration >= 300) showCelebration();
+  if (completedFiveMinutes) showCelebration();
   elapsedMs = 0; accumulatedMs = 0; $('#toggleButton').textContent = '开始'; $('#timerState').textContent = '今天也完成了'; updateTimer(); await syncPending();
 });
 $('#history').addEventListener('click', async (event) => {

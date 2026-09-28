@@ -22,7 +22,7 @@ test('login, create, list, and delete a session', async (t) => {
   const listed = await fetch(`${base}/api/sessions`, { headers: { cookie } });
   const body = await listed.json();
   assert.equal(body.sessions.length, 1);
-  assert.equal(body.sessions[0].duration, 93.427);
+  assert.equal(body.sessions[0].duration, 93);
 
   const removed = await fetch(`${base}/api/sessions/${body.sessions[0].id}`, { method: 'DELETE', headers: { cookie, 'content-type': 'application/json' }, body: '{}' });
   assert.equal(removed.status, 200);
