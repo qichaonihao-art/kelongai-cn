@@ -1,3 +1,4 @@
+import { validateReplacementPrompt, replacementTargetPrompt } from './product-replacement.mjs';
 // All upstream requests are mocked; never creates paid video tasks.
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
@@ -216,6 +217,23 @@ for (const type of ['hanging', 'sticker', 'ornament']) {
   if (type === 'sticker') { assert.match(sent, /PVC/); assert.doesNotMatch(sent, /尺寸：宽180/); }
  }
 }
+// 用户实际失败句：旧木框属于被替换的原片目标，不属于新铝合金摆台。
+const sourceToAluminum = '将原视频中的木质边框笑纳百财大肚佛摆台替换为金色矩形铝合金边框、四角斜接、木质背板、背部下边中央连接单根细金属后撑杆的固定一体摆台';
+assert.deepEqual(validateReplacementPrompt(sourceToAluminum, 'ornament'), []);
+assert.ok(replacementTargetPrompt(sourceToAluminum).includes('金色矩形铝合金边框'));
+const actualReplacement = res();
+await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', duration: 7, prompt: `【产品元素替换：ornament】\n复刻目标与允许变化：${sourceToAluminum}；人物整体搬放，红布完全盖住摆台，手抓红布上角向上揭开，展示正面平面图案。` }), actualReplacement);
+assert.equal(actualReplacement.status, 200, actualReplacement.body);
+for (const badTarget of [
+ sourceToAluminum.replace('金色矩形铝合金边框', '木质边框'),
+ '将原视频中的木质边框摆台替换为铝合金边框摆台，替换后的摆台采用塑料边框。',
+ '将原视频中的铝合金边框摆台替换为木质边框摆台。',
+ `${sourceToAluminum}，取下主体再安装支架。`,
+ '原视频里的木质边框摆台保持不变。',
+]) assert.ok(validateReplacementPrompt(badTarget, 'ornament').length, badTarget);
+assert.ok(validateReplacementPrompt('将原视频中的木质边框摆台替换为贴画，贴画配有实木边框。', 'sticker').length);
+assert.deepEqual(validateReplacementPrompt('将原视频中的带挂绳挂画替换为铝合金边框固定一体摆台。', 'ornament'), []);
+
 // 模型漏写标记或改变括号、加粗格式时，前后端采用同一口径。
 for (const type of ['hanging', 'sticker', 'ornament']) {
  for (const status of ['', '**替换动作兼容性: 兼容**\n']) {

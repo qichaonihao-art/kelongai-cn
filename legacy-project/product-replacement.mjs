@@ -6,6 +6,14 @@ export function replacementProductFromPrompt(prompt) {
   if (new Set(matches).size !== 1 || !['hanging', 'sticker', 'ornament', 'generic'].includes(matches[0])) throw Object.assign(new Error('元素替换产品标记冲突或无效'), { statusCode: 400 });
   return matches[0];
 }
+// 只排除明确“将/把原片目标替换为新目标”中的旧目标描述。
+// 替换后的描述和后续动作仍完整校验，不能因为同句有“原视频”就跳过整句。
+export function replacementTargetPrompt(prompt) {
+  return String(prompt || '').replace(
+    /(?:将|把)(?:原视频|原片|源视频|参考视频)(?:中|里|里面|中的|里的)?[^。；;\n]*?(?:替换为|替换成|更换为|更换成|换成)/g,
+    '将原片目标替换为',
+  );
+}
 export function validateReplacementPrompt(prompt, type) {
   if (!type || type === 'generic') return [];
   const text = String(prompt || '');
@@ -14,9 +22,10 @@ export function validateReplacementPrompt(prompt, type) {
   if (compatibility === 'incompatible') issues.push('分析明确指出原视频动作与目标产品不兼容');
   if (compatibility === 'uncertain') issues.push('分析明确表示无法确认原视频动作与目标产品兼容');
   if (/【(?:固定一体摆件物理锁定|PVC背胶贴画物理锁定|挂画真实尺寸强制锁定|挂画生成尺寸补偿锁定)】/.test(text)) issues.push('元素替换混入AI素材固定方向或尺寸规则');
-  if (type === 'ornament') issues.push(...inspectOrnamentPromptIssues(text));
+  const targetText = replacementTargetPrompt(text);
+  if (type === 'ornament') issues.push(...inspectOrnamentPromptIssues(targetText));
   if (type === 'sticker') {
-    const clauses = text.split(/[。；;，,\n]/).filter(clause => !/(禁止|不得|不能|不使用|不新增|无实体|没有|不是)/.test(clause));
+    const clauses = targetText.split(/[。；;，,\n]/).filter(clause => !/(禁止|不得|不能|不使用|不新增|无实体|没有|不是)/.test(clause));
     for (const clause of clauses) {
       if (/(?:贴画|墙贴|产品).{0,12}(?:配有|具有|采用|使用|带有|安装)(?:实体边框|实木边框|木条|挂绳|支架)|(?:实木|金属|实体)边框.{0,8}(?:贴画|墙贴)|卷轴展开/.test(clause)) issues.push('贴画替换混入挂画或摆件结构动作');
     }
