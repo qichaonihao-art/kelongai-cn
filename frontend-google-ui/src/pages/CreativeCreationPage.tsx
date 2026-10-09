@@ -1,3 +1,4 @@
+import { CLIP_PRODUCT_OPTIONS, directProductContext, resolveClipProductType, type IncomingCreativeClip } from '@/src/lib/clipCreative';
 import { replacementProductRules, wrapReplacementPrompt, replacementElementLabel, replacementProductLabel, type ReplacementProductType } from '@/src/lib/productReplacement';
 import { useState, useRef, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import {
@@ -135,17 +136,7 @@ interface CreativeCreationPageProps {
   onNavigate: (page: ModuleId) => void;
   onSwitchToCopy?: () => void;
   onSwitchToClip?: () => void;
-  incomingClip?: {
-    file: File;
-    previewUrl: string;
-    serverMediaToken: string;
-    mode: 'direct' | 'replace';
-    audioMode: ClipAudioMode;
-    audioFile?: File;
-    requiredImageFile?: File;
-    audioDurationSeconds?: number;
-    token: number;
-  } | null;
+  incomingClip?: IncomingCreativeClip | null;
   onIncomingClipConsumed?: () => void;
 }
 
@@ -1939,6 +1930,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchConfirming, setPaintingBatchConfirming] = useState(false);
   const [paintingBatchUnconfirmed, setPaintingBatchUnconfirmed] = useState(false);
   const [paintingBatchSubmitError, setPaintingBatchSubmitError] = useState('');
+  const [directProductType, setDirectProductType] = useState<ReplacementProductType>('generic');
   const [replacementProductType, setReplacementProductType] = useState<ReplacementProductType>('hanging');
   const [replacementReferences, setReplacementReferences] = useState<Record<'side' | 'frame', SelectedCreativeMedia | null>>({ side: null, frame: null });
   const [replacementReferenceUploading, setReplacementReferenceUploading] = useState(false);
@@ -2037,6 +2029,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       onIncomingClipConsumed?.();
       return;
     }
+    // 每次新剪裁片段都从干净的创作输入开始，同模式跳转也不能沿用上一款。
+    lastReplacementSyncedRef.current = false;
+    lastReplacementSyncSnapshotRef.current = null;
+    pendingReverseSeedanceSyncRef.current = null;
+    autoSyncToSeedanceRef.current = false;
+    paintingSeedanceSourceRef.current = null;
+    clearReplaceImage();
+    setSeedancePrompt('');
+    setSeedanceTaskMode('generate');
+    const productType = resolveClipProductType(incomingClip.productType, incomingClip.mode);
+    setReplacementProductType(productType);
+    setDirectProductType(productType);
+    setReplaceTarget(productType === 'generic' ? '' : `视频中的${replacementElementLabel(productType)}`);
+    setReplaceWith(productType === 'generic' ? '' : `图片中的${replacementElementLabel(productType)}`);
     switchReverseMode(incomingClip.mode);
     setClipAudioMode(incomingClip.audioMode);
     setClipAudioDurationSeconds(Number(incomingClip.audioDurationSeconds) > 0 ? Number(incomingClip.audioDurationSeconds) : null);
@@ -2066,14 +2072,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       })
       .catch((error) => console.warn('[clip history] background save failed', error));
     setSeedanceReferences((previous) => {
-      const retained = previous.filter((reference) => {
-        const isPreviousClipAsset = reference.source === 'clip-audio' || reference.source === 'clip-required-image';
-        if (isPreviousClipAsset && reference.previewUrl) URL.revokeObjectURL(reference.previewUrl);
-        return !isPreviousClipAsset;
-      });
-      if (incomingClip.audioMode === 'none' || !incomingClip.audioFile || !incomingClip.requiredImageFile) return retained;
+      previous.forEach(reference => { if (reference.previewUrl) URL.revokeObjectURL(reference.previewUrl); });
+      if (incomingClip.audioMode === 'none' || !incomingClip.audioFile || !incomingClip.requiredImageFile) return [];
       return [
-        ...retained,
         {
           id: createMessageId('clip_required_image'),
           kind: 'image',
@@ -3065,7 +3066,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       scrollToRef(textareaRef);
       handleSend(prompt);
     } else {
-      const prompt = VIDEO_REVERSE_PROMPT({ durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText, clipAudioMode: activeClipAudioMode });
+      const prompt = directProductContext(directProductType) + VIDEO_REVERSE_PROMPT({ durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText, clipAudioMode: activeClipAudioMode });
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
@@ -7105,6 +7106,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {reverseMode === 'direct' && (
+                <div className="mt-3 rounded-2xl border border-indigo-100 bg-indigo-50/35 p-3">
+                  <div className="text-xs font-black text-slate-800">原视频产品类型</div>
+                  <div className="mt-2 grid grid-cols-2 gap-2">{CLIP_PRODUCT_OPTIONS.map(([value, label]) => <button key={value} type="button" disabled={isLoading} onClick={() => { setDirectProductType(value); setSeedancePrompt(''); pendingReverseSeedanceSyncRef.current = null; }} className={cn('rounded-lg border px-3 py-2 text-xs font-bold', directProductType === value ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-600')}>{label}</button>)}</div>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-500">按原视频反推实际结构和动作。需要换款请切换到元素替换。</p>
                 </div>
               )}
 

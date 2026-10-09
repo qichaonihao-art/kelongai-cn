@@ -6,20 +6,11 @@ import CreativeSubNav from '@/src/components/CreativeSubNav';
 import { extractCpTranscript, extractCpTranscriptStream, resolveCpExtract, type DouyinDownloadCandidate, type DouyinResolveResult } from '@/src/lib/douyin';
 import { cn } from '@/src/lib/utils';
 
-export type ClipCreativeMode = 'direct' | 'replace';
-export type ClipAudioMode = 'none' | 'original' | 'voice';
+import { CLIP_PRODUCT_OPTIONS, type ClipCreativePayload, type ClipCreativeMode, type ClipAudioMode } from '@/src/lib/clipCreative';
+import type { ReplacementProductType } from '@/src/lib/productReplacement';
+export type { ClipCreativePayload, ClipCreativeMode, ClipAudioMode } from '@/src/lib/clipCreative';
 
 const MAX_DETECTABLE_SHOTS = 20;
-
-export interface ClipCreativePayload {
-  file: File;
-  previewUrl: string;
-  serverMediaToken: string;
-  audioMode: ClipAudioMode;
-  audioFile?: File;
-  requiredImageFile?: File;
-  audioDurationSeconds?: number;
-}
 
 interface ClipExtractionPageProps {
   onBack: () => void;
@@ -181,6 +172,7 @@ export default function ClipExtractionPage({
   const [error, setError] = useState('');
   const [showModePicker, setShowModePicker] = useState(false);
   const [preparingCreative, setPreparingCreative] = useState(false);
+  const [selectedProductType, setSelectedProductType] = useState<ReplacementProductType | null>(null);
   const [selectedCreativeMode, setSelectedCreativeMode] = useState<ClipCreativeMode>('direct');
   const [selectedAudioMode, setSelectedAudioMode] = useState<ClipAudioMode>('none');
   const [audioStartSeconds, setAudioStartSeconds] = useState(0);
@@ -1042,6 +1034,7 @@ export default function ClipExtractionPage({
 
   function openCreativePicker(audioMode: ClipAudioMode) {
     if (!result) return;
+    setSelectedProductType(null);
     setSelectedAudioMode(audioMode);
     setAudioStartSeconds(result.startSeconds);
     setAudioEndSeconds(result.endSeconds);
@@ -1053,7 +1046,7 @@ export default function ClipExtractionPage({
   }
 
   async function useInCreative(mode: ClipCreativeMode, audioMode: ClipAudioMode) {
-    if (!result) return;
+    if (!result || !selectedProductType || preparingCreative) return;
     setPreparingCreative(true);
     setError('');
     try {
@@ -1086,7 +1079,7 @@ export default function ClipExtractionPage({
       }
       sourceRef.current = null;
       resultRef.current = null;
-      onUseInCreative({ file, previewUrl: result.url, serverMediaToken: result.outputId, audioMode, audioFile, requiredImageFile, audioDurationSeconds }, mode);
+      onUseInCreative({ file, previewUrl: result.url, serverMediaToken: result.outputId, productType: selectedProductType, audioMode, audioFile, requiredImageFile, audioDurationSeconds }, mode);
       void cleanupTemporaryFiles(sourceId);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '载入视频创作失败。');
@@ -1287,11 +1280,15 @@ export default function ClipExtractionPage({
         <div className={cn('my-5 w-full overflow-hidden rounded-3xl bg-white shadow-2xl', selectedAudioMode === 'none' ? 'max-w-xl' : 'max-w-3xl')}>
           <div className="flex items-start justify-between bg-slate-950 px-6 py-5 text-white"><div><h2 className="text-xl font-black">进入视频创作</h2><p className="mt-1 text-sm text-slate-400">原视频只进入左侧反推，右侧不会上传原视频。</p></div><button type="button" disabled={preparingCreative} onClick={() => { audioPreviewRef.current?.pause(); setPreviewingAudio(false); setShowModePicker(false); }} className="rounded-full bg-white/10 p-2 text-slate-300 hover:bg-white/20"><X className="size-5" /></button></div>
           <div className="space-y-5 p-6">
-            <div><div className="mb-2 text-sm font-black text-slate-800">1. 创作方式</div><div className="grid grid-cols-2 gap-2">
+            <div><div className="mb-2 text-sm font-black text-slate-800">1. 视频中的产品类型 <span className="text-xs text-red-500">必选</span></div>
+              <div className="grid grid-cols-2 gap-2">{CLIP_PRODUCT_OPTIONS.map(([value, label]) => <button key={value} type="button" disabled={preparingCreative} onClick={() => setSelectedProductType(value)} className={cn('rounded-xl border-2 px-3 py-3 text-sm font-black transition', selectedProductType === value ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-700 hover:border-indigo-200')}>{label}</button>)}</div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">选择会带入创作页。元素替换需使用同类产品；摆台指主体和后撑杆固定在一起的款式。</p>
+            </div>
+            <div><div className="mb-2 text-sm font-black text-slate-800">2. 创作方式</div><div className="grid grid-cols-2 gap-2">
               <button type="button" disabled={preparingCreative} onClick={() => setSelectedCreativeMode('direct')} className={cn('rounded-xl border-2 p-3 text-left transition', selectedCreativeMode === 'direct' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 hover:border-emerald-200')}><div className="flex items-center gap-2 font-black text-slate-900"><Sparkles className="size-4 text-emerald-600" />直接反推</div><div className="mt-1 text-xs text-slate-500">完整复刻镜头与动作</div></button>
               <button type="button" disabled={preparingCreative} onClick={() => setSelectedCreativeMode('replace')} className={cn('rounded-xl border-2 p-3 text-left transition', selectedCreativeMode === 'replace' ? 'border-violet-500 bg-violet-50' : 'border-slate-200 hover:border-violet-200')}><div className="flex items-center gap-2 font-black text-slate-900"><Film className="size-4 text-violet-600" />元素替换</div><div className="mt-1 text-xs text-slate-500">复刻镜头并替换元素</div></button>
             </div></div>
-            <div><div className="mb-2 text-sm font-black text-slate-800">2. 声音方式</div><div className="space-y-2">
+            <div><div className="mb-2 text-sm font-black text-slate-800">3. 声音方式</div><div className="space-y-2">
               {([
                 ['none', '不使用音频', '保持原来的创作流程，不生成MP3'],
                 ['original', '沿用原声音频', '自动提取MP3，成片完全使用原台词和节奏'],
@@ -1301,7 +1298,7 @@ export default function ClipExtractionPage({
             {selectedAudioMode !== 'none' && source && <section className="rounded-2xl border border-violet-200 bg-violet-50/50 p-4">
               <audio ref={audioPreviewRef} src={source.url} preload="metadata" onTimeUpdate={handleAudioPreviewTimeUpdate} onPause={() => setPreviewingAudio(false)} onEnded={() => setPreviewingAudio(false)} />
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div><div className="text-sm font-black text-slate-900">3. 精细截取MP3</div><div className="mt-1 text-xs text-slate-500">画面范围和MP3范围彼此独立。点击开始线或结束线后，用键盘左右键逐帧调整。</div></div>
+                <div><div className="text-sm font-black text-slate-900">4. 精细截取MP3</div><div className="mt-1 text-xs text-slate-500">画面范围和MP3范围彼此独立。点击开始线或结束线后，用键盘左右键逐帧调整。</div></div>
                 <button type="button" onClick={() => { const nextStart = result?.startSeconds || 0; const nextEnd = result?.endSeconds || 0; setAudioStartSeconds(nextStart); setAudioEndSeconds(nextEnd); setActiveAudioLine('end'); seekAudio(nextEnd); zoomAudioAround(nextStart, nextEnd); }} className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-black text-violet-700 hover:bg-violet-50">跟随画面范围</button>
               </div>
               <div className="mt-3 flex items-center gap-2">
@@ -1371,7 +1368,7 @@ export default function ClipExtractionPage({
               </div>
               <div className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-[11px] font-bold leading-5 text-slate-500">{selectedAudioMode === 'original' ? `沿用原声：成片时长会按这段MP3自动设为 ${Math.max(1, Math.ceil(audioEndSeconds - audioStartSeconds))} 秒，画面仍只参考左侧截取的镜头。` : '参考音色：这段MP3只提供音色，不改变画面或成片时长。'}</div>
             </section>}
-            <button type="button" disabled={preparingCreative} onClick={() => void useInCreative(selectedCreativeMode, selectedAudioMode)} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-60">{preparingCreative ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4 fill-current" />}{preparingCreative ? (selectedAudioMode === 'none' ? '正在载入视频…' : '正在提取音频并载入…') : '进入视频创作'}</button>
+            <button type="button" disabled={preparingCreative || !selectedProductType} onClick={() => void useInCreative(selectedCreativeMode, selectedAudioMode)} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-60">{preparingCreative ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4 fill-current" />}{preparingCreative ? (selectedAudioMode === 'none' ? '正在载入视频…' : '正在提取音频并载入…') : '进入视频创作'}</button>
           </div>
         </div>
       </div>}

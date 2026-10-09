@@ -1,3 +1,4 @@
+import { readReplacementCompatibility } from './replacement-compatibility.mjs';
 import { ORNAMENT_STRUCTURE_RULE, inspectOrnamentPromptIssues } from './ornament-creative.mjs';
 export function replacementProductFromPrompt(prompt) {
   const matches = [...String(prompt || '').matchAll(/【产品元素替换：([^】]+)】/g)].map(match => match[1]);
@@ -9,7 +10,9 @@ export function validateReplacementPrompt(prompt, type) {
   if (!type || type === 'generic') return [];
   const text = String(prompt || '');
   const issues = [];
-  if (!text.includes('【替换动作兼容性：兼容】') || text.includes('【替换动作兼容性：不兼容】')) issues.push('未确认原视频动作与目标产品兼容');
+  const compatibility = readReplacementCompatibility(text);
+  if (compatibility === 'incompatible') issues.push('分析明确指出原视频动作与目标产品不兼容');
+  if (compatibility === 'uncertain') issues.push('分析明确表示无法确认原视频动作与目标产品兼容');
   if (/【(?:固定一体摆件物理锁定|PVC背胶贴画物理锁定|挂画真实尺寸强制锁定|挂画生成尺寸补偿锁定)】/.test(text)) issues.push('元素替换混入AI素材固定方向或尺寸规则');
   if (type === 'ornament') issues.push(...inspectOrnamentPromptIssues(text));
   if (type === 'sticker') {

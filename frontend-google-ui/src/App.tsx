@@ -10,7 +10,8 @@ import VoiceCloningPage from './pages/VoiceCloningPage';
 import CreativeCreationPage from './pages/CreativeCreationPage';
 import CreativeSelectPage from './pages/CreativeSelectPage';
 import CopywritingPage from './pages/CopywritingPage';
-import ClipExtractionPage, { type ClipAudioMode, type ClipCreativeMode } from './pages/ClipExtractionPage';
+import ClipExtractionPage from './pages/ClipExtractionPage';
+import type { IncomingCreativeClip } from './lib/clipCreative';
 import DouyinDownloaderPage from './pages/DouyinDownloaderPage';
 import StoreOverviewPage from './pages/StoreOverviewPage';
 import ImageGenerationPage from './pages/ImageGenerationPage';
@@ -60,17 +61,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: bo
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('login');
   const [authChecked, setAuthChecked] = useState(false);
-  const [incomingCreativeClip, setIncomingCreativeClip] = useState<{
-    file: File;
-    previewUrl: string;
-    serverMediaToken: string;
-    mode: ClipCreativeMode;
-    audioMode: ClipAudioMode;
-    audioFile?: File;
-    requiredImageFile?: File;
-    audioDurationSeconds?: number;
-    token: number;
-  } | null>(null);
+  const [incomingCreativeClip, setIncomingCreativeClip] = useState<IncomingCreativeClip | null>(null);
 
   useEffect(() => {
     let cancelled = false;

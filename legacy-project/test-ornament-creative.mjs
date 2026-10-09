@@ -216,7 +216,15 @@ for (const type of ['hanging', 'sticker', 'ornament']) {
   if (type === 'sticker') { assert.match(sent, /PVC/); assert.doesNotMatch(sent, /尺寸：宽180/); }
  }
 }
-for (const prompt of ['【产品元素替换：ornament】【替换动作兼容性：不兼容】卷轴展开', '【产品元素替换：ornament】未经确认', '【产品元素替换：ornament】【替换动作兼容性：兼容】取下主体再安装支架', '【产品元素替换：sticker】【替换动作兼容性：兼容】贴画配有实木边框', '【产品元素替换：hanging】【产品元素替换：ornament】【替换动作兼容性：兼容】']) {
+// 模型漏写标记或改变括号、加粗格式时，前后端采用同一口径。
+for (const type of ['hanging', 'sticker', 'ornament']) {
+ for (const status of ['', '**替换动作兼容性: 兼容**\n']) {
+  const response = res();
+  await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', duration: 6, prompt: `【产品元素替换：${type}】\n${status}原视频固定机位，人物整体搬放同类产品，只替换正面图案，原动作不改变。` }), response);
+  assert.equal(response.status, 200, response.body);
+ }
+}
+for (const prompt of ['【产品元素替换：ornament】【替换动作兼容性：不兼容】卷轴展开', '【产品元素替换：ornament】【替换动作兼容性：未确认】目标不可见', '【产品元素替换：ornament】\n**替换动作兼容性: 不兼容** 卷轴展开', '【产品元素替换：ornament】\n原视频动作与目标产品不兼容，不能完成替换。', '【产品元素替换：ornament】取下主体再安装支架', '【产品元素替换：ornament】【替换动作兼容性：兼容】取下主体再安装支架', '【产品元素替换：sticker】【替换动作兼容性：兼容】贴画配有实木边框', '【产品元素替换：hanging】【产品元素替换：ornament】【替换动作兼容性：兼容】']) {
  const before = payloads.length; const response = res();
  await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', prompt }), response);
  assert.equal(response.status, 400, response.body); assert.equal(payloads.length, before);
