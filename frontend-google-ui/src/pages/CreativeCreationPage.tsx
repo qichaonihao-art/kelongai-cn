@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, type KeyboardEvent, type RefObject } from "react";
+import { useState, useRef, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import {
   Send,
   Film,
@@ -217,6 +217,7 @@ interface PaintingHistoryItem {
   thumbnail?: string;
   uploadHistoryId?: number;
   imageFileName?: string;
+  ornamentReferenceHistoryIds?: Partial<Record<'side' | 'frame', number>>;
   upperWoodUploadHistoryId?: number;
   upperWoodImageFileName?: string;
   lowerWoodUploadHistoryId?: number;
@@ -1457,6 +1458,10 @@ function loadPaintingHistory() {
   }
 }
 
+function paintingProductTypeFromPrompt(prompt: string): PaintingProductType {
+  return prompt.includes('【固定一体摆件物理锁定】') ? 'ornament' : prompt.includes('【PVC背胶贴画物理锁定】') ? 'sticker' : 'hanging';
+}
+
 function mergePaintingHistoryItem(previous: PaintingHistoryItem[], item: PaintingHistoryItem) {
   const next = [
     item,
@@ -1828,6 +1833,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [reverseMode, setReverseMode] = useState<ReverseMode>('direct');
   const [paintingImage, setPaintingImage] = useState<SelectedCreativeMedia | null>(null);
   const [paintingUploadHistoryId, setPaintingUploadHistoryId] = useState<number | null>(null);
+  const [ornamentReferences, setOrnamentReferences] = useState<Record<'side' | 'frame', SelectedCreativeMedia | null>>({ side: null, frame: null });
+  const [ornamentReferenceHistoryIds, setOrnamentReferenceHistoryIds] = useState<Partial<Record<'side' | 'frame', number>>>({});
+  const [ornamentReferenceUploading, setOrnamentReferenceUploading] = useState(false);
+  const ornamentSideInputRef = useRef<HTMLInputElement>(null);
+  const ornamentFrameInputRef = useRef<HTMLInputElement>(null);
   const [paintingUpperWoodImage, setPaintingUpperWoodImage] = useState<SelectedCreativeMedia | null>(null);
   const [paintingUpperWoodUploadHistoryId, setPaintingUpperWoodUploadHistoryId] = useState<number | null>(null);
   const [paintingLowerWoodImage, setPaintingLowerWoodImage] = useState<SelectedCreativeMedia | null>(null);
@@ -1837,6 +1847,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [stickerWidthCm, setStickerWidthCm] = useState(180);
   const [stickerHeightCm, setStickerHeightCm] = useState(60);
   const isSticker = paintingProductType === 'sticker';
+  const isOrnament = paintingProductType === 'ornament';
+  const isHanging = paintingProductType === 'hanging';
   const [paintingPlan, setPaintingPlan] = useState<PaintingMaterialPlan>({
     count: 10,
     durationMin: 5,
@@ -1891,6 +1903,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const paintingBatchPreferenceRef = useRef<Record<PaintingProductType, { model: string; resolution: string }>>({
     hanging: { model: SEEDANCE_BATCH_MODEL, resolution: SEEDANCE_BATCH_RESOLUTION },
     sticker: { model: 'wan3.0-video', resolution: '480p' },
+    ornament: { model: SEEDANCE_BATCH_MODEL, resolution: SEEDANCE_BATCH_RESOLUTION },
   });
   const [paintingBatchStartOrder, setPaintingBatchStartOrder] = useState<PaintingBatchStartOrder>('group1');
   const [paintingBatchRequestedCount, setPaintingBatchRequestedCount] = useState('');
@@ -2617,7 +2630,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   // 图片 / 方案 / 轮次 / 方向集合发生变化后，废弃旧创建幂等编号，避免把新批次错误恢复到旧批次。
   useEffect(() => {
     batchCreationRequestIdRef.current = null;
-  }, [paintingImage, paintingUpperWoodImage, paintingLowerWoodImage, paintingVariationRound, paintingBatchOnlyUnused, paintingPlan, paintingBatchIdeas, paintingBatchStartOrder, paintingBatchRequestedCount, paintingBatchRandomOrder]);
+  }, [paintingImage, ornamentReferences, paintingUpperWoodImage, paintingLowerWoodImage, paintingVariationRound, paintingBatchOnlyUnused, paintingPlan, paintingBatchIdeas, paintingBatchStartOrder, paintingBatchRequestedCount, paintingBatchRandomOrder]);
 
   useEffect(() => {
     const persistedMessages = serializeMessagesForStorage(messages);
@@ -3209,8 +3222,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setTimeout(() => setSeedancePromptHighlight(false), 1200);
   }
 
-  function handleSeedanceKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (!showAtMenu) return;
+  function handleSeedanceKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (!showAtMenu || event.nativeEvent.isComposing || event.keyCode === 229) return;
 
     const filtered = seedanceReferences
       .map((ref, i) => ({ ref, index: i, label: getAtReferenceLabel(ref, i) }))
@@ -3665,7 +3678,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
       if (target.paintingImageHash) {
         try {
-          const binding = await getPaintingFolderBinding(target.paintingImageHash, target.paintingName);
+          const binding = await getPaintingFolderBinding(target.paintingImageHash, target.paintingName, paintingProductTypeFromPrompt(target.prompt));
           if (binding && availableFolders.includes(binding.folderName)) {
             nextFolder = binding.folderName;
             nextSource = 'remembered';
@@ -3726,6 +3739,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       if (target.paintingImageHash) {
         try {
           await setPaintingFolderBinding({
+            productType: paintingProductTypeFromPrompt(target.prompt),
             paintingName: target.paintingName,
             uploadHistoryId: target.paintingUploadHistoryId,
             imageHash: target.paintingImageHash,
@@ -3993,7 +4007,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingError('');
   }
 
-  const paintingDraftBusy = paintingLoading !== 'idle' || paintingHistoryRestoring || paintingBatchPreparing || paintingBatchCreating || paintingBatchConfirming || paintingBatchUnconfirmed;
+  const paintingDraftBusy = ornamentReferenceUploading || paintingLoading !== 'idle' || paintingHistoryRestoring || paintingBatchPreparing || paintingBatchCreating || paintingBatchConfirming || paintingBatchUnconfirmed;
 
   function switchPaintingProduct(type: PaintingProductType) {
     if (paintingDraftBusy || type === paintingProductType) return;
@@ -4002,6 +4016,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       resolution: paintingBatchResolution,
     };
     resetPaintingProductDraft();
+    clearOrnamentReferences();
     clearPaintingWoodReference('upper');
     clearPaintingWoodReference('lower');
     setPaintingProductType(type);
@@ -4025,10 +4040,60 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
     setPaintingImage(null);
     setPaintingUploadHistoryId(null);
+    clearOrnamentReferences();
     clearPaintingWoodReference('upper');
     clearPaintingWoodReference('lower');
     if (paintingFileInputRef.current) {
       paintingFileInputRef.current.value = '';
+    }
+  }
+
+  function syncOrnamentSeedanceReferences(next: Record<'side' | 'frame', SelectedCreativeMedia | null>) {
+    const source = paintingSeedanceSourceRef.current;
+    if (!isOrnament || source?.productType !== 'ornament' || source.prompt.trim() !== seedancePrompt.trim()) return;
+    const references = computeNextSeedanceReferencesWithPainting(source.directionNumber, next);
+    setSeedanceReferences(previous => {
+      previous.forEach(reference => URL.revokeObjectURL(reference.previewUrl));
+      return references;
+    });
+  }
+
+  function clearOrnamentReference(kind: 'side' | 'frame') {
+    const current = ornamentReferences[kind];
+    if (current) URL.revokeObjectURL(current.previewUrl);
+    setOrnamentReferences(previous => ({ ...previous, [kind]: null }));
+    syncOrnamentSeedanceReferences({ ...ornamentReferences, [kind]: null });
+    setOrnamentReferenceHistoryIds(previous => ({ ...previous, [kind]: undefined }));
+    const input = kind === 'side' ? ornamentSideInputRef.current : ornamentFrameInputRef.current;
+    if (input) input.value = '';
+  }
+
+  function clearOrnamentReferences() {
+    clearOrnamentReference('side');
+    clearOrnamentReference('frame');
+  }
+
+  async function handleOrnamentReferenceChange(kind: 'side' | 'frame', file: File | null) {
+    if (paintingDraftBusy || !isOrnament || !paintingImage || !file) return;
+    setPaintingError('');
+    setOrnamentReferenceUploading(true);
+    try {
+      if (!file.type.startsWith('image/')) throw new Error('摆件辅助参考必须是图片格式。');
+      if (file.size > 10 * 1024 * 1024) throw new Error('辅助参考图请控制在10MB以内。');
+      const historyId = await saveUploadHistory(file, 'image');
+      const current = ornamentReferences[kind];
+      if (current) URL.revokeObjectURL(current.previewUrl);
+      const nextReference: SelectedCreativeMedia = { kind: 'image', file, previewUrl: createMediaPreviewUrl(file), fileName: file.name };
+      setOrnamentReferences(previous => ({ ...previous, [kind]: nextReference }));
+      syncOrnamentSeedanceReferences({ ...ornamentReferences, [kind]: nextReference });
+      setOrnamentReferenceHistoryIds(previous => ({ ...previous, [kind]: historyId || undefined }));
+      await refreshUploadHistories();
+    } catch (error) {
+      setPaintingError(error instanceof Error ? error.message : '辅助参考图读取失败，请重新上传。');
+    } finally {
+      setOrnamentReferenceUploading(false);
+      const input = kind === 'side' ? ornamentSideInputRef.current : ornamentFrameInputRef.current;
+      if (input) input.value = '';
     }
   }
 
@@ -4079,15 +4144,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (!file) return;
     try {
       if (!file.type.startsWith('image/')) {
-        throw new Error('挂画创意素材必须是图片格式。');
+        throw new Error('产品主图必须是图片格式。');
       }
       if (file.size > MAX_VIDEO_SIZE_BYTES) {
-        throw new Error('挂画图片请控制在 150MB 以内。');
+        throw new Error('产品主图请控制在 150MB 以内。');
       }
       const previewUrl = createMediaPreviewUrl(file);
       if (paintingImage) {
         URL.revokeObjectURL(paintingImage.previewUrl);
       }
+      clearOrnamentReferences();
       clearPaintingWoodReference('upper');
       clearPaintingWoodReference('lower');
       resetPaintingProductDraft();
@@ -4106,7 +4172,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingUploadHistoryId(savedHistoryId || null);
       await refreshUploadHistories();
     } catch (error) {
-      setPaintingError(error instanceof Error ? error.message : '挂画图片读取失败，请换一张再试。');
+      setPaintingError(error instanceof Error ? error.message : '产品主图读取失败，请换一张再试。');
     } finally {
       if (paintingFileInputRef.current) {
         paintingFileInputRef.current.value = '';
@@ -4121,7 +4187,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
     if (!paintingImage) {
-      setPaintingError('请先上传一张挂画图片。');
+      setPaintingError('请先上传一张产品正面图。');
       return;
     }
     setPaintingError('');
@@ -4142,7 +4208,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingCreativeSessionId(generatePaintingRequestId('session'));
       setTimeout(() => scrollToRef(paintingPlanRef), 80);
     } catch (error) {
-      setPaintingError(error instanceof Error ? error.message : '挂画分析失败，请稍后重试。');
+      setPaintingError(error instanceof Error ? error.message : '产品分析失败，请稍后重试。');
     } finally {
       setPaintingLoading('idle');
     }
@@ -4168,6 +4234,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       variationRound,
       creativeSessionId: paintingCreativeSessionId,
       profile: {
+        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-v1' : undefined,
         productType: paintingProductType,
         widthCm: paintingProfile?.widthCm,
         heightCm: paintingProfile?.heightCm,
@@ -4180,6 +4247,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       image: paintingImage
         ? `${paintingImage.file.name}:${paintingImage.file.size}:${paintingImage.file.lastModified}`
         : '',
+      ornamentReferences: isOrnament ? Object.fromEntries(Object.entries(ornamentReferences).map(([kind, image]) => [kind, image ? `${image.file.name}:${image.file.size}:${image.file.lastModified}` : ''])) : undefined,
       upperWoodImage: paintingUpperWoodImage
         ? `${paintingUpperWoodImage.file.name}:${paintingUpperWoodImage.file.size}:${paintingUpperWoodImage.file.lastModified}`
         : '',
@@ -4208,7 +4276,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (!paintingProfile) return {};
     return paintingProductType === 'sticker'
       ? { ...paintingProfile, productType: 'sticker', widthCm: stickerWidthCm, heightCm: stickerHeightCm }
-      : { ...paintingProfile, productType: 'hanging' };
+      : { ...paintingProfile, productType: paintingProductType, ...(isOrnament ? { supportStructure: 'fixed' } : {}) };
   }
 
   async function runPaintingIdeas(batch: number, variationRound = paintingVariationRound) {
@@ -4288,8 +4356,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
     const usageKey = getPaintingIdeaUsageKey(paintingFrameworkBatch, paintingVariationRound, idea.id);
     const previousUsageCount = paintingIdeaUsageCounts[usageKey] || 0;
-    const isContentDetailIdea = !isSticker && Number(idea.directionNumber) === 29;
-    const isWoodDetailIdea = !isSticker && Number(idea.directionNumber) === 30;
+    const isContentDetailIdea = isHanging && Number(idea.directionNumber) === 29;
+    const isWoodDetailIdea = isHanging && Number(idea.directionNumber) === 30;
     const isRotatingDetailIdea = isContentDetailIdea || isWoodDetailIdea;
     // 方向29每次复用都轮换“摆放×机位×路径”；其他方向仍只在用户点击换元素时变化。
     const elementVariationIndex = options?.remixElements
@@ -4315,13 +4383,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         character: paintingPlan.character,
         audio: paintingPlan.audio,
         scene: paintingPlan.scene,
-        extraRequirements: [paintingPlan.extraRequirements, woodReferenceRequirement].filter(Boolean).join('\n'),
+        extraRequirements: [paintingPlan.extraRequirements, woodReferenceRequirement, isOrnament ? `图1决定本款正面图案。${ornamentReferences.side ? '附带侧面参考仅用于框体厚度、倾角与支撑连接。' : ''}${ornamentReferences.frame ? '附带边框细节参考仅用于铝合金表面与斜接角。' : ''}辅助图片中的图案、背景、手或工具不复制，不改写铝合金框、木背板与固定后撑杆。` : ''].filter(Boolean).join('\n'),
         elementVariationIndex,
         previousPrompt: shouldAvoidPreviousPrompt ? paintingIdeaLastPrompts[usageKey] || '' : '',
       });
-      const returnedType = prompt.trimStart().startsWith('【PVC背胶贴画物理锁定】') ? 'sticker' : 'hanging';
+      const returnedType = prompt.trimStart().startsWith('【固定一体摆件物理锁定】') ? 'ornament' : prompt.trimStart().startsWith('【PVC背胶贴画物理锁定】') ? 'sticker' : 'hanging';
       if (returnedType !== paintingProductType) {
-        throw new Error(`系统拦截了错误文案：当前选择的是${paintingProductType === 'sticker' ? 'PVC背胶贴画' : '挂画／卷轴'}，但后台返回了另一类产品规则。请重新分析产品后再生成。`);
+        throw new Error(`系统拦截了错误文案：当前选择的是${getPaintingProductLabel({ productType: paintingProductType })}，但后台返回了另一类产品规则。请重新分析产品后再生成。`);
       }
       setPaintingFullPrompt(prompt);
       const nextUsageCounts = {
@@ -4358,6 +4426,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         fullPrompt: prompt,
         uploadHistoryId: paintingUploadHistoryId || undefined,
         imageFileName: paintingImage?.fileName,
+        ornamentReferenceHistoryIds: isOrnament ? ornamentReferenceHistoryIds : undefined,
         upperWoodUploadHistoryId: paintingUpperWoodUploadHistoryId || undefined,
         upperWoodImageFileName: paintingUpperWoodImage?.fileName,
         lowerWoodUploadHistoryId: paintingLowerWoodUploadHistoryId || undefined,
@@ -4423,7 +4492,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     // 全自动流程必须带挂画参考图：无图直接终止，避免生成无画面的视频。
     const hasImage = result.references.some((ref) => ref.kind === 'image');
     if (!hasImage) {
-      window.alert('提示词没有包含图片，已终止自动生成视频，请先加载挂画参考图。');
+      window.alert('提示词没有包含图片，已终止自动生成视频，请先加载产品正面参考图。');
       return;
     }
     // 手动生成 / 换元素再生成也写入方向使用记录，供“仅生成未使用方向”服务端持久化识别。
@@ -4607,12 +4676,38 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingImage({ kind: 'image', file, previewUrl, fileName: file.name });
       setPaintingUploadHistoryId(null);
       setPaintingProductType(getPaintingProductType(run.profile));
+      setPaintingBatchModel(run.model);
+      setPaintingBatchResolution(run.resolution);
+      paintingBatchPreferenceRef.current[getPaintingProductType(run.profile)] = { model: run.model, resolution: run.resolution };
       setPaintingProfile(run.profile);
       setPaintingPlan(run.plan);
       setStickerWidthCm(Number(run.profile.widthCm) || 180);
       setStickerHeightCm(Number(run.profile.heightCm) || 60);
       setPaintingVariationRound(run.variationRound);
       setPaintingCreativeSessionId(typeof run.options?.creativeSessionId === 'string' ? run.options.creativeSessionId : '');
+      clearOrnamentReferences();
+      clearPaintingWoodReference('upper');
+      clearPaintingWoodReference('lower');
+      if (getPaintingProductType(run.profile) === 'ornament') {
+        const refs = run.options?.ornamentReferences as Partial<Record<'side' | 'frame', { imageHash?: string; fileName?: string }>> | undefined;
+        await Promise.all((['side', 'frame'] as const).map(async kind => {
+          const reference = refs?.[kind];
+          if (!reference?.imageHash) return;
+          try {
+            const response = await fetch(`/api/painting/history-images/${encodeURIComponent(reference.imageHash)}/file`, { credentials: 'include' });
+            if (!response.ok) throw new Error('辅助参考图无法恢复');
+            const blob = await response.blob();
+            const file = new File([blob], reference.fileName || '辅助参考图.jpg', { type: blob.type || 'image/jpeg' });
+            if (await sha256File(file) !== reference.imageHash) throw new Error('辅助参考图校验失败');
+            const historyId = await saveUploadHistory(file, 'image');
+            const nextReference: SelectedCreativeMedia = { kind: 'image', file, previewUrl: createMediaPreviewUrl(file), fileName: file.name };
+            setOrnamentReferences(previous => ({ ...previous, [kind]: nextReference }));
+            setOrnamentReferenceHistoryIds(previous => ({ ...previous, [kind]: historyId || undefined }));
+          } catch {
+            setPaintingError('部分辅助参考图无法恢复，可重新上传；正面图与公共背面参考仍可正常使用。');
+          }
+        }));
+      }
       setPaintingBatchOnlyUnused(true);
       setPaintingBatchRequestedCount('');
       setTimeout(() => scrollToRef(paintingPlanRef), 80);
@@ -4629,7 +4724,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
     if (!paintingImage) {
-      setPaintingError('请先上传挂画图片。');
+      setPaintingError('请先上传产品正面图。');
       return;
     }
     setPaintingError('');
@@ -4657,7 +4752,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       let imageHash = '';
       try {
         imageHash = await sha256File(paintingImage.file);
-        const binding = await getPaintingFolderBinding(imageHash, String(paintingProfile.name || ''));
+        const binding = await getPaintingFolderBinding(imageHash, String(paintingProfile.name || ''), paintingProductType);
         if (binding && availableFolders.includes(binding.folderName)) {
           prefillFolder = binding.folderName;
           prefillFolderId = binding.folderId;
@@ -4724,8 +4819,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const requestedCount = parsePaintingBatchRequestedCount(paintingBatchRequestedCount) ?? 40;
     return {
       file: paintingImage!.file,
-      upperWoodFile: isSticker ? null : paintingUpperWoodImage?.file || null,
-      lowerWoodFile: isSticker ? null : paintingLowerWoodImage?.file || null,
+      upperWoodFile: !isHanging ? null : paintingUpperWoodImage?.file || null,
+      lowerWoodFile: !isHanging ? null : paintingLowerWoodImage?.file || null,
+      ornamentSideFile: isOrnament ? ornamentReferences.side?.file || null : null,
+      ornamentFrameFile: isOrnament ? ornamentReferences.frame?.file || null : null,
       profile: paintingProfile!,
       plan: paintingPlan,
       ideas,
@@ -4995,9 +5092,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     return computeSeedanceReferencesWithImages(image ? [image] : []);
   }
 
-  function computeNextSeedanceReferencesWithPainting(directionNumber = 0): SeedanceReferenceFile[] {
+  function computeNextSeedanceReferencesWithPainting(directionNumber = 0, references = ornamentReferences): SeedanceReferenceFile[] {
     const images = [paintingImage];
-    if (!isSticker && directionNumber === 30) images.push(paintingUpperWoodImage, paintingLowerWoodImage);
+    if (isOrnament) images.push(references.side, references.frame);
+    if (isHanging && directionNumber === 30) images.push(paintingUpperWoodImage, paintingLowerWoodImage);
     // 挂画自动流程使用一组全新、顺序固定的参考图，避免右侧面板残留其他流程的图片打乱“主图→上木条→下木条”顺序。
     return images
       .filter((item): item is SelectedCreativeMedia => Boolean(item))
@@ -5070,6 +5168,19 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingError('这条旧历史记录没有可恢复的图片，请从历史图片中重新选择一次原图。');
     }
 
+    clearOrnamentReferences();
+    if (restoredType === 'ornament') {
+      await Promise.all((['side', 'frame'] as const).map(async kind => {
+        const historyId = item.ornamentReferenceHistoryIds?.[kind];
+        const history = historyId ? await getUploadHistoryItem(historyId).catch(() => null) : null;
+        if (history?.kind !== 'image') return;
+        const file = blobToFile(history);
+        const nextReference: SelectedCreativeMedia = { kind: 'image', file, previewUrl: createMediaPreviewUrl(file), fileName: file.name };
+        setOrnamentReferences(previous => ({ ...previous, [kind]: nextReference }));
+        setOrnamentReferenceHistoryIds(previous => ({ ...previous, [kind]: historyId }));
+      }));
+    }
+
     const restoreWoodReference = async (kind: 'upper' | 'lower', historyId?: number) => {
       const history = historyId ? await getUploadHistoryItem(historyId).catch(() => null) : null;
       const file = history?.kind === 'image' ? blobToFile(history) : null;
@@ -5085,8 +5196,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       }
     };
     await Promise.all([
-      restoreWoodReference('upper', restoredType === 'sticker' ? undefined : item.upperWoodUploadHistoryId),
-      restoreWoodReference('lower', restoredType === 'sticker' ? undefined : item.lowerWoodUploadHistoryId),
+      restoreWoodReference('upper', restoredType === 'hanging' ? item.upperWoodUploadHistoryId : undefined),
+      restoreWoodReference('lower', restoredType === 'hanging' ? item.lowerWoodUploadHistoryId : undefined),
     ]);
     const restoredBatch = item.frameworkBatch || 0;
     const restoredRound = item.variationRound || 0;
@@ -5325,6 +5436,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (paintingImage) {
       URL.revokeObjectURL(paintingImage.previewUrl);
     }
+    clearOrnamentReferences();
     clearPaintingWoodReference('upper');
     clearPaintingWoodReference('lower');
     setPaintingImage({ kind: 'image', file, previewUrl, fileName: file.name });
@@ -5799,13 +5911,43 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
               {reverseMode === 'painting' ? (
                 <div className="space-y-3">
+                  <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-3">
+                    <div className="flex items-center gap-2 text-sm font-black text-slate-800">
+                      <Sparkles className="size-4 text-rose-500" />
+                      AI 生成素材
+                    </div>
+                    <ol aria-label="素材创作流程" className="mt-3 grid grid-cols-3 gap-2">
+                      {[
+                        { label: '上传产品图', done: !!paintingImage, current: !paintingImage },
+                        { label: '分析产品', done: !!paintingProfile, current: !!paintingImage && !paintingProfile },
+                        { label: '选择生成方式', done: false, current: !!paintingProfile },
+                      ].map((step, index) => (
+                        <li key={step.label} aria-current={step.current ? 'step' : undefined}
+                          className={cn('flex items-center gap-1.5 rounded-xl px-2 py-2 text-[11px] font-bold', step.current ? 'bg-white text-rose-700 shadow-sm' : step.done ? 'text-emerald-700' : 'text-slate-400')}>
+                          <span className={cn('flex size-5 shrink-0 items-center justify-center rounded-full text-[10px]', step.done ? 'bg-emerald-100' : step.current ? 'bg-rose-100' : 'bg-slate-100')}>
+                            {step.done ? <Check className="size-3" /> : index + 1}
+                          </span>
+                          {step.label}
+                        </li>
+                      ))}
+                    </ol>
+                    <p className="mt-2 text-[11px] leading-5 text-slate-500">
+                      {paintingProfile ? '先生成创意方案，挑选方向逐条制作；也可直接批量生成，在确认窗口选择数量和保存位置。' : paintingImage ? '图片已就绪，点击“分析产品”识别外观，再设置素材风格。' : '上传清晰的产品正面图，选择产品类型后开始分析。'}
+                    </p>
+                    {(paintingLoading !== 'idle' || paintingHistoryRestoring || paintingBatchPreparing) && (
+                      <div role="status" className="mt-2 flex items-center gap-2 text-xs font-semibold text-rose-700">
+                        <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                        {paintingHistoryRestoring ? '正在恢复历史素材…' : paintingBatchPreparing ? (paintingBatchPrepareStage || '正在准备批量创意方案…') : paintingLoading === 'analyze' ? '正在识别产品外观和材质…' : paintingLoading === 'ideas' ? '正在生成创意方案…' : '正在生成所选方案的完整提示词…'}
+                      </div>
+                    )}
+                  </div>
                   <div className="rounded-2xl border border-slate-200 bg-white p-3">
                     <div className="mb-2 text-xs font-black text-slate-800">产品类型</div>
                     <div className="flex gap-2">
-                      {(['hanging', 'sticker'] as const).map((type) => (
+                      {(['hanging', 'sticker', 'ornament'] as const).map((type) => (
                         <button key={type} type="button" disabled={paintingDraftBusy} onClick={() => switchPaintingProduct(type)} aria-pressed={paintingProductType === type}
                           className={cn('flex-1 rounded-xl border px-3 py-2 text-xs font-bold disabled:opacity-50', paintingProductType === type ? 'border-rose-400 bg-rose-50 text-rose-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50')}>
-                          {type === 'sticker' ? 'PVC背胶贴画' : '挂画／卷轴'}
+                          {getPaintingProductLabel({ productType: type })}
                         </button>
                       ))}
                     </div>
@@ -5816,7 +5958,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <label className="flex items-center gap-1">高<input aria-label="贴画高度（厘米）" type="number" min={10} max={500} value={stickerHeightCm} disabled={paintingDraftBusy} onChange={(event) => changeStickerDimension('height', Number(event.target.value))} className="w-20 rounded-lg border border-slate-200 px-2 py-1" />厘米</label>
                       </div>
                       <p className="mt-2 text-[11px] leading-5 text-slate-500">PVC柔性背胶 · 白色画背 · 可揭背膜 · 二维印刷装饰边线。以茶室、客厅、书房为主，30个成品展示＋10个形态与安装方向。</p>
-                    </> : <p className="mt-2 text-[11px] leading-5 text-slate-500">沿用原有40个挂画框架及尺寸补偿规则。</p>}
+                    </> : isOrnament ? <p className="mt-2 text-[11px] leading-5 text-slate-500">全系列统一为金色矩形铝合金框、木质背板、背部连接的单根金属后撑杆，只更换正面平面图案。系统自动附带公共背面结构参考；40个方向不含拆架、盘面分离、上墙或揭膜动作。</p> : <p className="mt-2 text-[11px] leading-5 text-slate-500">沿用原有40个挂画框架及尺寸补偿规则。</p>}
                     <p className="mt-1 text-[10px] text-slate-400">切换类型或修改尺寸后需要重新分析，已启动的批量任务不受影响。</p>
                   </div>
                   <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3">
@@ -5830,14 +5972,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0 text-xs font-semibold text-slate-500">
                             <span className="block truncate">{paintingImage.fileName}</span>
-                            <span className="text-slate-400">待分析的挂画/装饰画</span>
+                            <span className="text-slate-400">{`待分析的${getPaintingProductLabel({ productType: paintingProductType })}`}</span>
                           </div>
                           <button
                             type="button"
                             onClick={clearPaintingImage}
                             disabled={paintingDraftBusy}
                             className="flex size-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-white hover:text-slate-600"
-                            aria-label="移除挂画图片"
+                            aria-label={isOrnament ? '移除摆件图片' : isSticker ? '移除贴画图片' : '移除挂画图片'}
                           >
                             <X className="size-3.5" />
                           </button>
@@ -5853,8 +5995,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <span className="flex size-12 items-center justify-center rounded-full bg-rose-50 text-rose-600">
                           <Plus className="size-5" />
                         </span>
-                        <span className="text-sm font-bold text-slate-700">{isSticker ? '上传贴画正面图片' : '上传挂画图片'}</span>
-                        <span className="max-w-xs text-xs leading-5 text-slate-400">{isSticker ? '上传贴画印刷正面主图，AI识别画面内容，物理结构按贴画规则执行。' : '上传一张挂画/卷轴图片，AI 会分析成产品固定档案。'}</span>
+                        <span className="text-sm font-bold text-slate-700">{isOrnament ? '上传固定一体摆件图片' : isSticker ? '上传贴画正面图片' : '上传挂画图片'}</span>
+                        <span className="max-w-xs text-xs leading-5 text-slate-400">{isOrnament ? '上传本款摆台完整正面图，保留四周铝合金框；木背板和后撑杆使用系统公共背面参考，无需拆开或重复上传。' : isSticker ? '上传贴画印刷正面主图，AI识别画面内容，物理结构按贴画规则执行。' : '上传一张挂画/卷轴图片，AI 会分析成产品固定档案。'}</span>
                       </button>
                     )}
                     <input
@@ -5869,7 +6011,46 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     />
                   </div>
 
-                  {!isSticker && <details className="group rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
+                  {isOrnament && (
+                    <div className="rounded-2xl border border-sky-200 bg-sky-50/50 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-xs font-bold text-slate-700">辅助结构参考（选传）</div>
+                        <span className="text-[10px] font-semibold text-sky-700">可传任意一张，也可都不传</span>
+                      </div>
+                      <p className="mt-1 text-[11px] leading-5 text-slate-500">不上传也能生成，系统仍使用正面图和公共背面图。辅助图只补充结构细节，不替换本款正面图案。每张不超过10MB。</p>
+                      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {(['side', 'frame'] as const).map(kind => {
+                          const image = ornamentReferences[kind];
+                          const label = kind === 'side' ? '侧面结构参考' : '边框细节参考';
+                          const inputRef = kind === 'side' ? ornamentSideInputRef : ornamentFrameInputRef;
+                          return (
+                            <div key={kind} className="relative rounded-xl border border-sky-100 bg-white p-2">
+                              {image ? (
+                                <>
+                                  <img src={image.previewUrl} alt={label} className="h-28 w-full rounded-lg bg-slate-50 object-contain" />
+                                  <div className="mt-2 pr-7 text-[11px] font-bold text-slate-700">{label}</div>
+                                  <div className="truncate text-[10px] text-slate-400">{image.fileName}</div>
+                                  <button type="button" disabled={paintingDraftBusy} onClick={() => clearOrnamentReference(kind)} aria-label={`移除${label}`} className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-white/90 text-slate-500 shadow disabled:opacity-50"><X className="size-3" /></button>
+                                  <button type="button" disabled={paintingDraftBusy} onClick={() => inputRef.current?.click()} className="mt-2 text-[11px] font-semibold text-sky-700 disabled:opacity-50">更换图片</button>
+                                </>
+                              ) : (
+                                <button type="button" disabled={!paintingImage || paintingDraftBusy} onClick={() => inputRef.current?.click()} className="flex min-h-36 w-full flex-col items-center justify-center gap-2 px-2 text-center disabled:cursor-not-allowed disabled:opacity-50">
+                                  <Plus className="size-4 text-sky-600" />
+                                  <span className="text-xs font-bold text-slate-700">{label}</span>
+                                  <span className="text-[10px] leading-4 text-slate-400">{kind === 'side' ? '拍到框体厚度、后倾角度与后撑杆' : '拍清铝合金表面、直边与斜接角'}</span>
+                                  <span className="text-[10px] text-sky-600">点击上传 · 可选</span>
+                                </button>
+                              )}
+                              <input ref={inputRef} type="file" accept="image/*" disabled={paintingDraftBusy} className="hidden" onChange={event => void handleOrnamentReferenceChange(kind, event.target.files?.[0] ?? null)} />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {ornamentReferenceUploading && <div role="status" className="mt-2 flex items-center gap-1.5 text-[11px] text-sky-700"><Loader2 className="size-3 animate-spin" />正在保存辅助参考…</div>}
+                    </div>
+                  )}
+
+                  {isHanging && <details className="group rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
                     <summary className="flex cursor-pointer list-none items-start justify-between gap-3 rounded-xl outline-none marker:hidden focus-visible:ring-2 focus-visible:ring-amber-300 [&::-webkit-details-marker]:hidden">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
@@ -5899,10 +6080,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           <div className="p-2">
                             <img src={paintingUpperWoodImage.previewUrl} alt="上方木条高清图" className="h-24 w-full rounded-lg bg-slate-100 object-contain" />
                             <div className="mt-2 truncate pr-7 text-[10px] font-semibold text-slate-500">{paintingUpperWoodImage.fileName}</div>
-                            <button type="button" onClick={() => clearPaintingWoodReference('upper')} className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-white/90 text-slate-500 shadow" aria-label="移除上方木条图"><X className="size-3" /></button>
+                            <button type="button" disabled={paintingDraftBusy} onClick={() => clearPaintingWoodReference('upper')} className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-white/90 text-slate-500 shadow" aria-label="移除上方木条图"><X className="size-3" /></button>
                           </div>
                         ) : (
-                          <button type="button" disabled={!paintingImage || paintingLoading !== 'idle'} onClick={() => paintingUpperWoodFileInputRef.current?.click()} className="flex h-32 w-full flex-col items-center justify-center gap-2 text-center text-slate-500 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50">
+                          <button type="button" disabled={!paintingImage || paintingDraftBusy} onClick={() => paintingUpperWoodFileInputRef.current?.click()} className="flex h-32 w-full flex-col items-center justify-center gap-2 text-center text-slate-500 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50">
                             <Plus className="size-4 text-amber-600" />
                             <span className="text-xs font-bold">上方木条</span>
                             <span className="text-[10px]">选传高清特写</span>
@@ -5916,10 +6097,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           <div className="p-2">
                             <img src={paintingLowerWoodImage.previewUrl} alt="下方木条高清图" className="h-24 w-full rounded-lg bg-slate-100 object-contain" />
                             <div className="mt-2 truncate pr-7 text-[10px] font-semibold text-slate-500">{paintingLowerWoodImage.fileName}</div>
-                            <button type="button" onClick={() => clearPaintingWoodReference('lower')} className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-white/90 text-slate-500 shadow" aria-label="移除下方木条图"><X className="size-3" /></button>
+                            <button type="button" disabled={paintingDraftBusy} onClick={() => clearPaintingWoodReference('lower')} className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-white/90 text-slate-500 shadow" aria-label="移除下方木条图"><X className="size-3" /></button>
                           </div>
                         ) : (
-                          <button type="button" disabled={!paintingImage || paintingLoading !== 'idle'} onClick={() => paintingLowerWoodFileInputRef.current?.click()} className="flex h-32 w-full flex-col items-center justify-center gap-2 text-center text-slate-500 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50">
+                          <button type="button" disabled={!paintingImage || paintingDraftBusy} onClick={() => paintingLowerWoodFileInputRef.current?.click()} className="flex h-32 w-full flex-col items-center justify-center gap-2 text-center text-slate-500 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50">
                             <Plus className="size-4 text-amber-600" />
                             <span className="text-xs font-bold">下方木条</span>
                             <span className="text-[10px]">选传高清特写</span>
@@ -5935,11 +6116,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     <button
                       type="button"
                       onClick={handlePaintingAnalyze}
-                      disabled={!paintingImage || paintingLoading !== 'idle'}
+                      disabled={!paintingImage || paintingDraftBusy}
                       className="inline-flex h-9 items-center gap-1.5 rounded-full bg-rose-600 px-4 text-xs font-bold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {paintingLoading === 'analyze' ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-                      分析产品
+                      {paintingLoading === 'analyze' ? '正在分析…' : paintingProfile ? '重新分析产品' : '分析产品'}
                     </button>
                     <button
                       type="button"
@@ -5972,7 +6153,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           ['主体', paintingProfile.subject],
                           ['材质', paintingProfile.material],
                           ['构图', paintingProfile.composition],
-                          ['外框结构', paintingProfile.frameStructure],
+                          [isOrnament ? '固定支撑结构' : '外框结构', paintingProfile.frameStructure],
                           ['纹理', paintingProfile.texture],
                           ['氛围', paintingProfile.atmosphere],
                           ['比例', paintingProfile.ratio],
@@ -5995,7 +6176,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   {paintingProfile && (
                     <div ref={paintingPlanRef} className="space-y-2 rounded-2xl border border-slate-300 bg-slate-50 p-3">
                       <div className="text-xs font-black text-slate-800">素材计划</div>
-                      <div className="grid gap-2 sm:grid-cols-2">
+                      <fieldset disabled={paintingDraftBusy} className="grid min-w-0 gap-2 sm:grid-cols-2 disabled:opacity-60">
                         <label className="text-[11px] font-semibold text-slate-500 sm:col-span-2">
                           本轮整体风格
                           <select
@@ -6095,19 +6276,19 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             type="text"
                             value={paintingPlan.extraRequirements}
                             onChange={(event) => setPaintingPlan((previous) => ({ ...previous, extraRequirements: event.target.value }))}
-                            placeholder={isSticker ? '例如：不要出现人物、展示二维装饰边线细节、以茶室为主' : '例如：不要出现人物、画面必须特写木条工艺'}
+                            placeholder={isOrnament ? '例如：玄关柜陈列、只拍整体搬放、不出现人物' : isSticker ? '例如：不要出现人物、展示二维装饰边线细节、以茶室为主' : '例如：不要出现人物、画面必须特写木条工艺'}
                             className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
                           />
                         </label>
-                      </div>
+                      </fieldset>
                       <button
                         type="button"
                         onClick={handlePaintingGenerateIdeas}
-                        disabled={paintingLoading !== 'idle'}
+                        disabled={paintingDraftBusy}
                         className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {paintingLoading === 'ideas' ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-                        生成创意方案
+                        {paintingLoading === 'ideas' ? '正在生成创意方案…' : paintingIdeas.length > 0 ? '重新生成创意方案' : '生成创意方案'}
                       </button>
                     </div>
                   )}
@@ -6117,12 +6298,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       <button
                         type="button"
                         onClick={() => void handlePaintingOpenBatchConfirm()}
-                        disabled={!paintingImage || paintingLoading !== 'idle' || paintingBatchPreparing}
+                        disabled={!paintingImage || paintingDraftBusy}
                         className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 to-orange-500 px-4 text-sm font-black text-white shadow-[0_8px_20px_rgba(244,63,94,0.28)] transition-transform hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {paintingBatchPreparing ? <Loader2 className="size-4 animate-spin" /> : <Film className="size-4" />}
-                        {paintingBatchPreparing ? (paintingBatchPrepareStage || '正在准备 40 个方向…') : '全自动生成40条视频'}
+                        {paintingBatchPreparing ? (paintingBatchPrepareStage || '正在准备 40 个方向…') : '批量生成视频'}
                       </button>
+                      <p className="text-center text-[11px] leading-5 text-slate-500">默认准备 40 个创意方向，确认后才开始生成视频；数量、模型与保存位置可在下一步调整。</p>
                       {paintingBatchPrepareFailed && (
                         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">
                           <div className="font-bold">{paintingBatchPrepareError || '准备批量生成失败。'}</div>
@@ -6143,17 +6325,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
                   {paintingIdeas.length > 0 && (
                     <div ref={paintingIdeasRef} className="space-y-2">
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="text-xs font-black text-slate-800">创意方案（{paintingIdeas.length} 条）</div>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500">
                             第 {paintingFrameworkBatch + 1}/{paintingTotalBatches} 批 · 第 {paintingVariationRound + 1} 轮
+                            {isOrnament && ` · ${['整体搬放与人物展示', '生活场景陈列', '摄影机运镜', '细节与结构展示'][paintingFrameworkBatch]}`}
                             {isSticker && ` · ${['人物展示', '生活场景', '运镜与细节', '形态与安装'][paintingFrameworkBatch]}`}
                           </span>
                           <button
                             type="button"
                             onClick={handlePaintingPreviousIdeas}
-                            disabled={paintingLoading !== 'idle' || paintingFrameworkBatch <= 0}
+                            disabled={paintingDraftBusy || paintingFrameworkBatch <= 0}
                             className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-500 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             上一批
@@ -6161,7 +6344,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           <button
                             type="button"
                             onClick={handlePaintingRegenerateIdeas}
-                            disabled={paintingLoading !== 'idle'}
+                            disabled={paintingDraftBusy}
                             className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-500 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {paintingLoading === 'ideas' ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
@@ -6213,7 +6396,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                 <button
                                   type="button"
                                   onClick={() => handlePaintingGeneratePrompt(idea)}
-                                  disabled={paintingLoading !== 'idle'}
+                                  disabled={paintingDraftBusy}
                                   className={cn(
                                     'inline-flex h-8 items-center gap-1 rounded-full border px-3 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60',
                                     isUsed
@@ -6410,12 +6593,26 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <div className="mb-3">
+                        <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-slate-500">
+                          <span>素材完成进度</span>
+                          <span>{paintingBatchDetail.counts.completed} / {paintingBatchDetail.counts.total} 条</span>
+                        </div>
+                        <progress
+                          aria-label="批量素材完成进度"
+                          value={paintingBatchDetail.counts.completed}
+                          max={Math.max(1, paintingBatchDetail.counts.total)}
+                          className="block h-2 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-slate-100 [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-emerald-500 [&::-moz-progress-bar]:bg-emerald-500"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                         {[
                           ['已完成', paintingBatchDetail.counts.completed, 'text-emerald-600'],
+                          ['提示词生成中', paintingBatchDetail.counts.generatingPrompt, 'text-violet-600'],
                           ['生成中', paintingBatchDetail.counts.rendering, 'text-blue-600'],
                           ['待复核', paintingBatchDetail.counts.needsReview, 'text-amber-600'],
                           ['失败', paintingBatchDetail.counts.failed, 'text-red-600'],
+                          ['已停止', paintingBatchDetail.counts.stopped, 'text-slate-500'],
                         ].map(([label, value, tone]) => (
                           <div key={label} className="rounded-xl bg-slate-50 px-3 py-2">
                             <div className="text-[10px] font-bold text-slate-400">{label}</div>
@@ -6672,7 +6869,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             value={notebookDraft}
                             onChange={(e) => setNotebookDraft(e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !e.shiftKey) {
+                              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                                 e.preventDefault();
                                 addNotebookItem();
                               }
@@ -7251,7 +7448,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 ) : (
                   <div className="rounded-2xl border border-slate-300 bg-white p-3 shadow-sm focus-within:border-indigo-300">
                     <div className="mb-2 flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-500">手动输入</span>
+                      <span id="creative-manual-input-label" className="text-xs font-bold text-slate-500">手动输入</span>
                       <button
                         type="button"
                         onClick={() => setIsManualInputOpen(false)}
@@ -7263,10 +7460,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     </div>
                     <textarea
                       ref={textareaRef}
+                      aria-labelledby="creative-manual-input-label"
                       value={input}
                       onChange={(event) => setInput(event.target.value)}
                       onKeyDown={(event) => {
-                        if (event.key === 'Enter' && !event.shiftKey) {
+                        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
                           event.preventDefault();
                           handleSend();
                         }
@@ -7290,7 +7488,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       </div>
                       <button
                         type="button"
-                        onClick={handleSend}
+                        onClick={() => void handleSend()}
                         disabled={!input.trim() || isLoading}
                         className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                       >

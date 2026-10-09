@@ -241,7 +241,7 @@ for (const direction of [1, 8, 25, 29, 30, 33, 37, 40]) {
 textReply = '产品固定约束：保持印刷画面。创意内容：0—6秒，墙贴完整压实在墙上。负面约束：禁止变形。总时长：6秒';
 const explicitlyRoutedSticker = await server.generatePaintingIdeaPromptCore('explicit-sticker', 'test', { name: '旧档案缺少类型' }, { directionNumber: 2, title: '展示' }, { ...plan, productType: 'sticker' });
 assert.ok(explicitlyRoutedSticker.prompt.startsWith(STICKER_MARKER));
-await assert.rejects(server.generatePaintingIdeaPromptCore('bad', 'test', { name: '旧挂画' }, { productType: 'sticker' }, { ...plan, productType: 'hanging' }), /不能使用贴画/);
+await assert.rejects(server.generatePaintingIdeaPromptCore('bad', 'test', { name: '旧挂画' }, { productType: 'sticker' }, { ...plan, productType: 'hanging' }), /不能使用贴画|产品类型参数冲突/);
 
 server.dbMarkPaintingDirectionUsed('same-image', 0, 1);
 server.dbMarkPaintingDirectionUsed('same-image', 0, 33, 'sticker');

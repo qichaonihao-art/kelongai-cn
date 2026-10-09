@@ -902,9 +902,9 @@ export async function createSeedanceTask(options: {
   };
 }
 
-export type PaintingProductType = 'hanging' | 'sticker';
-export const getPaintingProductType = (profile?: PaintingProfile | null): PaintingProductType => profile?.productType === 'sticker' ? 'sticker' : 'hanging';
-export const getPaintingProductLabel = (profile?: PaintingProfile | null) => getPaintingProductType(profile) === 'sticker' ? 'PVC背胶贴画' : '挂画／卷轴';
+export type PaintingProductType = 'hanging' | 'sticker' | 'ornament';
+export const getPaintingProductType = (profile?: PaintingProfile | null): PaintingProductType => profile?.productType === 'ornament' ? 'ornament' : profile?.productType === 'sticker' ? 'sticker' : 'hanging';
+export const getPaintingProductLabel = (profile?: PaintingProfile | null) => getPaintingProductType(profile) === 'ornament' ? '摆件（固定一体）' : getPaintingProductType(profile) === 'sticker' ? 'PVC背胶贴画' : '挂画／卷轴';
 
 export interface PaintingProfile {
   productType?: PaintingProductType;
@@ -1071,7 +1071,7 @@ export async function analyzePainting(file: File, productType: PaintingProductTy
     formData.append('heightCm', String(heightCm));
   }
 
-  const response = await fetch(productType === 'sticker' ? '/api/sticker/analyze' : '/api/painting/analyze', {
+  const response = await fetch(productType === 'ornament' ? '/api/ornament/analyze' : productType === 'sticker' ? '/api/sticker/analyze' : '/api/painting/analyze', {
     method: 'POST',
     credentials: 'include',
     body: formData,
@@ -1107,7 +1107,7 @@ export async function generatePaintingIdeas(
   options?: { variationRound?: number; avoidIdeas?: string[]; clientRequestId?: string }
 ): Promise<PaintingIdeasResult> {
   const productType = getPaintingProductType(profile);
-  const response = await fetch(productType === 'sticker' ? '/api/sticker/ideas' : '/api/painting/ideas', {
+  const response = await fetch(productType === 'ornament' ? '/api/ornament/ideas' : productType === 'sticker' ? '/api/sticker/ideas' : '/api/painting/ideas', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -1174,7 +1174,7 @@ export async function generatePaintingIdeaPrompt(
   }
 ): Promise<{ prompt: string; duration: number }> {
   const productType = context?.productType || getPaintingProductType(profile);
-  const response = await fetch(productType === 'sticker' ? '/api/sticker/idea-prompt' : '/api/painting/idea-prompt', {
+  const response = await fetch(productType === 'ornament' ? '/api/ornament/idea-prompt' : productType === 'sticker' ? '/api/sticker/idea-prompt' : '/api/painting/idea-prompt', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -1380,6 +1380,8 @@ export function getSeedanceRatePerSecond(model: string, resolution = '720p'): nu
 
 export interface CreatePaintingBatchRunOptions {
   file: File;
+  ornamentSideFile?: File | null;
+  ornamentFrameFile?: File | null;
   upperWoodFile?: File | null;
   lowerWoodFile?: File | null;
   profile: PaintingProfile;
@@ -1464,9 +1466,13 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
 }> {
   const formData = new FormData();
   formData.append('file', options.file, options.file.name);
-  if (getPaintingProductType(options.profile) !== 'sticker') {
+  if (getPaintingProductType(options.profile) === 'hanging') {
     if (options.upperWoodFile) formData.append('upperWoodFile', options.upperWoodFile, options.upperWoodFile.name);
     if (options.lowerWoodFile) formData.append('lowerWoodFile', options.lowerWoodFile, options.lowerWoodFile.name);
+  }
+  if (getPaintingProductType(options.profile) === 'ornament') {
+    if (options.ornamentSideFile) formData.append('ornamentSideFile', options.ornamentSideFile, options.ornamentSideFile.name);
+    if (options.ornamentFrameFile) formData.append('ornamentFrameFile', options.ornamentFrameFile, options.ornamentFrameFile.name);
   }
   formData.append('profile', JSON.stringify(options.profile));
   formData.append('plan', JSON.stringify(options.plan));
@@ -1670,9 +1676,10 @@ export async function sha256File(file: File): Promise<string> {
     .join('');
 }
 
-export async function getPaintingFolderBinding(imageHash: string, paintingName?: string): Promise<PaintingFolderBinding | null> {
+export async function getPaintingFolderBinding(imageHash: string, paintingName?: string, productType: PaintingProductType = 'hanging'): Promise<PaintingFolderBinding | null> {
   const params = new URLSearchParams();
   if (paintingName?.trim()) params.set('paintingName', paintingName.trim());
+  params.set('productType', productType);
   const query = params.toString();
   const response = await fetch(`/api/painting/folder-binding/${encodeURIComponent(imageHash)}${query ? `?${query}` : ''}`, {
     credentials: 'include',
@@ -1688,6 +1695,7 @@ export async function getPaintingFolderBinding(imageHash: string, paintingName?:
 }
 
 export async function setPaintingFolderBinding(options: {
+  productType?: PaintingProductType;
   paintingName?: string;
   uploadHistoryId?: number | null;
   imageHash: string;

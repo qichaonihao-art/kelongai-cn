@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import { analyzePainting, generatePaintingIdeas, generatePaintingIdeaPrompt, createPaintingBatchRun, createSeedanceTask, getPaintingUsedDirections, getPaintingProductType, getPaintingProductLabel, getPaintingFolderBinding, setPaintingFolderBinding, type PaintingMaterialPlan } from './src/lib/creative';
+
+Object.assign(globalThis, { window: globalThis });
+const file = new File(['test'], 'product.png', { type: 'image/png' });
+const profile = { productType: 'ornament' as const, name: '固定一体摆台', supportStructure: 'fixed' };
+const idea = { productType: 'ornament' as const, id: 'ornament-1', directionNumber: 1, title: '讲解', summary: '画旁讲解' };
+const plan: PaintingMaterialPlan = { count: 10, durationMin: 5, durationMax: 8, ratio: '9:16', stylePreset: 'modern-minimal', character: '', scene: '', audio: '', extraRequirements: '' };
+const calls: { url: string; body: BodyInit | null | undefined }[] = [];
+globalThis.fetch = async (url, init: RequestInit = {}) => {
+  calls.push({ url: String(url), body: init.body });
+  if (String(url).includes('/tasks/ui-task')) return Response.json({ status: 'done', result: { profile, ideas: [idea], batch: 0, totalBatches: 4, prompt: '摆件文案', duration: 6 } });
+  return Response.json({ taskId: 'ui-task', batchRunId: 'ui-batch', usedDirections: [1] });
+};
+assert.equal(getPaintingProductType({ name: '旧记录' }), 'hanging');
+assert.equal(getPaintingProductLabel(profile), '摆件（固定一体）');
+assert.equal(getPaintingProductLabel(), '挂画／卷轴');
+await analyzePainting(file, 'ornament', 150, 50);
+assert.equal(calls[0].url, '/api/ornament/analyze');
+const analysisForm = calls[0].body as FormData;
+assert.equal(analysisForm.get('productType'), 'ornament');
+assert.equal(analysisForm.get('widthCm'), null);
+assert.equal(analysisForm.get('heightCm'), null);
+await generatePaintingIdeas(profile, plan);
+const ideasRequestCall = calls.find((call) => call.url === '/api/ornament/ideas')!;
+assert.ok(ideasRequestCall);
+const ideasRequest = JSON.parse(String(ideasRequestCall.body));
+assert.equal(ideasRequest.profile.productType, 'ornament');
+assert.equal(ideasRequest.productType, 'ornament');
+await generatePaintingIdeaPrompt(profile, idea, plan);
+const promptRequestCall = calls.find((call) => call.url === '/api/ornament/idea-prompt')!;
+assert.ok(promptRequestCall);
+const promptRequest = JSON.parse(String(promptRequestCall.body));
+assert.equal(promptRequest.idea.productType, 'ornament');
+assert.equal(promptRequest.profile.supportStructure, 'fixed');
+assert.equal(promptRequest.productType, 'ornament');
+await generatePaintingIdeaPrompt(profile, { ...idea, id: 'ornament-2', directionNumber: 2, title: '第二个方向' }, plan);
+assert.equal(calls.filter((call) => call.url === '/api/ornament/idea-prompt').length, 2);
+await createPaintingBatchRun({ file, upperWoodFile: file, lowerWoodFile: file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: false, watermark: false, stylePreset: 'modern-minimal', creationRequestId: 'ui-batch-create' });
+const batchForm = calls.at(-1)!.body as FormData;
+assert.equal(JSON.parse(String(batchForm.get('profile'))).productType, 'ornament');
+assert.equal(JSON.parse(String(batchForm.get('ideas')))[0].productType, 'ornament');
+assert.equal(batchForm.get('startOrder'), 'random');
+assert.equal(batchForm.get('requestedCount'), '1');
+assert.equal(batchForm.get('upperWoodFile'), null);
+assert.equal(batchForm.get('lowerWoodFile'), null);
+for (const [side, frame] of [[false, false], [true, false], [false, true], [true, true]]) {
+  await createPaintingBatchRun({ file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'optional-test', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: false, watermark: false, stylePreset: 'modern-minimal', ornamentSideFile: side ? file : null, ornamentFrameFile: frame ? file : null });
+  const form = calls.at(-1)!.body as FormData;
+  assert.equal(Boolean(form.get('ornamentSideFile')), side);
+  assert.equal(Boolean(form.get('ornamentFrameFile')), frame);
+}
+await createPaintingBatchRun({ file, profile: { productType: 'hanging', name: '挂画' }, plan, ideas: [], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'optional-test', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: false, watermark: false, stylePreset: 'modern-minimal', ornamentSideFile: file, ornamentFrameFile: file });
+assert.equal((calls.at(-1)!.body as FormData).get('ornamentSideFile'), null);
+assert.equal((calls.at(-1)!.body as FormData).get('ornamentFrameFile'), null);
+for (const withImage of [true, false]) {
+  await createSeedanceTask({ productType: 'ornament', model: 'wan3.0-video', prompt: '贴画', resolution: '480p', ratio: '9:16', duration: 6, generateAudio: false, watermark: false, references: withImage ? [{ id: '1', kind: 'image', file, fileName: file.name, previewUrl: '' }] : [] });
+  const body = calls.at(-1)!.body;
+  assert.equal(withImage ? (body as FormData).get('productType') : JSON.parse(String(body)).productType, 'ornament');
+}
+await getPaintingUsedDirections('hash', 1, 'ornament');
+assert.ok(calls.at(-1)!.url.includes('productType=ornament'));
+for (const productType of ['hanging', 'sticker', 'ornament'] as const) {
+  await getPaintingFolderBinding('same-hash', 'same-name', productType);
+  assert.ok(calls.at(-1)!.url.includes(`productType=${productType}`));
+  await setPaintingFolderBinding({ imageHash: 'same-hash', paintingName: 'same-name', productType, folderName: 'test' });
+  assert.equal(JSON.parse(String(calls.at(-1)!.body)).productType, productType);
+}
+console.log('前端摆件接口测试通过：旧记录兼容、产品分析类型、方案/提示词类型、批量顺序数量、木条过滤及单条提交。无真实网络调用。');

@@ -4,7 +4,7 @@ export const STICKER_FINAL_MARKER = '【PVC墙贴最终几何裁决】';
 export const STICKER_RASTER_MARKER = '【PVC正面不可拆分纹理锁定】';
 export const STICKER_COLOR_MARKER = '【PVC产品视觉与哑光表面绝对保真锁定】';
 export const isStickerProduct = (profile) => profile?.productType === 'sticker';
-export const productUsageHash = (hash, type) => type === 'sticker' && hash ? `sticker:${hash}` : String(hash || '');
+export const productUsageHash = (hash, type) => ['sticker', 'ornament'].includes(type) && hash ? `${type}:${hash}` : String(hash || '');
 
 export function normalizeStickerProfile(profile = {}) {
   const dimension = (value, fallback) => {
