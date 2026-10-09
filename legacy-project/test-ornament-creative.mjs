@@ -205,5 +205,21 @@ for (const chosen of productTypes) assert.deepEqual(server.dbGetPaintingUsedDire
 const mixedResponse = res(); const beforeMixed = payloads.length;
 await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', prompt: `${markers.ornament}\n${markers.sticker}`, resolution: '480p' }), mixedResponse);
 assert.equal(mixedResponse.status, 400); assert.equal(payloads.length, beforeMixed);
+for (const type of ['hanging', 'sticker', 'ornament']) {
+ for (const model of ['doubao-seedance-2-0-260128', 'MiniMax-H3', 'wan3.0-video']) {
+  const response = res();
+  await server.handleSeedanceCreateTask(req({ model, resolution: model === 'MiniMax-H3' ? '768p' : '480p', duration: 6, prompt: `【产品元素替换：${type}】\n【替换动作兼容性：兼容】\n原视频机位固定，替换同类产品正面图案，原动作不改变。` }), response);
+  assert.equal(response.status, 200, response.body);
+  const sent = JSON.stringify(payloads.at(-1).payload);
+  assert.doesNotMatch(sent, forbidden);
+  if (type === 'ornament') { assert.match(sent, /木质背板/); assert.match(sent, /data:image\/jpeg;base64/); assert.doesNotMatch(sent, /双手整体落台/); }
+  if (type === 'sticker') { assert.match(sent, /PVC/); assert.doesNotMatch(sent, /尺寸：宽180/); }
+ }
+}
+for (const prompt of ['【产品元素替换：ornament】【替换动作兼容性：不兼容】卷轴展开', '【产品元素替换：ornament】未经确认', '【产品元素替换：ornament】【替换动作兼容性：兼容】取下主体再安装支架', '【产品元素替换：sticker】【替换动作兼容性：兼容】贴画配有实木边框', '【产品元素替换：hanging】【产品元素替换：ornament】【替换动作兼容性：兼容】']) {
+ const before = payloads.length; const response = res();
+ await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', prompt }), response);
+ assert.equal(response.status, 400, response.body); assert.equal(payloads.length, before);
+}
 console.log('PASS: 40 fixed frameworks, analysis, separate-stand rejection, four batches, all prompts, type isolation, manual/batch submission across six models, three-product routing/usage/folder isolation, paid-request blocking.');
 process.exit(0);

@@ -1,3 +1,4 @@
+import { replacementProductRules, wrapReplacementPrompt, replacementElementLabel, replacementProductLabel, type ReplacementProductType } from '@/src/lib/productReplacement';
 import { useState, useRef, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import {
   Send,
@@ -709,6 +710,7 @@ interface VideoClonePromptOptions {
   includeSubtitles?: boolean;
   characterRemix?: string;
   clipAudioMode?: ClipAudioMode;
+  replacementProductType?: ReplacementProductType;
 }
 
 function buildClipAudioReverseAuthority(mode: ClipAudioMode, requestedDialogueLines: string[]) {
@@ -744,7 +746,7 @@ function buildVideoClonePrompt(options: VideoClonePromptOptions, replacement?: {
     ? `${options.clipAudioMode === 'original' ? '' : buildRequestedDialogueLock(additionalChange)}\n\n【本次额外调整】\n${additionalChange.trim()}`
     : ''}${clipAudioAuthority}`;
 
-  return `请把当前视频当作“待复刻样片”，先在内部逐帧核对，再输出一份可直接交给视频生成模型执行的单一复刻规格。目标是几何、镜头、时序和内容尽可能 1:1，不是改编、润色或根据台词再创作。不要输出你的观察过程，也不要把同一内容先分析后复述。\n\n${taskRule}\n\n【证据与变更优先级】\n1. 原视频实际可见画面与真实剪辑点，是镜头、构图、人物、场景、动作和时间轴的最高依据。\n2. 用户本次明确要求的变化，只覆盖被明确点名的内容。\n3. ${replacement ? '参考图片只决定替换元素本身的内容和视觉特征，不得覆盖原视频的镜头与布局。' : '不得使用历史任务或常识补充原片没拍到的内容。'}\n4. 台词与旁白只决定声音和口型，不能作为新增物体、插镜、特写、运镜或动作的依据。\n5. 看不清的细节写成中性、不扩张画面的约束，不得猜测或补拍。\n\n${buildReverseDurationRule(options.durationSeconds, options.sourceDurationSeconds)}\n\n${HUMAN_SPEECH_MARKER_RULE(HUMAN_SPEECH_CRITERION_VIDEO)}\n\n${VIDEO_CONTEXT_ISOLATION_RULE}\n\n${VIDEO_SHOT_FIDELITY_RULE}\n\n【内部核对清单，不要单独输出】\n- 逐段确认真实镜头数、每个切点、是否一镜到底；区分真实运镜与人物运动、画面抖动。目标时长变化时，保持镜头数量和先后顺序，按原片各镜头及关键动作的相对时长比例重排目标时间轴，不得死守已经失效的原始秒点。\n- 锁定原片画幅方向和宽高比，以及每个镜头的机位高度与方向、俯仰角、景别、主体边界框位置和占比、留白、透视、焦段观感、景深；无法测量时用相对关系准确表达。\n- 列全人物身份与外观、服装发型、姿态视线、表情、手指和道具接触，及背景物体的数量、位置、尺寸和遮挡；保持跨帧连续。\n- 按原片事件顺序覆盖 0-${options.durationSeconds} 秒，时间段连续、不重叠、不留空。目标时长变长时，保持核心动作与事件顺序，在同一镜头内补全直接相连的起手、过渡、收势和自然微动作，不得机械慢放、循环或新增独立剧情；目标时长缩短时，只压缩动作间隙，不得删除核心动作。\n- 精确分离画面事实与声音内容，逐字保留人声台词；台词提到但画面未出现的物体必须写入禁止生成项。分别核对原片的人声、背景音乐、环境音和动作音效，只写实际存在的声音及其出现时段，不得擅自增加配乐或音效。\n- 核对动作快慢、停顿、情绪、气质和环境氛围，以及主光方向、软硬、色温、曝光、对比、材质和环境动态，全部以原片为准，避免自动电影化和美化。\n- ${allowedChanges}\n- ${subtitleClause}\n- ${VIDEO_LIVE_EYE_GAZE_RULE}\n- 人物手部可见时，写清手指、手腕、手掌与物体的接触位置、发力方向和动作先后，避免笼统写“展示”或“操作”。\n- 挂画、海报、屏幕等平面元素保持原始比例、边界框、透视和空间占比，不得拉伸。出现卷轴滚动展开时，写清沿轴旋转、画布逐步释放；${PAINTING_WOOD_BAR_OUTPUT_RULE}\n- 明确抑制塑料感、过度磨皮、虚假光泽、僵硬表情、异常肢体、穿模、物体漂移、过度电影化和其他明显 AI 痕迹。\n${characterRemixClause}${userAdjustments}\n\n【唯一允许的输出结构】\n一、最终可直接用于视频生成模型的完整复刻提示词\n生成指令：按“复刻目标与允许变化、镜头硬锁、画面与空间、逐秒时间轴、人物动作与表演、节奏情绪与氛围、声音与逐字台词、光影材质与连续性”的顺序写成一份完整规格。必须使用具体、可执行的描述，避免“高级感、电影感、氛围感”等无法复刻原片的空泛词。必须包含目标时间轴上的准确镜头数和切点；固定机位一镜到底必须在镜头硬锁中明确，并在时间轴中落实为连续动作。除必要的镜头硬锁在时间轴中的落实外，每项事实只写一次，不要附加分析摘要或再次复述。第一部分最后单独写“总时长：${options.durationSeconds}秒”。\n\n二、负面提示词\n只集中列出会破坏本片 1:1 复刻的禁项，包括擅自新增或删除的镜头、运镜、人物、物体、独立动作或剧情事件、台词联想画面、构图漂移、比例透视错误、时序错误、连续性错误和 AI 瑕疵；自然补时所需的连续过渡与微动作不属于禁项。不要复制第一部分的正向描述。`;
+  return `请把当前视频当作“待复刻样片”，先在内部逐帧核对，再输出一份可直接交给视频生成模型执行的单一复刻规格。目标是几何、镜头、时序和内容尽可能 1:1，不是改编、润色或根据台词再创作。不要输出你的观察过程，也不要把同一内容先分析后复述。\n\n${taskRule}\n\n【证据与变更优先级】\n1. 原视频实际可见画面与真实剪辑点，是镜头、构图、人物、场景、动作和时间轴的最高依据。\n2. 用户本次明确要求的变化，只覆盖被明确点名的内容。\n3. ${replacement ? '参考图片只决定替换元素本身的内容和视觉特征，不得覆盖原视频的镜头与布局。' : '不得使用历史任务或常识补充原片没拍到的内容。'}\n4. 台词与旁白只决定声音和口型，不能作为新增物体、插镜、特写、运镜或动作的依据。\n5. 看不清的细节写成中性、不扩张画面的约束，不得猜测或补拍。\n\n${buildReverseDurationRule(options.durationSeconds, options.sourceDurationSeconds)}\n\n${HUMAN_SPEECH_MARKER_RULE(HUMAN_SPEECH_CRITERION_VIDEO)}\n\n${VIDEO_CONTEXT_ISOLATION_RULE}\n\n${VIDEO_SHOT_FIDELITY_RULE}\n\n【内部核对清单，不要单独输出】\n- 逐段确认真实镜头数、每个切点、是否一镜到底；区分真实运镜与人物运动、画面抖动。目标时长变化时，保持镜头数量和先后顺序，按原片各镜头及关键动作的相对时长比例重排目标时间轴，不得死守已经失效的原始秒点。\n- 锁定原片画幅方向和宽高比，以及每个镜头的机位高度与方向、俯仰角、景别、主体边界框位置和占比、留白、透视、焦段观感、景深；无法测量时用相对关系准确表达。\n- 列全人物身份与外观、服装发型、姿态视线、表情、手指和道具接触，及背景物体的数量、位置、尺寸和遮挡；保持跨帧连续。\n- 按原片事件顺序覆盖 0-${options.durationSeconds} 秒，时间段连续、不重叠、不留空。目标时长变长时，保持核心动作与事件顺序，在同一镜头内补全直接相连的起手、过渡、收势和自然微动作，不得机械慢放、循环或新增独立剧情；目标时长缩短时，只压缩动作间隙，不得删除核心动作。\n- 精确分离画面事实与声音内容，逐字保留人声台词；台词提到但画面未出现的物体必须写入禁止生成项。分别核对原片的人声、背景音乐、环境音和动作音效，只写实际存在的声音及其出现时段，不得擅自增加配乐或音效。\n- 核对动作快慢、停顿、情绪、气质和环境氛围，以及主光方向、软硬、色温、曝光、对比、材质和环境动态，全部以原片为准，避免自动电影化和美化。\n- ${allowedChanges}\n- ${subtitleClause}\n- ${VIDEO_LIVE_EYE_GAZE_RULE}\n- 人物手部可见时，写清手指、手腕、手掌与物体的接触位置、发力方向和动作先后，避免笼统写“展示”或“操作”。\n- 挂画、海报、屏幕等平面元素保持原始比例、边界框、透视和空间占比，不得拉伸。仅当本次替换产品为挂画且原片实际发生卷轴滚动展开时，写清沿轴旋转、画布逐步释放；${PAINTING_WOOD_BAR_OUTPUT_RULE}\n- 明确抑制塑料感、过度磨皮、虚假光泽、僵硬表情、异常肢体、穿模、物体漂移、过度电影化和其他明显 AI 痕迹。\n${characterRemixClause}${userAdjustments}\n\n【唯一允许的输出结构】\n一、最终可直接用于视频生成模型的完整复刻提示词\n生成指令：按“复刻目标与允许变化、镜头硬锁、画面与空间、逐秒时间轴、人物动作与表演、节奏情绪与氛围、声音与逐字台词、光影材质与连续性”的顺序写成一份完整规格。必须使用具体、可执行的描述，避免“高级感、电影感、氛围感”等无法复刻原片的空泛词。必须包含目标时间轴上的准确镜头数和切点；固定机位一镜到底必须在镜头硬锁中明确，并在时间轴中落实为连续动作。除必要的镜头硬锁在时间轴中的落实外，每项事实只写一次，不要附加分析摘要或再次复述。第一部分最后单独写“总时长：${options.durationSeconds}秒”。\n\n二、负面提示词\n只集中列出会破坏本片 1:1 复刻的禁项，包括擅自新增或删除的镜头、运镜、人物、物体、独立动作或剧情事件、台词联想画面、构图漂移、比例透视错误、时序错误、连续性错误和 AI 瑕疵；自然补时所需的连续过渡与微动作不属于禁项。不要复制第一部分的正向描述。`;
 }
 
 const VIDEO_REVERSE_PROMPT = (options: VideoClonePromptOptions) => buildVideoClonePrompt(options);
@@ -752,6 +754,7 @@ const VIDEO_REVERSE_PROMPT = (options: VideoClonePromptOptions) => buildVideoClo
 const VIDEO_REPLACE_PROMPT = (target: string, replacement: string, options: VideoClonePromptOptions) => (
   buildVideoClonePrompt(options, { target, value: replacement })
 );
+
 
 const IMAGE_TO_VIDEO_PROMPT = (options: {
   durationSeconds: number;
@@ -828,6 +831,7 @@ interface ReverseSeedanceSyncSnapshot {
   mode: Exclude<ReverseMode, 'painting'>;
   referenceImages: SelectedCreativeMedia[];
   requestedDuration?: number;
+  replacementProductType?: ReplacementProductType;
   additionalChange?: string;
   clipAudioMode?: ClipAudioMode;
 }
@@ -1935,6 +1939,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchConfirming, setPaintingBatchConfirming] = useState(false);
   const [paintingBatchUnconfirmed, setPaintingBatchUnconfirmed] = useState(false);
   const [paintingBatchSubmitError, setPaintingBatchSubmitError] = useState('');
+  const [replacementProductType, setReplacementProductType] = useState<ReplacementProductType>('hanging');
+  const [replacementReferences, setReplacementReferences] = useState<Record<'side' | 'frame', SelectedCreativeMedia | null>>({ side: null, frame: null });
+  const [replacementReferenceUploading, setReplacementReferenceUploading] = useState(false);
+  const [ornamentHistoryTarget, setOrnamentHistoryTarget] = useState<'painting' | 'replacement'>('painting');
   const [replaceImage, setReplaceImage] = useState<SelectedCreativeMedia | null>(null);
   const [replaceTarget, setReplaceTarget] = useState('');
   const [replaceWith, setReplaceWith] = useState('');
@@ -2011,6 +2019,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const additionalHistoryRef = useRef<HTMLDivElement>(null);
   const autoSyncToSeedanceRef = useRef(false);
   const pendingReverseSeedanceSyncRef = useRef<ReverseSeedanceSyncSnapshot | null>(null);
+  const replacementInputRevisionRef = useRef(0);
+  const lastReplacementSyncedRef = useRef(false);
+  const lastReplacementSyncSnapshotRef = useRef<ReverseSeedanceSyncSnapshot | null>(null);
   // 自动同步消费快照后，手动再次同步仍以当次提交的原话为准。
   const lastReverseDialogueInputRef = useRef('');
   const normalSeedanceSettingsRef = useRef({
@@ -2347,6 +2358,21 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   useEffect(() => {
     if (showHistoryModal) void ensureUploadHistoriesLoaded();
   }, [showHistoryModal]);
+
+  useEffect(() => {
+    replacementInputRevisionRef.current += 1;
+    const hadReplacementSync = lastReplacementSyncedRef.current;
+    lastReplacementSyncSnapshotRef.current = null;
+    if (pendingReverseSeedanceSyncRef.current?.mode === 'replace') pendingReverseSeedanceSyncRef.current = null;
+    setSeedancePrompt(previous => hadReplacementSync || previous.includes('【产品元素替换：') ? '' : previous);
+    setSeedanceReferences(previous => {
+      // 当前替换输入变化后，旧参考图必须重新分析再同步。
+      if (!lastReplacementSyncedRef.current) return previous;
+      previous.forEach(item => URL.revokeObjectURL(item.previewUrl));
+      lastReplacementSyncedRef.current = false;
+      return [];
+    });
+  }, [selectedMedia, replaceImage, replacementReferences, replacementProductType]);
 
   useEffect(() => () => {
     Object.values(ornamentImageHistory).flat().forEach(item => URL.revokeObjectURL(item.previewUrl));
@@ -2919,6 +2945,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   }
 
   async function prepareVideoReversePrompt() {
+    const replacementRevision = replacementInputRevisionRef.current;
     if (reverseMode === 'image') {
       if (selectedMedia?.kind !== 'image') {
         setRequestError('请先上传一张图片，作为生成视频提示词的视觉基准。');
@@ -2973,7 +3000,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
 
-    if (reverseMode === 'replace' && (!replaceTarget.trim() || !replaceWith.trim())) {
+    if (reverseMode === 'replace' && (!replaceImage || !replaceTarget.trim() || !replaceWith.trim())) {
       setRequestError('请填写需要替换的元素和目标元素');
       return;
     }
@@ -3005,19 +3032,32 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
 
+    let replacementBack: SelectedCreativeMedia | null = null;
+    if (reverseMode === 'replace' && replacementProductType === 'ornament') {
+      try {
+        const response = await fetch('/api/ornament/back-reference', { credentials: 'include' });
+        if (!response.ok) throw new Error('公共背面参考读取失败，请稍后重试。');
+        const file = new File([await response.blob()], 'ornament-back.jpg', { type: 'image/jpeg' });
+        replacementBack = { kind: 'image', file, fileName: file.name, previewUrl: '' };
+      } catch (error) { setRequestError(error instanceof Error ? error.message : '背面参考读取失败'); return; }
+    }
+    if (reverseMode === 'replace' && replacementRevision !== replacementInputRevisionRef.current) { setRequestError('视频或参考图已更换，请重新点击分析。'); return; }
+    const replacementImages = [replaceImage, ...(replacementProductType === 'ornament' ? [replacementReferences.side, replacementReferences.frame, replacementBack] : [])].filter((image): image is SelectedCreativeMedia => Boolean(image));
     // 先确定唯一权威时长；AI提示词和右侧生成参数始终共用这个整数值。
     setSeedanceDuration(durationSeconds);
     pendingReverseSeedanceSyncRef.current = {
       mode: reverseMode === 'replace' ? 'replace' : 'direct',
-      referenceImages: reverseMode === 'replace' && replaceImage ? [replaceImage] : [],
+      referenceImages: reverseMode === 'replace' ? replacementImages : [],
+      replacementProductType: reverseMode === 'replace' ? replacementProductType : undefined,
       requestedDuration: durationSeconds,
       additionalChange,
       clipAudioMode: activeClipAudioMode,
     };
+    if (reverseMode === 'replace') lastReplacementSyncSnapshotRef.current = pendingReverseSeedanceSyncRef.current;
     lastReverseDialogueInputRef.current = additionalChange;
 
     if (reverseMode === 'replace') {
-      const prompt = VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText, clipAudioMode: activeClipAudioMode });
+      const prompt = replacementProductRules(replacementProductType) + '\n' + (replacementProductType === 'ornament' ? '参考顺序：首个素材是原视频，第一张图片是本款正面，最后一张图片是公共背面，中间选传图片只补充侧面或边框结构。正面图决定本款图案，其他图不复制图案、背景或手。\n' : '') + VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText, clipAudioMode: activeClipAudioMode });
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
@@ -3045,9 +3085,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     // 两边都从这一个值推导 activeMode，所以既没有「当前是哪个模块」的第二套口径，
     // 也没有读写顺序错位导致判定到别的模块的余地。
     // 这中间没有 await，提前清空不会漏掉任何重新赋值的时机。
-    const snapshot = pendingReverseSeedanceSyncRef.current;
+    const snapshot = pendingReverseSeedanceSyncRef.current || (reverseMode === 'replace' ? lastReplacementSyncSnapshotRef.current : null);
     pendingReverseSeedanceSyncRef.current = null;
     const activeMode = snapshot?.mode || reverseMode;
+    let checkedReplacementPrompt: string | null = null;
+    if (activeMode === 'replace') {
+      if (!snapshot) { setRequestError('参考图或视频已更换，请重新分析后再同步提示词。'); return; }
+      try { checkedReplacementPrompt = wrapReplacementPrompt(latestAssistantText, snapshot?.replacementProductType || replacementProductType); }
+      catch (error) { setRequestError(error instanceof Error ? error.message : '替换动作不兼容'); setSeedancePrompt(''); setSeedanceReferences(previous => { previous.forEach(item => URL.revokeObjectURL(item.previewUrl)); return []; }); return; }
+    }
+
     const activeClipAudioMode: ClipAudioMode = snapshot?.clipAudioMode
       ?? (selectedMedia?.serverMediaToken ? clipAudioMode : 'none');
     // 人声标记必须从原始文本里取，不能用 strip 之后的输出——strip 已经把它删掉了。
@@ -3070,7 +3117,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
           : needsDialogueClarification ? [] : extractDialogueLines(latestAssistantText);
 
     // 格式化：在每个章节标题前插入一个空行，标题后紧跟正文不空行
-    const formatted = latestAssistantText
+    const formatted = (checkedReplacementPrompt || latestAssistantText)
       .replace(/\n{2,}/g, '\n')
       .replace(/(\d+[.、]\s*|第?[一二三四五六七八九十]+[、.]?\s*)(核心主体信息|场景与背景环境|构图与机位|镜头运动|动作设计与时间顺序|节奏与动态风格|光影与色彩|情绪与气质|复刻关键约束|负面约束|最终可直接用于|负面提示词)/g, '\n\n$1$2')
       .replace(/(最终可直接用于[^\n]*)/g, '\n\n$1')
@@ -3123,6 +3170,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
     // 反推完成自动带出：时长，以及参考图（元素替换 / 图片生视频）。输出比例遵循业务默认的 9:16。
     syncReverseMediaToSeedance(snapshot);
+    lastReplacementSyncedRef.current = activeMode === 'replace';
   }
 
   function syncReverseMediaToSeedance(snapshot: ReverseSeedanceSyncSnapshot | null) {
@@ -4114,12 +4162,44 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
+  function clearReplacementReferences() {
+    Object.values(replacementReferences).forEach(image => { if (image) URL.revokeObjectURL(image.previewUrl); });
+    setReplacementReferences({ side: null, frame: null });
+  }
+
+  function switchReplacementProduct(type: ReplacementProductType) {
+    if (isLoading || replacementReferenceUploading || type === replacementProductType) return;
+    clearReplacementReferences();
+    clearReplaceImage();
+    setReplacementProductType(type);
+    setReplaceTarget(type === 'generic' ? '' : `视频中的${replacementElementLabel(type)}`);
+    setReplaceWith(type === 'generic' ? '' : `图片中的${replacementElementLabel(type)}`);
+    pendingReverseSeedanceSyncRef.current = null;
+    setSeedancePrompt('');
+    setSeedanceReferences(previous => { previous.forEach(item => URL.revokeObjectURL(item.previewUrl)); return []; });
+  }
+
+  async function handleReplacementReferenceChange(kind: 'side' | 'frame', file: File | null) {
+    if (isLoading || replacementReferenceUploading || !replaceImage || replacementProductType !== 'ornament' || !file) return;
+    setReplacementReferenceUploading(true);
+    try {
+      if (!file.type.startsWith('image/') || file.size > 10 * 1024 * 1024) throw new Error('辅助图必须是10MB以内的图片。');
+      await saveUploadHistory(file, 'image', `ornament-${kind}`);
+      const previous = replacementReferences[kind];
+      if (previous) URL.revokeObjectURL(previous.previewUrl);
+      setReplacementReferences(current => ({ ...current, [kind]: { kind: 'image', file, fileName: file.name, previewUrl: createMediaPreviewUrl(file) } }));
+      await refreshUploadHistories();
+    } catch (error) { setRequestError(error instanceof Error ? error.message : '辅助图读取失败'); }
+    finally { setReplacementReferenceUploading(false); }
+  }
+
   async function selectOrnamentReferenceHistory(kind: 'side' | 'frame', id: number) {
-    if (paintingDraftBusy || !isOrnament || !paintingImage) return;
+    if (ornamentHistoryTarget === 'painting' ? (paintingDraftBusy || !isOrnament || !paintingImage) : (isLoading || replacementReferenceUploading || !replaceImage)) return;
     try {
       const item = await getUploadHistoryItem(id);
       if (!item || item.kind !== 'image' || item.scope !== `ornament-${kind}`) throw new Error('辅助参考图已不存在，请重新上传。');
-      await handleOrnamentReferenceChange(kind, blobToFile(item));
+      if (ornamentHistoryTarget === 'replacement') await handleReplacementReferenceChange(kind, blobToFile(item));
+      else await handleOrnamentReferenceChange(kind, blobToFile(item));
       setShowHistoryModal(false);
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '历史参考图读取失败');
@@ -5091,11 +5171,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   function replaceSeedanceReferencesWithImages(images: SelectedCreativeMedia[]) {
     const isSeedance25 = seedanceModel === 'doubao-seedance-2-5-260628';
     const maxImageCount = isSeedance25 ? 30 : 9;
-    const seenFileNames = new Set<string>();
+    const seenFiles = new Set<File>();
     const nextReferences = images
       .filter((image) => {
-        if (image.kind !== 'image' || seenFileNames.has(image.fileName)) return false;
-        seenFileNames.add(image.fileName);
+        if (image.kind !== 'image' || seenFiles.has(image.file)) return false;
+        seenFiles.add(image.file);
         return true;
       })
       .slice(0, maxImageCount)
@@ -5324,6 +5404,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       if (replaceImage) {
         URL.revokeObjectURL(replaceImage.previewUrl);
       }
+      clearReplacementReferences();
       setReplaceImage({
         kind: 'image',
         file,
@@ -5347,6 +5428,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       URL.revokeObjectURL(replaceImage.previewUrl);
     }
     setReplaceImage(null);
+    clearReplacementReferences();
     setRequestError("");
     if (replaceImageInputRef.current) {
       replaceImageInputRef.current.value = '';
@@ -5448,6 +5530,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       if (replaceImage) {
         URL.revokeObjectURL(replaceImage.previewUrl);
       }
+      clearReplacementReferences();
       setReplaceImage({ kind: 'image', file, previewUrl, fileName: file.name });
     } else {
       if (selectedMedia) {
@@ -5620,7 +5703,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const isImageToVideoWithPainting = reverseMode === 'image' && selectedMedia?.kind === 'image' && imageToVideoAddPainting && imageToVideoPainting;
     const shouldIsolateReverseTask = !!selectedMedia && (isReversePrompt || isReplaceMode);
     const mediaToSend: SelectedCreativeMedia | SelectedCreativeMedia[] | null = isReplaceMode
-      ? [selectedMedia!, replaceImage!]
+      ? [selectedMedia!, ...(pendingReverseSeedanceSyncRef.current?.referenceImages || [replaceImage!])]
       : isImageToVideoWithPainting
         ? [selectedMedia!, imageToVideoPainting!]
         : selectedMedia;
@@ -5687,8 +5770,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       }
     ]);
     setInput("");
-    setSelectedMedia(null);
-    setReplaceImage(null);
+    if (!isReplaceMode) { setSelectedMedia(null); setReplaceImage(null); }
     setIsLoading(true);
     setRequestError("");
     scrollAnalysisToBottom();
@@ -6046,7 +6128,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                   <span className="text-[10px] text-sky-600">点击上传 · 可选</span>
                                 </button>
                               )}
-                              <button type="button" disabled={!paintingImage || paintingDraftBusy} onClick={() => { setHistoryModalKind(`ornament-${kind}`); setShowHistoryModal(true); }} className="mt-2 inline-flex items-center gap-1 rounded-full border border-sky-100 px-2 py-1 text-[10px] font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50">
+                              <button type="button" disabled={!paintingImage || paintingDraftBusy} onClick={() => { setOrnamentHistoryTarget('painting'); setHistoryModalKind(`ornament-${kind}`); setShowHistoryModal(true); }} className="mt-2 inline-flex items-center gap-1 rounded-full border border-sky-100 px-2 py-1 text-[10px] font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50">
                                 <History className="size-3" />历史图片 <span className="text-slate-400">{ornamentImageHistory[kind].length}</span>
                               </button>
                               <input ref={inputRef} type="file" accept="image/*" disabled={paintingDraftBusy} className="hidden" onChange={event => void handleOrnamentReferenceChange(kind, event.target.files?.[0] ?? null)} />
@@ -7028,6 +7110,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
               {reverseMode === 'replace' && (
                 <div className="mt-3 space-y-3">
+                  <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-3">
+                    <div className="mb-2 text-xs font-bold text-slate-700">替换产品类型</div>
+                    <div className="flex flex-wrap gap-2">{(['hanging', 'sticker', 'ornament', 'generic'] as const).map(type => <button key={type} type="button" disabled={isLoading || replacementReferenceUploading} onClick={() => switchReplacementProduct(type)} className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold', replacementProductType === type ? 'border-indigo-500 bg-indigo-500 text-white' : 'border-slate-200 bg-white text-slate-600')}>{replacementProductLabel(type)}</button>)}</div>
+                    <p className="mt-2 text-[11px] leading-5 text-slate-500">使用同类产品视频换款，保留原镜头和动作；原动作不兼容时会提示重新选择视频。{replacementProductType === 'ornament' ? '摆件自动附带公共背面参考，主体与后撑杆保持固定连接。' : ''}</p>
+                  </div>
+
                   <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3">
                     {replaceImage ? (
                       <div className="space-y-3">
@@ -7084,6 +7172,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     </button>
                   )}
 
+                  {replacementProductType === 'ornament' && <div className="grid grid-cols-2 gap-2">
+                    {(['side', 'frame'] as const).map(kind => <div key={kind} className="rounded-xl border border-sky-100 bg-sky-50/50 p-2">
+                      <div className="text-xs font-bold text-slate-700">{kind === 'side' ? '侧面结构参考' : '边框细节参考'}（选传）</div>
+                      {replacementReferences[kind] && <img src={replacementReferences[kind]!.previewUrl} alt="辅助结构参考" className="mt-2 h-24 w-full object-contain" />}
+                      <label className="mt-2 inline-flex cursor-pointer rounded-full border border-sky-200 bg-white px-2 py-1 text-[10px] text-sky-700">{replacementReferences[kind] ? '更换图片' : '上传图片'}<input type="file" accept="image/*" disabled={!replaceImage || isLoading || replacementReferenceUploading} className="hidden" onChange={event => { void handleReplacementReferenceChange(kind, event.target.files?.[0] || null); event.target.value = ''; }} /></label>
+                      <button type="button" disabled={!replaceImage || isLoading || replacementReferenceUploading} onClick={() => { setOrnamentHistoryTarget('replacement'); setHistoryModalKind(`ornament-${kind}`); setShowHistoryModal(true); }} className="ml-1 text-[10px] font-semibold text-sky-700">历史图片</button>
+                      {replacementReferences[kind] && <button type="button" disabled={isLoading || replacementReferenceUploading} onClick={() => { URL.revokeObjectURL(replacementReferences[kind]!.previewUrl); setReplacementReferences(current => ({ ...current, [kind]: null })); }} className="ml-1 text-[10px] text-slate-500">移除</button>}
+                    </div>)}
+                  </div>}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <label className="text-[11px] font-bold text-slate-600">替换目标</label>
@@ -7099,17 +7196,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <span className="text-[10px] font-medium text-slate-400">常用：</span>
                         <button
                           type="button"
-                          onClick={() => setReplaceTarget('视频中的挂画')}
+                          onClick={() => setReplaceTarget(`视频中的${replacementElementLabel(replacementProductType)}`)}
                           className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-slate-500 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
                         >
-                          视频中的挂画
+                          {`视频中的${replacementElementLabel(replacementProductType)}`}
                         </button>
                         <button
                           type="button"
-                          onClick={() => setReplaceTarget('视频中的装饰画')}
+                          onClick={() => setReplaceTarget(`原视频中需要换款的${replacementElementLabel(replacementProductType)}`)}
                           className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-slate-500 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
                         >
-                          视频中的装饰画
+                          指定产品位置
                         </button>
                       </div>
                     </div>
@@ -7127,17 +7224,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <span className="text-[10px] font-medium text-slate-400">常用：</span>
                         <button
                           type="button"
-                          onClick={() => setReplaceWith('图片中的挂画')}
+                          onClick={() => setReplaceWith(`图片中的${replacementElementLabel(replacementProductType)}`)}
                           className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-slate-500 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
                         >
-                          图片中的挂画
+                          {`图片中的${replacementElementLabel(replacementProductType)}`}
                         </button>
                         <button
                           type="button"
-                          onClick={() => setReplaceWith('图片中的装饰画')}
+                          onClick={() => setReplaceWith(`参考图中的完整${replacementElementLabel(replacementProductType)}`)}
                           className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-slate-500 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
                         >
-                          图片中的装饰画
+                          参考图完整产品
                         </button>
                       </div>
                     </div>
@@ -7343,7 +7440,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     isLoading ||
                     (reverseMode === 'image' ? selectedMedia?.kind !== 'image' : selectedMedia?.kind !== 'video') ||
                     (reverseMode === 'image' && !imageToVideoDuration.trim()) ||
-                    (reverseMode === 'replace' && (!replaceImage || !replaceTarget.trim() || !replaceWith.trim()))
+                    (reverseMode === 'replace' && (replacementReferenceUploading || !replaceImage || !replaceTarget.trim() || !replaceWith.trim()))
                   }
                   className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
@@ -9161,7 +9258,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   <p className="mb-3 text-xs text-slate-500">这里只显示此前上传到{kind === 'side' ? '侧面结构' : '边框细节'}位置的图片。点击图片即可选用。</p>
                   {items.length === 0 ? <div className="py-12 text-center text-sm text-slate-400">暂无参考图记录，上传后会自动保存在这里。</div> : <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
                     {items.map(item => <div key={item.id} className="relative rounded-xl border border-slate-200 bg-white p-2">
-                      <button type="button" disabled={paintingDraftBusy} onClick={() => void selectOrnamentReferenceHistory(kind, item.id)} className="w-full text-left disabled:opacity-50">
+                      <button type="button" disabled={ornamentHistoryTarget === 'replacement' ? isLoading || replacementReferenceUploading : paintingDraftBusy} onClick={() => void selectOrnamentReferenceHistory(kind, item.id)} className="w-full text-left disabled:opacity-50">
                         <HistoryImageThumbnail src={item.previewUrl} name={item.name} />
                         <div className="mt-2 truncate text-[11px] font-semibold text-slate-600">{item.name}</div>
                         <div className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</div>

@@ -1,3 +1,4 @@
+import { replacementProductFromPrompt, validateReplacementPrompt, replacementStructureRule } from './product-replacement.mjs';
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
 import { createReadStream, createWriteStream, existsSync } from 'node:fs';
@@ -19565,6 +19566,10 @@ async function handleSeedanceCreateTask(req, res) {
     const isMiniMaxH3 = model === MINIMAX_H3_MODEL;
     const isWan3 = model === WAN3_VIDEO_MODEL;
     const manualDirection = Number(body?.directionNumber) || 0;
+    const replacementType = replacementProductFromPrompt(body?.prompt);
+    const replacementIssues = validateReplacementPrompt(body?.prompt, replacementType);
+    if (replacementIssues.length) { sendJson(res, 400, { error: `元素替换已拦截：${replacementIssues.join('；')}` }); return; }
+
     const declaredType = readValue(body?.productType);
     const rawPrompt = String(body?.prompt || '');
     const promptTypes = [
@@ -19590,7 +19595,7 @@ async function handleSeedanceCreateTask(req, res) {
     const stickerProfile = stickerProfileFromPrompt(body?.prompt) || (isStickerProduct(body) ? normalizeStickerProfile() : null);
     // 挂画批量/方向任务才允许注入挂画专用收尾和运镜规则。直接反推、元素替换、
     // 图片生视频等普通任务即使提示词中条件性提到“挂画”，也不能被改写成产品广告片。
-    const isPaintingCreativeTask = !ornamentProfile && !stickerProfile && Boolean(
+    const isPaintingCreativeTask = !replacementType && !ornamentProfile && !stickerProfile && Boolean(
       manualDirection > 0
       || readValue(body?.imageHash)
       || readValue(body?.productType)
@@ -19615,6 +19620,7 @@ async function handleSeedanceCreateTask(req, res) {
       prompt = ensureWan3CameraMotionLock(prompt);
       if (stickerProfile) prompt = ensureWan3StickerCoplanarLock(prompt);
     }
+    if (replacementType && replacementType !== 'generic') prompt += `\n${replacementStructureRule(replacementType)}`;
     const modelLabel = isMiniMaxH3 ? 'MiniMax H3' : isWan3 ? 'Wan3.0 Video' : isSeedance25 ? 'Seedance 2.5' : isSeedanceMini ? 'Seedance 2.0 mini' : isSeedanceFast ? 'Seedance 2.0 Fast' : 'Seedance 2.0';
     const resolvedApiKey = isMiniMaxH3
       ? readValue(SERVER_CONFIG.minimaxApiKey)
@@ -19625,7 +19631,8 @@ async function handleSeedanceCreateTask(req, res) {
     const generateAudio = !isWan3 && body?.generateAudio !== false;
     const watermark = body?.watermark === true;
     const uploadedFiles = Array.isArray(body?.files) ? body.files.slice() : [];
-    if (ornamentProfile && !isVideoEditTask) {
+    if ((ornamentProfile || replacementType === 'ornament') && !isVideoEditTask) {
+      for (let index = uploadedFiles.length - 1; index >= 0; index--) if (uploadedFiles[index].name === 'ornament-back.jpg') uploadedFiles.splice(index, 1);
       uploadedFiles.push(await buildPaintingImageFileForSeedance(ORNAMENT_BACK_REFERENCE_PATH, 'ornament-back'));
       prompt += '\n【公共背面参考职责】最后一张参考图是全系列公共背面，仅决定铝合金框、木质背板和连接在背部下边中央的单根细金属后撑杆。图1是本次正面主图，决定图案、题字和颜色；此前其余上传图若存在，仅作为侧面结构与铝合金边框细节辅助，不替换正面图案；不把木背板画到正面、不把题字画到背面、不复制背景与桌面。';
     }
@@ -19968,8 +19975,8 @@ async function handleSeedanceCreateTask(req, res) {
       elapsedMs: Date.now() - startedAt
     });
     const isBodyParseError = error?.message === '请求体不是合法 JSON';
-    sendJson(res, isBodyParseError ? 400 : 500, {
-      error: isBodyParseError ? error.message : translateUpstreamError(error?.message, '视频生成任务创建失败，请稍后重试。'),
+    sendJson(res, isBodyParseError ? 400 : Number(error?.statusCode) || 500, {
+      error: isBodyParseError || error?.statusCode === 400 ? error.message : translateUpstreamError(error?.message, '视频生成任务创建失败，请稍后重试。'),
       debug: { originalMessage: error?.message || '' }
     });
   }
@@ -21577,6 +21584,12 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/ornament/back-reference') {
+    const bytes = await readFile(ORNAMENT_BACK_REFERENCE_PATH);
+    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' });
+    res.end(bytes);
+    return;
+  }
   if (req.method === 'POST' && url.pathname === '/api/ornament/analyze') {
     await handlePaintingAnalyze(req, res, 'ornament');
     return;
