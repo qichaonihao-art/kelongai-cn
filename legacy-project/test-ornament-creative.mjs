@@ -9,10 +9,10 @@ import { productUsageHash } from './sticker-creative.mjs';
 process.env.RUNTIME_STATE_DIR = mkdtempSync(join(tmpdir(), 'kelong-ornament-test-'));
 process.env.KELONG_SKIP_LISTEN = '1';
 for (const key of ['ARK_API_KEY', 'MINIMAX_API_KEY', 'SEEDANCE_API_KEY', 'DASHSCOPE_API_KEY']) process.env[key] = 'test-only';
-let reply = '{}'; const payloads = [];
+let reply = '{}'; const replies = []; const payloads = [];
 globalThis.fetch = async (url, init = {}) => {
   const payload = JSON.parse(String(init.body || '{}')); payloads.push({ url: String(url), payload });
-  if (String(url).endsWith('/responses')) return Response.json({ output: [{ type: 'message', content: [{ type: 'output_text', text: reply }] }] });
+  if (String(url).endsWith('/responses')) return Response.json({ output: [{ type: 'message', content: [{ type: 'output_text', text: replies.length ? replies.shift() : reply }] }] });
   return Response.json({ id: 'stub-video', task_id: 'stub-video', output: { task_id: 'stub-video', task_status: 'PENDING' }, base_resp: { status_code: 0 } });
 };
 const server = await import('./server.mjs');
@@ -79,6 +79,21 @@ for (let batch = 0; batch < 4; batch++) {
  assert.deepEqual(result.ideas.map(i => i.directionNumber), Array.from({ length: 10 }, (_, i) => batch * 10 + i + 1));
  assert.ok(result.ideas.every(i => i.productType === 'ornament'));
 }
+assert.equal(inspectOrnamentPromptIssues('视频画布比例9:16，摄影机固定在三脚架，摆台稳定站立。').length, 0);
+assert.equal(inspectOrnamentPromptIssues('正面没有真实浮雕，无立体佛像。').length, 0);
+assert.ok(inspectOrnamentPromptIssues('摆台正面使用画布。').length);
+assert.ok(inspectOrnamentPromptIssues('摆台使用三脚架。').length);
+const batchTwo = ORNAMENT_FRAMEWORKS.slice(10, 20).map(f => ({ title: f.title, summary: f.action }));
+const brokenBatch = batchTwo.map((idea, index) => index === 2 ? { ...idea, summary: '摆台使用树脂摆件结构。' } : idea);
+replies.push(JSON.stringify(brokenBatch), JSON.stringify(batchTwo));
+const beforeRepair = payloads.length;
+const repaired = await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch: 1 }, 'test', 'repair');
+assert.equal(repaired.ideas.length, 10);
+assert.equal(payloads.length - beforeRepair, 2);
+assert.match(JSON.stringify(payloads.at(-1).payload), /方向13/);
+assert.match(JSON.stringify(payloads.at(-1).payload), /树脂摆件/);
+replies.push(JSON.stringify(brokenBatch), JSON.stringify(brokenBatch));
+await assert.rejects(server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch: 1 }, 'test', 'still-bad'), /修正后仍未通过.*方向13/s);
 const forbidden = /【挂画生成尺寸补偿锁定】|【挂画真实尺寸强制锁定】|【卷轴打开方式固定要求】|【千问 Wan3.0 专用·(?:静态挂画|安装|展开)/;
 for (const f of ORNAMENT_FRAMEWORKS) {
  reply = `创意内容：${f.action}\n总时长：6秒`;

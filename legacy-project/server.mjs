@@ -16786,15 +16786,27 @@ async function generateOrnamentIdeasCore(body, apiKey) {
   const batch = ((Math.trunc(Number(body.batch) || 0) % 4) + 4) % 4;
   const request = buildOrnamentIdeasRequest(profile, plan, batch, Number(body.variationRound) || 0, resolvePaintingStyleProfile(plan.stylePreset));
   const call = (text) => callDoubaoArkText({ apiKey, model: DEFAULT_DOUBAO_MULTIMODAL_MODEL, content: [{ type: 'input_text', text }], timeoutMs: 75 * 1000 });
-  const parsed = await parsePaintingIdeasWithJsonRetry(await call(request), () => call(`${request}\n只输出恰好10项完整合法JSON数组。`));
-  if (parsed.ideas.length !== 10) throw new Error('摆件方案必须完整生成10条，请重试');
-  return { batch, totalBatches: 4, ideas: parsed.ideas.map((idea, index) => {
-    const f = ORNAMENT_FRAMEWORKS[batch * 10 + index];
-    const issues = inspectOrnamentPromptIssues(idea.summary, f.directionNumber);
-    if (issues.length) throw new Error(`摆件方案结构错误：${issues.join('；')}`);
-    return { ...idea, id: `ornament-${f.directionNumber}`, productType: 'ornament', directionNumber: f.directionNumber, title: f.title,
-      ...ornamentDuration(plan.durationMin, plan.durationMax), summary: `【固定一体·${f.title}】${f.action}\n${idea.summary}` };
-  }) };
+  let failures = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const correction = failures.length
+      ? `\n上一版方案有以下错误，请完整重写10项，保留原方向和动作，仅修正错误描述：\n${failures.join('\n')}\n视频画布与摄影器材不是产品结构；否定约束请用明确的“禁止”表述。`
+      : '';
+    const parsed = await parsePaintingIdeasWithJsonRetry(await call(request + correction), () => call(`${request}${correction}\n只输出恰好10项完整合法JSON数组。`));
+    failures = parsed.ideas.length === 10 ? [] : ['方案必须完整生成10条'];
+    parsed.ideas.forEach((idea, index) => {
+      const f = ORNAMENT_FRAMEWORKS[batch * 10 + index];
+      if (!f) return;
+      const issues = inspectOrnamentPromptIssues(idea.summary, f.directionNumber);
+      if (issues.length) failures.push(`方向${f.directionNumber}「${f.title}」：${issues.join('；')}。原描述：${String(idea.summary || '').slice(0, 240)}`);
+    });
+    if (failures.length) continue;
+    return { batch, totalBatches: 4, ideas: parsed.ideas.map((idea, index) => {
+      const f = ORNAMENT_FRAMEWORKS[batch * 10 + index];
+      return { ...idea, id: `ornament-${f.directionNumber}`, productType: 'ornament', directionNumber: f.directionNumber, title: f.title,
+        ...ornamentDuration(plan.durationMin, plan.durationMax), summary: `【固定一体·${f.title}】${f.action}\n${idea.summary}` };
+    }) };
+  }
+  throw new Error(`摆件方案修正后仍未通过结构校验：${failures.join('；')}`);
 }
 
 async function generateOrnamentIdeaPromptCore(apiKey, profile, idea, context) {

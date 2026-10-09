@@ -76,7 +76,9 @@ export function inspectOrnamentPromptIssues(prompt, direction = 0) {
   const text = String(prompt || ''); const issues = [];
   // 只检查肯定动作句，避免把物理锁定中的否定约束当成动作。
   const creativeBody = text.includes('【摆件创意正文】') ? text.split('【摆件创意正文】').at(-1) : text;
-  for (const sentence of creativeBody.split(/[。；;，,\n]/).filter(s => !/(禁止|不得|不能|不允许|严禁|不拆|不取|不揭|不上|不卷|不装|不活|不复制|不抓|不变成活|不是|不变成|不生成|不编造)/.test(s))) {
+  for (const rawSentence of creativeBody.split(/[。；;，,\n]/).filter(s => !/(禁止|不得|不能|不允许|严禁|不拆|不取|不揭|不上|不卷|不装|不活|不复制|不抓|不变成活|不是|不变成|不生成|不编造)/.test(s))) {
+    // 视频画布与摄影器材不属于摆件本体，不能按产品材质/支架误判。
+    const sentence = rawSentence.replace(/(?:并不是|并非|没有|无)(?:真实浮雕|立体佛像|立体雕塑)/g, '平面图案').replace(/(?:视频|输出|成片)画布(?:比例)?|画布(?:比例|尺寸|宽高比)/g, '').replace(/(?:摄影机|摄像机|相机)(?:固定在|放在|置于|使用|采用|的)?三脚架|三脚架(?:上的|上的?摄影机|上的?相机|固定机位)/g, '摄影器材');
     if (/(取下|拆下|拆卸|分离|分开|拔出).{0,18}(主体|盘面|摆台|支架|托架)|(?:主体|盘面|支架).{0,18}(取下|拆下|拆卸|分离|分开)|(?:插入|装入|安装).{0,12}(支架|托架)/.test(sentence)) issues.push('不得拆分或装配固定一体摆台与支架');
     if (/(盘面|圆盘|装饰盘).{0,12}(放回|放到|放在|装到).{0,8}(支架|托架)/.test(sentence)) issues.push('不得将独立盘面放到托架上');
     if (/(揭膜|背胶|贴墙|卷轴展开|木条压杆|挂绳|挂钩)/.test(sentence)) issues.push('摆件混入挂画或贴画动作');
