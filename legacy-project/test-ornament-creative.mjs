@@ -83,17 +83,26 @@ assert.equal(inspectOrnamentPromptIssues('视频画布比例9:16，摄影机固�
 assert.equal(inspectOrnamentPromptIssues('正面没有真实浮雕，无立体佛像。').length, 0);
 assert.ok(inspectOrnamentPromptIssues('摆台正面使用画布。').length);
 assert.ok(inspectOrnamentPromptIssues('摆台使用三脚架。').length);
-const batchTwo = ORNAMENT_FRAMEWORKS.slice(10, 20).map(f => ({ title: f.title, summary: f.action }));
-const brokenBatch = batchTwo.map((idea, index) => index === 2 ? { ...idea, summary: '摆台使用树脂摆件结构。' } : idea);
-replies.push(JSON.stringify(brokenBatch), JSON.stringify(batchTwo));
-const beforeRepair = payloads.length;
-const repaired = await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch: 1 }, 'test', 'repair');
-assert.equal(repaired.ideas.length, 10);
-assert.equal(payloads.length - beforeRepair, 2);
-assert.match(JSON.stringify(payloads.at(-1).payload), /方向13/);
-assert.match(JSON.stringify(payloads.at(-1).payload), /树脂摆件/);
-replies.push(JSON.stringify(brokenBatch), JSON.stringify(brokenBatch));
-await assert.rejects(server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch: 1 }, 'test', 'still-bad'), /修正后仍未通过.*方向13/s);
+const actualDirection12 = '初始状态：摆台按固定结构稳定立于暖棕实木书桌一侧台面，金色四角斜接铝合金边框、木质背板、固定细金属后撑杆结构完整，正面为平面吉祥图案，无任何立体浮雕、独立佛像或可动金币元素，支撑结构接触台面呈轻微后倾的稳定状态；书桌另一侧铺素白宣纸、搁狼毫毛笔，搭配竹绿小文房水盂，整体为雅致书房场景。动作：身着月白棉麻盘扣上衣的人物在书桌另一侧完成书写后，将毛笔轻搁于笔山，抬眼望向摆台静静欣赏；过程中人物不触碰摆台，纸张、毛笔始终不越过摆台前方区域，禁止摆台混入实木/塑料/印刷假边框、金属/';
+assert.deepEqual(inspectOrnamentPromptIssues(actualDirection12, 12), []);
+for (const scene of ['书桌另一侧铺素白宣纸', '人物在宣纸上写字', '宣纸放在摆台旁边', '旁侧放一张画布', '身穿绢布上衣']) assert.deepEqual(inspectOrnamentPromptIssues(scene, 12), [], scene);
+for (const material of ['正面采用宣纸', '摆台由画布制成', '绢布制成的摆台', '产品正面覆盖一层PVC柔性薄膜']) assert.ok(inspectOrnamentPromptIssues(material).length, material);
+const beforePreparation = payloads.length;
+for (const variationRound of [0, 1, 2]) {
+ const all = [];
+ for (let batch = 0; batch < 4; batch++) {
+  const result = await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan: { ...plan, scene: '书桌另一侧铺素白宣纸', character: '穿绢布衣服的人物' }, batch, variationRound }, 'test', 'fixed-preparation');
+  assert.equal(result.ideas.length, 10);
+  all.push(...result.ideas);
+  for (const idea of result.ideas) assert.equal(inspectOrnamentPromptIssues(idea.summary, idea.directionNumber).length, 0);
+ }
+ assert.deepEqual(all.map(idea => idea.directionNumber), Array.from({ length: 40 }, (_, index) => index + 1));
+}
+assert.equal(payloads.length, beforePreparation, 'all four preparation batches load fixed frameworks without model calls');
+const safeVideoRequest = buildOrnamentVideoRequest(profile, { directionNumber: 12, summary: '摆台使用树脂，取下主体。' }, { ...plan, scene: '书桌另一侧铺素白宣纸' }, {});
+assert.doesNotMatch(safeVideoRequest, /摆台使用树脂，取下主体/);
+assert.match(safeVideoRequest, /书桌另一侧铺素白宣纸/);
+assert.match(safeVideoRequest, /放下笔后抬眼欣赏/);
 const forbidden = /【挂画生成尺寸补偿锁定】|【挂画真实尺寸强制锁定】|【卷轴打开方式固定要求】|【千问 Wan3.0 专用·(?:静态挂画|安装|展开)/;
 for (const f of ORNAMENT_FRAMEWORKS) {
  reply = `创意内容：${f.action}\n总时长：6秒`;

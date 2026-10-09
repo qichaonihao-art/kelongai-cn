@@ -4234,7 +4234,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       variationRound,
       creativeSessionId: paintingCreativeSessionId,
       profile: {
-        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-v1' : undefined,
+        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-fixed-ideas-v2' : undefined,
         productType: paintingProductType,
         widthCm: paintingProfile?.widthCm,
         heightCm: paintingProfile?.heightCm,
@@ -5911,36 +5911,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
               {reverseMode === 'painting' ? (
                 <div className="space-y-3">
-                  <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-3">
-                    <div className="flex items-center gap-2 text-sm font-black text-slate-800">
-                      <Sparkles className="size-4 text-rose-500" />
-                      AI 生成素材
-                    </div>
-                    <ol aria-label="素材创作流程" className="mt-3 grid grid-cols-3 gap-2">
-                      {[
-                        { label: '上传产品图', done: !!paintingImage, current: !paintingImage },
-                        { label: '分析产品', done: !!paintingProfile, current: !!paintingImage && !paintingProfile },
-                        { label: '选择生成方式', done: false, current: !!paintingProfile },
-                      ].map((step, index) => (
-                        <li key={step.label} aria-current={step.current ? 'step' : undefined}
-                          className={cn('flex items-center gap-1.5 rounded-xl px-2 py-2 text-[11px] font-bold', step.current ? 'bg-white text-rose-700 shadow-sm' : step.done ? 'text-emerald-700' : 'text-slate-400')}>
-                          <span className={cn('flex size-5 shrink-0 items-center justify-center rounded-full text-[10px]', step.done ? 'bg-emerald-100' : step.current ? 'bg-rose-100' : 'bg-slate-100')}>
-                            {step.done ? <Check className="size-3" /> : index + 1}
-                          </span>
-                          {step.label}
-                        </li>
-                      ))}
-                    </ol>
-                    <p className="mt-2 text-[11px] leading-5 text-slate-500">
-                      {paintingProfile ? '先生成创意方案，挑选方向逐条制作；也可直接批量生成，在确认窗口选择数量和保存位置。' : paintingImage ? '图片已就绪，点击“分析产品”识别外观，再设置素材风格。' : '上传清晰的产品正面图，选择产品类型后开始分析。'}
-                    </p>
-                    {(paintingLoading !== 'idle' || paintingHistoryRestoring || paintingBatchPreparing) && (
-                      <div role="status" className="mt-2 flex items-center gap-2 text-xs font-semibold text-rose-700">
+                  {(paintingLoading !== 'idle' || paintingHistoryRestoring || paintingBatchPreparing) && (
+                      <div role="status" className="flex items-center gap-2 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
                         <Loader2 className="size-3.5 shrink-0 animate-spin" />
                         {paintingHistoryRestoring ? '正在恢复历史素材…' : paintingBatchPreparing ? (paintingBatchPrepareStage || '正在准备批量创意方案…') : paintingLoading === 'analyze' ? '正在识别产品外观和材质…' : paintingLoading === 'ideas' ? '正在生成创意方案…' : '正在生成所选方案的完整提示词…'}
                       </div>
                     )}
-                  </div>
                   <div className="rounded-2xl border border-slate-200 bg-white p-3">
                     <div className="mb-2 text-xs font-black text-slate-800">产品类型</div>
                     <div className="flex gap-2">

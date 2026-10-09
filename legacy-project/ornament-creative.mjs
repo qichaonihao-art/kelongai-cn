@@ -84,7 +84,12 @@ export function inspectOrnamentPromptIssues(prompt, direction = 0) {
     if (/(揭膜|背胶|贴墙|卷轴展开|木条压杆|挂绳|挂钩)/.test(sentence)) issues.push('摆件混入挂画或贴画动作');
     if (/(实木|木质|木制|塑料|树脂|PVC)(?:材质|制|质)?的?\s*(边框|外框)|(?:边框|外框)(?:材质)?(?:为|是|采用|使用|由|：|:)?\s*(实木|木质|木制|塑料|树脂|PVC)/.test(sentence)) issues.push('摆台边框必须为铝合金');
     if (/(金属|铝合金|玻璃|PVC|软膜)(?:材质|制|质)?的?\s*(背板|背面板)|(?:背板|背面板)(?:材质)?(?:为|是|采用|使用|由|：|:)?\s*(金属|铝合金|玻璃|PVC|软膜)/.test(sentence)) issues.push('摆台背板必须为木板');
-    if (/(真实浮雕|立体雕塑|立体佛像|树脂摆件|陶瓷摆件|独立底座|三脚架|双脚托架|圆形框体|圆角边框|宣纸|绢布|画布|PVC柔性|压条|挂轴|轴头|揭背膜|安装上墙)/.test(sentence)) issues.push('摆台混入错误结构、材质或立体主体');
+    const paperMaterial = '(?:宣纸|绢布|画布|PVC柔性(?:薄膜|膜)?)';
+    const productSurface = '(?:摆台|摆件|产品|主体|正面|面板|覆层)';
+    // 只拦截“产品采用宣纸”等材质归属，不拦截书桌上的宣纸、服装绢布等道具。
+    const wrongSurfaceMaterial = new RegExp(`${productSurface}(?:的)?(?:材质|材料|表面)?(?:为|是|采用|使用|覆盖|覆有|由|用|以|制作成|制成|做成|贴上|裱上|：|:)\\s*(?:一层|一张|柔性|印刷)?${paperMaterial}`).test(sentence)
+      || new RegExp(`${paperMaterial}(?:材质|制成|制作|做成|印刷)?(?:的)?${productSurface}`).test(sentence);
+    if (wrongSurfaceMaterial || /(真实浮雕|立体雕塑|立体佛像|树脂摆件|陶瓷摆件|独立底座|三脚架|双脚托架|圆形框体|圆角边框|压条|挂轴|轴头|揭背膜|安装上墙)/.test(sentence)) issues.push('摆台混入错误结构、材质或立体主体');
     if (/(正面|表面|覆层)(?:材质)?(?:为|是|覆盖|采用|使用|由|：|:)\s*(玻璃|亚克力|树脂)/.test(sentence)) issues.push('正面覆层材质尚未确认，不得编造');
     if (/(拔出|折叠|伸缩|收起|展开|打开|拆卸).{0,10}(后撑杆|支撑杆)|(?:后撑杆|支撑杆).{0,10}(拔出|折叠|伸缩|收起|展开|打开|拆卸)/.test(sentence)) issues.push('后撑杆须保持连接和使用角度');
     if (/(马|花|图案).{0,12}(奔跑|飞出|活过来|变成活)/.test(sentence)) issues.push('产品图案不能活化');
@@ -116,5 +121,5 @@ export function buildOrnamentIdeasRequest(profile, plan, batch, variationRound, 
 }
 export function buildOrnamentVideoRequest(profile, idea, context, style) {
   const f = ornamentFramework(idea.directionNumber); const range = ornamentDuration(idea.durationMin || context.durationMin, idea.durationMax || context.durationMax);
-  return `输出可直接生成视频的中文完整提示词。${ornamentPhysicalRules(profile, f.directionNumber)}\n创意方向：${f.title}；摘要：${idea.summary || f.action}\n用户计划：${JSON.stringify(context)}\n统一风格：${JSON.stringify(style)}\n风格中的木材、石材、织物和配色仅用于场景与服装，不能改变产品公共结构与材质。必须遵守固定动作框架，一镜到底，只完成一个动作。分时间段写明初始状态、手的承托与撤离顺序、摄影机短路径和自然收束。${f.directionNumber === ORNAMENT_RED_CLOTH_DIRECTION ? '必须有一只手抓红布上角揭布，可以仅手入镜、不露脸；结尾留出完整展示产品的时间。' : '无人镜头不添加手。'}严禁采纳摘要或用户计划中的拆架、盘面分离动作。时长取${range.durationMin}至${range.durationMax}之间整数；以“总时长：X秒”结尾。`;
+  return `输出可直接生成视频的中文完整提示词。${ornamentPhysicalRules(profile, f.directionNumber)}\n创意方向：${f.title}；摘要：${f.action}\n用户计划：${JSON.stringify(context)}\n统一风格：${JSON.stringify(style)}\n风格中的木材、石材、织物和配色仅用于场景与服装，不能改变产品公共结构与材质。必须遵守固定动作框架，一镜到底，只完成一个动作。分时间段写明初始状态、手的承托与撤离顺序、摄影机短路径和自然收束。${f.directionNumber === ORNAMENT_RED_CLOTH_DIRECTION ? '必须有一只手抓红布上角揭布，可以仅手入镜、不露脸；结尾留出完整展示产品的时间。' : '无人镜头不添加手。'}严禁采纳摘要或用户计划中的拆架、盘面分离动作。时长取${range.durationMin}至${range.durationMax}之间整数；以“总时长：X秒”结尾。`;
 }
