@@ -1,4 +1,4 @@
-import { validateReplacementPrompt, replacementTargetPrompt } from './product-replacement.mjs';
+import { validateReplacementPrompt } from './product-replacement.mjs';
 // All upstream requests are mocked; never creates paid video tasks.
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
@@ -220,18 +220,17 @@ for (const type of ['hanging', 'sticker', 'ornament']) {
 // 用户实际失败句：旧木框属于被替换的原片目标，不属于新铝合金摆台。
 const sourceToAluminum = '将原视频中的木质边框笑纳百财大肚佛摆台替换为金色矩形铝合金边框、四角斜接、木质背板、背部下边中央连接单根细金属后撑杆的固定一体摆台';
 assert.deepEqual(validateReplacementPrompt(sourceToAluminum, 'ornament'), []);
-assert.ok(replacementTargetPrompt(sourceToAluminum).includes('金色矩形铝合金边框'));
 const actualReplacement = res();
 await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', duration: 7, prompt: `【产品元素替换：ornament】\n复刻目标与允许变化：${sourceToAluminum}；人物整体搬放，红布完全盖住摆台，手抓红布上角向上揭开，展示正面平面图案。` }), actualReplacement);
 assert.equal(actualReplacement.status, 200, actualReplacement.body);
-for (const badTarget of [
+for (const descriptivePrompt of [
  sourceToAluminum.replace('金色矩形铝合金边框', '木质边框'),
  '将原视频中的木质边框摆台替换为铝合金边框摆台，替换后的摆台采用塑料边框。',
  '将原视频中的铝合金边框摆台替换为木质边框摆台。',
  `${sourceToAluminum}，取下主体再安装支架。`,
  '原视频里的木质边框摆台保持不变。',
-]) assert.ok(validateReplacementPrompt(badTarget, 'ornament').length, badTarget);
-assert.ok(validateReplacementPrompt('将原视频中的木质边框摆台替换为贴画，贴画配有实木边框。', 'sticker').length);
+]) assert.deepEqual(validateReplacementPrompt(descriptivePrompt, 'ornament'), [], '正文关键词不再阻止元素替换提交');
+assert.deepEqual(validateReplacementPrompt('将原视频中的木质边框摆台替换为贴画，贴画配有实木边框。', 'sticker'), []);
 assert.deepEqual(validateReplacementPrompt('将原视频中的带挂绳挂画替换为铝合金边框固定一体摆台。', 'ornament'), []);
 
 // 模型漏写标记或改变括号、加粗格式时，前后端采用同一口径。
@@ -242,7 +241,23 @@ for (const type of ['hanging', 'sticker', 'ornament']) {
   assert.equal(response.status, 200, response.body);
  }
 }
-for (const prompt of ['【产品元素替换：ornament】【替换动作兼容性：不兼容】卷轴展开', '【产品元素替换：ornament】【替换动作兼容性：未确认】目标不可见', '【产品元素替换：ornament】\n**替换动作兼容性: 不兼容** 卷轴展开', '【产品元素替换：ornament】\n原视频动作与目标产品不兼容，不能完成替换。', '【产品元素替换：ornament】取下主体再安装支架', '【产品元素替换：ornament】【替换动作兼容性：兼容】取下主体再安装支架', '【产品元素替换：sticker】【替换动作兼容性：兼容】贴画配有实木边框', '【产品元素替换：hanging】【产品元素替换：ornament】【替换动作兼容性：兼容】']) {
+// 复刻场景中其他物件会命中宽泛词表，提交不可因此被挡；结构锁与参考图仍保留。
+for (const [type, body] of [
+ ['ornament', '固定一体摆台在桌上，背景博古架上摆放陶瓷摆件和树脂摆件，旁边有带独立底座的台灯。'],
+ ['ornament', '摆台正面绘制立体佛像的平面图案，手揭开红布，边框呈金色。'],
+ ['ornament', '摆台正面图案为红底笑纳百福钱袋子大肚弥勒平面图案，所有立体光影均为平面印刷效果，无真实立体雕塑结构，摆台主体与后撑杆固定为一体，不可拆装、不可折叠，非挂画墙贴款式，正面覆层为中性平面，不指定玻璃、树脂或亚克力材质；7-8秒人物将摆台平稳放在身前桌面上，摆台以自带的后撑杆支撑保持轻微后倾状态。'],
+ ['ornament', '原片木质边框摆台换款，金属背板和树脂覆层只属于背景展示架。'],
+ ['sticker', '背景墙上有实木边框贴画样片，前景展示替换后的PVC平面产品。'],
+]) {
+ const response = res();
+ await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', duration: 7, prompt: `【产品元素替换：${type}】\n${body}` }), response);
+ assert.equal(response.status, 200, response.body);
+ const sent = JSON.stringify(payloads.at(-1).payload);
+ if (type === 'ornament') { assert.match(sent, /木质背板/); assert.match(sent, /data:image\/jpeg;base64/); }
+ if (type === 'sticker') assert.match(sent, /PVC柔性平面印刷膜/);
+}
+
+for (const prompt of ['【产品元素替换：ornament】【替换动作兼容性：不兼容】卷轴展开', '【产品元素替换：ornament】【替换动作兼容性：未确认】目标不可见', '【产品元素替换：ornament】\n**替换动作兼容性: 不兼容** 卷轴展开', '【产品元素替换：ornament】\n原视频动作与目标产品不兼容，不能完成替换。', '【产品元素替换：hanging】【产品元素替换：ornament】【替换动作兼容性：兼容】', '【产品元素替换：ornament】【固定一体摆件物理锁定】框架方向：29']) {
  const before = payloads.length; const response = res();
  await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', prompt }), response);
  assert.equal(response.status, 400, response.body); assert.equal(payloads.length, before);
