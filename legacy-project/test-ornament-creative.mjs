@@ -127,12 +127,16 @@ for (const [handler, body] of [[server.handlePaintingAnalyze, { productType: 'or
 }
 const prompt = ensureOrnamentPrompt('创意内容：双手整体落台，站稳后撤手。\n总时长：6秒', profile, 1);
 for (const model of ['doubao-seedance-2-0-mini-260615', 'wan3.0-video', 'MiniMax-H3']) {
- const response = res(); await server.handleSeedanceCreateTask(req({ model, prompt, productType: 'ornament', directionNumber: 1, duration: 6, imageHash: 'manual-ornament-test', resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: false }), response);
- assert.equal(response.status, 200, response.body); assert.doesNotMatch(JSON.stringify(payloads.at(-1)), forbidden);
+ const response = res(); await server.handleSeedanceCreateTask(req({ model, prompt, productType: 'ornament', directionNumber: 1, duration: 6, imageHash: 'manual-ornament-test', resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: true }), response);
+ assert.equal(response.status, 200, response.body);
+ if (model === 'wan3.0-video') assert.equal(payloads.at(-1).payload.parameters.audio, false);
+ if (model.startsWith('doubao')) assert.equal(payloads.at(-1).payload.generate_audio, true); assert.doesNotMatch(JSON.stringify(payloads.at(-1)), forbidden);
  assert.ok(JSON.stringify(payloads.at(-1).payload).includes('data:image/jpeg;base64,'));
- await server.submitSeedanceTaskForBatchTask({ directionNumber: 30, prompt, duration: 6 }, { model, profile, imagePath, resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: false });
+ await server.submitSeedanceTaskForBatchTask({ directionNumber: 30, prompt, duration: 6 }, { model, profile, imagePath, resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: true });
  assert.doesNotMatch(JSON.stringify(payloads.at(-1)), forbidden);
  const sent = payloads.at(-1).payload;
+ if (model === 'wan3.0-video') assert.equal(sent.parameters.audio, false);
+ if (model.startsWith('doubao')) assert.equal(sent.generate_audio, true);
  assert.equal(model === 'wan3.0-video' ? sent.input.media.length : sent.content.filter(item => item.type === 'image_url').length, 2);
 }
 assert.deepEqual(server.dbGetPaintingUsedDirections('manual-ornament-test', 0, 'ornament'), [1]);

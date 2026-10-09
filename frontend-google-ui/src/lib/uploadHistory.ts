@@ -10,9 +10,12 @@ const MAX_HISTORY_BY_KIND: Record<UploadHistoryItem['kind'], number> = {
   audio: 100,
 };
 
+export type UploadHistoryScope = 'general' | 'ornament-side' | 'ornament-frame';
+
 export interface UploadHistoryItem {
   id: number;
   kind: 'image' | 'video' | 'audio';
+  scope?: UploadHistoryScope;
   name: string;
   type: string;
   size: number;
@@ -23,6 +26,7 @@ export interface UploadHistoryItem {
 export interface UploadHistorySummaryItem {
   id: number;
   kind: 'image' | 'video' | 'audio';
+  scope?: UploadHistoryScope;
   name: string;
   type: string;
   size: number;
@@ -183,8 +187,8 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
-function isSameUploadHistoryFile(item: UploadHistorySummaryItem, file: File, kind: UploadHistoryItem['kind']) {
-  return item.kind === kind && item.name === file.name && item.size === file.size && item.type === file.type;
+function isSameUploadHistoryFile(item: UploadHistorySummaryItem, file: File, kind: UploadHistoryItem['kind'], scope: UploadHistoryScope) {
+  return (item.scope || 'general') === scope && item.kind === kind && item.name === file.name && item.size === file.size && item.type === file.type;
 }
 
 function filterRetainedHistoryItems<T extends { kind: UploadHistoryItem['kind']; timestamp: number }>(items: T[], kind?: UploadHistoryItem['kind']): T[] {
@@ -213,7 +217,7 @@ function filterRetainedHistoryItems<T extends { kind: UploadHistoryItem['kind'];
     .sort((a, b) => b.timestamp - a.timestamp);
 }
 
-export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'audio'): Promise<number> {
+export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'audio', scope: UploadHistoryScope = 'general'): Promise<number> {
   const mediaMetadata = kind === 'video'
     ? await createVideoMetadata(file)
     : kind === 'image'
@@ -232,17 +236,14 @@ export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'a
   const store = transaction.objectStore(STORE_NAME);
   const metaStore = transaction.objectStore(META_STORE_NAME);
 
-  const existing = all.find((item) => isSameUploadHistoryFile(item, file, kind));
-  if (existing) {
-    store.delete(existing.id);
-    metaStore.delete(existing.id);
-  }
+  const existing = all.find((item) => isSameUploadHistoryFile(item, file, kind, scope));
+  // 重选同一参考图保留ID，避免已保存的创作历史引用失效。
 
   const now = Date.now();
   const oldestAllowed = now - HISTORY_RETENTION_MS;
   const maxCount = MAX_HISTORY_BY_KIND[kind] || 300;
   const sameKindAfterDuplicateRemoval = all
-    .filter((item) => item.kind === kind && item.id !== existing?.id);
+    .filter((item) => item.kind === kind && (item.scope || 'general') === scope && item.id !== existing?.id);
   const expired = sameKindAfterDuplicateRemoval.filter((item) => item.timestamp < oldestAllowed);
   const unexpired = sameKindAfterDuplicateRemoval
     .filter((item) => item.timestamp >= oldestAllowed)
@@ -256,7 +257,9 @@ export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'a
 
   const timestamp = now;
   let savedId = 0;
-  const addRequest = store.add({
+  const addRequest = store.put({
+    ...(existing ? { id: existing.id } : {}),
+    scope,
     kind,
     name: file.name,
     type: file.type,
@@ -266,7 +269,8 @@ export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'a
   });
   addRequest.onsuccess = () => {
     savedId = addRequest.result as number;
-    metaStore.add({
+    metaStore.put({
+      scope,
       id: addRequest.result as number,
       kind,
       name: file.name,
@@ -286,7 +290,7 @@ export async function saveUploadHistory(file: File, kind: 'image' | 'video' | 'a
   return savedId;
 }
 
-export async function loadUploadHistory(kind?: 'image' | 'video' | 'audio'): Promise<UploadHistoryItem[]> {
+export async function loadUploadHistory(kind?: 'image' | 'video' | 'audio', scope: UploadHistoryScope = 'general'): Promise<UploadHistoryItem[]> {
   const db = await openDB();
   const transaction = db.transaction(STORE_NAME, 'readonly');
   const store = transaction.objectStore(STORE_NAME);
@@ -299,7 +303,7 @@ export async function loadUploadHistory(kind?: 'image' | 'video' | 'audio'): Pro
 
   db.close();
 
-  return filterRetainedHistoryItems(all, kind);
+  return filterRetainedHistoryItems(all.filter(item => (item.scope || 'general') === scope), kind);
 }
 
 export async function getUploadHistoryItem(id: number): Promise<UploadHistoryItem | null> {
@@ -317,7 +321,7 @@ export async function getUploadHistoryItem(id: number): Promise<UploadHistoryIte
   return item;
 }
 
-export async function loadUploadHistorySummaries(kind?: 'image' | 'video' | 'audio'): Promise<UploadHistorySummaryItem[]> {
+export async function loadUploadHistorySummaries(kind?: 'image' | 'video' | 'audio', scope: UploadHistoryScope = 'general'): Promise<UploadHistorySummaryItem[]> {
   const db = await openDB();
   const transaction = db.transaction(META_STORE_NAME, 'readonly');
   const store = transaction.objectStore(META_STORE_NAME);
@@ -330,7 +334,27 @@ export async function loadUploadHistorySummaries(kind?: 'image' | 'video' | 'aud
 
   db.close();
 
-  return filterRetainedHistoryItems(all, kind);
+  return filterRetainedHistoryItems(all.filter(item => (item.scope || 'general') === scope), kind);
+}
+
+// 将能明确识别的旧辅助图分类，不移动或删除原始图片，ID保持不变。
+export async function classifyUploadHistory(id: number, scope: UploadHistoryScope): Promise<void> {
+  const db = await openDB();
+  const transaction = db.transaction([STORE_NAME, META_STORE_NAME], 'readwrite');
+  for (const name of [STORE_NAME, META_STORE_NAME]) {
+    const store = transaction.objectStore(name);
+    const request = store.get(id);
+    request.onsuccess = () => {
+      const item = request.result;
+      if (item && (!item.scope || item.scope === 'general')) store.put({ ...item, scope });
+    };
+  }
+  await new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+  db.close();
 }
 
 export async function deleteUploadHistory(id: number): Promise<void> {

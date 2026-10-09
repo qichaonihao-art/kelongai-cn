@@ -104,6 +104,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import {
   saveUploadHistory,
+  classifyUploadHistory,
   loadUploadHistorySummaries,
   getUploadHistoryItem,
   deleteUploadHistory,
@@ -1948,10 +1949,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [additionalChangeHistory, setAdditionalChangeHistory] = useState<AdditionalChangeHistoryItem[]>([]);
   const [videoHistory, setVideoHistory] = useState<UploadHistoryPreviewItem[]>([]);
   const [imageHistory, setImageHistory] = useState<UploadHistoryPreviewItem[]>([]);
+  const [ornamentImageHistory, setOrnamentImageHistory] = useState<Record<'side' | 'frame', UploadHistoryPreviewItem[]>>({ side: [], frame: [] });
   const videoHistoryRef = useRef<UploadHistoryPreviewItem[]>([]);
   const imageHistoryRef = useRef<UploadHistoryPreviewItem[]>([]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance' | 'video-edit-video' | 'video-edit-image'>('video');
+  const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance' | 'video-edit-video' | 'video-edit-image' | 'ornament-side' | 'ornament-frame'>('video');
   const [historyPreviewItem, setHistoryPreviewItem] = useState<HistoryPreviewItem | null>(null);
   const [historyVideoDurations, setHistoryVideoDurations] = useState<Record<number, number>>({});
   const [isUploadHistoryLoading, setIsUploadHistoryLoading] = useState(true);
@@ -2262,9 +2264,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   }, [messages.length]);
 
   async function refreshUploadHistories() {
-    const [videos, images] = await Promise.all([
+    const knownReferences = loadPaintingHistory().flatMap(item => Object.entries(item.ornamentReferenceHistoryIds || {}));
+    for (const [kind, id] of knownReferences) {
+      if (id && (kind === 'side' || kind === 'frame')) await classifyUploadHistory(id, `ornament-${kind}`);
+    }
+    const [videos, images, sideImages, frameImages] = await Promise.all([
       loadUploadHistorySummaries('video'),
       loadUploadHistorySummaries('image'),
+      loadUploadHistorySummaries('image', 'ornament-side'),
+      loadUploadHistorySummaries('image', 'ornament-frame'),
     ]);
 
     setVideoHistory((previous) => {
@@ -2294,6 +2302,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         timestamp: item.timestamp,
         previewUrl: item.previewBlob ? URL.createObjectURL(item.previewBlob) : '',
       }));
+    });
+    setOrnamentImageHistory(previous => {
+      Object.values(previous).flat().forEach(item => URL.revokeObjectURL(item.previewUrl));
+      const previews = (items: typeof sideImages) => items.map(item => ({ id: item.id, name: item.name, timestamp: item.timestamp, previewUrl: item.previewBlob ? URL.createObjectURL(item.previewBlob) : '' }));
+      return { side: previews(sideImages), frame: previews(frameImages) };
     });
     uploadHistoryLoadedRef.current = true;
   }
@@ -2334,6 +2347,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   useEffect(() => {
     if (showHistoryModal) void ensureUploadHistoriesLoaded();
   }, [showHistoryModal]);
+
+  useEffect(() => () => {
+    Object.values(ornamentImageHistory).flat().forEach(item => URL.revokeObjectURL(item.previewUrl));
+  }, [ornamentImageHistory]);
 
   useEffect(() => {
     videoHistoryRef.current = videoHistory;
@@ -3507,7 +3524,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         resolution: generationResolution,
         ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
         duration,
-        generateAudio: seedanceGenerateAudio,
+        generateAudio: !isWan3 && seedanceGenerateAudio,
         watermark: seedanceWatermark,
         directionNumber: paintingDirectionNumber,
         variationRound: paintingSourceVariationRound,
@@ -3537,7 +3554,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         resolution: generationResolution,
         ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
         duration,
-        generateAudio: seedanceGenerateAudio,
+        generateAudio: !isWan3 && seedanceGenerateAudio,
         watermark: seedanceWatermark,
         references,
         imageHash: paintingSourceImageHash,
@@ -3568,7 +3585,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               resolution: generationResolution,
               ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
               duration,
-              generateAudio: seedanceGenerateAudio,
+              generateAudio: !isWan3 && seedanceGenerateAudio,
               watermark: seedanceWatermark,
               directionNumber: paintingDirectionNumber,
               variationRound: paintingSourceVariationRound,
@@ -4080,7 +4097,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     try {
       if (!file.type.startsWith('image/')) throw new Error('摆件辅助参考必须是图片格式。');
       if (file.size > 10 * 1024 * 1024) throw new Error('辅助参考图请控制在10MB以内。');
-      const historyId = await saveUploadHistory(file, 'image');
+      const historyId = await saveUploadHistory(file, 'image', `ornament-${kind}`);
       const current = ornamentReferences[kind];
       if (current) URL.revokeObjectURL(current.previewUrl);
       const nextReference: SelectedCreativeMedia = { kind: 'image', file, previewUrl: createMediaPreviewUrl(file), fileName: file.name };
@@ -4094,6 +4111,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setOrnamentReferenceUploading(false);
       const input = kind === 'side' ? ornamentSideInputRef.current : ornamentFrameInputRef.current;
       if (input) input.value = '';
+    }
+  }
+
+  async function selectOrnamentReferenceHistory(kind: 'side' | 'frame', id: number) {
+    if (paintingDraftBusy || !isOrnament || !paintingImage) return;
+    try {
+      const item = await getUploadHistoryItem(id);
+      if (!item || item.kind !== 'image' || item.scope !== `ornament-${kind}`) throw new Error('辅助参考图已不存在，请重新上传。');
+      await handleOrnamentReferenceChange(kind, blobToFile(item));
+      setShowHistoryModal(false);
+    } catch (error) {
+      setPaintingError(error instanceof Error ? error.message : '历史参考图读取失败');
     }
   }
 
@@ -4699,7 +4728,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
             const blob = await response.blob();
             const file = new File([blob], reference.fileName || '辅助参考图.jpg', { type: blob.type || 'image/jpeg' });
             if (await sha256File(file) !== reference.imageHash) throw new Error('辅助参考图校验失败');
-            const historyId = await saveUploadHistory(file, 'image');
+            const historyId = await saveUploadHistory(file, 'image', `ornament-${kind}`);
             const nextReference: SelectedCreativeMedia = { kind: 'image', file, previewUrl: createMediaPreviewUrl(file), fileName: file.name };
             setOrnamentReferences(previous => ({ ...previous, [kind]: nextReference }));
             setOrnamentReferenceHistoryIds(previous => ({ ...previous, [kind]: historyId || undefined }));
@@ -4834,7 +4863,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       ratio: paintingPlan.ratio || seedanceRatio,
       variationRound: paintingVariationRound,
       creativeSessionId: paintingCreativeSessionId,
-      generateAudio: seedanceGenerateAudio,
+      generateAudio: paintingBatchModel !== 'wan3.0-video' && seedanceGenerateAudio,
       watermark: seedanceWatermark,
       stylePreset: paintingPlan.stylePreset,
       uploadHistoryId: paintingUploadHistoryId,
@@ -6017,6 +6046,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                   <span className="text-[10px] text-sky-600">点击上传 · 可选</span>
                                 </button>
                               )}
+                              <button type="button" disabled={!paintingImage || paintingDraftBusy} onClick={() => { setHistoryModalKind(`ornament-${kind}`); setShowHistoryModal(true); }} className="mt-2 inline-flex items-center gap-1 rounded-full border border-sky-100 px-2 py-1 text-[10px] font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50">
+                                <History className="size-3" />历史图片 <span className="text-slate-400">{ornamentImageHistory[kind].length}</span>
+                              </button>
                               <input ref={inputRef} type="file" accept="image/*" disabled={paintingDraftBusy} className="hidden" onChange={event => void handleOrnamentReferenceChange(kind, event.target.files?.[0] ?? null)} />
                             </div>
                           );
@@ -7924,7 +7956,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       <span className="h-3.5 w-px bg-slate-200" />
                       <span className="inline-flex items-center gap-1">
                         <Volume2 className="size-3" />
-                        {seedanceModel === 'MiniMax-H3' ? 'H3音轨随模型' : seedanceGenerateAudio ? '声音' : '静音'}
+                        {seedanceModel === 'MiniMax-H3' ? 'H3音轨随模型' : seedanceModel === 'wan3.0-video' ? '静音' : seedanceGenerateAudio ? '声音' : '静音'}
                       </span>
                       <span className="h-3.5 w-px bg-slate-200" />
                       <span>{seedanceWatermark ? '水印' : '无水印'}</span>
@@ -8018,15 +8050,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                               rememberManualSeedancePreference({ generateAudio: nextValue });
                               return nextValue;
                             })}
-                            disabled={seedanceModel === 'MiniMax-H3'}
+                            disabled={seedanceModel === 'MiniMax-H3' || seedanceModel === 'wan3.0-video'}
                             className={cn(
                               "rounded-xl border px-3 py-2 text-xs font-black transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-                              seedanceGenerateAudio
+                              seedanceModel !== 'wan3.0-video' && seedanceGenerateAudio
                                 ? "border-violet-300 bg-violet-50 text-violet-700"
                                 : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
                             )}
                           >
-                            {seedanceModel === 'MiniMax-H3' ? 'H3无声音开关' : seedanceGenerateAudio ? '生成声音' : '不生成声音'}
+                            {seedanceModel === 'MiniMax-H3' ? 'H3无声音开关' : seedanceModel === 'wan3.0-video' ? 'Wan3.0 固定静音' : seedanceGenerateAudio ? '生成声音' : '不生成声音'}
                           </button>
                           <button
                             type="button"
@@ -9034,6 +9066,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 <h3 className="text-sm font-black text-slate-800">
                   {historyModalKind === 'video' || historyModalKind === 'video-edit-video'
                     ? '最近上传的视频'
+                    : historyModalKind === 'ornament-side' ? '侧面结构参考 · 历史图片'
+                    : historyModalKind === 'ornament-frame' ? '边框细节参考 · 历史图片'
                     : historyModalKind === 'image-creative'
                       ? '最近上传的图片'
                       : '最近上传的图片'}
@@ -9041,6 +9075,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">
                   {historyModalKind === 'video' || historyModalKind === 'video-edit-video'
                     ? videoHistory.length
+                    : historyModalKind === 'ornament-side' ? ornamentImageHistory.side.length
+                    : historyModalKind === 'ornament-frame' ? ornamentImageHistory.frame.length
                     : imageHistory.length}
                 </span>
               </div>
@@ -9118,6 +9154,23 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   )}
                 </>
               )}
+              {!isUploadHistoryLoading && (historyModalKind === 'ornament-side' || historyModalKind === 'ornament-frame') && (() => {
+                const kind = historyModalKind === 'ornament-side' ? 'side' : 'frame';
+                const items = ornamentImageHistory[kind];
+                return <>
+                  <p className="mb-3 text-xs text-slate-500">这里只显示此前上传到{kind === 'side' ? '侧面结构' : '边框细节'}位置的图片。点击图片即可选用。</p>
+                  {items.length === 0 ? <div className="py-12 text-center text-sm text-slate-400">暂无参考图记录，上传后会自动保存在这里。</div> : <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+                    {items.map(item => <div key={item.id} className="relative rounded-xl border border-slate-200 bg-white p-2">
+                      <button type="button" disabled={paintingDraftBusy} onClick={() => void selectOrnamentReferenceHistory(kind, item.id)} className="w-full text-left disabled:opacity-50">
+                        <HistoryImageThumbnail src={item.previewUrl} name={item.name} />
+                        <div className="mt-2 truncate text-[11px] font-semibold text-slate-600">{item.name}</div>
+                        <div className="text-[10px] text-slate-400">{formatHistoryTime(item.timestamp)}</div>
+                      </button>
+                      <button type="button" aria-label={`删除历史参考图${item.name}`} onClick={() => void deleteUploadHistory(item.id).then(refreshUploadHistories).catch(error => setPaintingError(error instanceof Error ? error.message : '删除失败'))} className="absolute right-2 top-2 rounded-full bg-white p-1 text-slate-400 hover:text-red-500"><Trash2 className="size-3" /></button>
+                    </div>)}
+                  </div>}
+                </>;
+              })()}
               {!isUploadHistoryLoading && historyModalKind === 'image-creative' && (
                 <>
                   {imageHistory.length === 0 ? (

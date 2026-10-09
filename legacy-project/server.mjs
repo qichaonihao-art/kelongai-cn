@@ -15507,7 +15507,7 @@ async function handleCreatePaintingBatchRun(req, res) {
     const onlyUnused = body.onlyUnused === 'true' || body.onlyUnused === true;
     // 全自动批量入库同样固定检测并增强480P视频。
     const autoEnhance480p = true;
-    const generateAudio = body.generateAudio !== 'false' && body.generateAudio !== false;
+    const generateAudio = model !== WAN3_VIDEO_MODEL && body.generateAudio !== 'false' && body.generateAudio !== false;
     const watermark = body.watermark === 'true' || body.watermark === true;
     const stylePreset = readValue(body.stylePreset) || plan.stylePreset || 'modern-minimal';
     const uploadHistoryId = Number(body.uploadHistoryId) || null;
@@ -17546,7 +17546,7 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   const resolution = batchRun.resolution || '720p';
   const ratio = batchRun.ratio || '9:16';
   const duration = Math.min(isSeedance25 || isWan3 ? 30 : 15, Math.max(isWan3 ? 2 : 4, Math.round(task.duration || 8)));
-  const generateAudio = batchRun.generateAudio !== false;
+  const generateAudio = !isWan3 && batchRun.generateAudio !== false;
   const watermark = batchRun.watermark === true;
 
   const upstreamUrl = isMiniMaxH3
@@ -19622,7 +19622,7 @@ async function handleSeedanceCreateTask(req, res) {
         ? readValue(SERVER_CONFIG.dashscopeApiKey)
       : readValue(SERVER_CONFIG.seedanceApiKey);
     const isVideoEditTask = taskMode === 'video_edit';
-    const generateAudio = body?.generateAudio !== false;
+    const generateAudio = !isWan3 && body?.generateAudio !== false;
     const watermark = body?.watermark === true;
     const uploadedFiles = Array.isArray(body?.files) ? body.files.slice() : [];
     if (ornamentProfile && !isVideoEditTask) {

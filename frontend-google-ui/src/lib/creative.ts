@@ -833,7 +833,7 @@ export async function createSeedanceTask(options: {
     formData.append('resolution', options.resolution);
     formData.append('ratio', options.ratio);
     formData.append('duration', String(options.duration));
-    formData.append('generateAudio', String(options.generateAudio));
+    formData.append('generateAudio', String(options.model === 'wan3.0-video' ? false : options.generateAudio));
     formData.append('watermark', String(options.watermark));
     if (options.imageHash) formData.append('imageHash', options.imageHash);
     if (options.directionNumber) formData.append('directionNumber', String(options.directionNumber));
@@ -853,7 +853,7 @@ export async function createSeedanceTask(options: {
       resolution: options.resolution,
       ratio: options.ratio,
       duration: options.duration,
-      generateAudio: options.generateAudio,
+      generateAudio: options.model === 'wan3.0-video' ? false : options.generateAudio,
       watermark: options.watermark,
       imageHash: options.imageHash || undefined,
       directionNumber: options.directionNumber || undefined,
@@ -1485,7 +1485,7 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
   formData.append('ratio', options.ratio);
   formData.append('variationRound', String(options.variationRound));
   if (options.creativeSessionId) formData.append('creativeSessionId', options.creativeSessionId);
-  formData.append('generateAudio', String(options.generateAudio));
+  formData.append('generateAudio', String(options.model === 'wan3.0-video' ? false : options.generateAudio));
   formData.append('watermark', String(options.watermark));
   formData.append('stylePreset', options.stylePreset);
   formData.append('creationRequestId', options.creationRequestId);

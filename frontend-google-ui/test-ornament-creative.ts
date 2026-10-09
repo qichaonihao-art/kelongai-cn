@@ -36,7 +36,7 @@ assert.equal(promptRequest.profile.supportStructure, 'fixed');
 assert.equal(promptRequest.productType, 'ornament');
 await generatePaintingIdeaPrompt(profile, { ...idea, id: 'ornament-2', directionNumber: 2, title: '第二个方向' }, plan);
 assert.equal(calls.filter((call) => call.url === '/api/ornament/idea-prompt').length, 2);
-await createPaintingBatchRun({ file, upperWoodFile: file, lowerWoodFile: file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: false, watermark: false, stylePreset: 'modern-minimal', creationRequestId: 'ui-batch-create' });
+await createPaintingBatchRun({ file, upperWoodFile: file, lowerWoodFile: file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: true, watermark: false, stylePreset: 'modern-minimal', creationRequestId: 'ui-batch-create' });
 const batchForm = calls.at(-1)!.body as FormData;
 assert.equal(JSON.parse(String(batchForm.get('profile'))).productType, 'ornament');
 assert.equal(JSON.parse(String(batchForm.get('ideas')))[0].productType, 'ornament');
@@ -44,19 +44,21 @@ assert.equal(batchForm.get('startOrder'), 'random');
 assert.equal(batchForm.get('requestedCount'), '1');
 assert.equal(batchForm.get('upperWoodFile'), null);
 assert.equal(batchForm.get('lowerWoodFile'), null);
+assert.equal(batchForm.get('generateAudio'), 'false');
 for (const [side, frame] of [[false, false], [true, false], [false, true], [true, true]]) {
-  await createPaintingBatchRun({ file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'optional-test', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: false, watermark: false, stylePreset: 'modern-minimal', ornamentSideFile: side ? file : null, ornamentFrameFile: frame ? file : null });
+  await createPaintingBatchRun({ file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'optional-test', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: true, watermark: false, stylePreset: 'modern-minimal', ornamentSideFile: side ? file : null, ornamentFrameFile: frame ? file : null });
   const form = calls.at(-1)!.body as FormData;
   assert.equal(Boolean(form.get('ornamentSideFile')), side);
   assert.equal(Boolean(form.get('ornamentFrameFile')), frame);
 }
-await createPaintingBatchRun({ file, profile: { productType: 'hanging', name: '挂画' }, plan, ideas: [], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'optional-test', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: false, watermark: false, stylePreset: 'modern-minimal', ornamentSideFile: file, ornamentFrameFile: file });
+await createPaintingBatchRun({ file, profile: { productType: 'hanging', name: '挂画' }, plan, ideas: [], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'optional-test', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: true, watermark: false, stylePreset: 'modern-minimal', ornamentSideFile: file, ornamentFrameFile: file });
 assert.equal((calls.at(-1)!.body as FormData).get('ornamentSideFile'), null);
 assert.equal((calls.at(-1)!.body as FormData).get('ornamentFrameFile'), null);
 for (const withImage of [true, false]) {
-  await createSeedanceTask({ productType: 'ornament', model: 'wan3.0-video', prompt: '贴画', resolution: '480p', ratio: '9:16', duration: 6, generateAudio: false, watermark: false, references: withImage ? [{ id: '1', kind: 'image', file, fileName: file.name, previewUrl: '' }] : [] });
+  await createSeedanceTask({ productType: 'ornament', model: 'wan3.0-video', prompt: '贴画', resolution: '480p', ratio: '9:16', duration: 6, generateAudio: true, watermark: false, references: withImage ? [{ id: '1', kind: 'image', file, fileName: file.name, previewUrl: '' }] : [] });
   const body = calls.at(-1)!.body;
   assert.equal(withImage ? (body as FormData).get('productType') : JSON.parse(String(body)).productType, 'ornament');
+  assert.equal(withImage ? (body as FormData).get('generateAudio') : JSON.parse(String(body)).generateAudio, withImage ? 'false' : false);
 }
 await getPaintingUsedDirections('hash', 1, 'ornament');
 assert.ok(calls.at(-1)!.url.includes('productType=ornament'));
