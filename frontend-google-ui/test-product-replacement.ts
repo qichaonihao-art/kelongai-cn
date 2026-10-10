@@ -21,3 +21,7 @@ assert.equal(wrapReplacementPrompt('书架替换', 'generic'), '书架替换');
 assert.match(replacementProductRules('ornament'), /铝合金.*木质背板.*后撑杆/s);
 assert.match(replacementProductRules('sticker'), /PVC.*无实体边框/s);
 console.log('产品替换规则、通用模式、兼容性确认测试通过。');
+
+assert.match(wrapReplacementPrompt('同款搬放。', 'ornament'), /外框宽20厘米、高20厘米/);
+assert.match(wrapReplacementPrompt('同款搬放。', 'ornament', { widthCm: 25, heightCm: 30 }), /外框宽25厘米、高30厘米/);
+for (const type of ['hanging', 'sticker', 'generic'] as const) assert.doesNotMatch(wrapReplacementPrompt('原片复刻。', type, { widthCm: 25, heightCm: 30 }), /摆台真实尺寸/);

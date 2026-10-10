@@ -1,3 +1,4 @@
+import { ornamentSizeRule, readOrnamentSizeFromPrompt, withOrnamentSizePrompt } from './ornament-size.mjs';
 import { validateReplacementPrompt } from './product-replacement.mjs';
 // All upstream requests are mocked; never creates paid video tasks.
 import assert from 'node:assert/strict';
@@ -18,6 +19,11 @@ globalThis.fetch = async (url, init = {}) => {
 };
 const server = await import('./server.mjs');
 const profile = normalizeOrnamentProfile({ name: '马到成功固定一体摆台', subject: '马与题字', colors: ['红色', '金色'] });
+assert.equal(profile.widthCm, 20); assert.equal(profile.heightCm, 20);
+assert.deepEqual(readOrnamentSizeFromPrompt(ornamentSizeRule({ widthCm: 25, heightCm: 30 })), { widthCm: 25, heightCm: 30 });
+assert.equal((withOrnamentSizePrompt(ornamentSizeRule() + '正文', { widthCm: 25, heightCm: 30 }).match(/【摆台真实尺寸】/g) || []).length, 1);
+const customProfile = normalizeOrnamentProfile({ ...profile, widthCm: 25, heightCm: 30 });
+for (const framework of ORNAMENT_FRAMEWORKS) assert.match(ensureOrnamentPrompt('正文', customProfile, framework.directionNumber), /外框宽25厘米、高30厘米/);
 const plan = { durationMin: 5, durationMax: 8, stylePreset: 'modern-minimal', ratio: '9:16', productType: 'ornament' };
 const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 const imagePath = join(process.env.RUNTIME_STATE_DIR, 'test.png'); writeFileSync(imagePath, Buffer.from(imageData, 'base64'));
@@ -31,6 +37,19 @@ assert.equal(new Set(ORNAMENT_FRAMEWORKS.map(f => f.title)).size, 40);
 const reveal = ORNAMENT_FRAMEWORKS[ORNAMENT_RED_CLOTH_DIRECTION - 1];
 assert.equal(reveal.directionNumber, 29);
 assert.equal(reveal.title, '红布揭幕展示');
+assert.equal(reveal.action, '开场摆台已经站稳在台面，正面主图由一块不透明红布遮盖；一只手抓住红布上角，向上并向侧方连续揭开，真实布料逐渐露出完整摆台；红布最后被手持带到主体侧外，摆台与固定支架全程原位不动，完整正面清楚展示，镜头仅轻推。可换玄关柜、书桌、茶台或陈列柜等场景，红布与揭幕动作保持不变。');
+assert.equal(reveal.shotRule, '', '红布框架不追加新的占比或景别约束');
+assert.deepEqual(Object.fromEntries([...new Set(ORNAMENT_FRAMEWORKS.map(f => f.group))].map(group => [group, ORNAMENT_FRAMEWORKS.filter(f => f.group === group).length])), {
+ '人物全景搬放': 12, '人物中景展示': 8, '生活场景全景': 8, '整体产品展示': 6, '局部特写': 6,
+});
+for (const f of ORNAMENT_FRAMEWORKS.filter(f => f.directionNumber !== 29)) {
+ const request = buildOrnamentVideoRequest(profile, { ...f, summary: '旧框架：镜头推近摆台特写' }, plan, {});
+ assert.ok(request.includes(f.shotRule), '新景别规则必须进入实际请求');
+ if (f.directionNumber <= 12) { assert.match(request, /从头到脚/); assert.match(request, /全程不推近/); }
+ if (f.directionNumber >= 21 && f.directionNumber <= 28) assert.match(request, /不收束成产品近景/);
+ assert.ok(ensureOrnamentPrompt('模型正文', profile, f.directionNumber).includes(f.shotRule), '提交模型前也确定性保留构图要求');
+}
+
 for (const scene of ['玄关柜', '书桌', '茶台']) {
  const request = buildOrnamentVideoRequest(profile, reveal, { ...plan, scene }, {});
  assert.ok(request.includes(scene));
@@ -66,8 +85,12 @@ assert.ok(inspectOrnamentPromptIssues('将圆盘放回独立托架。').length);
 reply = JSON.stringify({ name: '固定一体摆台', supportStructure: 'fixed', frameStructure: '固定连接的后撑' });
 const analysis = await server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'ornament' }, 'test', 'analysis');
 assert.equal(analysis.profile.frameMaterial, '铝合金'); assert.equal(analysis.profile.backboardMaterial, '木板');
+assert.equal(analysis.profile.widthCm, 20); assert.equal(analysis.profile.heightCm, 20);
 assert.equal(analysis.profile.productType, 'ornament'); assert.equal(analysis.profile.supportStructure, 'fixed');
 assert.match(payloads.at(-1).payload.input?.[0]?.content?.[1]?.text || JSON.stringify(payloads.at(-1)), /主体独立放在可分离托架/);
+reply = JSON.stringify({ supportStructure: 'fixed', widthCm: 999, heightCm: 999 });
+const customAnalysis = await server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'ornament', widthCm: 25, heightCm: 30 }, 'test', 'custom-size');
+assert.equal(customAnalysis.profile.widthCm, 25); assert.equal(customAnalysis.profile.heightCm, 30);
 reply = JSON.stringify({ supportStructure: 'separate' });
 await assert.rejects(server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'ornament' }, 'test', 'separate'), /分离式/);
 for (let batch = 0; batch < 4; batch++) {
@@ -100,10 +123,10 @@ for (const variationRound of [0, 1, 2]) {
  assert.deepEqual(all.map(idea => idea.directionNumber), Array.from({ length: 40 }, (_, index) => index + 1));
 }
 assert.equal(payloads.length, beforePreparation, 'all four preparation batches load fixed frameworks without model calls');
-const safeVideoRequest = buildOrnamentVideoRequest(profile, { directionNumber: 12, summary: '摆台使用树脂，取下主体。' }, { ...plan, scene: '书桌另一侧铺素白宣纸' }, {});
+const safeVideoRequest = buildOrnamentVideoRequest(profile, { directionNumber: 22, summary: '摆台使用树脂，取下主体。' }, { ...plan, scene: '书桌另一侧铺素白宣纸' }, {});
 assert.doesNotMatch(safeVideoRequest, /摆台使用树脂，取下主体/);
 assert.match(safeVideoRequest, /书桌另一侧铺素白宣纸/);
-assert.match(safeVideoRequest, /放下笔后抬眼欣赏/);
+assert.match(safeVideoRequest, /书写后将笔放好并看向摆台/);
 const forbidden = /【挂画生成尺寸补偿锁定】|【挂画真实尺寸强制锁定】|【卷轴打开方式固定要求】|【千问 Wan3.0 专用·(?:静态挂画|安装|展开)/;
 for (const f of ORNAMENT_FRAMEWORKS) {
  reply = `创意内容：${f.action}\n总时长：6秒`;
@@ -118,34 +141,49 @@ for (const f of ORNAMENT_FRAMEWORKS) {
  assert.equal(specs.length, 2); assert.equal(specs[1].baseName, 'ornament-back'); assert.equal(specs[0].baseName, 'ornament-main');
 }
 reply = '创意内容：开场摆台完整可见，镜头推近。\n总时长：6秒';
-await assert.rejects(server.generatePaintingIdeaPromptCore('bad-reveal', 'test', profile, { ...reveal, productType: 'ornament' }, plan), /校验未通过/);
+assert.equal((await server.generatePaintingIdeaPromptCore('bad-reveal', 'test', profile, { ...reveal, productType: 'ornament' }, plan)).duration, 6);
 reply = '创意内容：取下主体再安装支架。\n总时长：6秒';
-await assert.rejects(server.generatePaintingIdeaPromptCore('bad', 'test', profile, { directionNumber: 1, productType: 'ornament' }, plan), /校验未通过/);
+assert.equal((await server.generatePaintingIdeaPromptCore('bad', 'test', profile, { directionNumber: 1, productType: 'ornament' }, plan)).duration, 6);
+for (const text of ['正文：无真实立体雕塑结构。', '正文：取下支架。总时长：99秒', '正文：展示摆台。总时长：0秒']) {
+ reply = text; const count = payloads.length;
+ const generated = await server.generatePaintingIdeaPromptCore('unfiltered', 'test', profile, { directionNumber: 1, productType: 'ornament' }, { ...plan, durationMin: 5, durationMax: 8 });
+ assert.ok(generated.duration >= 5 && generated.duration <= 8);
+ assert.equal(payloads.length, count + 1, '不再因正文质量或时长触发模型重写');
+}
 await assert.rejects(server.generatePaintingIdeasCore({ productType: 'hanging', profile, plan }, 'test', 'wrong'), /不能进入|产品类型参数冲突/);
 await assert.rejects(server.generatePaintingIdeaPromptCore('bad-type', 'test', profile, { directionNumber: 1, productType: 'sticker' }, plan), /其他产品|产品类型参数冲突/);
 for (const [handler, body] of [[server.handlePaintingAnalyze, { productType: 'ornament', image: 'x' }], [server.handlePaintingIdeas, { productType: 'ornament', profile }], [server.handlePaintingIdeaPrompt, { productType: 'ornament', profile, idea: { directionNumber: 1 } }]]) {
  const response = res(); await handler(req(body), response, 'hanging'); assert.equal(response.status, 400);
 }
-const prompt = ensureOrnamentPrompt('创意内容：双手整体落台，站稳后撤手。\n总时长：6秒', profile, 1);
+const prompt = ensureOrnamentPrompt('创意内容：双手整体落台，站稳后撤手。\n总时长：6秒', customProfile, 1);
 for (const model of ['doubao-seedance-2-0-mini-260615', 'wan3.0-video', 'MiniMax-H3']) {
  const response = res(); await server.handleSeedanceCreateTask(req({ model, prompt, productType: 'ornament', directionNumber: 1, duration: 6, imageHash: 'manual-ornament-test', resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: true }), response);
  assert.equal(response.status, 200, response.body);
- if (model === 'wan3.0-video') assert.equal(payloads.at(-1).payload.parameters.audio, false);
+ assert.match(JSON.stringify(payloads.at(-1).payload), /外框宽25厘米、高30厘米/);
+ if (model === 'wan3.0-video') assert.equal(payloads.at(-1).payload.parameters.audio, true);
  if (model.startsWith('doubao')) assert.equal(payloads.at(-1).payload.generate_audio, true); assert.doesNotMatch(JSON.stringify(payloads.at(-1)), forbidden);
  assert.ok(JSON.stringify(payloads.at(-1).payload).includes('data:image/jpeg;base64,'));
- await server.submitSeedanceTaskForBatchTask({ directionNumber: 30, prompt, duration: 6 }, { model, profile, imagePath, resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: true });
+ await server.submitSeedanceTaskForBatchTask({ directionNumber: 30, prompt, duration: 6 }, { model, profile: customProfile, imagePath, resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: true });
  assert.doesNotMatch(JSON.stringify(payloads.at(-1)), forbidden);
  const sent = payloads.at(-1).payload;
- if (model === 'wan3.0-video') assert.equal(sent.parameters.audio, false);
+ assert.match(JSON.stringify(sent), /外框宽25厘米、高30厘米/);
+ if (model === 'wan3.0-video') assert.equal(sent.parameters.audio, true);
  if (model.startsWith('doubao')) assert.equal(sent.generate_audio, true);
  assert.equal(model === 'wan3.0-video' ? sent.input.media.length : sent.content.filter(item => item.type === 'image_url').length, 2);
+}
+for (const audio of [false, true]) {
+ const response = res();
+ await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', prompt: '普通反推：人物展示。背景音乐为古风音乐。', resolution: '480p', duration: 6, generateAudio: audio }), response);
+ assert.equal(response.status, 200, response.body); assert.equal(payloads.at(-1).payload.parameters.audio, audio);
+ await server.submitSeedanceTaskForBatchTask({ directionNumber: 1, prompt: '摆台无真实立体雕塑结构，背景有陶瓷摆件。', duration: 6 }, { model: 'wan3.0-video', profile, imagePath, resolution: '480p', ratio: '9:16', generateAudio: audio });
+ assert.equal(payloads.at(-1).payload.parameters.audio, audio);
 }
 assert.deepEqual(server.dbGetPaintingUsedDirections('manual-ornament-test', 0, 'ornament'), [1]);
 assert.deepEqual(server.dbGetPaintingUsedDirections('manual-ornament-test', 0, 'hanging'), []);
 assert.equal(server.paintingPromptSimilarity(ensureOrnamentPrompt('竹林雨声', profile, 1), ensureOrnamentPrompt('都市霓虹', profile, 2)), 0);
 const before = payloads.length; const response = res();
 await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', productType: 'ornament', prompt: '把主体从支架取下。', directionNumber: 1 }), response);
-assert.equal(response.status, 400); assert.equal(payloads.length, before);
+assert.equal(response.status, 200, response.body); assert.ok(payloads.length > before);
 for (const [side, frame] of [[false, false], [true, false], [false, true], [true, true]]) {
  const form = new FormData();
  form.append('file', new File([Buffer.from(imageData, 'base64')], 'front.png', { type: 'image/png' }));
@@ -263,4 +301,14 @@ for (const prompt of ['【产品元素替换：ornament】【替换动作兼容�
  assert.equal(response.status, 400, response.body); assert.equal(payloads.length, before);
 }
 console.log('PASS: 40 fixed frameworks, analysis, separate-stand rejection, four batches, all prompts, type isolation, manual/batch submission across six models, three-product routing/usage/folder isolation, paid-request blocking.');
+
+for (const size of [{ widthCm: 20, heightCm: 20 }, { widthCm: 25, heightCm: 30 }]) {
+ const response = res();
+ await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', duration: 6, prompt: `【产品元素替换：ornament】\n${ornamentSizeRule(size)}\n原视频人物整体搬放，动作不变。` }), response);
+ assert.equal(response.status, 200, response.body);
+ assert.match(JSON.stringify(payloads.at(-1).payload), new RegExp(`外框宽${size.widthCm}厘米、高${size.heightCm}厘米`));
+ if (size.widthCm !== 20) assert.doesNotMatch(JSON.stringify(payloads.at(-1).payload), /外框宽20厘米/);
+}
+console.log('摆台默认及自定义尺寸：分析、40框架、手动、批量、替换实际提交通过。');
+
 process.exit(0);

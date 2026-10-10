@@ -14,8 +14,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 import { config as loadDotenv } from 'dotenv';
 import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
-import { ORNAMENT_STRUCTURE_RULE, isOrnamentProduct, normalizeOrnamentProfile, ORNAMENT_FRAMEWORKS, ornamentDuration, buildOrnamentVideoRequest, ensureOrnamentPrompt, inspectOrnamentPromptIssues, ornamentProfileFromPrompt } from './ornament-creative.mjs';
-import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, inspectStickerPromptIssues, stickerProfileFromPrompt } from './sticker-creative.mjs';
+import { ORNAMENT_STRUCTURE_RULE, isOrnamentProduct, normalizeOrnamentProfile, ORNAMENT_FRAMEWORKS, ornamentDuration, buildOrnamentVideoRequest, ensureOrnamentPrompt, ornamentProfileFromPrompt } from './ornament-creative.mjs';
+import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, stickerProfileFromPrompt } from './sticker-creative.mjs';
 import { setVideoLibraryShotRole } from './video-library-shot-role.mjs';
 import { deleteEmptyVideoLibraryFolder } from './video-library-folder-delete.mjs';
 import { normalizeWechatCookie, parseWechatChannelWithYuanbao } from './wechat-channels.mjs';
@@ -15508,7 +15508,7 @@ async function handleCreatePaintingBatchRun(req, res) {
     const onlyUnused = body.onlyUnused === 'true' || body.onlyUnused === true;
     // 全自动批量入库同样固定检测并增强480P视频。
     const autoEnhance480p = true;
-    const generateAudio = model !== WAN3_VIDEO_MODEL && body.generateAudio !== 'false' && body.generateAudio !== false;
+    const generateAudio = body.generateAudio === 'true' || body.generateAudio === true || (model !== WAN3_VIDEO_MODEL && body.generateAudio !== 'false' && body.generateAudio !== false);
     const watermark = body.watermark === 'true' || body.watermark === true;
     const stylePreset = readValue(body.stylePreset) || plan.stylePreset || 'modern-minimal';
     const uploadHistoryId = Number(body.uploadHistoryId) || null;
@@ -16114,6 +16114,7 @@ async function handleGetPaintingBatchRunEstimate(req, res) {
 
 async function analyzePaintingCore(body, apiKey, requestId) {
   const stickerInput = isStickerProduct(body) ? normalizeStickerProfile({ widthCm: body.widthCm, heightCm: body.heightCm }) : null;
+  const ornamentInput = isOrnamentProduct(body) ? normalizeOrnamentProfile({ widthCm: body.widthCm, heightCm: body.heightCm }) : null;
   let imageUrl = '';
   if (body.file instanceof File && body.file.size > 0) {
     const compressedFile = await compressMediaForArk(body.file, 'image');
@@ -16156,7 +16157,7 @@ async function analyzePaintingCore(body, apiKey, requestId) {
   });
 
   const parsedProfile = parseStructuredJson(answer);
-  const profile = ornament ? normalizeOrnamentProfile(parsedProfile) : sticker
+  const profile = ornament ? normalizeOrnamentProfile({ ...parsedProfile, widthCm: ornamentInput.widthCm, heightCm: ornamentInput.heightCm }) : sticker
     ? normalizeStickerProfile({ ...parsedProfile, widthCm: stickerInput.widthCm, heightCm: stickerInput.heightCm })
     : { ...parsedProfile, productType: 'hanging' };
   console.log('[doubao painting] analyze done', { requestId, profileKeys: profile && typeof profile === 'object' ? Object.keys(profile) : [] });
@@ -16748,37 +16749,33 @@ async function generateStickerIdeasCore(body, apiKey) {
   };
 }
 
+// 时长文字缺失或越界时补齐到所选范围，不再把它当成提示词质量错误。
+function resolveMaterialPromptDuration(prompt, range) {
+  const parsed = Number(String(prompt).match(/总时长\s*[：:]\s*(\d+(?:\.\d+)?)\s*秒/)?.[1]);
+  const fallback = Math.round((range.durationMin + range.durationMax) / 2);
+  return Math.min(range.durationMax, Math.max(range.durationMin, Math.round(parsed > 0 ? parsed : fallback)));
+}
+function normalizeMaterialPromptDuration(prompt, duration) {
+  const body = String(prompt).replace(/总时长\s*[：:]\s*\d+(?:\.\d+)?\s*秒/g, `总时长：${duration}秒`);
+  return /总时长\s*[：:]\s*\d+\s*秒/.test(body) ? body : `${body}\n总时长：${duration}秒`;
+}
+
 async function generateStickerIdeaPromptCore(apiKey, profile, idea, context) {
   if (idea.productType && idea.productType !== 'sticker') throw new Error('请重新生成当前贴画的创意方案');
   const normalized = normalizeStickerProfile(profile);
   const range = stickerDuration(idea.directionNumber, idea.durationMin || context.durationMin, idea.durationMax || context.durationMax);
   const request = buildStickerVideoRequest(normalized, idea, context, resolvePaintingStyleProfile(idea.stylePreset || context.stylePreset));
-  // 贴画提示词可能因物理校验再生成一次；单次上游请求不能沿用通用8分钟超时，
-  // 否则偶发连接悬挂会让第二次切换方向看起来一直转圈。
+  // 单次生成使用75秒超时，避免偶发上游悬挂导致界面长期等待。
   const call = (text) => callDoubaoArkText({
     apiKey,
     model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
     content: [{ type: 'input_text', text }],
     timeoutMs: 75 * 1000,
   });
-  let prompt = String(await call(request) || '').trim();
-  const validDuration = (text) => {
-    const duration = Number(text.match(/总时长\s*[：:]\s*(\d+)\s*秒/)?.[1]);
-    return Number.isInteger(duration) && duration >= range.durationMin && duration <= range.durationMax ? duration : null;
-  };
-  let duration = validDuration(prompt);
-  let physicalIssues = prompt ? inspectStickerPromptIssues(prompt, idea.directionNumber) : [];
-  if (!prompt || !duration || physicalIssues.length) {
-    const reason = physicalIssues.length
-      ? `上一版存在以下产品物理错误：${physicalIssues.join('；')}。`
-      : '上一版为空或时长不合法。';
-    prompt = String(await call(`${request}\n${reason}请完整重写，已贴好方向只能设计人物、环境和摄影机动作，不得改动产品状态；产品始终是横向、全平面、全幅贴墙的柔性印刷膜。最后以总时长：X秒结尾。`) || '').trim();
-    duration = validDuration(prompt);
-    physicalIssues = prompt ? inspectStickerPromptIssues(prompt, idea.directionNumber) : [];
-  }
-  if (!prompt || !duration) throw new Error('贴画提示词时长校验未通过，请重试');
-  if (physicalIssues.length) throw new Error(`贴画提示词存在产品物理错误，已阻止提交付费视频：${physicalIssues.join('；')}`);
-  return { prompt: ensureStickerPrompt(prompt, normalized, idea.directionNumber), duration };
+  const prompt = String(await call(request) || '').trim();
+  if (!prompt) throw new Error('模型返回的提示词为空');
+  const duration = resolveMaterialPromptDuration(prompt, range);
+  return { prompt: ensureStickerPrompt(normalizeMaterialPromptDuration(prompt, duration), normalized, idea.directionNumber), duration };
 }
 
 async function generateOrnamentIdeasCore(body) {
@@ -16788,7 +16785,7 @@ async function generateOrnamentIdeasCore(body) {
   // 固定框架直接载入；场景/人物/风格变化在完整提示词阶段生成，避免AI反复改写物理结构。
   return { batch, totalBatches: 4, ideas: ORNAMENT_FRAMEWORKS.slice(batch * 10, batch * 10 + 10).map(f => ({
     id: `ornament-${f.directionNumber}`, productType: 'ornament', directionNumber: f.directionNumber, title: f.title,
-    ...ornamentDuration(plan.durationMin, plan.durationMax), summary: `【固定一体·${f.title}】${f.action}`,
+    ...ornamentDuration(plan.durationMin, plan.durationMax), summary: f.directionNumber === 29 ? `【固定一体·${f.title}】${f.action}` : `【${f.group}·${f.title}】${f.action} 景别：${f.shotRule.split('。')[0]}。`,
   })) };
 }
 
@@ -16798,16 +16795,10 @@ async function generateOrnamentIdeaPromptCore(apiKey, profile, idea, context) {
   const range = ornamentDuration(idea.durationMin || context.durationMin, idea.durationMax || context.durationMax);
   const request = buildOrnamentVideoRequest(normalized, idea, context, resolvePaintingStyleProfile(context.stylePreset));
   const call = (text) => callDoubaoArkText({ apiKey, model: DEFAULT_DOUBAO_MULTIMODAL_MODEL, content: [{ type: 'input_text', text }], timeoutMs: 75 * 1000 });
-  let prompt = '';
-  for (let attempt = 0; attempt < 2; attempt++) {
-    prompt = String(await call(attempt ? `${request}\n上一版结构或时长错误，请重写。` : request) || '').trim();
-    const duration = Number(prompt.match(/总时长\s*[：:]\s*(\d+)\s*秒/)?.[1]);
-    const issues = inspectOrnamentPromptIssues(prompt, idea.directionNumber);
-    if (prompt && Number.isInteger(duration) && duration >= range.durationMin && duration <= range.durationMax && !issues.length) {
-      return { prompt: ensureOrnamentPrompt(prompt, normalized, idea.directionNumber), duration };
-    }
-  }
-  throw new Error('摆件提示词结构或时长校验未通过，已阻止提交付费视频，请重新生成');
+  const prompt = String(await call(request) || '').trim();
+  if (!prompt) throw new Error('模型返回的提示词为空');
+  const duration = resolveMaterialPromptDuration(prompt, range);
+  return { prompt: ensureOrnamentPrompt(normalizeMaterialPromptDuration(prompt, duration), normalized, idea.directionNumber), duration };
 }
 
 function assertMaterialProductType(productType, ...sources) {
@@ -16926,7 +16917,6 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
 
     console.log('[doubao painting] ideas request start', { requestId, count });
 
-    const modelStartedAt = Date.now();
     let answer = await callDoubaoArkText({
       apiKey,
       model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
@@ -16951,21 +16941,13 @@ ${avoidIdeas.length ? avoidIdeas.map((item, index) => `${index + 1}. ${item}`).j
     });
     answer = parsedIdeas.answer;
     let ideas = parsedIdeas.ideas;
-    const structureFailures = countPaintingIdeaStructureFailures(ideas, globalOffset);
-    const needsCriticalRetry = ideas.length !== count || countNearDuplicatePaintingIdeas(ideas) > 0;
-    const hasRetryBudget = Date.now() - modelStartedAt < 25 * 1000;
-    if (needsCriticalRetry && hasRetryBudget) {
-      const correctionPrompt = `${prompt}\n\n你上一次输出未通过质量检查：必须恰好输出 ${count} 条有效方案，标题和核心创意不得近似重复，并严格一一对应固定方向；除“其他方向05·画面内容移动特写”和“其他方向06·实木压条工艺移动特写”外，每条标题或核心创意都要明确写出远景/全景，并至少点名 2 件具体家具或陈设；两个特写方向不得添加这些空间要求。当前有 ${structureFailures} 条未满足空间结构要求。请重新输出完整 JSON 数组，不要解释。`;
+    if (ideas.length !== count) {
       answer = await callDoubaoArkText({
         apiKey,
         model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-        content: [{ type: 'input_text', text: correctionPrompt }]
+        content: [{ type: 'input_text', text: `${prompt}\n请输出完整的 ${count} 条方案JSON数组。` }],
       });
       ideas = normalizePaintingIdeas(parseStructuredJson(answer));
-    }
-
-    if (structureFailures > 0) {
-      console.warn('[doubao painting] ideas quality warning', { requestId, structureFailures });
     }
 
     if (ideas.length !== count) {
@@ -17193,7 +17175,6 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
 
   console.log('[doubao painting] idea-prompt request start', { requestId, title: ideaTitle });
 
-  const modelStartedAt = Date.now();
   let answer = await callDoubaoArkText({
     apiKey,
     model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
@@ -17214,27 +17195,6 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
     durationSec = hasDurationRange ? Math.round((durationMin + durationMax) / 2) : fallbackDuration;
   }
   let resolvedDuration = Math.min(30, Math.max(4, Math.round(durationSec)));
-  const qualityIssues = inspectPaintingPromptQuality(promptText, resolvedDuration, ideaSummary, {
-    staticWallSizeCompensation: useStaticWallSizeCompensation,
-  });
-  const hasRetryBudget = Date.now() - modelStartedAt < 25 * 1000;
-  if (qualityIssues.length > 0 && hasRetryBudget) {
-    const correctionPrompt = `${fullPrompt}\n\n【质量检查未通过，必须重写】\n${qualityIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\n请重新输出一份完整提示词，保留产品与创意方向，严格补齐连续时间轴、远景/全景和家居陈设。只输出重写后的提示词文本。`;
-    answer = await callDoubaoArkText({
-      apiKey,
-      model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
-      content: [{ type: 'input_text', text: correctionPrompt }]
-    });
-    promptText = String(answer || '').trim();
-    if (!promptText) throw new Error('模型重写后的提示词为空');
-    durationMatch = promptText.match(/总时长\s*[：:]\s*(\d{1,3})\s*秒?/);
-    if (durationMatch) {
-      const rewrittenDuration = Number.parseInt(durationMatch[1], 10);
-      if (Number.isFinite(rewrittenDuration) && rewrittenDuration > 0) {
-        resolvedDuration = Math.min(30, Math.max(4, Math.round(rewrittenDuration)));
-      }
-    }
-  }
   // 尺寸锁定由服务端确定性追加，不依赖提示词模型是否完整保留这项关键产品约束。
   promptText = ensurePaintingSizeLock(promptText, {
     contentDetailScan: isCloseDetailScan,
@@ -17247,10 +17207,6 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
   if (isContentDetailScan) {
     promptText = ensurePaintingContentDetailVariant(promptText, elementVariationIndex);
   }
-  if (qualityIssues.length > 0) {
-    console.warn('[doubao painting] idea-prompt quality warning', { requestId, qualityIssues, retried: hasRetryBudget });
-  }
-
   console.log('[doubao painting] idea-prompt done', { requestId, promptLength: promptText.length, duration: resolvedDuration });
   return { prompt: promptText, duration: resolvedDuration };
 }
@@ -17514,7 +17470,6 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   }
 
   const isOrnament = isOrnamentProduct(batchRun.profile);
-  if (isOrnament && inspectOrnamentPromptIssues(task.prompt, task.directionNumber).length) throw new Error('摆件结构错误，已阻止付费提交');
   const isSticker = isStickerProduct(batchRun.profile);
   const isWoodDetailDirection = !isSticker && !isOrnament && Number(task.directionNumber) === PAINTING_WOOD_DETAIL_DIRECTION;
   const referenceSpecs = getPaintingBatchReferenceSpecs(task, batchRun);
@@ -17522,10 +17477,6 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   const referenceGuide = isOrnament ? `【摆台正面与公共背面参考职责】\n${referenceSpecs.map(item => item.label).join('\n')}\n正面图案取图1，物理结构保持图2与公共结构锁定；禁止把木背板画在正面，也不能把题字和人物画到背板上。\n\n` : isWoodDetailDirection
     ? `【参考图职责强制区分】\n${referenceSpecs.map((item) => item.label).join('\n')}。木条特写图中的桌面、墙面、手、尺子、包装物或其他背景都不属于产品，严禁复制到生成视频。如细节图与正面主图的作用冲突，整体画面以主图为准，对应木条局部结构以高清细节图为准。\n\n`
     : '';
-  if (isSticker) {
-    const stickerIssues = inspectStickerPromptIssues(task.prompt, task.directionNumber);
-    if (stickerIssues.length) throw new Error(`PVC贴画任务混入错误产品规则，已阻止付费提交：${stickerIssues.join('；')}`);
-  }
   let promptForSubmission = isOrnament ? ensureOrnamentPrompt(task.prompt, batchRun.profile, task.directionNumber) : isSticker ? ensureStickerPrompt(task.prompt, batchRun.profile, task.directionNumber) : ensurePaintingProductFocusedEnding(
     ensurePaintingRollingUnfoldInstruction(task.prompt, task.directionNumber)
   );
@@ -17547,7 +17498,7 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   const resolution = batchRun.resolution || '720p';
   const ratio = batchRun.ratio || '9:16';
   const duration = Math.min(isSeedance25 || isWan3 ? 30 : 15, Math.max(isWan3 ? 2 : 4, Math.round(task.duration || 8)));
-  const generateAudio = !isWan3 && batchRun.generateAudio !== false;
+  const generateAudio = batchRun.generateAudio !== false;
   const watermark = batchRun.watermark === true;
 
   const upstreamUrl = isMiniMaxH3
@@ -17769,14 +17720,12 @@ async function generatePromptForBatchTask(task, batchRun, previousPrompts) {
     avoidElements: previousPrompts.slice(-8).map((p) => extractPaintingDiversitySummary(p).snippet).filter(Boolean),
   };
 
-  let previousPromptsForDirection = [];
   if (batchRun.variationRound > 0) {
     const previousTasks = dbGetPaintingBatchTasks(batchRun.batchRunId)
       .filter((t) => t.directionNumber === task.directionNumber && t.variationRound < batchRun.variationRound && t.prompt)
       .sort((a, b) => a.variationRound - b.variationRound);
     if (previousTasks.length > 0) {
       context.previousPrompt = previousTasks[previousTasks.length - 1].prompt;
-      previousPromptsForDirection = previousTasks.map((t) => t.prompt);
     }
   }
 
@@ -17785,8 +17734,7 @@ async function generatePromptForBatchTask(task, batchRun, previousPrompts) {
     try {
       const { prompt, duration } = await generatePaintingIdeaPromptCore(requestId, apiKey, batchRun.profile, idea, context);
 
-      const allPrevious = [...previousPrompts, ...previousPromptsForDirection];
-      return rewritePromptForDiversity(requestId, apiKey, batchRun.profile, idea, context, allPrevious, prompt, duration);
+      return { prompt, duration };
     } catch (error) {
       lastError = error;
       if (attempt < PAINTING_BATCH_PROMPT_RETRY_MAX) {
@@ -17799,45 +17747,12 @@ async function generatePromptForBatchTask(task, batchRun, previousPrompts) {
   throw lastError || new Error('完整提示词生成失败');
 }
 
-// 在提示词生成完成后、写入数据库前，串行地对最新“已提交提示词”做相似度复核。
-// 因为生成阶段是并发的，两个任务可能都基于同一个旧快照生成、互不比较；
-// 这里加锁后重新读取已提交的提示词，若发现相似度过高则重写，保证并发生成仍会互相比较。
-async function commitBatchPromptWithDiversity(task, batchRun, initialPrompt, initialDuration) {
+// 提示词直接入库；保留写入互斥与任务状态，不做相似度质量复核或重写。
+async function commitBatchPrompt(task, batchRun, initialPrompt, initialDuration) {
   await paintingBatchDiversityCommitMutex.acquire();
   try {
-    const apiKey = readValue(SERVER_CONFIG.arkApiKey);
-    const idea = {
-      id: task.ideaId,
-      title: task.ideaTitle,
-      summary: task.ideaSummary,
-      directionNumber: task.directionNumber,
-      durationMin: task.duration || batchRun.plan?.durationMin,
-      durationMax: task.duration || batchRun.plan?.durationMax,
-      ratio: batchRun.ratio,
-      stylePreset: batchRun.stylePreset,
-    };
-    const context = {
-      ...batchRun.plan,
-      ratio: batchRun.ratio,
-      stylePreset: batchRun.stylePreset,
-      elementVariationIndex: batchRun.variationRound,
-      previousPrompt: '',
-      avoidElements: [],
-    };
-    // 重新读取已提交提示词（排除自身），捕获并发生成的竞态。
-    const committedPrompts = dbGetPaintingBatchTasks(task.batchRunId)
-      .filter((t) => t.id !== task.id && t.prompt && t.status !== 'failed' && t.status !== 'stopped')
-      .map((t) => t.prompt);
-    const { prompt, duration } = await rewritePromptForDiversity(
-      `diversity-${randomBytes(3).toString('hex')}`,
-      apiKey,
-      batchRun.profile,
-      idea,
-      context,
-      committedPrompts,
-      initialPrompt,
-      initialDuration
-    );
+    const prompt = initialPrompt;
+    const duration = initialDuration;
     dbUpdatePaintingBatchTask(task.id, {
       prompt,
       duration,
@@ -17893,8 +17808,8 @@ async function processBatchTask(taskId) {
         .sort((a, b) => a.id - b.id);
       const previousPrompts = previousTasks.map((t) => t.prompt);
       const generated = await generatePromptForBatchTask(task, currentRun, previousPrompts);
-      // 串行提交 + 对最新“已提交提示词”做相似度复核，修复并发生成互不比较的竞态。
-      await commitBatchPromptWithDiversity(task, currentRun, generated.prompt, generated.duration);
+      // 直接保存已生成提示词，不因正文质量再次重写。
+      await commitBatchPrompt(task, currentRun, generated.prompt, generated.duration);
     } catch (error) {
       const nextRetryCount = (task.retryCount || 0) + 1;
       if (nextRetryCount > PAINTING_BATCH_PROMPT_RETRY_MAX) {
@@ -19588,10 +19503,6 @@ async function handleSeedanceCreateTask(req, res) {
       sendJson(res, 400, { error: '摆件提示词与提交产品类型不一致' });
       return;
     }
-    if (ornamentProfile && inspectOrnamentPromptIssues(body?.prompt, manualDirection).length) {
-      sendJson(res, 400, { error: '摆件提示词含拆架或其他产品动作，已阻止付费提交' });
-      return;
-    }
     const stickerProfile = stickerProfileFromPrompt(body?.prompt) || (isStickerProduct(body) ? normalizeStickerProfile() : null);
     // 挂画批量/方向任务才允许注入挂画专用收尾和运镜规则。直接反推、元素替换、
     // 图片生视频等普通任务即使提示词中条件性提到“挂画”，也不能被改写成产品广告片。
@@ -19601,14 +19512,6 @@ async function handleSeedanceCreateTask(req, res) {
       || readValue(body?.productType)
     );
     const isPaintingFamilyTask = Boolean(ornamentProfile) || Boolean(stickerProfile) || isPaintingCreativeTask;
-    if (stickerProfile) {
-      const stickerDirection = manualDirection || Number(String(body?.prompt).match(/框架方向：(\d+)/)?.[1]) || 1;
-      const stickerIssues = inspectStickerPromptIssues(body?.prompt, stickerDirection);
-      if (stickerIssues.length) {
-        sendJson(res, 400, { error: `PVC贴画任务混入错误产品规则，已阻止付费提交：${stickerIssues.join('；')}` });
-        return;
-      }
-    }
     let prompt = ornamentProfile ? ensureOrnamentPrompt(readValue(body?.prompt), ornamentProfile, manualDirection || Number(String(body?.prompt).match(/框架方向：(\d+)/)?.[1]) || 1) : stickerProfile
       ? ensureStickerPrompt(readValue(body?.prompt), stickerProfile, manualDirection || Number(String(body?.prompt).match(/框架方向：(\d+)/)?.[1]) || 1)
       : ensurePaintingRollingUnfoldInstruction(readValue(body?.prompt), manualDirection);
@@ -19620,7 +19523,7 @@ async function handleSeedanceCreateTask(req, res) {
       prompt = ensureWan3CameraMotionLock(prompt);
       if (stickerProfile) prompt = ensureWan3StickerCoplanarLock(prompt);
     }
-    if (replacementType && replacementType !== 'generic') prompt += `\n${replacementStructureRule(replacementType)}`;
+    if (replacementType && replacementType !== 'generic') prompt += `\n${replacementStructureRule(replacementType, body.prompt)}`;
     const modelLabel = isMiniMaxH3 ? 'MiniMax H3' : isWan3 ? 'Wan3.0 Video' : isSeedance25 ? 'Seedance 2.5' : isSeedanceMini ? 'Seedance 2.0 mini' : isSeedanceFast ? 'Seedance 2.0 Fast' : 'Seedance 2.0';
     const resolvedApiKey = isMiniMaxH3
       ? readValue(SERVER_CONFIG.minimaxApiKey)
@@ -19628,7 +19531,7 @@ async function handleSeedanceCreateTask(req, res) {
         ? readValue(SERVER_CONFIG.dashscopeApiKey)
       : readValue(SERVER_CONFIG.seedanceApiKey);
     const isVideoEditTask = taskMode === 'video_edit';
-    const generateAudio = !isWan3 && body?.generateAudio !== false;
+    const generateAudio = body?.generateAudio !== false;
     const watermark = body?.watermark === true;
     const uploadedFiles = Array.isArray(body?.files) ? body.files.slice() : [];
     if ((ornamentProfile || replacementType === 'ornament') && !isVideoEditTask) {

@@ -268,7 +268,8 @@ export function extractVideoGenerationDurationFromPrompt(prompt: string): number
 export function extractExplicitAudioPreference(text: string): boolean | null {
   const clauses = String(text || '').split(/[。；;，,\n]|但/);
   let preference: boolean | null = null;
-  const sound = '(?:人声|台词|对白|口播|旁白|配音|对话|背景音乐|配乐|环境音(?:效)?|音效|原声|声音|音频|声轨|音轨)';
+  const sound = '(?:人声|台词|对白|口播|旁白|配音|对话|背景音乐|背景音|配乐|环境音(?:效)?|音效|原声|声音|音频|声轨|音轨)';
+  const declaredSound = /(?:背景音乐|背景音|配乐|环境音(?:效)?|音效|人声|旁白|口播|对白|台词)\s*[:：]\s*(?!\s|[（(]?(?:无|没有|关闭|不需要|不生成))\S/;
   const fullSilence = /(?:全片|全程|视频|成片)?\s*(?:保持|设为|设置为|输出为)?\s*(?:完全)?\s*(?:静音|无声)|(?:不要|不用|无需|不需要|不生成|关闭|去掉|移除|删除|不保留|禁止)\s*(?:生成)?\s*(?:任何|全部|所有)?\s*(?:声音|音频|声轨|音轨)/;
   const audible = new RegExp(`(?:保留|增加|添加|加入|加上|生成|开启|需要|包含|伴随|配有|配上|带有).{0,8}?${sound}|(?:^|视频|画面|全片|全程)有.{0,8}?${sound}|${sound}\\s*(?:为|是|持续|存在|清晰可闻|可听见)`);
   for (const raw of clauses) {
@@ -276,7 +277,7 @@ export function extractExplicitAudioPreference(text: string): boolean | null {
     if (!clause) continue;
     if (!/(?:禁止|避免|不得)\s*(?:出现)?\s*(?:静音|无声)/.test(clause) && fullSilence.test(clause)) {
       preference = false;
-    } else if (!/(?:禁止|严禁|避免|不得|不要|不用|无需|不需要|不生成|关闭|去掉|移除|删除|不保留)/.test(clause) && audible.test(clause)) {
+    } else if (!/(?:禁止|严禁|避免|不得|不要|不用|无需|不需要|不生成|关闭|去掉|移除|删除|不保留)/.test(clause) && (audible.test(clause) || declaredSound.test(clause))) {
       preference = true;
     }
   }
@@ -833,7 +834,7 @@ export async function createSeedanceTask(options: {
     formData.append('resolution', options.resolution);
     formData.append('ratio', options.ratio);
     formData.append('duration', String(options.duration));
-    formData.append('generateAudio', String(options.model === 'wan3.0-video' ? false : options.generateAudio));
+    formData.append('generateAudio', String(options.generateAudio));
     formData.append('watermark', String(options.watermark));
     if (options.imageHash) formData.append('imageHash', options.imageHash);
     if (options.directionNumber) formData.append('directionNumber', String(options.directionNumber));
@@ -853,7 +854,7 @@ export async function createSeedanceTask(options: {
       resolution: options.resolution,
       ratio: options.ratio,
       duration: options.duration,
-      generateAudio: options.model === 'wan3.0-video' ? false : options.generateAudio,
+      generateAudio: options.generateAudio,
       watermark: options.watermark,
       imageHash: options.imageHash || undefined,
       directionNumber: options.directionNumber || undefined,
@@ -1062,13 +1063,13 @@ export async function waitForPaintingTask<T>(taskId: string, fallbackError: stri
   throw new Error(`${fallbackError}：后台处理超过 ${timeoutMinutes} 分钟，已停止等待，请重新点击生成。`);
 }
 
-export async function analyzePainting(file: File, productType: PaintingProductType = 'hanging', widthCm = 180, heightCm = 60): Promise<PaintingProfile> {
+export async function analyzePainting(file: File, productType: PaintingProductType = 'hanging', widthCm?: number, heightCm?: number): Promise<PaintingProfile> {
   const formData = new FormData();
   formData.append('file', file, file.name);
   formData.append('productType', productType);
-  if (productType === 'sticker') {
-    formData.append('widthCm', String(widthCm));
-    formData.append('heightCm', String(heightCm));
+  if (productType === 'sticker' || productType === 'ornament') {
+    formData.append('widthCm', String(widthCm ?? (productType === 'ornament' ? 20 : 180)));
+    formData.append('heightCm', String(heightCm ?? (productType === 'ornament' ? 20 : 60)));
   }
 
   const response = await fetch(productType === 'ornament' ? '/api/ornament/analyze' : productType === 'sticker' ? '/api/sticker/analyze' : '/api/painting/analyze', {
@@ -1485,7 +1486,7 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
   formData.append('ratio', options.ratio);
   formData.append('variationRound', String(options.variationRound));
   if (options.creativeSessionId) formData.append('creativeSessionId', options.creativeSessionId);
-  formData.append('generateAudio', String(options.model === 'wan3.0-video' ? false : options.generateAudio));
+  formData.append('generateAudio', String(options.generateAudio));
   formData.append('watermark', String(options.watermark));
   formData.append('stylePreset', options.stylePreset);
   formData.append('creationRequestId', options.creationRequestId);

@@ -354,10 +354,7 @@ assert.equal(blockedManualResponse.status, 400);
 assert.match(blockedManualResponse.body, /已阻止付费提交/);
 assert.equal(payloads.length, 0);
 payloads = [];
-await assert.rejects(
-  server.submitSeedanceTaskForBatchTask({ id: 999, directionNumber: 2, prompt: contaminatedPrompt, duration: 6 }, { ...run, profile: normalizeStickerProfile(), model: 'wan3.0-video', imagePath, resolution: '480p', options: {} }),
-  /已阻止付费提交/
-);
-assert.equal(payloads.length, 0);
+await server.submitSeedanceTaskForBatchTask({ id: 999, directionNumber: 2, prompt: contaminatedPrompt, duration: 6 }, { ...run, profile: normalizeStickerProfile(), model: 'wan3.0-video', imagePath, resolution: '480p', options: {} });
+assert.ok(payloads.length > 0, '批量提交不再根据正文关键词拒绝');
 console.log('贴画测试通过：40方向、结构分层、尺寸、分析/文案路由、历史快照、使用记录隔离及6模型手动/批量提交。全部请求均为模拟，无付费调用。');
 process.exit(0);

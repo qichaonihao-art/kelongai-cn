@@ -1,3 +1,4 @@
+import { ornamentSizeRule } from '../../../legacy-project/ornament-size.mjs';
 import { resolveClipProductType, type IncomingCreativeClip } from '@/src/lib/clipCreative';
 import { replacementProductRules, wrapReplacementPrompt, replacementElementLabel, replacementProductLabel, type ReplacementProductType } from '@/src/lib/productReplacement';
 import { useState, useRef, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
@@ -819,6 +820,7 @@ function parsePaintingBatchRequestedCount(value: string): number | null {
 }
 
 interface ReverseSeedanceSyncSnapshot {
+  ornamentSize?: { widthCm: number; heightCm: number };
   mode: Exclude<ReverseMode, 'painting'>;
   referenceImages: SelectedCreativeMedia[];
   requestedDuration?: number;
@@ -1840,6 +1842,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingLowerWoodUploadHistoryId, setPaintingLowerWoodUploadHistoryId] = useState<number | null>(null);
   const [paintingProfile, setPaintingProfile] = useState<PaintingProfile | null>(null);
   const [paintingProductType, setPaintingProductType] = useState<PaintingProductType>('hanging');
+  const [ornamentWidthCm, setOrnamentWidthCm] = useState(20);
+  const [ornamentHeightCm, setOrnamentHeightCm] = useState(20);
+  const [replacementOrnamentWidthCm, setReplacementOrnamentWidthCm] = useState(20);
+  const [replacementOrnamentHeightCm, setReplacementOrnamentHeightCm] = useState(20);
   const [stickerWidthCm, setStickerWidthCm] = useState(180);
   const [stickerHeightCm, setStickerHeightCm] = useState(60);
   const isSticker = paintingProductType === 'sticker';
@@ -1894,6 +1900,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchFolderId, setPaintingBatchFolderId] = useState<number | null>(null);
   const [paintingBatchFolderChoiceSource, setPaintingBatchFolderChoiceSource] = useState<VideoLibraryFolderChoiceSource>('fallback');
   const [showPaintingBatchFolderChoices, setShowPaintingBatchFolderChoices] = useState(false);
+  const [paintingWanGenerateAudio, setPaintingWanGenerateAudio] = useState(false);
   const [paintingBatchModel, setPaintingBatchModel] = useState<string>(SEEDANCE_BATCH_MODEL);
   const [paintingBatchResolution, setPaintingBatchResolution] = useState<string>(SEEDANCE_BATCH_RESOLUTION);
   const paintingBatchPreferenceRef = useRef<Record<PaintingProductType, { model: string; resolution: string }>>({
@@ -2373,7 +2380,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       lastReplacementSyncedRef.current = false;
       return [];
     });
-  }, [selectedMedia, replaceImage, replacementReferences, replacementProductType]);
+  }, [selectedMedia, replaceImage, replacementReferences, replacementProductType, replacementOrnamentWidthCm, replacementOrnamentHeightCm]);
 
   useEffect(() => () => {
     Object.values(ornamentImageHistory).flat().forEach(item => URL.revokeObjectURL(item.previewUrl));
@@ -3001,6 +3008,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
 
+    if (reverseMode === 'replace' && replacementProductType === 'ornament' && ![replacementOrnamentWidthCm, replacementOrnamentHeightCm].every(value => Number.isFinite(value) && value > 0 && value <= 500)) {
+      setRequestError('摆台宽、高请填写大于0且不超过500的厘米数。');
+      return;
+    }
+
     if (reverseMode === 'replace' && (!replaceImage || !replaceTarget.trim() || !replaceWith.trim())) {
       setRequestError('请填写需要替换的元素和目标元素');
       return;
@@ -3050,6 +3062,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       mode: reverseMode === 'replace' ? 'replace' : 'direct',
       referenceImages: reverseMode === 'replace' ? replacementImages : [],
       replacementProductType: reverseMode === 'replace' ? replacementProductType : undefined,
+      ornamentSize: reverseMode === 'replace' && replacementProductType === 'ornament' ? { widthCm: replacementOrnamentWidthCm, heightCm: replacementOrnamentHeightCm } : undefined,
       requestedDuration: durationSeconds,
       additionalChange,
       clipAudioMode: activeClipAudioMode,
@@ -3058,7 +3071,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     lastReverseDialogueInputRef.current = additionalChange;
 
     if (reverseMode === 'replace') {
-      const prompt = replacementProductRules(replacementProductType) + '\n' + (replacementProductType === 'ornament' ? '参考顺序：首个素材是原视频，第一张图片是本款正面，最后一张图片是公共背面，中间选传图片只补充侧面或边框结构。正面图决定本款图案，其他图不复制图案、背景或手。\n' : '') + VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText, clipAudioMode: activeClipAudioMode });
+      const prompt = replacementProductRules(replacementProductType) + '\n' + (replacementProductType === 'ornament' ? ornamentSizeRule({ widthCm: replacementOrnamentWidthCm, heightCm: replacementOrnamentHeightCm }) + '\n' : '') + (replacementProductType === 'ornament' ? '参考顺序：首个素材是原视频，第一张图片是本款正面，最后一张图片是公共背面，中间选传图片只补充侧面或边框结构。正面图决定本款图案，其他图不复制图案、背景或手。\n' : '') + VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText, clipAudioMode: activeClipAudioMode });
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
@@ -3092,7 +3105,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     let checkedReplacementPrompt: string | null = null;
     if (activeMode === 'replace') {
       if (!snapshot) { setRequestError('参考图或视频已更换，请重新分析后再同步提示词。'); return; }
-      try { checkedReplacementPrompt = wrapReplacementPrompt(latestAssistantText, snapshot?.replacementProductType || replacementProductType); }
+      try { checkedReplacementPrompt = wrapReplacementPrompt(latestAssistantText, snapshot?.replacementProductType || replacementProductType, snapshot?.ornamentSize || { widthCm: replacementOrnamentWidthCm, heightCm: replacementOrnamentHeightCm }); }
       catch (error) { setRequestError(error instanceof Error ? error.message : '替换动作不兼容'); setSeedancePrompt(''); setSeedanceReferences(previous => { previous.forEach(item => URL.revokeObjectURL(item.previewUrl)); return []; }); return; }
     }
 
@@ -3155,7 +3168,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     // 用户的全局默认永久改成「开声音」。
     // nextGenerateAudio 为 null 表示不表态（历史记录、AI 未按格式输出、该模式不适用、H3 模型），
     // 保持用户设置；false 是明确的「关」。所以这里必须判 !== null，不能简写成 if (x)。
-    const nextGenerateAudio = resolveAutoAudioSetting({ hasSpeech, explicitPreference: explicitAudio, mode: activeMode, model: seedanceModel });
+    const nextGenerateAudio = resolveAutoAudioSetting({ hasSpeech, explicitPreference: explicitAudio ?? (seedanceModel === 'wan3.0-video' ? extractExplicitAudioPreference(latestAssistantText) : null), mode: activeMode, model: seedanceModel });
     if (activeClipAudioMode !== 'none') {
       setSeedanceGenerateAudio(true);
     } else if (nextGenerateAudio !== null) {
@@ -3233,6 +3246,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   function handleSeedancePromptChange(event: { target: { value: string; selectionStart: number | null } }) {
     const value = event.target.value;
     setSeedancePrompt(value);
+    if (seedanceModel === 'wan3.0-video' && paintingSeedanceSourceRef.current?.prompt.trim() !== seedancePrompt.trim()) {
+      const audio = extractExplicitAudioPreference(value);
+      if (audio !== null) setSeedanceGenerateAudio(audio);
+    }
     setSeedanceReplaceHighlight(null);
 
     const cursorPosition = event.target.selectionStart;
@@ -3573,7 +3590,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         resolution: generationResolution,
         ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
         duration,
-        generateAudio: !isWan3 && seedanceGenerateAudio,
+        generateAudio: seedanceGenerateAudio,
         watermark: seedanceWatermark,
         directionNumber: paintingDirectionNumber,
         variationRound: paintingSourceVariationRound,
@@ -3603,7 +3620,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         resolution: generationResolution,
         ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
         duration,
-        generateAudio: !isWan3 && seedanceGenerateAudio,
+        generateAudio: seedanceGenerateAudio,
         watermark: seedanceWatermark,
         references,
         imageHash: paintingSourceImageHash,
@@ -3634,7 +3651,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               resolution: generationResolution,
               ratio: isVideoEdit ? 'adaptive' : seedanceRatio,
               duration,
-              generateAudio: !isWan3 && seedanceGenerateAudio,
+              generateAudio: seedanceGenerateAudio,
               watermark: seedanceWatermark,
               directionNumber: paintingDirectionNumber,
               variationRound: paintingSourceVariationRound,
@@ -4092,6 +4109,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingPlan((previous) => ({ ...previous, scene: '', extraRequirements: '' }));
   }
 
+  function changeOrnamentDimension(axis: 'width' | 'height', value: number) {
+    if (paintingDraftBusy) return;
+    resetPaintingProductDraft();
+    if (axis === 'width') setOrnamentWidthCm(value);
+    else setOrnamentHeightCm(value);
+  }
+
   function changeStickerDimension(axis: 'width' | 'height', value: number) {
     if (paintingDraftBusy) return;
     resetPaintingProductDraft();
@@ -4292,6 +4316,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
   async function handlePaintingAnalyze() {
     if (paintingDraftBusy) return;
+    if (isOrnament && ![ornamentWidthCm, ornamentHeightCm].every(value => Number.isFinite(value) && value > 0 && value <= 500)) {
+      setPaintingError('摆台宽、高请填写大于0且不超过500的厘米数。');
+      return;
+    }
     if (isSticker && (![stickerWidthCm, stickerHeightCm].every((value) => Number.isFinite(value) && value >= 10 && value <= 500))) {
       setPaintingError('请填写10至500厘米之间的贴画宽度和高度。');
       return;
@@ -4303,7 +4331,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingError('');
     setPaintingLoading('analyze');
     try {
-      const profile = await analyzePainting(paintingImage.file, paintingProductType, stickerWidthCm, stickerHeightCm);
+      const profile = await analyzePainting(paintingImage.file, paintingProductType, isOrnament ? ornamentWidthCm : stickerWidthCm, isOrnament ? ornamentHeightCm : stickerHeightCm);
       setPaintingProfile(profile);
       setPaintingIdeas([]);
       setPaintingIdeaBatchCache({});
@@ -4344,7 +4372,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       variationRound,
       creativeSessionId: paintingCreativeSessionId,
       profile: {
-        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-fixed-ideas-v2' : undefined,
+        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-wide-mix-v3' : undefined,
         productType: paintingProductType,
         widthCm: paintingProfile?.widthCm,
         heightCm: paintingProfile?.heightCm,
@@ -4386,7 +4414,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     if (!paintingProfile) return {};
     return paintingProductType === 'sticker'
       ? { ...paintingProfile, productType: 'sticker', widthCm: stickerWidthCm, heightCm: stickerHeightCm }
-      : { ...paintingProfile, productType: paintingProductType, ...(isOrnament ? { supportStructure: 'fixed' } : {}) };
+      : { ...paintingProfile, productType: paintingProductType, ...(isOrnament ? { supportStructure: 'fixed', widthCm: ornamentWidthCm, heightCm: ornamentHeightCm } : {}) };
   }
 
   async function runPaintingIdeas(batch: number, variationRound = paintingVariationRound) {
@@ -4518,6 +4546,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       const maxDuration = seedanceModel === 'doubao-seedance-2-5-260628' ? 30 : 15;
       const durationSeconds = Math.min(maxDuration, Math.max(4, Math.round(duration)));
       setSeedancePrompt(prompt.trim());
+      if (seedanceModel === 'wan3.0-video') setSeedanceGenerateAudio(paintingWanGenerateAudio);
       clearSeedanceDialogueReview();
       setSeedanceRatio(ratio);
       setSeedanceDuration(durationSeconds);
@@ -4791,8 +4820,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       paintingBatchPreferenceRef.current[getPaintingProductType(run.profile)] = { model: run.model, resolution: run.resolution };
       setPaintingProfile(run.profile);
       setPaintingPlan(run.plan);
-      setStickerWidthCm(Number(run.profile.widthCm) || 180);
-      setStickerHeightCm(Number(run.profile.heightCm) || 60);
+      if (run.profile.productType === 'ornament') {
+        setOrnamentWidthCm(Number(run.profile.widthCm) || 20);
+        setOrnamentHeightCm(Number(run.profile.heightCm) || 20);
+      }
+      if (run.profile.productType === 'sticker') {
+        setStickerWidthCm(Number(run.profile.widthCm) || 180);
+        setStickerHeightCm(Number(run.profile.heightCm) || 60);
+      }
       setPaintingVariationRound(run.variationRound);
       setPaintingCreativeSessionId(typeof run.options?.creativeSessionId === 'string' ? run.options.creativeSessionId : '');
       clearOrnamentReferences();
@@ -4933,7 +4968,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       lowerWoodFile: !isHanging ? null : paintingLowerWoodImage?.file || null,
       ornamentSideFile: isOrnament ? ornamentReferences.side?.file || null : null,
       ornamentFrameFile: isOrnament ? ornamentReferences.frame?.file || null : null,
-      profile: paintingProfile!,
+      profile: getCurrentPaintingRequestProfile(),
       plan: paintingPlan,
       ideas,
       totalDirections: requestedCount,
@@ -4944,7 +4979,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       ratio: paintingPlan.ratio || seedanceRatio,
       variationRound: paintingVariationRound,
       creativeSessionId: paintingCreativeSessionId,
-      generateAudio: paintingBatchModel !== 'wan3.0-video' && seedanceGenerateAudio,
+      generateAudio: paintingBatchModel === 'wan3.0-video' ? paintingWanGenerateAudio : seedanceGenerateAudio,
       watermark: seedanceWatermark,
       stylePreset: paintingPlan.stylePreset,
       uploadHistoryId: paintingUploadHistoryId,
@@ -5230,8 +5265,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     const batchPreference = paintingBatchPreferenceRef.current[restoredType];
     setPaintingBatchModel(batchPreference.model);
     setPaintingBatchResolution(batchPreference.resolution);
-    setStickerWidthCm(Number(item.profile.widthCm) || 180);
-    setStickerHeightCm(Number(item.profile.heightCm) || 60);
+    if (item.profile.productType === 'ornament') {
+      setOrnamentWidthCm(Number(item.profile.widthCm) || 20);
+      setOrnamentHeightCm(Number(item.profile.heightCm) || 20);
+    }
+    if (item.profile.productType === 'sticker') {
+      setStickerWidthCm(Number(item.profile.widthCm) || 180);
+      setStickerHeightCm(Number(item.profile.heightCm) || 60);
+    }
     let restoredHistoryItem = item.uploadHistoryId
       ? await getUploadHistoryItem(item.uploadHistoryId).catch(() => null)
       : null;
@@ -6047,6 +6088,17 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       </div>
                       <p className="mt-2 text-[11px] leading-5 text-slate-500">PVC柔性背胶 · 白色画背 · 可揭背膜 · 二维印刷装饰边线。以茶室、客厅、书房为主，30个成品展示＋10个形态与安装方向。</p>
                     </> : isOrnament ? <p className="mt-2 text-[11px] leading-5 text-slate-500">全系列统一为金色矩形铝合金框、木质背板、背部连接的单根金属后撑杆，只更换正面平面图案。系统自动附带公共背面结构参考；40个方向不含拆架、盘面分离、上墙或揭膜动作。</p> : <p className="mt-2 text-[11px] leading-5 text-slate-500">沿用原有40个挂画框架及尺寸补偿规则。</p>}
+                        {isOrnament && (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="mb-2 text-xs font-bold text-slate-600">摆台外框尺寸</div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                          <label>宽 <input aria-label="素材摆台宽度（厘米）" type="number" min={0.1} max={500} step="any" value={ornamentWidthCm} disabled={paintingDraftBusy} onChange={(event) => changeOrnamentDimension('width', Number(event.target.value))} className="w-20 rounded-lg border border-slate-200 px-2 py-1" /> 厘米</label>
+                          <span>×</span>
+                          <label>高 <input aria-label="素材摆台高度（厘米）" type="number" min={0.1} max={500} step="any" value={ornamentHeightCm} disabled={paintingDraftBusy} onChange={(event) => changeOrnamentDimension('height', Number(event.target.value))} className="w-20 rounded-lg border border-slate-200 px-2 py-1" /> 厘米</label>
+                        </div>
+                        <p className="mt-2 text-[10px] text-slate-400">默认20×20厘米，指完整外框；尺寸会写入视频生成提示词。修改后请重新分析。</p>
+                      </div>
+                        )}
                     <p className="mt-1 text-[10px] text-slate-400">切换类型或修改尺寸后需要重新分析，已启动的批量任务不受影响。</p>
                   </div>
                   <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3">
@@ -6239,7 +6291,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         {[
                           ['产品类型', getPaintingProductLabel(paintingProfile)],
                           ['名称', paintingProfile.name],
-                          ...(isSticker ? [['真实尺寸', `${paintingProfile.widthCm} × ${paintingProfile.heightCm} 厘米`]] : []),
+                          ...((isSticker || isOrnament) ? [['真实尺寸', `${paintingProfile.widthCm} × ${paintingProfile.heightCm} 厘米`]] : []),
                           ['风格', paintingProfile.style],
                           ['主体', paintingProfile.subject],
                           ['材质', paintingProfile.material],
@@ -6341,6 +6393,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
                           />
                         </label>
+                        <button type="button" onClick={() => {
+                          const audio = !paintingWanGenerateAudio;
+                          setPaintingWanGenerateAudio(audio);
+                          batchCreationRequestIdRef.current = null;
+                          if (seedanceModel === 'wan3.0-video' && paintingSeedanceSourceRef.current?.prompt.trim() === seedancePrompt.trim()) setSeedanceGenerateAudio(audio);
+                        }} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-left text-xs font-bold text-indigo-700 sm:col-span-2">千问3素材声音：{paintingWanGenerateAudio ? '开启' : '关闭'}（默认关闭，点击切换；手动与全自动共用）</button>
                         <label className="text-[11px] font-semibold text-slate-500 sm:col-span-2">
                           声音/音乐偏好（可选）
                           <input
@@ -6361,6 +6419,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
                           />
                         </label>
+
                         <label className="text-[11px] font-semibold text-slate-500 sm:col-span-2">
                           其他特殊要求（可选）
                           <input
@@ -6421,7 +6480,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500">
                             第 {paintingFrameworkBatch + 1}/{paintingTotalBatches} 批 · 第 {paintingVariationRound + 1} 轮
-                            {isOrnament && ` · ${['整体搬放与人物展示', '生活场景陈列', '摄影机运镜', '细节与结构展示'][paintingFrameworkBatch]}`}
+                            {isOrnament && ` · ${['人物全景搬放10条', '人物全景搬放2条＋中景展示8条', '生活场景全景8条＋整体展示2条', '整体展示4条＋局部特写6条'][paintingFrameworkBatch]}`}
                             {isSticker && ` · ${['人物展示', '生活场景', '运镜与细节', '形态与安装'][paintingFrameworkBatch]}`}
                           </span>
                           <button
@@ -7243,6 +7302,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 </div>
               )}
 
+              {reverseMode === 'replace' && replacementProductType === 'ornament' && (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="mb-2 text-xs font-bold text-slate-600">摆台外框尺寸</div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                          <label>宽 <input aria-label="替换摆台宽度（厘米）" type="number" min={0.1} max={500} step="any" value={replacementOrnamentWidthCm} disabled={isLoading} onChange={(event) => setReplacementOrnamentWidthCm(Number(event.target.value))} className="w-20 rounded-lg border border-slate-200 px-2 py-1" /> 厘米</label>
+                          <span>×</span>
+                          <label>高 <input aria-label="替换摆台高度（厘米）" type="number" min={0.1} max={500} step="any" value={replacementOrnamentHeightCm} disabled={isLoading} onChange={(event) => setReplacementOrnamentHeightCm(Number(event.target.value))} className="w-20 rounded-lg border border-slate-200 px-2 py-1" /> 厘米</label>
+                        </div>
+                        <p className="mt-2 text-[10px] text-slate-400">默认20×20厘米，指完整外框；尺寸会写入视频生成提示词。修改后请重新分析。</p>
+                      </div>
+              )}
+
               <div className="mt-3 space-y-1.5">
                 <label className="text-[11px] font-bold text-slate-600">额外调整（可选）</label>
                 <textarea
@@ -7633,6 +7704,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     onChange={(event) => {
                       const nextModel = event.target.value as SeedanceModelId;
                       setSeedanceModel(nextModel);
+                      if (nextModel === 'wan3.0-video') {
+                        const fromMaterial = paintingSeedanceSourceRef.current?.prompt.trim() === seedancePrompt.trim();
+                        const audio = fromMaterial ? paintingWanGenerateAudio : extractExplicitAudioPreference(seedancePrompt);
+                        if (audio !== null) setSeedanceGenerateAudio(audio);
+                      }
                       rememberManualSeedancePreference({ model: nextModel });
                     }}
                     disabled={isSeedanceLoading || seedanceTaskMode === 'video-edit-painting'}
@@ -8054,7 +8130,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       <span className="h-3.5 w-px bg-slate-200" />
                       <span className="inline-flex items-center gap-1">
                         <Volume2 className="size-3" />
-                        {seedanceModel === 'MiniMax-H3' ? 'H3音轨随模型' : seedanceModel === 'wan3.0-video' ? '静音' : seedanceGenerateAudio ? '声音' : '静音'}
+                        {seedanceModel === 'MiniMax-H3' ? 'H3音轨随模型' : seedanceGenerateAudio ? '声音' : '静音'}
                       </span>
                       <span className="h-3.5 w-px bg-slate-200" />
                       <span>{seedanceWatermark ? '水印' : '无水印'}</span>
@@ -8145,18 +8221,19 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             type="button"
                             onClick={() => setSeedanceGenerateAudio((value) => {
                               const nextValue = !value;
+                              if (seedanceModel === 'wan3.0-video' && paintingSeedanceSourceRef.current?.prompt.trim() === seedancePrompt.trim()) setPaintingWanGenerateAudio(nextValue);
                               rememberManualSeedancePreference({ generateAudio: nextValue });
                               return nextValue;
                             })}
-                            disabled={seedanceModel === 'MiniMax-H3' || seedanceModel === 'wan3.0-video'}
+                            disabled={seedanceModel === 'MiniMax-H3'}
                             className={cn(
                               "rounded-xl border px-3 py-2 text-xs font-black transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-                              seedanceModel !== 'wan3.0-video' && seedanceGenerateAudio
+                              seedanceGenerateAudio
                                 ? "border-violet-300 bg-violet-50 text-violet-700"
                                 : "border-slate-200 bg-slate-50 text-slate-500 hover:border-violet-200 hover:bg-white"
                             )}
                           >
-                            {seedanceModel === 'MiniMax-H3' ? 'H3无声音开关' : seedanceModel === 'wan3.0-video' ? 'Wan3.0 固定静音' : seedanceGenerateAudio ? '生成声音' : '不生成声音'}
+                            {seedanceModel === 'MiniMax-H3' ? 'H3无声音开关' : seedanceGenerateAudio ? '生成声音' : '不生成声音'}
                           </button>
                           <button
                             type="button"
@@ -8896,6 +8973,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               </label>
             </div>
 
+            {paintingBatchModel === 'wan3.0-video' && <button type="button" disabled={paintingBatchCreating || paintingBatchConfirming} onClick={() => { setPaintingWanGenerateAudio(value => !value); batchCreationRequestIdRef.current = null; }} className="mt-3 w-full rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 text-sm font-bold text-indigo-700">千问3声音：{paintingWanGenerateAudio ? '开启' : '关闭'}（点击切换，默认关闭）</button>}
+
             <div className="mt-3 grid grid-cols-2 gap-3">
               <label className="block">
                 <span className="mb-1.5 block text-xs font-black text-slate-700">从第几组开始</span>
@@ -8951,7 +9030,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 ['画面比例', paintingPlan.ratio || seedanceRatio],
                 ['单条时长', `${paintingPlan.durationMin}-${paintingPlan.durationMax} 秒`],
                 ['本轮风格', getPaintingStyleLabel(paintingPlan.stylePreset)],
-                ['背景音乐', seedanceGenerateAudio ? '开启' : '关闭'],
+                ['生成声音', (paintingBatchModel === 'wan3.0-video' ? paintingWanGenerateAudio : seedanceGenerateAudio) ? '开启' : '关闭'],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl bg-slate-50 px-3 py-2">
                   <div className="text-[10px] font-bold text-slate-400">{label}</div>

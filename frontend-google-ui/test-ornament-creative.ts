@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { analyzePainting, generatePaintingIdeas, generatePaintingIdeaPrompt, createPaintingBatchRun, createSeedanceTask, getPaintingUsedDirections, getPaintingProductType, getPaintingProductLabel, getPaintingFolderBinding, setPaintingFolderBinding, type PaintingMaterialPlan } from './src/lib/creative';
+import { extractExplicitAudioPreference, resolveAutoAudioSetting, analyzePainting, generatePaintingIdeas, generatePaintingIdeaPrompt, createPaintingBatchRun, createSeedanceTask, getPaintingUsedDirections, getPaintingProductType, getPaintingProductLabel, getPaintingFolderBinding, setPaintingFolderBinding, type PaintingMaterialPlan } from './src/lib/creative';
 
 Object.assign(globalThis, { window: globalThis });
 const file = new File(['test'], 'product.png', { type: 'image/png' });
@@ -19,8 +19,8 @@ await analyzePainting(file, 'ornament', 150, 50);
 assert.equal(calls[0].url, '/api/ornament/analyze');
 const analysisForm = calls[0].body as FormData;
 assert.equal(analysisForm.get('productType'), 'ornament');
-assert.equal(analysisForm.get('widthCm'), null);
-assert.equal(analysisForm.get('heightCm'), null);
+assert.equal(analysisForm.get('widthCm'), '150');
+assert.equal(analysisForm.get('heightCm'), '50');
 await generatePaintingIdeas(profile, plan);
 const ideasRequestCall = calls.find((call) => call.url === '/api/ornament/ideas')!;
 assert.ok(ideasRequestCall);
@@ -44,7 +44,7 @@ assert.equal(batchForm.get('startOrder'), 'random');
 assert.equal(batchForm.get('requestedCount'), '1');
 assert.equal(batchForm.get('upperWoodFile'), null);
 assert.equal(batchForm.get('lowerWoodFile'), null);
-assert.equal(batchForm.get('generateAudio'), 'false');
+assert.equal(batchForm.get('generateAudio'), 'true');
 for (const [side, frame] of [[false, false], [true, false], [false, true], [true, true]]) {
   await createPaintingBatchRun({ file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'optional-test', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: true, watermark: false, stylePreset: 'modern-minimal', ornamentSideFile: side ? file : null, ornamentFrameFile: frame ? file : null });
   const form = calls.at(-1)!.body as FormData;
@@ -58,7 +58,7 @@ for (const withImage of [true, false]) {
   await createSeedanceTask({ productType: 'ornament', model: 'wan3.0-video', prompt: '贴画', resolution: '480p', ratio: '9:16', duration: 6, generateAudio: true, watermark: false, references: withImage ? [{ id: '1', kind: 'image', file, fileName: file.name, previewUrl: '' }] : [] });
   const body = calls.at(-1)!.body;
   assert.equal(withImage ? (body as FormData).get('productType') : JSON.parse(String(body)).productType, 'ornament');
-  assert.equal(withImage ? (body as FormData).get('generateAudio') : JSON.parse(String(body)).generateAudio, withImage ? 'false' : false);
+  assert.equal(withImage ? (body as FormData).get('generateAudio') : JSON.parse(String(body)).generateAudio, withImage ? 'true' : true);
 }
 await getPaintingUsedDirections('hash', 1, 'ornament');
 assert.ok(calls.at(-1)!.url.includes('productType=ornament'));
@@ -69,3 +69,26 @@ for (const productType of ['hanging', 'sticker', 'ornament'] as const) {
   assert.equal(JSON.parse(String(calls.at(-1)!.body)).productType, productType);
 }
 console.log('前端摆件接口测试通过：旧记录兼容、产品分析类型、方案/提示词类型、批量顺序数量、木条过滤及单条提交。无真实网络调用。');
+
+for (const text of ['背景音乐：轻柔古风音乐。', '背景音为轻柔的中式纯音乐。', '旁白：欢迎来到书房。', '环境音：茶杯轻放声。']) {
+ const detected = extractExplicitAudioPreference(text);
+ assert.equal(detected, true, text);
+ assert.equal(resolveAutoAudioSetting({ hasSpeech: false, explicitPreference: detected, mode: 'direct', model: 'wan3.0-video' }), true);
+}
+assert.equal(extractExplicitAudioPreference('全片保持静音，不生成任何声音。'), false);
+assert.equal(extractExplicitAudioPreference('背景音乐：无。台词：（无台词、无人声）。'), null);
+for (const generateAudio of [false, true]) {
+ for (const withImage of [true, false]) {
+  await createSeedanceTask({ model: 'wan3.0-video', prompt: '背景音乐：古风音乐', resolution: '480p', ratio: '9:16', duration: 6, generateAudio, watermark: false, references: withImage ? [{ id: '1', kind: 'image', file, fileName: file.name, previewUrl: '' }] : [] });
+  const body = calls.at(-1)!.body;
+  assert.equal(withImage ? (body as FormData).get('generateAudio') : JSON.parse(String(body)).generateAudio, withImage ? String(generateAudio) : generateAudio);
+ }
+ await createPaintingBatchRun({ file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'audio-toggle', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio, watermark: false, stylePreset: 'modern-minimal' });
+ assert.equal((calls.at(-1)!.body as FormData).get('generateAudio'), String(generateAudio));
+}
+console.log('千问3提示词声音识别、单条JSON/图片提交与批量声音开关通过。');
+
+const beforeDefaultAnalysis = calls.length;
+await analyzePainting(file, 'ornament');
+const defaultForm = calls[beforeDefaultAnalysis].body as FormData;
+assert.equal(defaultForm.get('widthCm'), '20'); assert.equal(defaultForm.get('heightCm'), '20');
