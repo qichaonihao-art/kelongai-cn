@@ -190,6 +190,10 @@ cp legacy-project/.env.example legacy-project/.env
 
 ### 视频素材库
 
+- 文件夹首页只读取文件夹和数量，视频列表在进入文件夹后读取；未读提醒独立更新。
+- 最近浏览结果在当前会话中缓存最多12个视图、2分钟；始终后台刷新，上传、移动、删除或退出登录后清空。
+- 更新此版本时需同时部署前后端并重启后台，随后刷新网页。
+
 - `VIDEO_LIBRARY_DIR`
   - 可选，团队共享视频的独立文件目录
   - 生产环境建议使用 `/www/wwwroot/kelongai-media/video-library`

@@ -11,6 +11,7 @@ import {
   formatVideoLibraryTime,
   calculateVideoLibraryUnread,
   getVideoLibrary,
+  getVideoLibraryView,
   getVideoLibrarySummary,
   markVideoLibraryItemsRead,
   retryVideoEnhancement,
@@ -32,6 +33,8 @@ import {
   isVideoLibraryDestinationCurrent,
   type VideoLibraryDirectoryHandle,
 } from '@/src/lib/videoLibraryLocal';
+
+import { cacheVideoLibraryView, getVideoLibraryCacheRevision, readCachedVideoLibraryView, videoLibraryViewKey, type VideoLibraryView } from '@/src/lib/videoLibraryViewCache';
 
 interface VideoLibraryPageProps {
   onBack: () => void;
@@ -141,8 +144,16 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const deleteBusyRef = useRef(false);
   const mountedRef = useRef(true);
   const retryDownloadRef = useRef<{ folder: string; ids: number[] }>({ folder: '', ids: [] });
-  const [items, setItems] = useState<VideoLibraryItem[]>([]);
-  const [folders, setFolders] = useState<string[]>([DEFAULT_FOLDER]);
+  const [initialView] = useState(() => readCachedVideoLibraryView(videoLibraryViewKey()));
+  const [items, setItems] = useState<VideoLibraryItem[]>(initialView?.items || []);
+  const [folders, setFolders] = useState<string[]>(initialView?.folders || [DEFAULT_FOLDER]);
+  const [overviewCounts, setOverviewCounts] = useState<Record<string, number>>(initialView?.counts || {});
+  const [loadedKey, setLoadedKey] = useState<string | null>(initialView ? videoLibraryViewKey() : null);
+  const [activeQuery, setActiveQuery] = useState('');
+  const displayedKeyRef = useRef<string | null>(initialView ? videoLibraryViewKey() : null);
+  const requestRef = useRef<{ id: number; controller: AbortController | null }>({ id: 0, controller: null });
+  const summaryRequestRef = useRef<AbortController | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState('');
   const [search, setSearch] = useState('');
   const [folderDraft, setFolderDraft] = useState(DEFAULT_FOLDER);
@@ -155,7 +166,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [renameDraft, setRenameDraft] = useState('');
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isFolderOpen, setIsFolderOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(!initialView);
   const [isUploading, setIsUploading] = useState(false);
   const [downloadingVideoId, setDownloadingVideoId] = useState<number | null>(null);
   const [isDownloadBusy, setIsDownloadBusy] = useState(false);
@@ -185,10 +196,15 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   }
 
   async function refreshUnreadSummary() {
+    summaryRequestRef.current?.abort();
+    const controller = new AbortController();
+    summaryRequestRef.current = controller;
+    const revision = getVideoLibraryCacheRevision();
     try {
-      applyUnreadSummary(await getVideoLibrarySummary());
+      const summary = await getVideoLibrarySummary(controller.signal);
+      if (!controller.signal.aborted && mountedRef.current && revision === getVideoLibraryCacheRevision()) applyUnreadSummary(summary);
     } catch {
-      // 未看提醒更新失败不影响素材的上传、移动或删除。
+      // Unread reminders must never delay the visible library.
     }
   }
 
@@ -210,45 +226,76 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     }
   }
 
-  async function refresh(overrides?: { folder?: string; query?: string }) {
-    setIsLoading(true);
-    setError('');
+  function applyView(result: VideoLibraryView, key: string) {
+    setItems(result.items);
+    setFolders(result.folders);
+    setOverviewCounts(result.counts);
+    displayedKeyRef.current = key;
+    setLoadedKey(key);
+  }
+
+  async function refresh(overrides?: { folder?: string; query?: string }, background = false) {
+    if (background && requestRef.current.controller) return;
+    const folder = overrides?.folder ?? selectedFolder;
+    const query = overrides?.query ?? (background ? activeQuery : search.trim());
+    const key = videoLibraryViewKey(folder, query);
+    setActiveQuery(query);
+    requestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const id = requestRef.current.id + 1;
+    requestRef.current = { id, controller };
+    const revision = getVideoLibraryCacheRevision();
+    // Keep current content during refresh; only restore cache when changing views.
+    const cached = displayedKeyRef.current === key ? null : readCachedVideoLibraryView(key);
+    if (cached) applyView(cached, key);
+    setIsLoading(displayedKeyRef.current !== key);
+    setIsRefreshing(true);
+    if (!background) setError('');
+    if (!background) void refreshUnreadSummary();
     try {
-      const [result, summary] = await Promise.all([
-        getVideoLibrary({
-          folder: overrides?.folder ?? selectedFolder,
-          query: overrides?.query ?? search.trim(),
-        }),
-        getVideoLibrarySummary().catch(() => null),
-      ]);
-      setItems(result.items);
-      setFolders(result.folders);
-      if (summary) applyUnreadSummary(summary);
+      const result = await getVideoLibraryView({ folder, query }, controller.signal);
+      if (controller.signal.aborted || requestRef.current.id !== id || !mountedRef.current) return;
+      if (revision !== getVideoLibraryCacheRevision()) {
+        requestRef.current.controller = null;
+        return refresh({ folder, query }, background);
+      }
+      if (background) {
+        const previousIds = new Set(items.map((item) => `${item.id}:${item.folderName}`));
+        if (result.items.length !== items.length || result.items.some((item) => !previousIds.has(`${item.id}:${item.folderName}`))) {
+          void refreshUnreadSummary();
+        }
+      }
+      cacheVideoLibraryView(key, result, revision);
+      applyView(result, key);
     } catch (loadError) {
+      if (controller.signal.aborted || requestRef.current.id !== id || !mountedRef.current) return;
       setError(loadError instanceof Error ? loadError.message : '读取视频库失败');
     } finally {
-      setIsLoading(false);
+      if (requestRef.current.id === id && mountedRef.current) {
+        requestRef.current.controller = null;
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }
 
   useEffect(() => {
-    void refresh();
+    void refresh({ folder: selectedFolder, query: activeQuery });
+    return () => {
+      requestRef.current.controller?.abort();
+      summaryRequestRef.current?.abort();
+    };
   }, [selectedFolder]);
 
   useEffect(() => {
     if (!items.some((item) => item.enhancement && !['completed', 'failed', 'skipped'].includes(item.enhancement.status))) return;
     const timer = window.setInterval(() => {
-      void Promise.all([
-        getVideoLibrary({ folder: selectedFolder, query: search.trim() }),
-        getVideoLibrarySummary().catch(() => null),
-      ]).then(([result, summary]) => {
-        setItems(result.items);
-        setFolders(result.folders);
-        if (summary) applyUnreadSummary(summary);
-      }).catch(() => {});
+      if (document.visibilityState === 'hidden') return;
+      // Do not download the whole-library unread summary on every task poll.
+      void refresh({ folder: selectedFolder, query: activeQuery }, true);
     }, 10_000);
     return () => window.clearInterval(timer);
-  }, [items, selectedFolder, search]);
+  }, [items, selectedFolder, activeQuery]);
 
   useEffect(() => {
     let cancelled = false;
@@ -305,17 +352,19 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   }, [items, shotRoleView]);
 
   const folderCounts = useMemo(() => {
+    if (!selectedFolder && !activeQuery) return new Map(Object.entries(overviewCounts));
     const counts = new Map<string, number>();
     items.forEach((item) => counts.set(item.folderName, (counts.get(item.folderName) || 0) + 1));
     return counts;
-  }, [items]);
+  }, [items, selectedFolder, activeQuery, overviewCounts]);
 
   const sortedFolders = useMemo(
     () => sortVideoLibraryFoldersByCount(folders, folderCounts),
     [folders, folderCounts],
   );
 
-  const isFolderHome = !selectedFolder && !search.trim();
+  const isFolderHome = !selectedFolder && !activeQuery;
+  const isCurrentViewLoaded = loadedKey === videoLibraryViewKey(selectedFolder, activeQuery);
   const folderHomeContent = (
     <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
       {sortedFolders.map((folder) => (
@@ -414,6 +463,8 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     progress = { ...progress, currentName: '' };
     setUploadProgress(progress);
     setIsUploading(false);
+    setSearch('');
+    setActiveQuery('');
     setSelectedFolder(folderDraft);
     await refresh({ folder: folderDraft, query: '' });
     setNotice(`批量上传完成：成功 ${progress.uploaded} 个，已存在 ${progress.duplicates} 个，失败 ${progress.failed} 个`);
@@ -962,7 +1013,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
             <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void refresh(); }} placeholder="搜索素材" className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-xs font-semibold outline-none focus:border-sky-300 focus:bg-white" />
           </div>
-          <button type="button" onClick={() => void refresh()} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border-2 border-sky-300 bg-sky-50 px-4 text-sm font-black text-sky-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-400 hover:bg-sky-100 hover:shadow-md"><RefreshCw className={cn('size-4.5', isLoading && 'animate-spin')} />刷新</button>
+          <button type="button" onClick={() => void refresh()} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border-2 border-sky-300 bg-sky-50 px-4 text-sm font-black text-sky-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-400 hover:bg-sky-100 hover:shadow-md"><RefreshCw className={cn('size-4.5', isRefreshing && 'animate-spin')} />刷新</button>
           <div className="flex gap-2 overflow-x-auto">
             {selectedFolder && <button type="button" onClick={() => setSelectedFolder('')} className="inline-flex h-11 whitespace-nowrap items-center gap-2 rounded-xl border-2 border-slate-800 bg-slate-900 px-4 text-sm font-black text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg"><ArrowLeft className="size-4.5" />返回文件夹</button>}
           </div>
@@ -1021,6 +1072,8 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       <section className="mx-auto mt-4 max-w-7xl space-y-5">
         {isLoading ? (
           <div className="flex items-center justify-center rounded-2xl border border-white/80 bg-white/80 py-20 text-sm font-bold text-slate-400"><Loader2 className="mr-2 size-5 animate-spin" />正在读取共享视频库</div>
+        ) : !isCurrentViewLoaded ? (
+          <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-500">{error ? '未能读取素材，请点击上方刷新重试。' : '正在切换文件夹…'}</div>
         ) : isFolderHome ? (
           folderHomeContent
         ) : groupedItems.length === 0 ? (

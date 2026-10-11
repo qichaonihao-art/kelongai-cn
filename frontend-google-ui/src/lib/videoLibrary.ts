@@ -1,3 +1,5 @@
+import { invalidateVideoLibraryCache, type VideoLibraryView } from './videoLibraryViewCache';
+
 export interface VideoLibraryItem {
   id: number;
   folderName: string;
@@ -143,14 +145,47 @@ function errorMessage(json: any, fallback: string) {
   return typeof json?.error === 'string' ? json.error : fallback;
 }
 
-export async function getVideoLibrary(filters?: { folder?: string; query?: string }) {
+// Apply the timeout through JSON consumption as well as connection setup.
+async function fetchVideoLibraryJson(url: string, signal?: AbortSignal) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abort = () => controller.abort();
+  if (signal?.aborted) abort();
+  else signal?.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 20_000);
+  try {
+    const response = await fetch(url, { credentials: 'include', signal: controller.signal });
+    if (response.status === 401 || response.status === 403) invalidateVideoLibraryCache();
+    const json = await response.json();
+    if (!response.ok) throw new Error(errorMessage(json, '读取视频库失败'));
+    return json;
+  } catch (error) {
+    if (timedOut) throw new Error('读取视频库超时，请点击刷新重试');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
+  }
+}
+
+export async function getVideoLibraryView(filters: { folder?: string; query?: string }, signal?: AbortSignal): Promise<VideoLibraryView> {
+  if (!filters.folder && !filters.query?.trim()) {
+    const json = await fetchVideoLibraryJson('/api/video-library/folders', signal);
+    if (!json?.counts || typeof json.counts !== 'object') {
+      throw new Error('请重启后台以启用素材库快速加载，再点击刷新');
+    }
+    return { items: [], folders: json.folders || ['通用素材'], counts: json.counts };
+  }
+  const result = await getVideoLibrary(filters, signal);
+  return { ...result, counts: {} };
+}
+
+export async function getVideoLibrary(filters?: { folder?: string; query?: string }, signal?: AbortSignal) {
   const params = new URLSearchParams();
   if (filters?.folder) params.set('folder', filters.folder);
   if (filters?.query) params.set('q', filters.query);
   const query = params.toString();
-  const response = await fetch(`/api/video-library/videos${query ? `?${query}` : ''}`, { credentials: 'include' });
-  const json = await readJson(response);
-  if (!response.ok) throw new Error(errorMessage(json, '读取视频库失败'));
+  const json = await fetchVideoLibraryJson(`/api/video-library/videos${query ? `?${query}` : ''}`, signal);
   return {
     items: Array.isArray(json?.items) ? json.items as VideoLibraryItem[] : [],
     folders: Array.isArray(json?.folders) ? json.folders as string[] : ['通用素材'],
@@ -168,6 +203,7 @@ export async function uploadVideoLibraryVideo(file: File, folderName: string) {
   });
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '上传视频失败'));
+  invalidateVideoLibraryCache();
   return {
     item: json?.item as VideoLibraryItem,
     duplicate: Boolean(json?.duplicate),
@@ -184,6 +220,7 @@ export async function createVideoLibraryFolder(folderName: string) {
   });
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '新建文件夹失败'));
+  invalidateVideoLibraryCache();
   return String(json?.folder || folderName);
 }
 
@@ -194,6 +231,7 @@ export async function deleteVideoLibraryFolder(folderName: string) {
   });
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '删除文件夹失败'));
+  invalidateVideoLibraryCache();
 }
 
 export async function getVideoLibraryFolders() {
@@ -203,10 +241,8 @@ export async function getVideoLibraryFolders() {
   return Array.isArray(json?.folders) ? json.folders.map(String) : ['通用素材'];
 }
 
-export async function getVideoLibrarySummary() {
-  const response = await fetch('/api/video-library/summary', { credentials: 'include' });
-  const json = await readJson(response);
-  if (!response.ok) throw new Error(errorMessage(json, '读取视频素材库提醒失败'));
+export async function getVideoLibrarySummary(signal?: AbortSignal) {
+  const json = await fetchVideoLibraryJson('/api/video-library/summary', signal);
   return Array.isArray(json?.items) ? json.items as VideoLibrarySummaryItem[] : [];
 }
 
@@ -227,6 +263,7 @@ export async function saveSeedanceVideoToLibrary(input: {
   });
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '保存到视频素材库失败'));
+  invalidateVideoLibraryCache();
   return {
     item: json?.item as VideoLibraryItem,
     duplicate: Boolean(json?.duplicate),
@@ -243,6 +280,7 @@ export async function retryVideoEnhancement(id: number) {
   });
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '重新启动画质增强失败'));
+  invalidateVideoLibraryCache();
   return json?.task;
 }
 
@@ -252,6 +290,7 @@ export async function startVideoEnhancement(id: number) {
   });
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '启动画质增强失败'));
+  invalidateVideoLibraryCache();
   return json?.item as VideoLibraryItem;
 }
 
@@ -264,6 +303,7 @@ export async function updateVideoLibraryItem(id: number, input: { note?: string;
   });
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '更新视频信息失败'));
+  invalidateVideoLibraryCache();
   return json?.item as VideoLibraryItem;
 }
 
@@ -276,6 +316,7 @@ export async function setVideoLibraryShotRole(ids: number[], folderName: string,
   });
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '移动镜头素材失败'));
+  invalidateVideoLibraryCache();
   return Array.isArray(json?.items) ? json.items as VideoLibraryItem[] : [];
 }
 
@@ -286,6 +327,7 @@ export async function deleteVideoLibraryVideo(id: number) {
   });
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '删除视频失败'));
+  invalidateVideoLibraryCache();
 }
 
 // Snapshot explicit IDs only; a failed item must not stop the remaining selection.

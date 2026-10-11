@@ -4001,7 +4001,7 @@ async function handleGetVideoLibraryFolders(req, res) {
   `).all().map((row) => [row.folder_name, Number(row.file_count)]));
   const folders = dbGetVideoLibraryFolders().sort((left, right) =>
     (counts.get(right) || 0) - (counts.get(left) || 0));
-  sendJson(res, 200, { ok: true, folders });
+  sendJson(res, 200, { ok: true, folders, counts: Object.fromEntries(counts) });
 }
 
 async function handleGetVideoLibrarySummary(req, res) {
@@ -21980,6 +21980,7 @@ export {
   generatePaintingIdeasCore,
   generatePaintingIdeaPromptCore,
   getCollectionDb,
+  handleGetVideoLibraryFolders,
   ensurePaintingBatchIdempotencyConstraints,
   dbInsertPaintingBatchRun,
   dbInsertPaintingBatchTask,

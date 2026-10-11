@@ -21,6 +21,7 @@ import CreativeFeedingPage from './pages/CreativeFeedingPage';
 import TeamTimelinePage from './pages/TeamTimelinePage';
 import VideoLibraryPage from './pages/VideoLibraryPage';
 import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
+import { invalidateVideoLibraryCache } from './lib/videoLibraryViewCache';
 import type { ModuleId } from './components/ModuleQuickNav';
 
 type Page = 'login' | 'home' | 'universal' | 'creative-video' | 'creative-clip' | 'creative-copy' | ModuleId;
@@ -89,6 +90,7 @@ export default function App() {
   const handleLogin = async (password: string) => {
     const result = await loginWithPassword(password);
     if (result.ok) {
+      invalidateVideoLibraryCache();
       setCurrentPage('home');
     }
     return result;
@@ -111,6 +113,7 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    invalidateVideoLibraryCache();
     await logout();
     setCurrentPage('login');
   };
