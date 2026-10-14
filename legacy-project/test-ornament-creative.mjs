@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ORNAMENT_FRAMEWORKS, ORNAMENT_MARKER, ORNAMENT_RED_CLOTH_DIRECTION, buildOrnamentVideoRequest, buildOrnamentIdeasRequest, normalizeOrnamentProfile, inspectOrnamentPromptIssues, ensureOrnamentPrompt, ornamentProfileFromPrompt } from './ornament-creative.mjs';
+import { ORNAMENT_FRAMEWORKS, ORNAMENT_MARKER, ORNAMENT_RED_CLOTH_DIRECTION, buildOrnamentVideoRequest, buildOrnamentIdeasRequest, normalizeOrnamentProfile, ornamentScaleRules, inspectOrnamentPromptIssues, ensureOrnamentPrompt, ornamentProfileFromPrompt } from './ornament-creative.mjs';
 import { productUsageHash } from './sticker-creative.mjs';
 process.env.RUNTIME_STATE_DIR = mkdtempSync(join(tmpdir(), 'kelong-ornament-test-'));
 process.env.KELONG_SKIP_LISTEN = '1';
@@ -24,6 +24,25 @@ assert.deepEqual(readOrnamentSizeFromPrompt(ornamentSizeRule({ widthCm: 25, heig
 assert.equal((withOrnamentSizePrompt(ornamentSizeRule() + '正文', { widthCm: 25, heightCm: 30 }).match(/【摆台真实尺寸】/g) || []).length, 1);
 const customProfile = normalizeOrnamentProfile({ ...profile, widthCm: 25, heightCm: 30 });
 for (const framework of ORNAMENT_FRAMEWORKS) assert.match(ensureOrnamentPrompt('正文', customProfile, framework.directionNumber), /外框宽25厘米、高30厘米/);
+const defaultScale = ornamentScaleRules(profile);
+assert.match(defaultScale, /摆台宽约为肩宽的50%/);
+assert.match(defaultScale, /摆台高约为全身高的12.1%/);
+assert.match(defaultScale, /半个成人肩宽/);
+assert.match(defaultScale, /不前伸到镜头前/);
+assert.match(defaultScale, /放到桌柜上后不能突然变大或缩小/);
+const customScale = ornamentScaleRules(customProfile);
+assert.match(customScale, /外框宽25厘米、高30厘米/);
+assert.match(customScale, /肩宽的62.5%/);
+assert.match(customScale, /全身高的18.2%/);
+assert.doesNotMatch(customScale, /本款20×20厘米|宽约半个成人肩宽/);
+for (const framework of ORNAMENT_FRAMEWORKS) {
+ const request = buildOrnamentVideoRequest(profile, framework, {}, {});
+ assert.ok(request.includes(defaultScale), '全部框架的提示词请求都携带真实尺度参照');
+ const finalPrompt = ensureOrnamentPrompt('展示摆台。', profile, framework.directionNumber);
+ assert.ok(finalPrompt.includes(defaultScale));
+ assert.equal((finalPrompt.match(/【摆台与人物真实比例】/g) || []).length, 1);
+ if (framework.directionNumber <= 28) assert.doesNotMatch(framework.shotRule, /12%-20%|25%-40%|10%-20%/);
+}
 const plan = { durationMin: 5, durationMax: 8, stylePreset: 'modern-minimal', ratio: '9:16', productType: 'ornament' };
 const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 const imagePath = join(process.env.RUNTIME_STATE_DIR, 'test.png'); writeFileSync(imagePath, Buffer.from(imageData, 'base64'));
@@ -34,6 +53,8 @@ const req = body => {
 const res = () => ({ status: 0, body: '', writeHead(status) { this.status = status; }, end(body) { this.body = String(body); } });
 assert.equal(ORNAMENT_FRAMEWORKS.length, 40);
 assert.equal(new Set(ORNAMENT_FRAMEWORKS.map(f => f.title)).size, 40);
+assert.doesNotMatch(ORNAMENT_FRAMEWORKS.map(f => f.title + f.action).join('\n'), /胸前偏下|胸前双手|坐姿托扶展示/);
+for (const n of [13, 14, 15]) assert.match(ORNAMENT_FRAMEWORKS[n - 1].action, /台面|桌面|柜面/);
 const reveal = ORNAMENT_FRAMEWORKS[ORNAMENT_RED_CLOTH_DIRECTION - 1];
 assert.equal(reveal.directionNumber, 29);
 assert.equal(reveal.title, '红布揭幕展示');
@@ -160,6 +181,7 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'wan3.0-video', 'MiniMax
  const response = res(); await server.handleSeedanceCreateTask(req({ model, prompt, productType: 'ornament', directionNumber: 1, duration: 6, imageHash: 'manual-ornament-test', resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: true }), response);
  assert.equal(response.status, 200, response.body);
  assert.match(JSON.stringify(payloads.at(-1).payload), /外框宽25厘米、高30厘米/);
+ assert.ok(JSON.stringify(payloads.at(-1).payload).includes(JSON.stringify(customScale).slice(1, -1)));
  if (model === 'wan3.0-video') assert.equal(payloads.at(-1).payload.parameters.audio, true);
  if (model.startsWith('doubao')) assert.equal(payloads.at(-1).payload.generate_audio, true); assert.doesNotMatch(JSON.stringify(payloads.at(-1)), forbidden);
  assert.ok(JSON.stringify(payloads.at(-1).payload).includes('data:image/jpeg;base64,'));
@@ -167,6 +189,7 @@ for (const model of ['doubao-seedance-2-0-mini-260615', 'wan3.0-video', 'MiniMax
  assert.doesNotMatch(JSON.stringify(payloads.at(-1)), forbidden);
  const sent = payloads.at(-1).payload;
  assert.match(JSON.stringify(sent), /外框宽25厘米、高30厘米/);
+ assert.ok(JSON.stringify(sent).includes(JSON.stringify(customScale).slice(1, -1)));
  if (model === 'wan3.0-video') assert.equal(sent.parameters.audio, true);
  if (model.startsWith('doubao')) assert.equal(sent.generate_audio, true);
  assert.equal(model === 'wan3.0-video' ? sent.input.media.length : sent.content.filter(item => item.type === 'image_url').length, 2);
@@ -311,4 +334,41 @@ for (const size of [{ widthCm: 20, heightCm: 20 }, { widthCm: 25, heightCm: 30 }
 }
 console.log('摆台默认及自定义尺寸：分析、40框架、手动、批量、替换实际提交通过。');
 
+// 风格必须经过实际生成入口进入请求及付费模型载荷，即使AI正文漏写风格。
+const styleCases = [
+ ['new-chinese', '新中式雅致', '改良中式'],
+ ['modern-minimal', '现代简约', '现代针织'],
+ ['modern-luxury', '现代轻奢', '石材、金属、皮质'],
+ ['cream-warm', '奶油温馨', '奶油色墙面'],
+ ['natural-wood', '原木自然', '浅木家具'],
+ ['nordic-fresh', '北欧清新', '浅木、白墙'],
+ ['vintage-home', '复古雅居', '复古衬衫'],
+ ['gallery-display', '高端展陈', '艺术展厅'],
+ ['everyday-life', '烟火生活', '真实普通住宅'],
+];
+for (const [stylePreset, label, feature] of styleCases) {
+ reply = '创意内容：人物在柜旁自然展示，摆台留在台面。\n总时长：6秒';
+ const generated = await server.generatePaintingIdeaPromptCore('style-' + stylePreset, 'test', profile, { directionNumber: 13, productType: 'ornament', stylePreset: 'new-chinese' }, { ...plan, stylePreset, scene: '客厅边柜', character: '中年女性' });
+ const request = JSON.stringify(payloads.at(-1).payload);
+ assert.ok(request.includes(label)); assert.ok(request.includes(feature));
+ assert.match(request, /框架只固定动作顺序/); assert.match(request, /服装建议主色/);
+ assert.ok(generated.prompt.includes(label)); assert.ok(generated.prompt.includes(feature));
+ assert.match(generated.prompt, /客厅边柜/); assert.match(generated.prompt, /中年女性/);
+ assert.match(generated.prompt, /不双手持框在胸前静止展示/);
+ assert.equal(ensureOrnamentPrompt(generated.prompt, profile, 13), generated.prompt, '重新提交重建物理规则不能丢失风格');
+ for (const direction of [1, 15, 22, 29, 35]) {
+   const restyled = ensureOrnamentPrompt(generated.prompt, profile, direction);
+   assert.ok(restyled.includes(feature));
+   assert.equal((restyled.match(/【摆台场景与服饰风格】/g) || []).length, 1);
+ }
+ const response = res();
+ await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', prompt: generated.prompt, duration: 6, resolution: '480p' }), response);
+ assert.equal(response.status, 200, response.body);
+ assert.ok(JSON.stringify(payloads.at(-1).payload).includes(feature));
+ await server.submitSeedanceTaskForBatchTask({ directionNumber: 13, prompt: generated.prompt, duration: 6 }, { model: 'wan3.0-video', profile, imagePath, resolution: '480p', ratio: '9:16', generateAudio: false });
+ assert.ok(JSON.stringify(payloads.at(-1).payload).includes(feature));
+}
+console.log('PASS: 9 styles carry concrete scenery and wardrobe through prompt generation, manual and batch video payloads; natural side/table display replaces chest-held poses.');
+
+console.log('PASS: real-world scale anchors replace oversized human-shot occupancy; default and custom dimensions survive manual/batch payloads.');
 process.exit(0);

@@ -23,10 +23,10 @@ const entries = [
   ["接待区柜面换位", "人物站在接待区柜前，双手整体托起摆台，侧身走一步到同一柜面另一位置落稳，撤手；完整呈现重心与步伐。"],
   ["长桌侧行放到空位", "人物双手托扶整件摆台沿长桌一侧正常走两步，放到干燥空位，站稳后撤手；桌边和人物脚步持续可见。"],
   ["走近书架低格陈列", "人物手持整件摆台走到腰高且空间充足的开放书架格前，将整件放稳后撤手；不踮脚、不挤入过小格子。"],
-  ["胸前双手正面展示", "人物双手承托完整摆台，在胸前偏下保持正面朝向镜头，自然看向产品再看向镜头；不把摆台向镜头前送。"],
-  ["手持三分之四转正", "人物双手托住底部与侧边，将整件从三分之四侧面缓慢转回正面；主体与后撑杆同步，脸与双手保持可见。"],
-  ["坐姿托扶展示", "人物坐在桌旁，双手托扶完整摆台在胸前偏下，轻微调整到正对镜头并停稳；保留人物面部、双手和桌沿。"],
-  ["坐姿整体落台", "人物坐在桌前双手持摆台，将整件轻放在面前空位，后撑杆和框体下沿落稳后松手；不切成手部特写。"],
+  ["柜旁侧身展示", "摆台预先稳定站在柜面，人物站在产品侧方，身体自然侧向柜面，一只空手摊掌示意完整正面后收手，微笑欣赏；摆台全程留在台面，不举起合影。"],
+  ["台面三分之四转正", "摆台预先稳定站在桌面，人物站在桌侧，双手轻扶底边与侧边，在台面上将整件从三分之四侧向小角度转正，支撑落稳后撤手；主体与后撑杆同步，不举离台面。"],
+  ["坐姿桌旁欣赏", "摆台预先稳定站在桌面侧方，人物坐在产品旁侧，自然看向摆台再微笑看向镜头，一只手在旁侧桌面自然停放；双手不持框，不把摆台挡在身体正中央。"],
+  ["坐姿侧方整体落台", "人物侧坐在桌前，从腰侧自然托扶整件摆台，直接轻放到旁侧桌面空位，后撑杆和框体下沿落稳后松手；不抬高到胸口，不持框停顿展示，不切成手部特写。"],
   ["桌旁指示正面图案", "人物站在已摆好摆台的侧方，用空手悬空指示真实主图后收手，自然看向镜头；摆台不移动，不推近主图局部。"],
   ["桌旁轻转整体正面", "人物在柜旁双手扶稳整件摆台，整体小角度转正，确认支撑落稳后撤手；脸、双手与完整摆台保持同框。"],
   ["人物侧让完整展示", "人物站在摆台侧方，轻摊手示意产品后向旁侧让半步；人物面部仍入镜，不让镜头追着产品推近。"],
@@ -53,9 +53,9 @@ const entries = [
   ["平面表面侧光纹理", "近乎正面以小幅摄影机侧移展示本款真实图面纹理；保持平面印刷属性，只有参考确认的光泽才出现自然微反射。"],
  ];
 const shotGroups = [
-  { end: 12, group: '人物全景搬放', shotRule: '全程采用人物全景：人物从头到脚、双手、完整摆台、柜面与脚下地面同时入镜，人物高度约占画面70%-85%，摆台高度约占画面12%-20%。保留起步、行走、落台和撤手的完整过程；固定机位或为保留全身做克制跟随，全程不推近，不切特写，不截成只见手和摆台的画面。占比是构图参考，不改变产品真实比例或尺寸。' },
-  { end: 20, group: '人物中景展示', shotRule: '全程采用人物中景：人物面部、上半身到腰部、双手与完整摆台同时入镜，摆台高度约占画面25%-40%。产品不挡脸，不向镜头前送，不截成手部或图案特写；摄影机不推近，人物与产品始终同框。占比只用于构图，不改变实物比例。' },
-  { end: 28, group: '生活场景全景', shotRule: '全程采用生活场景全景：清楚交代人物、桌柜、座椅与房间环境，站姿人物从头到脚、坐姿人物及完整座椅留在构图，摆台高度约占画面10%-20%。人物日常动作与摆台所在空间持续同框，不收束成产品近景，不推近、不插入特写；保持产品真实尺寸。' },
+  { end: 12, group: '人物全景搬放', shotRule: '全程采用人物全景：人物从头到脚、双手、完整摆台、柜面与脚下地面同时入镜，人物高度约占画面70%-85%；摆台按真实厘米尺寸与人物同景深呈现，不另设产品画面占比。保留起步、行走、落台和撤手的完整过程；固定机位或为保留全身做克制跟随，全程不推近，不切特写，不截成只见手和摆台的画面。占比是构图参考，不改变产品真实比例或尺寸。' },
+  { end: 20, group: '人物中景展示', shotRule: '全程采用人物中景：人物面部、上半身到腰部、双手与完整摆台同时入镜；摆台按真实厘米尺寸与人物同景深呈现，不为填满中景画面而放大。产品不挡脸，不向镜头前送，不截成手部或图案特写；摄影机不推近，人物与产品始终同框。占比只用于构图，不改变实物比例。' },
+  { end: 28, group: '生活场景全景', shotRule: '全程采用生活场景全景：清楚交代人物、桌柜、座椅与房间环境，站姿人物从头到脚、坐姿人物及完整座椅留在构图；摆台按真实尺寸作为桌柜上的小件陈设，不为突出主体而放大。人物日常动作与摆台所在空间持续同框，不收束成产品近景，不推近、不插入特写；保持产品真实尺寸。' },
   { end: 34, group: '整体产品展示', shotRule: '全程展示整件产品：完整四边边框、支撑所处台面和旁侧适量环境持续入镜，摆台高度约占画面35%-55%，四周保留可见留白。只做指定小幅运镜，不推近图案或边框局部，不裁切产品外轮廓，不改变实体尺寸。' },
   { end: 40, group: '局部特写', shotRule: '本条才采用局部近景或结构中近景，围绕指定图案、文字或真实结构做一次短路径展示；不为了拍细节改变产品比例、材质、结构或添加原图不存在的内容。' },
 ];
@@ -76,9 +76,31 @@ export function ornamentDuration(min = 5, max = 10) {
 export function ornamentRedClothRule() {
   return '【红布揭幕动作锁定】第0秒摆件已在台面稳定站立，正面主图被真实不透明红布盖住，可以看到布面形成的产品轮廓；不是开场无遮挡展示后再盖布。按所选总时长划分开场遮盖、手抓上角向上及侧方揭布、完整展示三个连续阶段。只移动布料，主体与固定支架位置和倾角不变。红布由手持续抓持，有自然褶皱、重力和连续轨迹，揭开后仍被手拿在主体侧外，不能凭空消失、淡出或透明化。布与主体真实接触，不穿过产品、不挂住支架、不带倒摆件；布移开时露出的是原本存在的同一产品，不是布内新生成或变身。结尾红布不遮挡正面，保留完整产品的展示时间。环境、人物服装、台面和光线可以变化，红布颜色、开场遮盖和揭布展示动作不可替换；允许仅手入镜，无需人物露脸。';
 }
+export const ORNAMENT_PRESENTATION_RULE = '【自然喜庆展示】有人物搬运时，摆台在腰部附近或身体侧方自然托扶，直接完成搬放，落台站稳后及时撤手；展示时摆台留在桌柜上，人物在旁侧自然微笑、欣赏或摊掌示意。不双手持框在胸前静止展示，不抱在身体正中央摆拍，不做肃立持框合影。无人镜头不增加人物；仅手揭红布的镜头继续只移动红布。';
+const SCENE_STYLE_START = '【摆台场景与服饰风格】';
+const SCENE_STYLE_END = '【/摆台场景与服饰风格】';
+function sceneStyleConfigFromPrompt(prompt) {
+  const match = String(prompt || '').match(/场景风格配置：([^\n]+)/);
+  if (!match) return null;
+  try { return JSON.parse(match[1]); } catch { return null; }
+}
+export function ornamentSceneStyleRules(config, direction) {
+  const style = config?.style;
+  if (!style?.label || !style?.direction) return '';
+  const wardrobe = Array.isArray(style.wardrobe) ? style.wardrobe : [];
+  const index = Math.max(0, Number(direction) - 1 + (Number(config.variationIndex) || 0));
+  const color = wardrobe.length ? wardrobe[index % wardrobe.length] : '';
+  return `${SCENE_STYLE_START}\n场景风格配置：${JSON.stringify(config)}\n本条采用「${style.label}」。环境和服饰必须实际体现：${style.direction}\n框架只固定动作顺序、物体接触关系和景别；其中书房、茶室、办公区等名称表示功能区域，不锁定中式装修、实木家具、旗袍或盘扣衣。将墙面、家具造型、陈设、织物、配色与光线统一设计为本次所选风格，不能只在标题写风格名称而沿用上一种环境。有人物时服装的款式、面料和搭配也采用同一风格${color ? `，本条服装建议主色为${color}` : ''}；无人镜头不为展示服装增加人物。${config.scene ? `用户本次场景偏好：${config.scene}；保留动作所需的台面和空间，在该场景内落实所选装修风格。` : ''}${config.character ? `用户本次人物偏好：${config.character}；具体人物要求优先，未指定的服装细节按所选风格补全。` : ''}\n产品档案中的题材、红底或书法气质只决定产品图案，不能据此把所有环境和服装改成新中式。风格只改变环境、人物服饰和摄影氛围，不改变铝合金框、木背板、固定后撑杆、真实尺寸及本款正面图案。${Number(direction) === ORNAMENT_RED_CLOTH_DIRECTION ? '本条红布揭幕仍使用原来的不透明红布和连续揭布动作。' : '本条不增加红布揭幕或其他框架的动作。'}\n${SCENE_STYLE_END}`;
+}
+export function ornamentScaleRules(profile) {
+  const { widthCm, heightCm } = normalizeOrnamentSize(profile);
+  const percent = (value, reference) => Number((value / reference * 100).toFixed(1));
+  const standardSize = widthCm === 20 && heightCm === 20;
+  return `【摆台与人物真实比例】先建立正常体型成年人、正常大小的双手和桌柜，再放入外框宽${widthCm}厘米、高${heightCm}厘米的小型桌面摆台。尺度参照取正常成人肩宽约40厘米、全身高约165厘米：同距离、正面且没有透视缩短时，摆台宽约为肩宽的${percent(widthCm, 40)}%，摆台高约为全身高的${percent(heightCm, 165)}%。这些是同景深的实物尺度参照，不是视频画面占比，不要求人物恰好为该身高或肩宽。${standardSize ? '本款20×20厘米：宽约半个成人肩宽，高约成人身高的八分之一；一条20厘米外框边长大致接近一只成人从手腕到中指尖的完整手长，不是一整段上半身的高度。' : '自定义尺寸按本次输入同比例呈现，不套用20×20厘米款的手长或半肩宽关系。'}\n人物搬运时摆台贴近身体腰侧，不前伸到镜头前，不靠近镜头制造近大远小；人物、双手与摆台应处于相近景深，采用自然标准透视，避免超广角夸大前景。双手只是轻扶底边和侧边，${widthCm <= 20 ? '不能把这款小摆台做成与双肩同宽的大画框。' : '框体宽度严格依照本次厘米尺寸，不按双手张开的距离猜测尺寸。'}搬运、转向、落台、撤手全过程保持同一件产品的实体大小，放到桌柜上后不能突然变大或缩小；桌柜也不缩小来迎合摆台。\n人物全景与生活全景中允许产品自然较小，靠清楚的轮廓、正面朝向、合理光线与背景区分提高辨识度，不靠增大产品。人物中景也保持相同实物比例。无人整体展示和局部特写可以通过摄影机取景让产品或局部占画面较多，产品仍是相同厘米尺寸；整件、手指、框边与台面之间的比例不能变化。实际厘米尺寸和同景深比例优先于正文、旧方案中的产品画面占比建议。【/摆台与人物真实比例】`;
+}
 export function ornamentCommonPhysicalRules(profile) {
   const p = normalizeOrnamentProfile(profile);
-  return `${ORNAMENT_MARKER}\n产品档案：${JSON.stringify(p)}\n${ORNAMENT_STRUCTURE_RULE}\n${ornamentSizeRule(p)}\n主体与后撑杆固定连接；视频中维持支撑角度，作为同一稳定整体；任何托举、搬放、转向必须整件同步运动，落台后支撑接触台面、重心稳定才能撤手。主体不能脱离支架，支架不能单独滑动、凭空出现或变化。仅按参考图和已确认档案保留轮廓、比例、厚度、文字、图案、颜色和实际材质，不照搬样片的马或红底；金色铝合金边框为全系列固定结构；背面只按公共背面参考保留木背板与后撑杆，不编造其他结构。未知真实尺寸不猜厘米数。不复制参考图的手、背景或字幕。产品不是墙贴、卷轴或独立装饰盘，不上墙、不揭膜、不卷展、不装配托架。图案和题字静止附着在产品上，不活化、不改字。摄影机运动不改变产品实体尺寸，结尾产品仍为视觉焦点。`;
+  return `${ORNAMENT_MARKER}\n产品档案：${JSON.stringify(p)}\n${ORNAMENT_STRUCTURE_RULE}\n${ornamentSizeRule(p)}\n${ornamentScaleRules(p)}\n${ORNAMENT_PRESENTATION_RULE}\n主体与后撑杆固定连接；视频中维持支撑角度，作为同一稳定整体；任何托举、搬放、转向必须整件同步运动，落台后支撑接触台面、重心稳定才能撤手。主体不能脱离支架，支架不能单独滑动、凭空出现或变化。仅按参考图和已确认档案保留轮廓、比例、厚度、文字、图案、颜色和实际材质，不照搬样片的马或红底；金色铝合金边框为全系列固定结构；背面只按公共背面参考保留木背板与后撑杆，不编造其他结构。未知真实尺寸不猜厘米数。不复制参考图的手、背景或字幕。产品不是墙贴、卷轴或独立装饰盘，不上墙、不揭膜、不卷展、不装配托架。图案和题字静止附着在产品上，不活化、不改字。摄影机运动不改变产品实体尺寸，结尾产品仍为视觉焦点。`;
 }
 export function ornamentPhysicalRules(profile, direction) {
   const f = ornamentFramework(direction);
@@ -117,10 +139,13 @@ export function inspectOrnamentPromptIssues(prompt, direction = 0) {
   }
   return [...new Set(issues)];
 }
-export function ensureOrnamentPrompt(prompt, profile, direction) {
+export function ensureOrnamentPrompt(prompt, profile, direction, sceneStyleConfig) {
   const text = String(prompt || '');
-  const body = text.includes('【摆件创意正文】') ? text.split('【摆件创意正文】').at(-1).trim() : text.trim();
-  return `${ornamentPhysicalRules(profile, direction)}\n\n【摆件创意正文】\n${body}`;
+  const config = sceneStyleConfig ?? sceneStyleConfigFromPrompt(text);
+  const rawBody = text.includes('【摆件创意正文】') ? text.split('【摆件创意正文】').at(-1).trim() : text.trim();
+  const body = rawBody.replace(/【摆台场景与服饰风格】[\s\S]*?【\/摆台场景与服饰风格】/g, '').trim();
+  const styleRule = ornamentSceneStyleRules(config, direction);
+  return `${ornamentPhysicalRules(profile, direction)}${styleRule ? `\n${styleRule}` : ''}\n\n【摆件创意正文】\n${body}`;
 }
 export function ornamentProfileFromPrompt(prompt) {
   const text = String(prompt || '');
@@ -133,5 +158,5 @@ export function buildOrnamentIdeasRequest(profile, plan, batch, variationRound, 
 }
 export function buildOrnamentVideoRequest(profile, idea, context, style) {
   const f = ornamentFramework(idea.directionNumber); const range = ornamentDuration(idea.durationMin || context.durationMin, idea.durationMax || context.durationMax);
-  return `输出可直接生成视频的中文完整提示词。${ornamentPhysicalRules(profile, f.directionNumber)}\n创意方向：${f.title}；摘要：${f.action}\n用户计划：${JSON.stringify(context)}\n统一风格：${JSON.stringify(style)}\n风格中的木材、石材、织物和配色仅用于场景与服装，不能改变产品公共结构与材质。必须遵守固定动作框架，一镜到底，只完成一个动作。分时间段写明初始状态、手的承托与撤离顺序、摄影机短路径和自然收束。${f.directionNumber === ORNAMENT_RED_CLOTH_DIRECTION ? '必须有一只手抓红布上角揭布，可以仅手入镜、不露脸；结尾留出完整展示产品的时间。' : '无人镜头不添加手。'}严禁采纳摘要或用户计划中的拆架、盘面分离动作。时长取${range.durationMin}至${range.durationMax}之间整数；以“总时长：X秒”结尾。`;
+  return `输出可直接生成视频的中文完整提示词。${ornamentPhysicalRules(profile, f.directionNumber)}\n创意方向：${f.title}；摘要：${f.action}\n用户计划：${JSON.stringify(context)}\n${ornamentSceneStyleRules({ style, scene: context.scene, character: context.character, variationIndex: context.elementVariationIndex }, f.directionNumber)}\n风格中的木材、石材、织物和配色仅用于场景与服装，不能改变产品公共结构与材质。必须遵守固定动作框架，一镜到底，只完成一个动作。分时间段写明初始状态、手的承托与撤离顺序、摄影机短路径和自然收束。${f.directionNumber === ORNAMENT_RED_CLOTH_DIRECTION ? '必须有一只手抓红布上角揭布，可以仅手入镜、不露脸；结尾留出完整展示产品的时间。' : '无人镜头不添加手。'}严禁采纳摘要或用户计划中的拆架、盘面分离动作。时长取${range.durationMin}至${range.durationMax}之间整数；以“总时长：X秒”结尾。`;
 }

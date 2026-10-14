@@ -16798,7 +16798,7 @@ async function generateOrnamentIdeaPromptCore(apiKey, profile, idea, context) {
   const prompt = String(await call(request) || '').trim();
   if (!prompt) throw new Error('模型返回的提示词为空');
   const duration = resolveMaterialPromptDuration(prompt, range);
-  return { prompt: ensureOrnamentPrompt(normalizeMaterialPromptDuration(prompt, duration), normalized, idea.directionNumber), duration };
+  return { prompt: ensureOrnamentPrompt(normalizeMaterialPromptDuration(prompt, duration), normalized, idea.directionNumber, { style: resolvePaintingStyleProfile(context.stylePreset), scene: context.scene, character: context.character, variationIndex: context.elementVariationIndex }), duration };
 }
 
 function assertMaterialProductType(productType, ...sources) {

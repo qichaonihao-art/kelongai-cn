@@ -4372,7 +4372,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       variationRound,
       creativeSessionId: paintingCreativeSessionId,
       profile: {
-        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-wide-mix-v3' : undefined,
+        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-real-scale-v5' : undefined,
         productType: paintingProductType,
         widthCm: paintingProfile?.widthCm,
         heightCm: paintingProfile?.heightCm,
@@ -6324,7 +6324,16 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           本轮整体风格
                           <select
                             value={paintingPlan.stylePreset}
-                            onChange={(event) => setPaintingPlan((previous) => ({ ...previous, stylePreset: event.target.value }))}
+                            onChange={(event) => {
+                              setPaintingPlan((previous) => ({ ...previous, stylePreset: event.target.value }));
+                              if (isOrnament) {
+                                setPaintingFullPrompt('');
+                                if (paintingSeedanceSourceRef.current?.prompt.trim() === seedancePrompt.trim()) {
+                                  setSeedancePrompt('');
+                                  paintingSeedanceSourceRef.current = null;
+                                }
+                              }
+                            }}
                             className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"
                           >
                             {PAINTING_STYLE_OPTIONS.map((option) => (
