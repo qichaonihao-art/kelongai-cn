@@ -136,16 +136,22 @@ const beforePreparation = payloads.length;
 for (const variationRound of [0, 1, 2]) {
  const all = [];
  for (let batch = 0; batch < 4; batch++) {
-  const result = await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan: { ...plan, scene: '书桌另一侧铺素白宣纸', character: '穿绢布衣服的人物' }, batch, variationRound }, 'test', 'fixed-preparation');
+  reply = JSON.stringify(ORNAMENT_FRAMEWORKS.slice(batch * 10, batch * 10 + 10).map(f => ({ title: f.title, summary: f.action + ' 环境为雾蓝墙面、布艺椅和几何灯，人物穿现代针织上衣。' })));
+  const result = await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan: { ...plan, scene: '书桌另一侧铺素白宣纸', character: '穿绢布衣服的人物' }, batch, variationRound }, 'test', 'two-stage-preparation');
+  assert.ok(result.ideas.every(idea => idea.summary.includes('雾蓝墙面') && idea.stylePreset === plan.stylePreset));
+  assert.match(JSON.stringify(payloads.at(-1).payload), /红布揭幕仅用于第29号/);
+  assert.doesNotMatch(JSON.stringify(payloads.at(-1).payload), /本条红布揭幕仍使用/);
   assert.equal(result.ideas.length, 10);
   all.push(...result.ideas);
   for (const idea of result.ideas) assert.equal(inspectOrnamentPromptIssues(idea.summary, idea.directionNumber).length, 0);
  }
  assert.deepEqual(all.map(idea => idea.directionNumber), Array.from({ length: 40 }, (_, index) => index + 1));
 }
-assert.equal(payloads.length, beforePreparation, 'all four preparation batches load fixed frameworks without model calls');
+assert.equal(payloads.length, beforePreparation + 12, '四批方案每轮调用豆包展开，三轮共12次，缓存及断点续做仍由原有前端负责');
 const safeVideoRequest = buildOrnamentVideoRequest(profile, { directionNumber: 22, summary: '摆台使用树脂，取下主体。' }, { ...plan, scene: '书桌另一侧铺素白宣纸' }, {});
-assert.doesNotMatch(safeVideoRequest, /摆台使用树脂，取下主体/);
+assert.match(safeVideoRequest, /已按风格展开的创意方案/);
+assert.match(safeVideoRequest, /方案仅决定这些约束内的具体执行/);
+assert.match(safeVideoRequest, /不采纳方案中相冲突的拆架/);
 assert.match(safeVideoRequest, /书桌另一侧铺素白宣纸/);
 assert.match(safeVideoRequest, /书写后将笔放好并看向摆台/);
 const forbidden = /【挂画生成尺寸补偿锁定】|【挂画真实尺寸强制锁定】|【卷轴打开方式固定要求】|【千问 Wan3.0 专用·(?:静态挂画|安装|展开)/;
@@ -347,7 +353,19 @@ const styleCases = [
  ['everyday-life', '烟火生活', '真实普通住宅'],
 ];
 for (const [stylePreset, label, feature] of styleCases) {
+ const sceneDetail = `${label}方案：客厅有弧形椅、边柜与落地灯，人物穿本轮款式外套；方向一的自然搬放动作。`;
+ reply = JSON.stringify(ORNAMENT_FRAMEWORKS.slice(0, 10).map(f => ({ title: label + f.title, summary: sceneDetail + f.action })));
+ const prepared = await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan: { ...plan, stylePreset }, batch: 0, variationRound: 1, avoidIdeas: ['旧版灰色沙发与白衣组合'] }, 'test', 'prepared-' + stylePreset);
+ const firstRequest = JSON.stringify(payloads.at(-1).payload);
+ assert.ok(firstRequest.includes(feature)); assert.ok(firstRequest.includes('旧版灰色沙发与白衣组合'));
+ assert.match(firstRequest, /至少2—3件/); assert.match(firstRequest, /第2轮/);
+ assert.ok(prepared.ideas[0].summary.includes(sceneDetail));
  reply = '创意内容：人物在柜旁自然展示，摆台留在台面。\n总时长：6秒';
+ await server.generatePaintingIdeaPromptCore('expanded-' + stylePreset, 'test', profile, prepared.ideas[0], { ...plan, stylePreset });
+ const secondRequest = JSON.stringify(payloads.at(-1).payload);
+ assert.ok(secondRequest.includes(sceneDetail), '完整提示词必须使用第一阶段已经展开的具体方案');
+ assert.ok(secondRequest.includes(feature));
+
  const generated = await server.generatePaintingIdeaPromptCore('style-' + stylePreset, 'test', profile, { directionNumber: 13, productType: 'ornament', stylePreset: 'new-chinese' }, { ...plan, stylePreset, scene: '客厅边柜', character: '中年女性' });
  const request = JSON.stringify(payloads.at(-1).payload);
  assert.ok(request.includes(label)); assert.ok(request.includes(feature));
@@ -371,4 +389,14 @@ for (const [stylePreset, label, feature] of styleCases) {
 console.log('PASS: 9 styles carry concrete scenery and wardrobe through prompt generation, manual and batch video payloads; natural side/table display replaces chest-held poses.');
 
 console.log('PASS: real-world scale anchors replace oversized human-shot occupancy; default and custom dimensions survive manual/batch payloads.');
+const expandedIdeas = JSON.stringify(ORNAMENT_FRAMEWORKS.slice(0, 10).map(f => ({ title: f.title, summary: '奶油墙面、圆润布艺椅、暖光灯；' + f.action })));
+reply = expandedIdeas;
+replies.push('这不是JSON', expandedIdeas);
+const jsonRecovered = await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch: 0 }, 'test', 'json-recovery');
+assert.equal(jsonRecovered.ideas.length, 10);
+replies.push('[{"title":"一条","summary":"柜旁自然展示"}]', expandedIdeas);
+assert.equal((await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch: 0 }, 'test', 'count-recovery')).ideas.length, 10);
+reply = '[]';
+await assert.rejects(server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch: 0 }, 'test', 'missing-ideas'), /完整生成10条/);
+console.log('PASS: two-stage ornament ideation matches hanging workflow; all four batches, nine styles, summary inheritance, JSON/count recovery.');
 process.exit(0);

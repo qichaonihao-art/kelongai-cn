@@ -14,7 +14,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 import { config as loadDotenv } from 'dotenv';
 import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
-import { ORNAMENT_STRUCTURE_RULE, isOrnamentProduct, normalizeOrnamentProfile, ORNAMENT_FRAMEWORKS, ornamentDuration, buildOrnamentVideoRequest, ensureOrnamentPrompt, ornamentProfileFromPrompt } from './ornament-creative.mjs';
+import { ORNAMENT_STRUCTURE_RULE, isOrnamentProduct, normalizeOrnamentProfile, ORNAMENT_FRAMEWORKS, ornamentDuration, buildOrnamentVideoRequest, buildOrnamentIdeasRequest, ensureOrnamentPrompt, ornamentProfileFromPrompt } from './ornament-creative.mjs';
 import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, stickerProfileFromPrompt } from './sticker-creative.mjs';
 import { setVideoLibraryShotRole } from './video-library-shot-role.mjs';
 import { deleteEmptyVideoLibraryFolder } from './video-library-folder-delete.mjs';
@@ -16778,15 +16778,29 @@ async function generateStickerIdeaPromptCore(apiKey, profile, idea, context) {
   return { prompt: ensureStickerPrompt(normalizeMaterialPromptDuration(prompt, duration), normalized, idea.directionNumber), duration };
 }
 
-async function generateOrnamentIdeasCore(body) {
-  normalizeOrnamentProfile(body.profile);
+async function generateOrnamentIdeasCore(body, apiKey) {
+  const profile = normalizeOrnamentProfile(body.profile);
   const plan = body.plan || {};
   const batch = ((Math.trunc(Number(body.batch) || 0) % 4) + 4) % 4;
-  // 固定框架直接载入；场景/人物/风格变化在完整提示词阶段生成，避免AI反复改写物理结构。
-  return { batch, totalBatches: 4, ideas: ORNAMENT_FRAMEWORKS.slice(batch * 10, batch * 10 + 10).map(f => ({
-    id: `ornament-${f.directionNumber}`, productType: 'ornament', directionNumber: f.directionNumber, title: f.title,
-    ...ornamentDuration(plan.durationMin, plan.durationMax), summary: f.directionNumber === 29 ? `【固定一体·${f.title}】${f.action}` : `【${f.group}·${f.title}】${f.action} 景别：${f.shotRule.split('。')[0]}。`,
-  })) };
+  const variationRound = Math.max(0, Math.trunc(Number(body.variationRound) || 0));
+  const request = buildOrnamentIdeasRequest(profile, plan, batch, variationRound, resolvePaintingStyleProfile(plan.stylePreset), body.avoidIdeas);
+  const call = (text) => callDoubaoArkText({ apiKey, model: DEFAULT_DOUBAO_MULTIMODAL_MODEL, content: [{ type: 'input_text', text }] });
+  const answer = await call(request);
+  const parsed = await parsePaintingIdeasWithJsonRetry(answer, () => call(`${request}\n上一次结果无法解析，请只输出完整合法JSON数组，不得截断。`));
+  let ideas = parsed.ideas;
+  if (ideas.length !== 10) {
+    ideas = normalizePaintingIdeas(parseStructuredJson(await call(`${request}\n请输出完整的10条方案JSON数组，每项必须包含title和summary。`)));
+  }
+  if (ideas.length !== 10) throw new Error('摆件方案必须完整生成10条，请重试');
+  return { batch, totalBatches: 4, ideas: ideas.map((idea, index) => {
+    const f = ORNAMENT_FRAMEWORKS[batch * 10 + index];
+    return {
+      ...idea, id: `ornament-${f.directionNumber}`, productType: 'ornament', directionNumber: f.directionNumber,
+      stylePreset: plan.stylePreset || 'modern-minimal',
+      ...ornamentDuration(plan.durationMin, plan.durationMax),
+      summary: `【${f.group}·${f.title}】${idea.summary}`,
+    };
+  }) };
 }
 
 async function generateOrnamentIdeaPromptCore(apiKey, profile, idea, context) {

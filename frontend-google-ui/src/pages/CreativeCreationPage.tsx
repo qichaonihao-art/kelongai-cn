@@ -4372,7 +4372,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       variationRound,
       creativeSessionId: paintingCreativeSessionId,
       profile: {
-        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-real-scale-v5' : undefined,
+        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-two-stage-style-v6' : undefined,
         productType: paintingProductType,
         widthCm: paintingProfile?.widthCm,
         heightCm: paintingProfile?.heightCm,
@@ -6327,6 +6327,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             onChange={(event) => {
                               setPaintingPlan((previous) => ({ ...previous, stylePreset: event.target.value }));
                               if (isOrnament) {
+                                setPaintingIdeas([]);
+                                setPaintingSelectedIdea(null);
+                                setPaintingFrameworkBatch(0);
+                                setPaintingBatchIdeas([]);
                                 setPaintingFullPrompt('');
                                 if (paintingSeedanceSourceRef.current?.prompt.trim() === seedancePrompt.trim()) {
                                   setSeedancePrompt('');

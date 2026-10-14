@@ -152,11 +152,30 @@ export function ornamentProfileFromPrompt(prompt) {
   if (!text.startsWith(ORNAMENT_MARKER)) return null;
   try { return normalizeOrnamentProfile(JSON.parse(text.match(/产品档案：([^\n]+)/)?.[1] || '{}')); } catch { throw new Error('摆件档案标记损坏，请重新生成提示词'); }
 }
-export function buildOrnamentIdeasRequest(profile, plan, batch, variationRound, style) {
+export function buildOrnamentIdeasRequest(profile, plan, batch, variationRound, style, avoidIdeas = []) {
   const frameworks = ORNAMENT_FRAMEWORKS.slice(batch * 10, batch * 10 + 10);
-  return `为固定一体摆台生成10条创意方案。${ornamentCommonPhysicalRules(profile)}\n本轮风格：${JSON.stringify(style)}；用户计划：${JSON.stringify(plan)}；变化轮次：${variationRound}。风格中的木材、石材、织物和配色只用于场景与服装，不能改写摆台边框、木背板、后撑杆和正面平面属性。只变场景、人物和摄影参数，以下10个动作和方向编号不得改变。每条一镜到底、只完成一个可实现动作。用户要求若与固定结构冲突，固定结构优先。\n${frameworks.map(f => `${f.directionNumber}. ${f.title}：${f.action}${f.shotRule ? `；景别：${f.shotRule}` : ''}`).join('\n')}\n只输出合法JSON数组，按上述顺序恰好10项，每项包含title、summary；summary明确初始状态、动作、运镜和结束状态。不要输出挂画或贴画规则。`;
+  const previous = Array.isArray(avoidIdeas) ? avoidIdeas.filter(item => typeof item === 'string').slice(0, 12).map(item => item.slice(0, 500)) : [];
+  return `你是短视频创意策划专家，为固定一体摆台生成10条可执行的带货视频创意方案，不是原样抄写动作模板。${ornamentCommonPhysicalRules(profile)}
+【本轮整体风格】${style.label || ''}：${style.direction || ''}
+【用户素材计划】${JSON.stringify(plan)}
+【本轮变化】当前为第${variationRound + 1}轮。同一动作方向不变，但人物、服装、装修、家具组合、配色和光线应形成新的具体执行版本。
+【历史避重】${JSON.stringify(previous)}
+框架只固定动作机制、顺序、接触关系和景别，框架中的书房、茶室等是功能区域，不锁定新中式装修；按所选整体风格重新设计墙面、家具、灯具、软装和服装，不因产品正面是书法、佛像或红底而自动改回新中式。用户指定的场景、人物、声音和其他要求在不改变产品物理结构与动作方向的前提下落实。
+${ornamentSceneStyleRules({ style: { ...style, wardrobe: [] }, scene: plan.scene, character: plan.character, variationIndex: variationRound * 3 }, 0).replace('本条不增加红布揭幕或其他框架的动作。', '红布揭幕仅用于第29号，其他方向不添加红布或其他框架的动作。')}
+【本批10个固定动作方向，严格按顺序一一展开】
+${frameworks.map(f => {
+  const wardrobe = Array.isArray(style.wardrobe) ? style.wardrobe : [];
+  const color = wardrobe.length ? wardrobe[(f.directionNumber - 1 + variationRound * 3) % wardrobe.length] : '';
+  return `${f.directionNumber}. ${f.title}：${f.action}${f.shotRule ? `；景别：${f.shotRule}` : ''}${color ? `；若出现人物，服装主色为${color}，款式、面料按本轮风格` : ''}${f.directionNumber === ORNAMENT_RED_CLOTH_DIRECTION ? `\n${ornamentRedClothRule()}` : ''}`;
+}).join('\n')}
+【每条方案要求】
+1. 只输出标题与一句话核心创意，不输出完整视频提示词。标题能看出动作和景别，summary必须写具体空间布局、至少2—3件与所选风格协调的家居陈设、明确的光线和配色；有人物时写出具体服装款式、面料、主色及自然动作，无人方向不加人物。局部特写只描述原景别内实际可见的背景，不为了交代陈设增加全景或塞入道具。
+2. 把对应固定方向的初始状态、动作、运镜、结束状态融入该场景；只换房间名称或加一个风格形容词不算落实风格。每条一镜到底；物体移动有真实施动者，不新增剧情、切镜或其他框架的动作。
+3. 有人物搬运时在腰侧自然托扶，落台后撤手，不双手持框在胸前静止摆拍；始终按本次厘米尺寸与正常成人建立比例，不按画面占比放大。产品材质、结构和正面图案保持本次档案，场景中的木材、石材和织物不移植到产品上。
+4. 第29号如在本批，保持开场不透明红布遮盖、手持续抓持向上侧揭布、摆台原位不动、结尾完整展示的动作，只按风格改变环境和服装。无人方向与局部特写继续保持各自景别。
+5. 严格只输出合法JSON数组，按上述顺序恰好10项，每项包含title、summary；不输出解释或markdown。不得混入挂画或贴画的尺寸、安装或卷展规则。`;
 }
 export function buildOrnamentVideoRequest(profile, idea, context, style) {
   const f = ornamentFramework(idea.directionNumber); const range = ornamentDuration(idea.durationMin || context.durationMin, idea.durationMax || context.durationMax);
-  return `输出可直接生成视频的中文完整提示词。${ornamentPhysicalRules(profile, f.directionNumber)}\n创意方向：${f.title}；摘要：${f.action}\n用户计划：${JSON.stringify(context)}\n${ornamentSceneStyleRules({ style, scene: context.scene, character: context.character, variationIndex: context.elementVariationIndex }, f.directionNumber)}\n风格中的木材、石材、织物和配色仅用于场景与服装，不能改变产品公共结构与材质。必须遵守固定动作框架，一镜到底，只完成一个动作。分时间段写明初始状态、手的承托与撤离顺序、摄影机短路径和自然收束。${f.directionNumber === ORNAMENT_RED_CLOTH_DIRECTION ? '必须有一只手抓红布上角揭布，可以仅手入镜、不露脸；结尾留出完整展示产品的时间。' : '无人镜头不添加手。'}严禁采纳摘要或用户计划中的拆架、盘面分离动作。时长取${range.durationMin}至${range.durationMax}之间整数；以“总时长：X秒”结尾。`;
+  return `输出可直接生成视频的中文完整提示词。${ornamentPhysicalRules(profile, f.directionNumber)}\n【已按风格展开的创意方案】标题：${idea.title || f.title}；核心创意：${idea.summary || f.action}\n继承方案中具体的空间布局、家具陈设、人物服装、配色、光线与动作衔接，细化为连续时间轴，不退回只复述固定动作模板；当前所选风格优先于旧方案的环境描述。固定动作、产品结构、实际厘米尺寸与自然持握要求优先，方案仅决定这些约束内的具体执行，不采纳方案中相冲突的拆架、胸前持框或放大产品要求。\n用户计划：${JSON.stringify(context)}\n${Number(context.elementVariationIndex) > 0 ? '【换元素】相对上一版本更换人物服装、家具组合和空间配色，固定方向、所选风格及产品物理信息保持一致；同一条视频内不换人换装。' : ''}${context.previousPrompt || context.avoidElements?.length ? '历史提示词和avoidElements只供避重，不继承其中的旧风格、动作或尺寸。' : ''}\n${ornamentSceneStyleRules({ style, scene: context.scene, character: context.character, variationIndex: context.elementVariationIndex }, f.directionNumber)}\n风格中的木材、石材、织物和配色仅用于场景与服装，不能改变产品公共结构与材质。必须遵守固定动作框架，一镜到底，只完成一个动作。分时间段写明初始状态、手的承托与撤离顺序、摄影机短路径和自然收束。${f.directionNumber === ORNAMENT_RED_CLOTH_DIRECTION ? '必须有一只手抓红布上角揭布，可以仅手入镜、不露脸；结尾留出完整展示产品的时间。' : '无人镜头不添加手。'}严禁采纳摘要或用户计划中的拆架、盘面分离动作。时长取${range.durationMin}至${range.durationMax}之间整数；以“总时长：X秒”结尾。`;
 }
