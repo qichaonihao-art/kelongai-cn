@@ -1,3 +1,4 @@
+import { createPersonReplacementService } from './person-replacement.mjs';
 import { replacementProductFromPrompt, validateReplacementPrompt, replacementStructureRule } from './product-replacement.mjs';
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
@@ -4200,7 +4201,11 @@ async function handleUploadVideoLibrary(req, res) {
     const sha256 = createHash('sha256').update(buffer).digest('hex');
     const existing = dbFindVideoLibraryByHash(sha256);
     if (existing) {
-      sendJson(res, 200, { ok: true, duplicate: true, item: existing, message: '这个视频已经存在，没有重复保存' });
+      const enhancementResult = await queueVideoEnhancementForLibraryItem(existing, { enabled: true, req });
+      sendJson(res, 200, {
+        ok: true, duplicate: true, item: enhancementResult.item || existing,
+        message: '这个视频已经存在，没有重复保存', enhancement: enhancementResult,
+      });
       return;
     }
 
@@ -4225,7 +4230,11 @@ async function handleUploadVideoLibrary(req, res) {
         message: thumbnailError?.message || '',
       });
     });
-    sendJson(res, 201, { ok: true, duplicate: false, item });
+    // 本地上传与创意视频入库共用480P检测及1080P自动增强流程。
+    const enhancementResult = await queueVideoEnhancementForLibraryItem(item, { enabled: true, req });
+    sendJson(res, 201, {
+      ok: true, duplicate: false, item: enhancementResult.item || item, enhancement: enhancementResult,
+    });
   } catch (error) {
     if (filePath) await unlink(filePath).catch(() => {});
     sendJson(res, 500, { error: error.message || '视频上传失败' });
@@ -12039,6 +12048,10 @@ async function readSeedanceTaskFormBody(req) {
 
   return {
     prompt: readValue(formData.get('prompt')),
+    audioMode: readValue(formData.get('audioMode')),
+    dialogue: String(formData.get('dialogue') || ''),
+    voiceDescription: String(formData.get('voiceDescription') || ''),
+    creationRequestId: readValue(formData.get('creationRequestId')),
     model: readValue(formData.get('model')),
     taskMode: readValue(formData.get('taskMode')) || 'generate',
     resolution: readValue(formData.get('resolution')) || '720p',
@@ -21195,6 +21208,62 @@ async function serveStatic(req, res, pathname) {
   }
 }
 
+const personReplacement = createPersonReplacementService({
+  getDb: getCollectionDb,
+  root: path.join(RUNTIME_STATE_DIR, 'person-replacement'),
+  probe: probeVideoMetadata,
+  exec: execFileAsync,
+  getConfig: () => ({ mediaKey: readValue(SERVER_CONFIG.mediakitApiKey), seedanceKey: readValue(SERVER_CONFIG.seedanceApiKey), mediaBase: MEDIAKIT_API_BASE_URL }),
+  fetchTask: fetchManualVideoGenerationTask,
+});
+
+async function handlePersonReplacement(req, res, url) {
+  try {
+    const base = '/api/person-replacement/tasks';
+    const suffix = url.pathname.slice(base.length).split('/').filter(Boolean);
+    if (req.method === 'GET' && suffix.length === 0) {
+      sendJson(res, 200, { tasks: personReplacement.list() }); return;
+    }
+    if (req.method === 'GET' && suffix[0] === 'by-request' && suffix.length === 2) {
+      sendJson(res, 200, { task: personReplacement.byRequest(suffix[1]) }); return;
+    }
+    if (req.method === 'POST' && suffix.length === 0) {
+      const body = await readSeedanceTaskFormBody(req);
+      const task = await personReplacement.create(body, getConfiguredPublicBaseUrl());
+      sendJson(res, 201, { task }); return;
+    }
+    const id = suffix[0];
+    if (req.method === 'GET' && suffix.length === 1) {
+      const task = personReplacement.get(id);
+      sendJson(res, task ? 200 : 404, task ? { task } : { error: '人物替换任务不存在' }); return;
+    }
+    if (req.method === 'POST' && suffix[1] === 'retry' && suffix.length === 2) {
+      sendJson(res, 200, { task: personReplacement.retry(id) }); return;
+    }
+    if (req.method === 'POST' && suffix[1] === 'save' && suffix.length === 2) {
+      const body = await readRequestBody(req);
+      const folderName = sanitizeVideoLibraryFolder(body?.folderName);
+      const result = await personReplacement.resultFile(id);
+      const bytes = await readFile(result.path);
+      const sha256 = createHash('sha256').update(bytes).digest('hex');
+      let item = dbFindVideoLibraryByHash(sha256);
+      if (!item) {
+        await ensureVideoLibraryDir();
+        const storedName = `${sha256}.mp4`;
+        await copyFile(result.path, path.join(VIDEO_LIBRARY_DIR, storedName));
+        item = dbFindVideoLibraryByHash(sha256) || dbInsertVideoLibraryItem({ folderName, originalName: result.name, storedName, mimeType: 'video/mp4', fileSize: bytes.length, sha256,
+          note: `视频人物替换 · ${getVideoLibraryModelLabel(result.model)}\n${result.prompt}`, ...await probeVideoMetadata(result.path) });
+        void ensureVideoLibraryPreview({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
+        void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
+      }
+      const enhancement = await queueVideoEnhancementForLibraryItem(item, { enabled: true, req });
+      item = enhancement.item || item;
+      sendJson(res, 200, { item, enhancement, message: `已保存到“${item.folderName}”文件夹` }); return;
+    }
+    sendJson(res, 404, { error: '人物替换接口不存在' });
+  } catch (error) { sendJson(res, 400, { error: error.message || '人物替换处理失败' }); }
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   setCorsHeaders(req, res);
@@ -21224,6 +21293,13 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/config/status') {
     await handleConfigStatus(req, res);
+    return;
+  }
+
+  if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/api/person-replacement/media/')) {
+    const parts = url.pathname.slice('/api/person-replacement/media/'.length).split('/');
+    if (parts.length !== 3) { sendJson(res, 404, { error: '素材不存在' }); return; }
+    await personReplacement.media(req, res, ...parts);
     return;
   }
 
@@ -21683,6 +21759,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/person-replacement/tasks' || url.pathname.startsWith('/api/person-replacement/tasks/')) {
+    await handlePersonReplacement(req, res, url);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/seedance/tasks') {
     await handleSeedanceCreateTask(req, res);
     return;
@@ -21981,6 +22062,7 @@ if (process.env.KELONG_SKIP_LISTEN !== '1') {
       console.error('[video enhancement] source_cleanup_failed', { message: error?.message || '' });
     });
     scheduleVideoEnhancementWorker(500);
+    personReplacement.start();
   });
 }
 
@@ -21995,6 +22077,7 @@ export {
   generatePaintingIdeaPromptCore,
   getCollectionDb,
   handleGetVideoLibraryFolders,
+  handleUploadVideoLibrary,
   ensurePaintingBatchIdempotencyConstraints,
   dbInsertPaintingBatchRun,
   dbInsertPaintingBatchTask,

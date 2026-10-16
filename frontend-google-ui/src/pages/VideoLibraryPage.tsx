@@ -1141,6 +1141,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
               <div>
                 <h2 className="text-xl font-black">批量上传共享视频</h2>
                 <p className="mt-1 text-xs font-semibold text-slate-400">一次可选择多个视频，原文件不压缩；每个文件不超过100MB</p>
+                <p className="mt-1 text-xs font-semibold text-cyan-600">480P及以下视频入库后自动在后台增强至1080P，完成后替换原片</p>
               </div>
               <button type="button" onClick={() => setIsUploadOpen(false)} disabled={isUploading} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 disabled:opacity-40"><X className="size-5" /></button>
             </div>

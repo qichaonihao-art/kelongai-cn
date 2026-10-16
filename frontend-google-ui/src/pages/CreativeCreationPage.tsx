@@ -1,3 +1,4 @@
+import PersonReplacementPanel from '@/src/components/PersonReplacementPanel';
 import { ornamentSizeRule } from '../../../legacy-project/ornament-size.mjs';
 import { resolveClipProductType, type IncomingCreativeClip } from '@/src/lib/clipCreative';
 import { replacementProductRules, wrapReplacementPrompt, replacementElementLabel, replacementProductLabel, type ReplacementProductType } from '@/src/lib/productReplacement';
@@ -1788,6 +1789,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [qwenMultimodalModel, setQwenMultimodalModel] = useState('qwen3.8-max');
   const [reverseModel, setReverseModel] = useState<CreativeReverseModel>('doubao');
   const [selectedMedia, setSelectedMedia] = useState<SelectedCreativeMedia | null>(null);
+  const [showPersonReplacement, setShowPersonReplacement] = useState(false);
   const [seedanceTaskMode, setSeedanceTaskMode] = useState<SeedanceTaskMode>('generate');
   const seedanceManualPreferenceRef = useRef<SeedanceManualPreference>(loadSeedanceManualPreference());
   const [seedanceModel, setSeedanceModel] = useState<SeedanceModelId>(() => seedanceManualPreferenceRef.current.model);
@@ -7711,7 +7713,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   </div>
                   <h2 className="text-base font-black text-slate-900">AI 生成视频</h2>
                 </div>
-                <div className="flex flex-col items-end gap-1.5">
+                <div className={cn("flex flex-col items-end gap-1.5", showPersonReplacement && "hidden")}>
                   <select
                     value={seedanceModel}
                     onChange={(event) => {
@@ -7757,25 +7759,30 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               <div className="mb-4 flex h-9 rounded-xl border border-slate-200 bg-slate-100 p-1">
                 <button
                   type="button"
-                  onClick={() => switchSeedanceTaskMode('generate')}
+                  onClick={() => { setShowPersonReplacement(false); switchSeedanceTaskMode('generate'); }}
                   className={cn(
                     "flex-1 rounded-lg px-4 text-xs font-black transition-colors",
-                    seedanceTaskMode === 'generate' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                    !showPersonReplacement && seedanceTaskMode === 'generate' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
                   )}
                 >
                   常规生成
                 </button>
                 <button
                   type="button"
-                  onClick={() => switchSeedanceTaskMode('video-edit-painting')}
+                  onClick={() => { setShowPersonReplacement(false); switchSeedanceTaskMode('video-edit-painting'); }}
                   className={cn(
                     "flex-1 rounded-lg px-4 text-xs font-black transition-colors",
-                    seedanceTaskMode === 'video-edit-painting' ? "bg-violet-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-700"
+                    !showPersonReplacement && seedanceTaskMode === 'video-edit-painting' ? "bg-violet-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-700"
                   )}
                 >
                   视频直接换画
                 </button>
+                <button type="button" onClick={() => setShowPersonReplacement(true)} className={cn("flex-1 rounded-lg px-2 text-xs font-black transition-colors", showPersonReplacement ? "bg-violet-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-700")}>
+                  视频人物替换
+                </button>
               </div>
+              <div hidden={!showPersonReplacement}><PersonReplacementPanel /></div>
+              <div hidden={showPersonReplacement}>
 
               {seedanceTaskMode === 'generate' && seedanceModel === 'MiniMax-H3' && (
                 <div className={cn(
@@ -8683,6 +8690,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     })()}
                   </div>
                 )}
+              </div>
               </div>
             </div>
           </section>
