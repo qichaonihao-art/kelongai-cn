@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, History, X, Download, RefreshCw, UserRound, Check, Upload, Film, FolderOpen, Play, ZoomIn, Image as ImageIcon } from 'lucide-react';
 import UploadHistoryPreview from '@/src/components/UploadHistoryPreview';
+import HistoryVideoThumbnail from '@/src/components/HistoryVideoThumbnail';
 import { getKelongDeviceId, getSeedanceRatePerSecond } from '@/src/lib/creative';
 import { blobToFile, getUploadHistoryItem, loadUploadHistorySummaries, saveUploadHistory, formatHistoryTime, type UploadHistoryItem, type UploadHistorySummaryItem } from '@/src/lib/uploadHistory';
 
@@ -77,10 +78,12 @@ function HistoryMedia({ item, disabled, selecting, onSelect }: { item: UploadHis
   const Icon = item.kind === 'video' ? Film : ImageIcon;
   const PreviewIcon = item.kind === 'video' ? Play : ZoomIn;
   return <button type="button" disabled={disabled} aria-label={`预览${item.kind === 'video' ? '视频' : '图片'}：${item.name}`} onClick={onSelect} title={`点击预览：${item.name}`} className="group min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 text-left transition hover:border-violet-400 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50">
-    <div className="relative grid aspect-video place-items-center overflow-hidden rounded-lg bg-slate-100">
-      {url ? <img src={url} alt={item.name} className="h-full w-full object-contain" /> : <Icon className="size-8 text-slate-300" />}
+    <div className="relative aspect-video overflow-hidden rounded-lg bg-slate-100">
+      {item.kind === 'video' ? <HistoryVideoThumbnail src={url} name={item.name} />
+        : url ? <img src={url} alt={item.name} className="absolute inset-0 size-full object-contain" />
+          : <span className="absolute inset-0 grid place-items-center"><Icon className="size-8 text-slate-300" /></span>}
       {selecting && <span className="absolute inset-0 grid place-items-center bg-white/70"><Loader2 className="size-5 animate-spin text-violet-600" /></span>}
-      {!selecting && <span className="pointer-events-none absolute inset-0 grid place-items-center bg-black/10"><span className="grid size-8 place-items-center rounded-full bg-white/85 text-violet-700 shadow"><PreviewIcon size={16} /></span></span>}
+      {!selecting && <span className="pointer-events-none absolute inset-0 grid place-items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"><span className="grid size-8 place-items-center rounded-full bg-white/85 text-violet-700 shadow"><PreviewIcon size={16} /></span></span>}
       {item.kind === 'video' && item.duration && <span className="absolute bottom-1 right-1 rounded bg-slate-950/70 px-1.5 py-0.5 text-[10px] text-white">{item.duration.toFixed(1)}秒</span>}
     </div>
     <div className="mt-2 truncate text-xs font-semibold text-slate-700">{item.name}</div>

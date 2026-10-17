@@ -1,5 +1,6 @@
 import PersonReplacementPanel from '@/src/components/PersonReplacementPanel';
 import UploadHistoryPreview from '@/src/components/UploadHistoryPreview';
+import HistoryVideoThumbnail from '@/src/components/HistoryVideoThumbnail';
 import { ornamentSizeRule } from '../../../legacy-project/ornament-size.mjs';
 import { resolveClipProductType, type IncomingCreativeClip } from '@/src/lib/clipCreative';
 import { replacementProductRules, wrapReplacementPrompt, replacementElementLabel, replacementProductLabel, type ReplacementProductType } from '@/src/lib/productReplacement';
@@ -430,30 +431,6 @@ function formatVideoDuration(seconds?: number): string {
   const restSeconds = totalSeconds % 60;
   if (minutes <= 0) return `${restSeconds}秒`;
   return `${minutes}分${String(restSeconds).padStart(2, '0')}秒`;
-}
-
-function HistoryVideoThumbnail({
-  src,
-  name,
-}: {
-  src: string;
-  name: string;
-}) {
-  return (
-    <div className="aspect-video w-full bg-slate-950">
-      {src ? (
-        <img
-          src={src}
-          alt={name}
-          className="size-full object-cover"
-        />
-      ) : (
-        <div className="flex size-full items-center justify-center bg-slate-900 text-white/50">
-          <Film className="size-5" />
-        </div>
-      )}
-    </div>
-  );
 }
 
 function HistoryImageThumbnail({
