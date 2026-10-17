@@ -42,6 +42,7 @@ import {
   createMediaPreviewUrl,
   createSeedanceTask,
   getCreativeConfigStatus,
+  getKelongDeviceId,
   querySeedanceTask,
   sendCreativeMessage,
   analyzePainting,
@@ -119,6 +120,7 @@ import {
   getVideoLibraryFolders,
   markVideoLibraryItemsRead,
   saveSeedanceVideoToLibrary,
+  savePersonReplacementVideoToLibrary,
 } from "@/src/lib/videoLibrary";
 
 interface Message {
@@ -189,6 +191,8 @@ interface SeedanceHistoryItem {
 
 interface SeedanceLibrarySaveTarget {
   taskId: string;
+  personReplacementId?: string;
+  onSaved?: (folder: string) => void;
   model: SeedanceModelId;
   prompt?: string;
   createdAt?: number;
@@ -1210,7 +1214,7 @@ function formatSeedanceLibraryFileName(createdAt?: number) {
     hour12: false,
     hourCycle: 'h23',
     timeZone: 'Asia/Shanghai',
-  }).replace(':', '-');
+  });
   return `${month}${day} ${time}.mp4`;
 }
 
@@ -3788,7 +3792,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       if (!nextFolder) {
         const recentSavedFolder = seedanceHistory.find((item) => item.libraryFolder && availableFolders.includes(item.libraryFolder))?.libraryFolder || '';
         const lastFolder = loadLastVideoLibraryFolder();
-        nextFolder = recentSavedFolder || getFallbackVideoLibraryFolder(availableFolders);
+        nextFolder = availableFolders.includes(lastFolder) ? lastFolder : recentSavedFolder || getFallbackVideoLibraryFolder(availableFolders);
         nextSource = recentSavedFolder || availableFolders.includes(lastFolder) ? 'last-used' : 'fallback';
       }
       setVideoLibraryFolders(availableFolders);
@@ -3807,7 +3811,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setIsSavingToVideoLibrary(true);
     setVideoLibrarySaveError('');
     try {
-      const result = await saveSeedanceVideoToLibrary({
+      const result = target.personReplacementId ? await savePersonReplacementVideoToLibrary({
+        taskId: target.personReplacementId,
+        folderName: selectedVideoLibraryFolder,
+        deviceId: getKelongDeviceId(),
+      }) : await saveSeedanceVideoToLibrary({
         taskId: target.taskId,
         model: target.model,
         folderName: selectedVideoLibraryFolder,
@@ -3849,6 +3857,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               ? '；原片已保存，但服务器尚未配置公网地址，画质增强未启动'
               : '；原片已保存，画质增强暂未启动';
       setVideoLibrarySaveNotice(`${result.message}：${result.item.originalName}${enhancementSuffix}`);
+      target.onSaved?.(result.item.folderName);
       setSeedanceLibrarySaveTarget(null);
     } catch (error) {
       setVideoLibrarySaveError(error instanceof Error ? error.message : '保存到视频素材库失败');
@@ -7781,7 +7790,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   视频人物替换
                 </button>
               </div>
-              <div hidden={!showPersonReplacement}><PersonReplacementPanel /></div>
+              <div hidden={!showPersonReplacement}><PersonReplacementPanel onSaveToLibrary={(task, onSaved) => {
+                void openSeedanceLibrarySave({ taskId: task.id, personReplacementId: task.id, model: task.model, prompt: task.prompt, createdAt: task.createdAt, onSaved });
+              }} /></div>
               <div hidden={showPersonReplacement}>
 
               {seedanceTaskMode === 'generate' && seedanceModel === 'MiniMax-H3' && (
@@ -8468,11 +8479,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                     {seedanceError}
                   </div>
                 )}
-                {videoLibrarySaveNotice && (
-                  <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-medium leading-5 text-emerald-700">
-                    {videoLibrarySaveNotice}
-                  </div>
-                )}
               </div>
 
               {/* 生成历史 — 底部全宽区域 */}
@@ -8692,6 +8698,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 )}
               </div>
               </div>
+              {videoLibrarySaveNotice && (
+                <div role="status" className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-medium leading-5 text-emerald-700">
+                  {videoLibrarySaveNotice}
+                </div>
+              )}
             </div>
           </section>
 
@@ -8777,10 +8788,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 <div>
                   <h3 className="text-base font-black text-slate-900">保存到视频素材库</h3>
                   <p className="mt-1 text-xs leading-5 text-slate-500">
-                    原视频会立即复制到我们自己的素材库，不再依赖 Seedance 临时链接；不压缩、不转码，下载仍为 MP4。
+                    {seedanceLibrarySaveTarget.personReplacementId
+                      ? '替换完成后的成片会无损复制到素材库，保留本次声音设置；不压缩、不转码，下载仍为 MP4。'
+                      : '原视频会立即复制到我们自己的素材库，不再依赖 Seedance 临时链接；不压缩、不转码，下载仍为 MP4。'}
                   </p>
                   <p className="mt-1 text-[11px] font-medium leading-5 text-amber-600">
-                    请在 Seedance 链接失效前完成保存；保存成功后可长期预览和下载。
+                    {seedanceLibrarySaveTarget.personReplacementId ? '保存成功后可在视频素材库长期预览和下载。' : '请在 Seedance 链接失效前完成保存；保存成功后可长期预览和下载。'}
                   </p>
                 </div>
                 <button

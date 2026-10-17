@@ -1796,7 +1796,7 @@ function setCorsHeaders(req, res) {
   res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,PUT,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-File-Name');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-File-Name, X-Device-Id');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
 }
 
@@ -4067,8 +4067,40 @@ function normalizeLegacyVideoLibrarySourceNote(note) {
   return direction ? `来自创意素材 · 方向${direction}` : '来自创意素材';
 }
 
+// 常规生成、元素替换和人物替换共用无损入库、命名、去重及480P增强。
+async function saveCreativeVideoBufferToLibrary(buffer, { folderName, createdAt, model, provider, directionNumber = 0, req }) {
+  if (!buffer.length) throw new Error('生成视频文件为空');
+  if (buffer.length < 12 || buffer.subarray(4, 8).toString('ascii') !== 'ftyp') throw new Error('生成结果不是有效的 MP4 文件，请刷新任务后重试');
+  const sha256 = createHash('sha256').update(buffer).digest('hex');
+  let item = dbFindVideoLibraryByHash(sha256);
+  let duplicate = !!item;
+  if (!item) {
+    await ensureVideoLibraryDir();
+    const storedName = `${sha256}.mp4`;
+    const temporaryPath = path.join(VIDEO_LIBRARY_DIR, `${sha256}.${randomBytes(12).toString('hex')}.importing`);
+    try {
+      await writeFile(temporaryPath, buffer);
+      if ((await stat(temporaryPath)).size !== buffer.length) throw new Error('保存后文件大小校验失败，请重试');
+      await rename(temporaryPath, path.join(VIDEO_LIBRARY_DIR, storedName));
+      // Recheck after filesystem awaits: concurrent saves of the same bytes share one library entry.
+      item = dbFindVideoLibraryByHash(sha256);
+      duplicate = !!item;
+      if (!item) item = dbInsertVideoLibraryItem({
+        folderName, originalName: formatSeedanceVideoLibraryName(createdAt), storedName,
+        mimeType: 'video/mp4', fileSize: buffer.length, sha256,
+        note: formatVideoLibrarySourceNote({ model, provider, directionNumber: getPaintingFrameworkPosition(directionNumber) ? directionNumber : 0 }),
+      });
+    } finally { await unlink(temporaryPath).catch(() => {}); }
+    void ensureVideoLibraryPreview({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
+    void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
+  }
+  const enhancement = await queueVideoEnhancementForLibraryItem(item, { enabled: true, req });
+  item = enhancement.item || item;
+  return { ok: true, duplicate, item, sourceBytes: buffer.length, savedBytes: item.fileSize, enhancement,
+    message: duplicate ? `这个视频已经保存在“${item.folderName}”文件夹` : `已无损保存到“${item.folderName}”文件夹` };
+}
+
 async function handleSaveSeedanceVideoToLibrary(req, res) {
-  let filePath = '';
   try {
     const body = await readRequestBody(req);
     const taskId = readValue(body?.taskId);
@@ -4076,14 +4108,11 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
     const folderName = sanitizeVideoLibraryFolder(body?.folderName);
     const requestedCreatedAt = Number(body?.createdAt || 0);
     const paintingDirectionNumber = Number(body?.paintingDirectionNumber || 0);
-    // 创意视频入库统一执行480P检测：命中后自动增强至1080P，不再由前端开关决定。
-    const autoEnhance480p = true;
     if (!taskId) {
       sendJson(res, 400, { error: '缺少视频生成任务 ID' });
       return;
     }
     const taskResult = await fetchManualVideoGenerationTask(taskId);
-    const taskPayload = taskResult.payload;
     const videoUrl = taskResult.videoUrl;
     if (!videoUrl) throw new Error('这条生成记录还没有可保存的视频');
 
@@ -4104,74 +4133,12 @@ async function handleSaveSeedanceVideoToLibrary(req, res) {
     }
 
     const buffer = await readVideoLibraryRemoteBuffer(videoResponse);
-    if (!buffer.length) throw new Error('生成视频文件为空');
-    if (buffer.length < 12 || buffer.subarray(4, 8).toString('ascii') !== 'ftyp') {
-      throw new Error('生成结果不是有效的 MP4 文件，请刷新任务后重试');
-    }
-    const sha256 = createHash('sha256').update(buffer).digest('hex');
-    const existing = dbFindVideoLibraryByHash(sha256);
-    if (existing) {
-      const enhancementResult = await queueVideoEnhancementForLibraryItem(existing, { enabled: autoEnhance480p, req });
-      sendJson(res, 200, {
-        ok: true,
-        duplicate: true,
-        item: enhancementResult.item || existing,
-        sourceBytes: buffer.length,
-        savedBytes: existing.fileSize,
-        message: `这个视频已经保存在“${existing.folderName}”文件夹`,
-        enhancement: enhancementResult,
-      });
-      return;
-    }
-
-    const taskCreatedAt = Number(taskResult.createdAt || requestedCreatedAt || 0);
-    // 挂画方向号只写入备注；文件名与其他创意素材一样只保留月日和时分。
-    const paintingPosition = getPaintingFrameworkPosition(paintingDirectionNumber);
-    const originalName = paintingPosition
-      ? formatPaintingSeedanceVideoLibraryName(taskCreatedAt, paintingDirectionNumber)
-      : formatSeedanceVideoLibraryName(taskCreatedAt);
-    const storedName = `${sha256}.mp4`;
-    await ensureVideoLibraryDir();
-    filePath = path.join(VIDEO_LIBRARY_DIR, storedName);
-    await writeFile(filePath, buffer);
-    const savedFile = await stat(filePath);
-    if (savedFile.size !== buffer.length) {
-      throw new Error('保存后文件大小校验失败，请重试');
-    }
-    let item = dbInsertVideoLibraryItem({
-      folderName,
-      originalName,
-      storedName,
-      mimeType: 'video/mp4',
-      fileSize: savedFile.size,
-      sha256,
-      note: formatVideoLibrarySourceNote({
-        model: requestedModel,
-        provider: taskResult.provider,
-        directionNumber: paintingPosition ? paintingDirectionNumber : 0,
-      }),
+    const result = await saveCreativeVideoBufferToLibrary(buffer, {
+      folderName, createdAt: Number(taskResult.createdAt || requestedCreatedAt || 0),
+      model: requestedModel, provider: taskResult.provider, directionNumber: paintingDirectionNumber, req,
     });
-    void ensureVideoLibraryPreview({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
-    void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch((thumbnailError) => {
-      console.warn('[video library] seedance_thumbnail_generation_failed', {
-        id: item.id,
-        taskId,
-        message: thumbnailError?.message || '',
-      });
-    });
-    const enhancementResult = await queueVideoEnhancementForLibraryItem(item, { enabled: autoEnhance480p, req });
-    item = enhancementResult.item || item;
-    sendJson(res, 201, {
-      ok: true,
-      duplicate: false,
-      item,
-      sourceBytes: buffer.length,
-      savedBytes: item.fileSize,
-      message: `已无损保存到“${folderName}”文件夹`,
-      enhancement: enhancementResult,
-    });
+    sendJson(res, result.duplicate ? 200 : 201, result);
   } catch (error) {
-    if (filePath) await unlink(filePath).catch(() => {});
     const isTimeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
     sendJson(res, isTimeout ? 504 : 500, {
       error: isTimeout ? '保存视频超时，请稍后重试' : (error?.message || '保存视频失败'),
@@ -21219,46 +21186,42 @@ const personReplacement = createPersonReplacementService({
 
 async function handlePersonReplacement(req, res, url) {
   try {
+    const deviceId = readPaintingDeviceId(req);
+    if (!deviceId) { sendJson(res, 400, { error: '缺少有效的设备标识，请允许浏览器保存本地数据后重试' }); return; }
     const base = '/api/person-replacement/tasks';
     const suffix = url.pathname.slice(base.length).split('/').filter(Boolean);
     if (req.method === 'GET' && suffix.length === 0) {
-      sendJson(res, 200, { tasks: personReplacement.list() }); return;
+      sendJson(res, 200, { tasks: personReplacement.list(deviceId) }); return;
     }
     if (req.method === 'GET' && suffix[0] === 'by-request' && suffix.length === 2) {
-      sendJson(res, 200, { task: personReplacement.byRequest(suffix[1]) }); return;
+      sendJson(res, 200, { task: personReplacement.byRequest(suffix[1], deviceId) }); return;
     }
     if (req.method === 'POST' && suffix.length === 0) {
       const body = await readSeedanceTaskFormBody(req);
-      const task = await personReplacement.create(body, getConfiguredPublicBaseUrl());
+      const task = await personReplacement.create(body, getConfiguredPublicBaseUrl(), deviceId);
       sendJson(res, 201, { task }); return;
     }
     const id = suffix[0];
     if (req.method === 'GET' && suffix.length === 1) {
-      const task = personReplacement.get(id);
+      const task = personReplacement.get(id, deviceId);
       sendJson(res, task ? 200 : 404, task ? { task } : { error: '人物替换任务不存在' }); return;
     }
     if (req.method === 'POST' && suffix[1] === 'retry' && suffix.length === 2) {
-      sendJson(res, 200, { task: personReplacement.retry(id) }); return;
+      sendJson(res, 200, { task: personReplacement.retry(id, deviceId) }); return;
+    }
+    if (req.method === 'POST' && suffix[1] === 'recover' && suffix.length === 2) {
+      const body = await readRequestBody(req);
+      sendJson(res, 200, { task: await personReplacement.recoverTask(id, body?.taskId, deviceId) }); return;
     }
     if (req.method === 'POST' && suffix[1] === 'save' && suffix.length === 2) {
       const body = await readRequestBody(req);
       const folderName = sanitizeVideoLibraryFolder(body?.folderName);
-      const result = await personReplacement.resultFile(id);
-      const bytes = await readFile(result.path);
-      const sha256 = createHash('sha256').update(bytes).digest('hex');
-      let item = dbFindVideoLibraryByHash(sha256);
-      if (!item) {
-        await ensureVideoLibraryDir();
-        const storedName = `${sha256}.mp4`;
-        await copyFile(result.path, path.join(VIDEO_LIBRARY_DIR, storedName));
-        item = dbFindVideoLibraryByHash(sha256) || dbInsertVideoLibraryItem({ folderName, originalName: result.name, storedName, mimeType: 'video/mp4', fileSize: bytes.length, sha256,
-          note: `视频人物替换 · ${getVideoLibraryModelLabel(result.model)}\n${result.prompt}`, ...await probeVideoMetadata(result.path) });
-        void ensureVideoLibraryPreview({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
-        void ensureVideoLibraryThumbnail({ id: item.id, stored_name: storedName, sha256 }).catch(() => {});
-      }
-      const enhancement = await queueVideoEnhancementForLibraryItem(item, { enabled: true, req });
-      item = enhancement.item || item;
-      sendJson(res, 200, { item, enhancement, message: `已保存到“${item.folderName}”文件夹` }); return;
+      const result = await personReplacement.resultFile(id, deviceId);
+      const saved = await saveCreativeVideoBufferToLibrary(await readFile(result.path), {
+        folderName, createdAt: result.createdAt, model: result.model, provider: 'seedance', req,
+      });
+      personReplacement.markLibrarySaved(id, saved.item, deviceId);
+      sendJson(res, saved.duplicate ? 200 : 201, saved); return;
     }
     sendJson(res, 404, { error: '人物替换接口不存在' });
   } catch (error) { sendJson(res, 400, { error: error.message || '人物替换处理失败' }); }
@@ -21293,6 +21256,17 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/config/status') {
     await handleConfigStatus(req, res);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname.startsWith('/api/person-replacement/callback/')) {
+    const parts = url.pathname.slice('/api/person-replacement/callback/'.length).split('/');
+    if (parts.length !== 2) { sendJson(res, 404, { error: '任务通知地址无效' }); return; }
+    try {
+      const body = await readRequestBody(req);
+      personReplacement.acceptCallback(parts[0], parts[1], body);
+      sendJson(res, 200, { ok: true });
+    } catch (error) { sendJson(res, error.statusCode || 400, { error: error.message || '任务通知处理失败' }); }
     return;
   }
 
@@ -22078,6 +22052,8 @@ export {
   getCollectionDb,
   handleGetVideoLibraryFolders,
   handleUploadVideoLibrary,
+  handleSaveSeedanceVideoToLibrary,
+  handlePersonReplacement,
   ensurePaintingBatchIdempotencyConstraints,
   dbInsertPaintingBatchRun,
   dbInsertPaintingBatchTask,

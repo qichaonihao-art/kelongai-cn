@@ -261,6 +261,20 @@ export async function saveSeedanceVideoToLibrary(input: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
+  return readSavedVideoLibraryResult(response);
+}
+
+export async function savePersonReplacementVideoToLibrary(input: { taskId: string; folderName: string; deviceId: string }) {
+  if (!input.deviceId) throw new Error('无法识别当前设备，请允许浏览器保存本地数据后重试');
+  const response = await fetch(`/api/person-replacement/tasks/${encodeURIComponent(input.taskId)}/save`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-Device-Id': input.deviceId },
+    body: JSON.stringify({ folderName: input.folderName }),
+  });
+  return readSavedVideoLibraryResult(response);
+}
+
+async function readSavedVideoLibraryResult(response: Response) {
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '保存到视频素材库失败'));
   invalidateVideoLibraryCache();

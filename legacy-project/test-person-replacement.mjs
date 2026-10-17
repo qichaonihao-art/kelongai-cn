@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createPersonReplacementService, PERSON_MODELS, buildPersonPrompt, validatePersonOptions } from './person-replacement.mjs';
+import { createPersonReplacementService, PERSON_MODELS, PERSON_GENERATION_SUBMIT_TIMEOUT_MS, buildPersonPrompt, validatePersonOptions } from './person-replacement.mjs';
 
 const exec = promisify(execFile);
 const root = await mkdtemp(path.join(tmpdir(), 'person-replacement-test-'));
 const db = new DatabaseSync(path.join(root, 'tasks.sqlite'));
+// Exercise upgrades from the original shared-history schema as well as fresh jobs.
+db.exec('CREATE TABLE person_replacement_jobs (id TEXT PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, data TEXT NOT NULL)');
 const source = path.join(root, 'source.mp4');
 const silent = path.join(root, 'silent.mp4');
 const generated = path.join(root, 'generated.mp4');
@@ -27,19 +29,25 @@ async function probe(file) {
 const sourceBytes = await readFile(source);
 const silentBytes = await readFile(silent);
 const generatedBytes = await readFile(generated);
-let posts = [], failGeneration = false, ambiguous = false, queryFailure = false, blurFailed = false, dropMaskAudio = false, dropGeneratedAudio = false;
+let posts = [], failGeneration = false, ambiguous = false, queryFailure = false, blurFailed = false, dropMaskAudio = false, dropGeneratedAudio = false, earlyCallback = false, throwAfterCallback = false, recoveryTask = null;
 const deps = { getDb: () => db, root: path.join(root, 'jobs'), exec, probe,
   getConfig: () => ({ mediaKey: 'fake-media', seedanceKey: 'fake-seedance', mediaBase: 'https://mock-mediakit.test' }),
   fetch: async (url, options = {}) => {
     if (options.method === 'POST') {
       posts.push({ url, body: JSON.parse(options.body) });
-      if (ambiguous && url.includes('generations')) throw new Error('connection interrupted');
+      if (url.includes('generations') && earlyCallback) {
+        const payload = JSON.parse(options.body); const parts = new URL(payload.callback_url).pathname.split('/');
+        service.acceptCallback(parts.at(-2), parts.at(-1), { id: `generate-${posts.length}`, model: payload.model, status: 'running', content: { video_url: 'https://untrusted.test/ignored.mp4' } });
+        if (throwAfterCallback) throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+      }
+      if (ambiguous && url.includes('generations')) throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
       return Response.json(url.includes('face-blur') ? { task_id: `blur-${posts.length}` } : { id: `generate-${posts.length}` });
     }
     if (url.includes('/api/v1/tasks/')) return Response.json(blurFailed ? { status: 'failed', error: { message: 'mock blur failure' } } : { status: 'completed', result: { video_url: 'https://mock.test/masked.mp4' } });
     return new Response(url.includes('masked') ? (dropMaskAudio ? silentBytes : sourceBytes) : (dropGeneratedAudio ? silentBytes : generatedBytes));
   },
   fetchTask: async () => {
+    if (recoveryTask) return recoveryTask;
     if (queryFailure) throw new Error('temporary query failure');
     return failGeneration ? { status: 'failed', errorMessage: 'mock generation failure' } : { status: 'succeeded', videoUrl: 'https://mock.test/generated.mp4' };
   },
@@ -50,11 +58,12 @@ async function drive(id, target = 'completed') {
   for (let index = 0; index < 12; index++) {
     service.stop(); await service.tick();
     const task = service.get(id);
-    if (task.stage === target || task.stage === 'failed') return task;
+    if (task.stage === target || task.stage === 'failed' || task.stage === 'awaiting_confirmation') return task;
   }
   assert.fail(`task did not reach ${target}: ${service.get(id).stage}`);
 }
 try {
+  assert.equal(PERSON_GENERATION_SUBMIT_TIMEOUT_MS, 180000);
   assert.throws(() => validatePersonOptions(options({ audioMode: 'bad' })), /声音/);
   assert.throws(() => validatePersonOptions(options({ model: 'wan3.0-video' })), /请选择/);
   assert.throws(() => validatePersonOptions(options({ model: PERSON_MODELS[1], resolution: '480p' })), /支持/);
@@ -81,6 +90,7 @@ try {
   const request = posts[1].body;
   assert.equal(request.duration, 5, 'fractional source duration is rounded up, not truncated');
   assert.equal(request.generate_audio, true, 'native preservation keeps model audio enabled');
+  assert.match(request.callback_url, new RegExp(`/api/person-replacement/callback/${first.id}/[a-z0-9-]+$`));
   assert.match(request.content.find(item => item.type === 'video_url').video_url.url, /masked.mp4$/);
   assert.ok(!JSON.stringify(request).includes('source.mp4'), 'original face video is not sent to generation');
   assert.match(request.content[0].text, /脸部打码不作为新人物的视觉参考/);
@@ -202,12 +212,71 @@ try {
   ambiguous = true;
   const uncertain = await service.create(options(), 'https://app.test');
   result = await drive(uncertain.id);
+  assert.equal(result.stage, 'awaiting_confirmation');
+  assert.equal(result.canRecover, true);
+  assert.match(result.notice, /向Seedance提交请求超时/);
+  assert.ok(!result.notice.includes('The operation'));
   assert.equal(result.ambiguous, true);
   assert.equal(result.canRetry, false);
   assert.throws(() => service.retry(uncertain.id), /核对/);
   const ambiguousCount = posts.length;
   await service.tick(); assert.equal(posts.length, ambiguousCount, 'unknown paid submission never repeats automatically');
+  const callback = new URL(posts.at(-1).body.callback_url).pathname.split('/');
+  assert.throws(() => service.acceptCallback(uncertain.id, 'wrong-token', { id: 'cgt-found', model: PERSON_MODELS[0] }), /无效/);
+  assert.throws(() => service.acceptCallback(uncertain.id, callback.at(-1), { id: 'cgt-found', model: PERSON_MODELS[1] }), /模型/);
   ambiguous = false;
+  service.stop(); service = createPersonReplacementService(deps);
+  assert.equal(service.get(uncertain.id).stage, 'awaiting_confirmation');
+  service.acceptCallback(uncertain.id, callback.at(-1), { id: 'cgt-found', model: PERSON_MODELS[0], status: 'succeeded', content: { video_url: 'https://untrusted.test/must-ignore.mp4' } });
+  assert.equal(service.get(uncertain.id).stage, 'generating', 'callback only recovers the ID; it does not trust callback output');
+  assert.equal((await drive(uncertain.id)).stage, 'completed');
+  assert.equal(posts.length, ambiguousCount, 'callback recovers timeout without another paid POST');
+  service.acceptCallback(uncertain.id, callback.at(-1), { id: 'cgt-found', model: PERSON_MODELS[0], status: 'running' });
+  assert.equal(service.get(uncertain.id).stage, 'completed', 'late duplicate callbacks cannot regress completed work');
+
+  earlyCallback = true; throwAfterCallback = true;
+  const raced = await service.create(options(), 'https://app.test');
+  result = await drive(raced.id);
+  assert.equal(result.stage, 'completed', 'callback arriving before POST timeout keeps the recovered ID');
+  earlyCallback = false; throwAfterCallback = false;
+
+  ambiguous = true;
+  const manual = await service.create(options(), 'https://app.test');
+  result = await drive(manual.id);
+  assert.equal(result.stage, 'awaiting_confirmation');
+  const manualPosts = posts.length;
+  // Reproduce the screenshot's older failed record with no callback registered.
+  const manualRow = JSON.parse(db.prepare('SELECT data FROM person_replacement_jobs WHERE id = ?').get(manual.id).data);
+  manualRow.stage = 'failed'; manualRow.failedStage = 'submitting_generation'; delete manualRow.callbackToken;
+  manualRow.error = 'The operation was aborted due to timeout';
+  db.prepare('UPDATE person_replacement_jobs SET data = ? WHERE id = ?').run(JSON.stringify(manualRow), manual.id);
+  assert.equal(service.get(manual.id).canRecover, true);
+  assert.equal(service.get(manual.id).awaitingNotification, false);
+  assert.ok(!service.get(manual.id).error.includes('The operation'));
+  recoveryTask = { status: 'succeeded', videoUrl: 'https://mock.test/generated.mp4', createdAt: Math.floor(Date.now() / 1000), payload: { model: PERSON_MODELS[1], resolution: '720p' } };
+  await assert.rejects(service.recoverTask(manual.id, 'cgt-manual'), /模型/);
+  recoveryTask.payload.model = PERSON_MODELS[0]; recoveryTask.payload.resolution = '480p';
+  await assert.rejects(service.recoverTask(manual.id, 'cgt-manual'), /分辨率/);
+  recoveryTask.payload.resolution = '720p';
+  assert.equal((await service.recoverTask(manual.id, 'cgt-manual')).stage, 'generating');
+  ambiguous = false;
+  assert.equal((await drive(manual.id)).stage, 'completed');
+  assert.equal(posts.length, manualPosts, 'manual recovery makes no paid POST and reuses the completed mask');
+  recoveryTask = null;
+
+  const interrupted = await service.create(options(), 'https://app.test');
+  await drive(interrupted.id, 'ready');
+  const interruptedData = JSON.parse(db.prepare('SELECT data FROM person_replacement_jobs WHERE id = ?').get(interrupted.id).data);
+  Object.assign(interruptedData, { stage: 'submitting_generation', callbackToken: 'restart-token' });
+  db.prepare('UPDATE person_replacement_jobs SET data = ? WHERE id = ?').run(JSON.stringify(interruptedData), interrupted.id);
+  service.stop(); service = createPersonReplacementService(deps);
+  const interruptedPosts = posts.length;
+  await service.tick();
+  assert.equal(service.get(interrupted.id).stage, 'awaiting_confirmation');
+  assert.equal(posts.length, interruptedPosts, 'restart while submitting waits rather than submits twice');
+  service.acceptCallback(interrupted.id, 'restart-token', { id: 'cgt-after-restart', model: PERSON_MODELS[0] });
+  assert.equal((await drive(interrupted.id)).stage, 'completed');
+  assert.equal(posts.length, interruptedPosts);
 
   blurFailed = true;
   const blurFailure = await service.create(options(), 'https://app.test');
@@ -216,10 +285,55 @@ try {
   service.retry(blurFailure.id);
   assert.equal((await drive(blurFailure.id)).stage, 'completed');
   assert.ok(service.list().length >= 8);
+
+  // Two devices can submit and continue independently, including after a server restart.
+  const deviceA = 'device-a', deviceB = 'device-b';
+  const bodyA = options(), bodyB = options();
+  const isolatedPosts = posts.length;
+  const [taskA, taskB] = await Promise.all([
+    service.create(bodyA, 'https://app.test', deviceA),
+    service.create(bodyB, 'https://app.test', deviceB),
+  ]);
+  service.stop();
+  assert.deepEqual(service.list(deviceA).map(item => item.id), [taskA.id]);
+  assert.deepEqual(service.list(deviceB).map(item => item.id), [taskB.id]);
+  assert.equal(service.get(taskA.id, deviceB), null);
+  assert.equal(service.byRequest(bodyA.creationRequestId, deviceB), null);
+  assert.equal(service.byRequest(bodyA.creationRequestId, deviceA).id, taskA.id);
+  assert.throws(() => service.retry(taskA.id, deviceB), /当前设备/);
+  await assert.rejects(service.recoverTask(taskA.id, 'cgt-other-device', deviceB), /当前设备/);
+  await assert.rejects(service.resultFile(taskA.id, deviceB), /当前设备/);
+  await assert.rejects(service.create(bodyA, 'https://app.test', deviceB), /不属于当前设备/);
+  assert.equal((await service.create(bodyA, 'https://app.test', deviceA)).id, taskA.id, 'same-device duplicate remains idempotent');
+  assert.throws(() => service.list(''), /设备标识/);
+  assert.throws(() => service.get(taskA.id, 'bad device'), /设备标识/);
+  await assert.rejects(service.create(options(), 'https://app.test', ''), /设备标识/);
+  service.stop(); service = createPersonReplacementService(deps);
+  assert.equal(service.get(taskA.id, deviceA).stage, 'queued', 'own device resumes its queued task after restart');
+  assert.equal((await drive(taskA.id)).stage, 'completed');
+  assert.equal((await drive(taskB.id)).stage, 'completed');
+  assert.equal(posts.length - isolatedPosts, 4, 'two devices submit exactly one mask and one generation each');
+  assert.ok((await service.resultFile(taskA.id, deviceA)).path.endsWith('result.mp4'));
+  assert.deepEqual(service.list(deviceA).map(item => item.id), [taskA.id]);
+  assert.deepEqual(service.list(deviceB).map(item => item.id), [taskB.id]);
+  // Device filtering must happen before LIMIT, even with more than 50 newer records elsewhere.
+  const historyData = JSON.parse(db.prepare('SELECT data FROM person_replacement_jobs WHERE id = ?').get(taskB.id).data);
+  for (let index = 0; index < 55; index++) {
+    const id = `other-device-history-${index}`, requestId = crypto.randomUUID();
+    db.prepare('INSERT INTO person_replacement_jobs (id, request_id, data, device_id) VALUES (?, ?, ?, ?)')
+      .run(id, requestId, JSON.stringify({ ...historyData, id, requestId }), deviceB);
+  }
+  assert.deepEqual(service.list(deviceA).map(item => item.id), [taskA.id]);
+  assert.equal(service.list(deviceB).length, 50);
+  assert.equal(service.get(first.id, deviceA), null, 'unassigned pre-upgrade history is hidden instead of shared');
+  assert.equal(service.byRequest(body.creationRequestId, 'legacy-device').id, first.id, 'local pending request ID can reclaim its legacy task');
+  assert.equal(service.byRequest(body.creationRequestId, deviceA), null, 'a legacy task is claimed only once');
+  assert.equal(service.get(first.id, 'legacy-device').id, first.id);
+  assert.equal(posts.length - isolatedPosts, 4, 'history, ownership checks and legacy recovery do not submit paid work');
   // Public media accepts only the per-task capability token and named assets.
   let status;
   await service.media({ headers: {} }, { writeHead: value => { status = value; }, end() {} }, first.id, 'wrong-token', 'source.mp4');
   assert.equal(status, 404);
   await assert.rejects(service.create(options({ files: [new File(['x'], 'bad.avi', { type: 'video/avi' })] }), 'https://app.test'), /MP4/);
-  console.log('PASS: person replacement workflow, native audio preservation, rewritten speech, new voice with new dialogue, silent output, legacy audio, duration modes, durable recovery, idempotency, failure retries, ambiguous POST protection, optional portrait, input-mask/output-face separation in every voice mode, and media access');
+  console.log('PASS: person replacement workflow, native audio preservation, rewritten speech, new voice with new dialogue, silent output, legacy audio, duration modes, durable recovery, idempotency, failure retries, ambiguous POST protection, timeout/callback/manual recovery, callback race and replay safety, optional portrait, input-mask/output-face separation, concurrent device isolation, ownership checks, per-device history limits, schema upgrade, legacy recovery, and media access');
 } finally { service.stop(); db.close(); await rm(root, { recursive: true, force: true }); }
