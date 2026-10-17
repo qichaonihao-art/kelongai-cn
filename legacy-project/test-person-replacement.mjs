@@ -58,6 +58,20 @@ try {
   assert.throws(() => validatePersonOptions(options({ audioMode: 'bad' })), /声音/);
   assert.throws(() => validatePersonOptions(options({ model: 'wan3.0-video' })), /请选择/);
   assert.throws(() => validatePersonOptions(options({ model: PERSON_MODELS[1], resolution: '480p' })), /支持/);
+  // The temporary input mask must be explicitly excluded from fidelity constraints in every mode.
+  for (const model of PERSON_MODELS) for (const audioMode of ['preserve', 'rewrite', 'new-voice', 'silent']) for (const hasPortrait of [false, true]) {
+    const prompt = buildPersonPrompt({ model, audioMode, hasPortrait, audioVersion: 2, sourceHasAudio: true,
+      prompt: '更换人物，其他全部保持原样', dialogue: '把好心情带回家', voiceDescription: '自然女声' });
+    assert.ok(prompt.indexOf('临时预处理') < prompt.indexOf('本次人物要求'), 'explain mask purpose before user fidelity wording');
+    assert.match(prompt, /明确不适用于原人物脸部打码/);
+    assert.match(prompt, /新人物的全部可见面部/);
+    assert.match(prompt, /转头、侧脸、移动和说话期间/);
+    assert.match(prompt, /不为展示面部而强行转头/);
+    assert.match(prompt, /保留真实的手部、头发或道具遮挡/);
+    assert.match(prompt, /不复制、保留或重新添加输入视频的人脸马赛克/);
+    if (hasPortrait) assert.match(prompt, /图片1决定新人物的面部与外观/);
+    else assert.match(prompt, /不尝试识别或还原原人物被遮住的身份/);
+  }
   const body = options();
   const [first, duplicate] = await Promise.all([service.create(body, 'https://app.test'), service.create(body, 'https://app.test')]);
   assert.equal(first.id, duplicate.id, 'concurrent duplicate submissions share one durable task');
@@ -69,6 +83,9 @@ try {
   assert.equal(request.generate_audio, true, 'native preservation keeps model audio enabled');
   assert.match(request.content.find(item => item.type === 'video_url').video_url.url, /masked.mp4$/);
   assert.ok(!JSON.stringify(request).includes('source.mp4'), 'original face video is not sent to generation');
+  assert.match(request.content[0].text, /脸部打码不作为新人物的视觉参考/);
+  assert.match(request.content[0].text, /清除该打码并生成新脸是本次必须完成的编辑/);
+
   assert.ok(!JSON.stringify(request).includes('挂画'), 'product rules are not injected');
   const resultFile = (await service.resultFile(first.id)).path;
   let info = await inspect(resultFile);
@@ -96,6 +113,7 @@ try {
   assert.equal(posts.at(-1).body.duration, -1, '2.5 edits follow source duration natively');
   assert.equal(posts.at(-1).body.omni_reference_task_type, 'edit');
   const rewritePrompt = posts.at(-1).body.content[0].text;
+  assert.match(rewritePrompt, /不复制、保留或重新添加输入视频的人脸马赛克/, '2.5 submitted edit uses the same unmasked-output contract');
   assert.ok(rewritePrompt.includes(newDialogue));
   assert.match(rewritePrompt, /原音色参考/);
   assert.match(rewritePrompt, /不沿用旧台词口型/);
@@ -203,5 +221,5 @@ try {
   await service.media({ headers: {} }, { writeHead: value => { status = value; }, end() {} }, first.id, 'wrong-token', 'source.mp4');
   assert.equal(status, 404);
   await assert.rejects(service.create(options({ files: [new File(['x'], 'bad.avi', { type: 'video/avi' })] }), 'https://app.test'), /MP4/);
-  console.log('PASS: person replacement workflow, native audio preservation, rewritten speech, new voice with new dialogue, silent output, legacy audio, duration modes, durable recovery, idempotency, failure retries, ambiguous POST protection, optional portrait and media access');
+  console.log('PASS: person replacement workflow, native audio preservation, rewritten speech, new voice with new dialogue, silent output, legacy audio, duration modes, durable recovery, idempotency, failure retries, ambiguous POST protection, optional portrait, input-mask/output-face separation in every voice mode, and media access');
 } finally { service.stop(); db.close(); await rm(root, { recursive: true, force: true }); }
