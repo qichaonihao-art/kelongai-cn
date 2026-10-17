@@ -1,4 +1,5 @@
 import PersonReplacementPanel from '@/src/components/PersonReplacementPanel';
+import UploadHistoryPreview from '@/src/components/UploadHistoryPreview';
 import { ornamentSizeRule } from '../../../legacy-project/ornament-size.mjs';
 import { resolveClipProductType, type IncomingCreativeClip } from '@/src/lib/clipCreative';
 import { replacementProductRules, wrapReplacementPrompt, replacementElementLabel, replacementProductLabel, type ReplacementProductType } from '@/src/lib/productReplacement';
@@ -9568,88 +9569,21 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         </div>
       )}
 
-      {/* 历史记录大预览层（Quick Look 风格） */}
-      {historyPreviewItem && (
-        <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center pointer-events-none">
-          {/* 背景遮罩 */}
-          <div className="pointer-events-auto absolute inset-0 bg-black/75" onClick={() => setHistoryPreviewItem(null)} />
-          {/* 内容区域 - 接收鼠标事件 */}
-          <div
-            className="relative pointer-events-auto"
-            onMouseEnter={() => {
-              if (hoverPreviewTimerRef.current) {
-                clearTimeout(hoverPreviewTimerRef.current);
-                hoverPreviewTimerRef.current = null;
-              }
-            }}
-            onDoubleClick={() => {
-              void selectHistoryPreviewItem(historyPreviewItem);
-            }}
-          >
-            <div className="relative flex max-h-[82vh] max-w-[85vw] items-center justify-center">
-              {historyPreviewItem.kind === 'video' ? (
-                <video
-                  src={historyPreviewItem.previewUrl}
-                  className="max-h-[78vh] max-w-[82vw] rounded-xl object-contain shadow-2xl"
-                  autoPlay
-                  loop
-                  muted
-                  controls
-                  playsInline
-                  onLoadedMetadata={(event) => rememberHistoryVideoDuration(historyPreviewItem.id, event.currentTarget.duration)}
-                />
-              ) : (
-                <img
-                  src={historyPreviewItem.previewUrl}
-                  alt={historyPreviewItem.name}
-                  className="max-h-[78vh] max-w-[82vw] rounded-xl object-contain shadow-2xl"
-                />
-              )}
-              {/* 删除按钮 */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setHistoryPreviewItem(null);
-                }}
-                className="absolute -right-3 -top-3 flex size-7 items-center justify-center rounded-full bg-white text-slate-400 shadow-md transition-colors hover:bg-slate-50 hover:text-slate-700"
-                title="关闭预览"
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
-            <div className="mt-4 flex flex-col items-center gap-3 text-center">
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <span className="rounded-full bg-white/10 px-4 py-1.5 text-sm font-semibold text-white backdrop-blur-sm">
-                  {historyPreviewItem.name}
-                </span>
-                {historyPreviewItem.kind === 'video' && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold text-white/85 backdrop-blur-sm">
-                    <Clock className="size-3.5" />
-                    视频时长 {formatVideoDuration(historyVideoDurations[historyPreviewItem.id])}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setHistoryPreviewItem(null)}
-                  className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-white/20"
-                >
-                  继续浏览
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void selectHistoryPreviewItem(historyPreviewItem)}
-                  className="rounded-full bg-white px-5 py-2 text-xs font-black text-slate-900 shadow-lg transition-colors hover:bg-slate-100"
-                >
-                  选用此{historyPreviewItem.kind === 'video' ? '视频' : '图片'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 左侧与人物替换共用历史素材预览：先查看，再明确选用。 */}
+      {historyPreviewItem && <UploadHistoryPreview
+        item={historyPreviewItem}
+        duration={historyVideoDurations[historyPreviewItem.id]}
+        onClose={() => setHistoryPreviewItem(null)}
+        onSelect={() => void selectHistoryPreviewItem(historyPreviewItem)}
+        onDuration={seconds => rememberHistoryVideoDuration(historyPreviewItem.id, seconds)}
+        onMouseEnter={() => {
+          if (hoverPreviewTimerRef.current) {
+            clearTimeout(hoverPreviewTimerRef.current);
+            hoverPreviewTimerRef.current = null;
+          }
+        }}
+      />}
+
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, History, X, Download, RefreshCw, UserRound, Check, Upload, Film, FolderOpen, Image as ImageIcon } from 'lucide-react';
+import { Loader2, History, X, Download, RefreshCw, UserRound, Check, Upload, Film, FolderOpen, Play, ZoomIn, Image as ImageIcon } from 'lucide-react';
+import UploadHistoryPreview from '@/src/components/UploadHistoryPreview';
 import { getKelongDeviceId, getSeedanceRatePerSecond } from '@/src/lib/creative';
-import { blobToFile, getUploadHistoryItem, loadUploadHistorySummaries, saveUploadHistory, formatHistoryTime, type UploadHistorySummaryItem } from '@/src/lib/uploadHistory';
+import { blobToFile, getUploadHistoryItem, loadUploadHistorySummaries, saveUploadHistory, formatHistoryTime, type UploadHistoryItem, type UploadHistorySummaryItem } from '@/src/lib/uploadHistory';
 
 type Model = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-5-260628';
 type AudioMode = 'preserve' | 'rewrite' | 'new-voice' | 'silent' | 'generate';
@@ -64,17 +65,22 @@ function historyUnavailableReason(item: UploadHistorySummaryItem) {
   if (item.kind === 'video') {
     if (!/\.(mp4|mov)$/i.test(item.name)) return '请选择MP4或MOV视频';
     if (item.size > 50 * 1024 * 1024) return '文件超过50MB';
-  } else if (item.size > 10 * 1024 * 1024) return '图片超过10MB';
+  } else {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(item.type)) return '请选择JPG、PNG或WebP图片';
+    if (item.size > 10 * 1024 * 1024) return '图片超过10MB';
+  }
   return '';
 }
 function HistoryMedia({ item, disabled, selecting, onSelect }: { item: UploadHistorySummaryItem; disabled: boolean; selecting: boolean; onSelect: () => void }) {
   const url = usePreview(item.previewBlob);
   const reason = historyUnavailableReason(item);
   const Icon = item.kind === 'video' ? Film : ImageIcon;
-  return <button type="button" disabled={disabled || !!reason} onClick={onSelect} title={reason || item.name} className="group min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 text-left transition hover:border-violet-400 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50">
+  const PreviewIcon = item.kind === 'video' ? Play : ZoomIn;
+  return <button type="button" disabled={disabled} aria-label={`预览${item.kind === 'video' ? '视频' : '图片'}：${item.name}`} onClick={onSelect} title={`点击预览：${item.name}`} className="group min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 text-left transition hover:border-violet-400 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50">
     <div className="relative grid aspect-video place-items-center overflow-hidden rounded-lg bg-slate-100">
       {url ? <img src={url} alt={item.name} className="h-full w-full object-contain" /> : <Icon className="size-8 text-slate-300" />}
       {selecting && <span className="absolute inset-0 grid place-items-center bg-white/70"><Loader2 className="size-5 animate-spin text-violet-600" /></span>}
+      {!selecting && <span className="pointer-events-none absolute inset-0 grid place-items-center bg-black/10"><span className="grid size-8 place-items-center rounded-full bg-white/85 text-violet-700 shadow"><PreviewIcon size={16} /></span></span>}
       {item.kind === 'video' && item.duration && <span className="absolute bottom-1 right-1 rounded bg-slate-950/70 px-1.5 py-0.5 text-[10px] text-white">{item.duration.toFixed(1)}秒</span>}
     </div>
     <div className="mt-2 truncate text-xs font-semibold text-slate-700">{item.name}</div>
@@ -151,8 +157,12 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
   const [history, setHistory] = useState<{ kind: 'video' | 'image'; items: UploadHistorySummaryItem[] } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historySelecting, setHistorySelecting] = useState<number | null>(null);
+  const [historyOpening, setHistoryOpening] = useState<number | null>(null);
+  const [historyPreview, setHistoryPreview] = useState<{ item: UploadHistoryItem; duration?: number } | null>(null);
+  const [historyPreviewError, setHistoryPreviewError] = useState('');
   const [historyError, setHistoryError] = useState('');
   const historyRequest = useRef(0);
+  const historyPreviewRequest = useRef(0);
   const [acting, setActing] = useState(false);
   const [upstreamTaskId, setUpstreamTaskId] = useState('');
   const [recoveryError, setRecoveryError] = useState('');
@@ -161,6 +171,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
   const submitting = useRef(false);
   const videoUrl = usePreview(video);
   const portraitUrl = usePreview(portrait);
+  const historyPreviewUrl = usePreview(historyPreview?.item.blob);
   const locked = uploading || recovering || busyTask(task) || acting;
   const maxDuration = model === 'doubao-seedance-2-0-260128' ? 15 : 30;
   const rate = getSeedanceRatePerSecond(model, resolution);
@@ -190,7 +201,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
     setRecovering(true); setError('');
     try {
       const json = await request(`${API}/by-request/${encodeURIComponent(id)}`);
-      if (json.task) { updateTask(json.task); rememberPending(''); }
+      if (json.task) { updateTask(json.task); rememberPrompt(json.task.prompt); rememberPending(''); }
       else { setMissingRequest(true); setError('暂未找到任务记录，可以继续查询，或用相同提交编号重新上传；服务端会合并重复提交。'); }
     } catch (err) { setError(err instanceof Error ? err.message : '查询失败'); }
     finally { setRecovering(false); }
@@ -210,7 +221,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
       if (mounted.current) timer = setTimeout(refresh, 5000);
     }
     void refresh();
-    return () => { mounted.current = false; clearTimeout(timer); };
+    return () => { mounted.current = false; historyRequest.current++; historyPreviewRequest.current++; clearTimeout(timer); };
   }, []);
   useEffect(() => { if (pendingRequest) void recover(pendingRequest); }, []);
 
@@ -229,6 +240,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
   }
   async function openHistory(kind: 'video' | 'image') {
     if (locked) return;
+    historyPreviewRequest.current++; setHistoryPreview(null); setHistoryPreviewError(''); setHistoryOpening(null);
     const requestId = ++historyRequest.current;
     setHistory({ kind, items: [] }); setHistoryLoading(true); setHistoryError('');
     try {
@@ -239,17 +251,37 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
   }
   function closeHistory() {
     if (historySelecting !== null) return;
-    historyRequest.current++; setHistory(null); setHistoryError('');
+    historyRequest.current++; historyPreviewRequest.current++;
+    setHistory(null); setHistoryPreview(null); setHistoryOpening(null); setHistoryError(''); setHistoryPreviewError('');
   }
-  async function chooseHistory(id: number) {
-    if (!history || historySelecting !== null || locked) return;
-    setHistorySelecting(id); setHistoryError('');
+  function closeHistoryPreview() {
+    if (historySelecting !== null) return;
+    historyPreviewRequest.current++; setHistoryPreview(null); setHistoryPreviewError('');
+  }
+  async function openHistoryPreview(id: number) {
+    if (!history || historyOpening !== null || historySelecting !== null) return;
+    const requestId = ++historyPreviewRequest.current;
+    const kind = history.kind;
+    const summary = history.items.find(item => item.id === id);
+    setHistoryOpening(id); setHistoryError(''); setHistoryPreviewError('');
     try {
       const item = await getUploadHistoryItem(id);
-      if (!item || item.kind !== history.kind) throw new Error('这条历史素材已不存在，请重新选择');
-      if (await selectFile(blobToFile(item), history.kind)) { historyRequest.current++; setHistory(null); }
-      else setHistoryError('这份素材不符合上传要求，请重新选择');
-    } catch (err) { setHistoryError(err instanceof Error ? err.message : '读取历史素材失败'); }
+      if (!mounted.current || requestId !== historyPreviewRequest.current) return;
+      if (!item || item.kind !== kind || !(item.blob instanceof Blob) || !item.blob.size) throw new Error('这条历史素材已不存在或文件为空，请重新上传');
+      setHistoryPreview({ item, duration: summary?.duration });
+    } catch (err) { if (requestId === historyPreviewRequest.current) setHistoryError(err instanceof Error ? err.message : '读取历史素材失败'); }
+    finally { if (requestId === historyPreviewRequest.current) setHistoryOpening(null); }
+  }
+  async function chooseHistory() {
+    if (!historyPreview || historySelecting !== null || locked) return;
+    const item = historyPreview.item;
+    if (item.kind !== 'video' && item.kind !== 'image') return;
+    setHistorySelecting(item.id); setHistoryPreviewError('');
+    try {
+      if (await selectFile(blobToFile(item), item.kind)) {
+        historyRequest.current++; historyPreviewRequest.current++; setHistoryPreview(null); setHistory(null);
+      } else setHistoryPreviewError('这份素材不符合上传要求，请重新选择');
+    } catch (err) { setHistoryPreviewError(err instanceof Error ? err.message : '选用历史素材失败'); }
     finally { setHistorySelecting(null); }
   }
   async function submit(reusePending = false) {
@@ -390,7 +422,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
         <input autoFocus aria-label="搜索人物替换要求历史" value={promptSearch} onChange={event => setPromptSearch(event.target.value)} placeholder="搜索历史要求" className={`${inputClass} mb-3`} />
         <div className="min-h-0 space-y-3 overflow-y-auto">
           {filteredPrompts.map(item => <div key={item.prompt.trim()} className="rounded-xl border border-slate-200 p-3">
-            <div className="mb-2 flex items-center justify-between gap-3"><span className="text-[11px] text-slate-400">{new Date(item.timestamp).toLocaleString('zh-CN')}</span><button type="button" disabled={locked} onClick={() => { setPrompt(item.prompt); setPromptHistoryOpen(false); setPromptHistoryNotice('已填入历史要求，可继续修改。'); }} className="shrink-0 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-violet-700 disabled:opacity-40">使用这条</button></div>
+            <div className="mb-2 flex items-center justify-between gap-3"><span className="text-[11px] text-slate-400">{new Date(item.timestamp).toLocaleString('zh-CN')}</span><button type="button" disabled={locked} onClick={() => { setPrompt(item.prompt); rememberPrompt(item.prompt); setPromptHistoryOpen(false); setPromptHistoryNotice('已填入历史要求，可继续修改。'); }} className="shrink-0 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-violet-700 disabled:opacity-40">使用这条</button></div>
             <p className="whitespace-pre-wrap break-words text-xs leading-6 text-slate-700">{item.prompt}</p>
           </div>)}
           {!filteredPrompts.length && <p className="py-10 text-center text-xs text-slate-400">{promptHistory.length ? '没有找到匹配的要求，换个关键词试试。' : '暂无历史要求，保存或提交后会显示在这里。'}</p>}
@@ -399,11 +431,17 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
     </div>}
     {history && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 p-4" onClick={closeHistory} onKeyDown={event => { if (event.key === 'Escape') closeHistory(); }}><div role="dialog" aria-modal="true" aria-label={history.kind === 'video' ? '选择历史视频' : '选择人物历史图片'} className="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-2xl bg-white p-4" onClick={event => event.stopPropagation()}>
       <div className="mb-2 flex items-center justify-between text-sm font-bold">{history.kind === 'video' ? '选择历史视频' : '选择人物参考图'}<button type="button" disabled={historySelecting !== null} aria-label="关闭上传历史" onClick={closeHistory} className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"><X size={20} /></button></div>
-      <p className="mb-4 text-xs leading-5 text-slate-500">{history.kind === 'video' ? '选择之前上传的视频，无需重新选择本地文件。支持MP4 / MOV，最大50MB。' : '选择之前上传的图片，作为本次目标人物参考。'}</p>
+      <p className="mb-4 text-xs leading-5 text-slate-500">{history.kind === 'video' ? '点击缩略图先预览播放，确认后选用此视频。支持MP4 / MOV，最大50MB。' : '点击缩略图查看完整图片，确认后选用作本次人物参考。'}</p>
       {historyError && <p role="alert" className="mb-3 rounded-lg bg-red-50 p-2 text-xs text-red-600">{historyError}</p>}
       {historyLoading ? <div className="flex justify-center gap-2 py-12 text-xs text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取历史记录…</div>
-        : history.items.length ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{history.items.map(item => <HistoryMedia key={item.id} item={item} disabled={historySelecting !== null} selecting={historySelecting === item.id} onSelect={() => void chooseHistory(item.id)} />)}</div>
+        : history.items.length ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{history.items.map(item => <HistoryMedia key={item.id} item={item} disabled={historySelecting !== null || historyOpening !== null} selecting={historyOpening === item.id} onSelect={() => void openHistoryPreview(item.id)} />)}</div>
         : <div className="grid place-items-center gap-2 py-12 text-slate-400"><History size={28} /><p className="text-xs">{history.kind === 'video' ? '暂无历史视频，上传后会自动保存在这里。' : '暂无历史图片，上传后会自动保存在这里。'}</p></div>}
     </div></div>}
+    {historyPreview && historyPreviewUrl && <UploadHistoryPreview
+      item={{ kind: historyPreview.item.kind === 'video' ? 'video' : 'image', name: historyPreview.item.name, previewUrl: historyPreviewUrl }}
+      duration={historyPreview.duration} selecting={historySelecting !== null} error={historyPreviewError}
+      selectionDisabledReason={historyUnavailableReason({ ...historyPreview.item, size: historyPreview.item.blob.size }) || (locked ? '当前任务处理中，请完成后再选用。' : '')}
+      onClose={closeHistoryPreview} onSelect={() => void chooseHistory()}
+      onDuration={seconds => setHistoryPreview(previous => previous ? { ...previous, duration: seconds } : previous)} />}
   </div>;
 }
