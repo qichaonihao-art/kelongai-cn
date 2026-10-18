@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -13,8 +13,19 @@ process.env.RUNTIME_STATE_DIR = path.join(temporaryRoot, 'runtime');
 process.env.VIDEO_LIBRARY_DIR = path.join(temporaryRoot, 'video-library');
 await mkdir(process.env.RUNTIME_STATE_DIR, { recursive: true });
 await mkdir(process.env.VIDEO_LIBRARY_DIR, { recursive: true });
+// server.mjs loads its own .env with override:true. Copy the server into the
+// fixture root, so this real-media test cannot read or write production state.
+const serverRoot = path.join(temporaryRoot, 'server');
+await mkdir(serverRoot);
+for (const name of await readdir(import.meta.dirname)) {
+  if (name.endsWith('.mjs') && !name.includes('test')) await copyFile(path.join(import.meta.dirname, name), path.join(serverRoot, name));
+}
+await copyFile(path.join(import.meta.dirname, 'package.json'), path.join(serverRoot, 'package.json'));
+await symlink(path.join(import.meta.dirname, 'node_modules'), path.join(serverRoot, 'node_modules'), 'dir');
+await symlink(path.join(import.meta.dirname, 'copypilot-api'), path.join(serverRoot, 'copypilot-api'), 'dir');
+await writeFile(path.join(serverRoot, '.env'), `KELONG_SKIP_LISTEN=1\nVOICE_CLONE_MOCK_MODE=true\nRUNTIME_STATE_DIR=${process.env.RUNTIME_STATE_DIR}\nVIDEO_LIBRARY_DIR=${process.env.VIDEO_LIBRARY_DIR}\n`);
 const { getClipEndBeforeDetectedCut, parseClipRange, handleClipSourceUpload,
-  getFfmpegFrameSyncArgs, handleDetectFirstClipCut, handleClipTrim, handleClipCleanup } = await import('./server.mjs');
+  getFfmpegFrameSyncArgs, handleDetectFirstClipCut, handleClipTrim, handleClipCleanup } = await import(path.join(serverRoot, 'server.mjs'));
 
 async function invoke(handler, data, headers = {}) {
   const req = Readable.from([Buffer.isBuffer(data) ? data : Buffer.from(JSON.stringify(data))]);
@@ -31,7 +42,7 @@ async function pixels(file) {
     ...frameSyncArgs, '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-'], { encoding: 'buffer' });
   return stdout;
 }
-const outputPath = (clip) => path.join(import.meta.dirname, '.runtime-uploads', path.basename(clip.url));
+const outputPath = (clip) => path.join(serverRoot, '.runtime-uploads', path.basename(clip.url));
 
 try {
   assert.equal(getClipEndBeforeDetectedCut(4, 30), 3.983);
@@ -46,6 +57,7 @@ try {
   for (const sample of [
     { name: '25fps', fps: '25', count: 90 },
     { name: '30fps', fps: '30', count: 90 },
+    { name: '开场0.5秒切镜', fps: '30', count: 15 },
     { name: '29.97fps', fps: '30000/1001', count: 90 },
     { name: '60fps', fps: '60', count: 90 },
     { name: '一帧过渡', fps: '30', count: 90, transition: true },
@@ -85,6 +97,41 @@ try {
       console.log(`通过：${sample.name}，末帧无下一镜头，手动范围有效`);
     } finally {
       for (const clip of outputs) await invoke(handleClipCleanup, { outputId: clip.outputId });
+      await invoke(handleClipCleanup, { sourceId: source.sourceId });
+    }
+  }
+
+  // Exercise the public route response as well as physical trim frame content.
+  for (const sample of [
+    { name: '快速切镜', filter: "drawbox=color=white:t=fill:enable='between(t,2,2.39)'", expected: [2, 2.4] },
+    { name: '弱切镜', filter: "drawbox=color=0x202020:t=fill:enable='gte(t,2)'", expected: [2] },
+    { name: '闪光不是切镜', filter: "drawbox=color=white:t=fill:enable='eq(n,45)'", expected: [] },
+  ]) {
+    const file = path.join(temporaryRoot, `${sample.name}.mp4`);
+    await exec('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=black:s=160x160:r=30:d=4', '-vf', sample.filter, '-c:v', 'libx264', file]);
+    const data = await readFile(file);
+    const source = await invoke(handleClipSourceUpload, data, { 'content-type': 'video/mp4', 'content-length': data.length });
+    let clip;
+    try {
+      if (!sample.expected.length) {
+        const detected = await invoke(handleDetectFirstClipCut, { sourceId: source.sourceId, shotCount: 1 });
+        assert.equal(detected.detected, false);
+        assert.deepEqual(detected.shots, [], '未确认切镜不能显示已定位镜头');
+        assert.match(detected.message, /未确认切镜/);
+      } else {
+        for (let count = 1; count <= sample.expected.length; count++) {
+          const detected = await invoke(handleDetectFirstClipCut, { sourceId: source.sourceId, shotCount: count });
+          assert.equal(detected.detected, true);
+          assert.ok(Math.abs(detected.shots[count - 1].cutSeconds - sample.expected[count - 1]) < 0.00002);
+        }
+        const detected = await invoke(handleDetectFirstClipCut, { sourceId: source.sourceId, shotCount: 1 });
+        clip = await invoke(handleClipTrim, { sourceId: source.sourceId, startSeconds: 0, endSeconds: detected.endSeconds });
+        const rgb = await pixels(outputPath(clip));
+        assert.ok([...rgb].every((v) => v <= 5), `${sample.name}: 不能带入下一镜头`);
+      }
+      console.log(`通过：${sample.name}，接口和裁切内容正确`);
+    } finally {
+      if (clip) await invoke(handleClipCleanup, { outputId: clip.outputId });
       await invoke(handleClipCleanup, { sourceId: source.sourceId });
     }
   }

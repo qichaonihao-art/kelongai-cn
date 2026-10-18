@@ -34,6 +34,7 @@ import {
   generateSpeech,
   getVoiceArchive,
   getVoiceConfigStatus,
+  isRetiredAliyunVoice,
   supportsVoiceSpeechRate,
   updateVoiceArchiveName,
 } from "@/src/lib/voice";
@@ -372,7 +373,8 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
   const isUsingSiliconFlowVoice = activeReadyVoice?.provider === 'siliconflow';
   const isUsingVolcVoice = activeReadyVoice?.provider === 'volcengine';
   const canAdjustSpeechRate = activeReadyVoice ? supportsVoiceSpeechRate(activeReadyVoice.provider) : false;
-  const isVoiceReady = !!activeReadyVoice && (!isUsingSiliconFlowVoice || hasSiliconFlowVoiceUri);
+  const isVoiceReady = !!activeReadyVoice && (!isUsingSiliconFlowVoice || hasSiliconFlowVoiceUri)
+    && (configStatus.mockMode || !isRetiredAliyunVoice(activeReadyVoice));
   const activeVolcAliasCount = useMemo(() => {
     if (!activeReadyVoice || activeReadyVoice.provider !== 'volcengine') {
       return 0;
@@ -615,9 +617,9 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
         return "当前为本地 mock 模式，阿里云链路会返回演示音色和演示语音。";
       }
       if (configStatus.aliyunApiKey) {
-        return "当前为真实模式，服务端已托管阿里云 API Key。留空即可直接调用真实音色创建和真实语音生成，也可以在这里临时覆盖。";
+        return "已升级千问语音 3.1，服务端已配置密钥。新建音色使用新版；旧模型音色需要上传原音频重新克隆，历史档案会保留。";
       }
-      return "当前为真实模式。请填写阿里云 API Key，或在 legacy-project/.env 中配置 ALIYUN_API_KEY。";
+      return "已升级千问语音 3.1。请填写阿里云 API Key，或由管理员配置服务端密钥。旧模型音色需重新克隆。";
     }
 
     if (configStatus.mockMode) {
@@ -1772,6 +1774,9 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                     该音色与另外 {activeVolcAliasCount - 1} 条记录共用同一个 speaker_id
                   </p>
                 )}
+                {activeReadyVoice && isRetiredAliyunVoice(activeReadyVoice) && (
+                  <p className="mt-2 text-xs leading-5 text-amber-700">这个音色使用的旧模型已下线，请上传原音频重新克隆。历史音色档案会保留。</p>
+                )}
               </div>
 
               {/* Generate button */}
@@ -2153,6 +2158,9 @@ export default function VoiceCloningPage({ onBack, onNavigate }: VoiceCloningPag
                               <span className="text-slate-300">|</span>
                               <span>{formatVoiceDate(voice.createdAt)}</span>
                             </div>
+                            {isRetiredAliyunVoice(voice) && (
+                              <p className="mt-1 text-[11px] font-bold text-amber-700">旧模型已下线 · 请用原音频重新克隆</p>
+                            )}
                           </div>
 
                           {/* Delete */}

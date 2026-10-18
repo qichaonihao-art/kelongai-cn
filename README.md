@@ -166,6 +166,12 @@ cp legacy-project/.env.example legacy-project/.env
 
 - `ALIYUN_API_KEY`
   - 阿里云真实音色创建和 TTS
+- `ALIYUN_VOICE_API_BASE_URL`（可选）
+  - 声音克隆与配音使用 `qwen-audio-3.1-tts-flash`。新版克隆调用 `voice-enrollment/create_voice`，配音走 HTTP `SpeechSynthesizer`，返回 WAV。
+  - 需要指定业务空间或地域时，填写 `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1`（新加坡使用对应地域域名），密钥须属于同地域。未单独配置时沿用显式配置的 `DASHSCOPE_API_BASE_URL`，否则使用北京公共接口。
+  - 线上样本复用平台公网临时上传地址（可通过 `PUBLIC_BASE_URL` 指定）；无公网地址的本地安装使用百炼私有临时 OSS，文件绑定 `voice-enrollment`，48 小时自动过期。生产环境应使用稳定的公网样本地址。
+  - 已下线的 `qwen3-tts-vc-realtime-*` 音色仍保留在原档案中，但不能换模型名继续使用，需上传原样本重新克隆。镜头专用音色也只复用新版音色，旧记录保留在独立档案中。
+  - 更新需同时发布前后端并重启后台；先按 `RUNTIME_STATE_PROTECTION.md` 备份运行状态，禁止覆盖音色档案。无费接口回归：`node --test legacy-project/aliyun-voice.test.mjs legacy-project/aliyun-voice-routes.test.mjs`。
 - `ZHIPU_API_KEY`
   - 智谱真实音色创建和 TTS
 - `VOLCENGINE_APP_KEY`
@@ -204,6 +210,9 @@ cp legacy-project/.env.example legacy-project/.env
 - 新上传视频会生成 JPEG 封面；旧视频首次显示时自动补封面
 - 视频预览支持正确的分段读取、悬停预热和浏览器长期缓存，重复打开不会重新下载完整文件
 - MP4 会额外生成约 540P 的轻量快速起播副本；预览使用该副本，下载仍使用未经转码的原文件
+- 卡片和预览弹窗的单条“下载”直接交给浏览器下载管理器，按浏览器设置保存；无需选择素材库文件夹或授权电脑目录，也不等待本地绑定、素材列表和未读摘要加载。
+- 指定保存目录、下载所选和下载新素材继续使用批量保存流程，保留同名保护、校验和失败重试；准备请求并行执行，只对待下载的新素材核验本地记录，完成后不等待未读提醒刷新。
+- 浏览器单条下载无法确认最终保存完成，因此不会伪造本地完成记录；批量流程仍以实际文件校验成功为准。
 - `VIDEO_LIBRARY_ACCEL_REDIRECT_PREFIX`
   - 可选，生产环境配合 Nginx `internal + alias` 使用，让 Nginx 直接发送预览和下载文件
   - 推荐设置为 `/_protected_video_library`，具体配置见 `legacy-project/DEPLOY.md`

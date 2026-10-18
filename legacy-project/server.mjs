@@ -1,3 +1,5 @@
+import { createClipSceneDetectionService, getClipEndBeforeDetectedCut } from './clip-scene-detection.mjs';
+import { ALIYUN_VOICE_MODEL, LEGACY_ALIYUN_VOICE_MODEL, canReuseAliyunShotVoice, createAliyunVoiceService } from './aliyun-voice.mjs';
 import { createPersonReplacementService } from './person-replacement.mjs';
 import { replacementProductFromPrompt, validateReplacementPrompt, replacementStructureRule } from './product-replacement.mjs';
 import { createServer } from 'node:http';
@@ -1349,43 +1351,9 @@ function parseClipRange(body, sourceDuration) {
   };
 }
 
-/**
- * 场景检测给出的 cutSeconds 是下一个镜头第一帧的时间。
- * 自动截取上一镜头时把结束线放到切点前半帧：既能包含上一镜头最后一帧，
- * 又不会因为时间戳取整把下一镜头第一帧编码进结果。
- */
-function getClipEndBeforeDetectedCut(cutSeconds, fps = 30, previousFrameSeconds) {
-  const cut = Math.max(0, Number(cutSeconds) || 0);
-  if (Number.isFinite(previousFrameSeconds) && previousFrameSeconds >= 0 && previousFrameSeconds < cut) {
-    // 可变帧率不能用平均 fps 推算末帧；使用相邻两帧的真实时间。
-    return Math.floor((previousFrameSeconds + cut) / 2 * 1e6) / 1e6;
-  }
-  const safeFps = Number.isFinite(Number(fps)) && Number(fps) > 0 ? Number(fps) : 30;
-  return Math.max(0, Math.round((cut - 0.5 / safeFps) * 1000) / 1000);
-}
-
-function parseDetectedClipBoundaries(stderr, fps) {
-  const frames = [...String(stderr).matchAll(/\[Parsed_metadata_[^\]]+\]\s+frame:\d+\s+pts:\s*\d+\s+pts_time:([\d.]+)\s*\n\[Parsed_metadata_[^\]]+\]\s+lavfi.scene_score=([\d.]+)/g)]
-    .map((match) => ({ time: Number(match[1]), score: Number(match[2]) }));
-  const candidates = [...String(stderr).matchAll(/\[Parsed_showinfo_[^\]]+\]\s+n:\s*\d+\s+pts:\s*\d+\s+pts_time:([\d.]+)/g)]
-    .map((match) => Number(match[1]));
-  return candidates.map((candidate) => {
-    let index = frames.findIndex((frame) => Math.abs(frame.time - candidate) < 0.00002);
-    if (index < 0) return { cutSeconds: candidate, endSeconds: getClipEndBeforeDetectedCut(candidate, fps) };
-    // 高阈值可能晚于过渡开始一两帧。仅回看紧邻的、变化达到半阈值的帧，
-    // 不把整段缓慢运镜当作转场，也不对所有镜头一律多减几帧。
-    for (let step = 0; step < 2 && index > 0; step++) {
-      const previous = frames[index - 1];
-      if (candidate - previous.time > 0.1 || previous.score < 0.16) break;
-      index--;
-    }
-    const cutSeconds = frames[index].time;
-    return {
-      cutSeconds,
-      endSeconds: getClipEndBeforeDetectedCut(cutSeconds, fps, frames[index - 1]?.time),
-    };
-  });
-}
+const clipSceneDetection = createClipSceneDetectionService({
+  probe: probeVideoMetadata, getFrameSyncArgs: getFfmpegFrameSyncArgs, ttlMs: CLIP_MEDIA_TTL_MS,
+});
 
 async function handleClipTrim(req, res) {
   const body = await readRequestBody(req);
@@ -1628,24 +1596,10 @@ async function handleDetectFirstClipCut(req, res) {
   }
   try {
     await ensureVideoCompressionTools();
-    const metadata = await probeVideoMetadata(sourcePath);
-    const scanDuration = Math.min(metadata.durationSeconds, 60);
-    const { stderr } = await execFileAsync('ffmpeg', [
-      '-hide_banner', '-t', String(scanDuration), '-i', sourcePath,
-      '-vf', `scale=320:-2,select='gte(scene,0)',metadata=print:key=lavfi.scene_score,select='gt(scene,0.32)*gte(t,0.8)*lt(t,${scanDuration})*(isnan(prev_selected_t)+gte(t-prev_selected_t,0.6))',showinfo`,
-      // null 输出只用于驱动滤镜分析，不需要帧同步参数；避免 FFmpeg 新旧版本选项不兼容。
-      '-frames:v', String(requestedShotCount), '-an', '-f', 'null', '-',
-    ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024 });
-    const rawMatches = parseDetectedClipBoundaries(stderr, metadata.fps)
-      .filter(({ cutSeconds }) => Number.isFinite(cutSeconds) && cutSeconds >= 0.8 && cutSeconds < metadata.durationSeconds - 0.1);
-    const cutPoints = [];
-    for (const value of rawMatches) {
-      if (cutPoints.length && value.cutSeconds - cutPoints[cutPoints.length - 1].cutSeconds < 0.6) continue;
-      cutPoints.push(value);
-      if (cutPoints.length >= requestedShotCount) break;
-    }
+    const { metadata, cutPoints, scannedToVideoEnd } = await clipSceneDetection.detect({
+      sourceId: normalizeClipSourceId(body?.sourceId), sourcePath, shotCount: requestedShotCount,
+    });
     const shotBoundaries = cutPoints.map((boundary) => ({ ...boundary, videoEnd: false }));
-    const scannedToVideoEnd = metadata.durationSeconds <= scanDuration + 0.1;
     if (scannedToVideoEnd && shotBoundaries.length < requestedShotCount && (!cutPoints.length || metadata.durationSeconds - cutPoints[cutPoints.length - 1].cutSeconds >= 0.1)) {
       shotBoundaries.push({ cutSeconds: Math.round(metadata.durationSeconds * 1000) / 1000, videoEnd: true });
     }
@@ -1662,15 +1616,18 @@ async function handleDetectFirstClipCut(req, res) {
         durationSeconds: Math.round((endSeconds - startSeconds) * 1000) / 1000,
       };
     });
-    const suggestedEnd = shots[Math.min(requestedShotCount, shots.length) - 1]?.endSeconds || Math.min(15, metadata.durationSeconds);
+    const detected = cutPoints.length > 0;
+    // A full video with no confirmed cut is a suggested range, not a detected shot.
+    const confirmedShots = detected ? shots : [];
+    const suggestedEnd = confirmedShots[Math.min(requestedShotCount, confirmedShots.length) - 1]?.endSeconds || Math.min(15, metadata.durationSeconds);
     sendJson(res, 200, {
       ok: true,
-      detected: cutPoints.length > 0,
+      detected,
       endSeconds: suggestedEnd,
-      shots,
-      message: cutPoints.length > 0
-        ? `已识别前 ${shots.length} 个镜头，结束线已移动到 ${Math.round(suggestedEnd * 10) / 10} 秒`
-        : `没有识别到明显切镜，已先取开头 ${Math.round(suggestedEnd * 10) / 10} 秒`,
+      shots: confirmedShots,
+      message: detected
+        ? `${shots.length < requestedShotCount ? `当前仅定位到 ${shots.length} 个镜头` : `已识别前 ${shots.length} 个镜头`}，结束线已移动到 ${Math.round(suggestedEnd * 10) / 10} 秒，请预览确认`
+        : `未确认切镜点，暂建议开头 ${Math.round(suggestedEnd * 10) / 10} 秒，请预览或手动调整`,
     });
   } catch (error) {
     console.error('[clip detect] failed', {
@@ -1696,6 +1653,7 @@ async function handleClipCleanup(req, res) {
   await Promise.all(targets.map((target) => unlink(target).catch(() => {})));
   if (sourceId) clipSourceMimeTypes.delete(`${sourceId}_clip_source`);
   if (sourceId) clipTimedTranscriptCache.delete(sourceId);
+  if (sourceId) clipSceneDetection.forget(sourceId);
   sendJson(res, 200, { ok: true, deleted: targets.length });
 }
 
@@ -1966,16 +1924,6 @@ function buildVolcAudioParams(speechRate) {
     audioParams.speech_rate = speechRateToVolcSpeechRate(normalizedSpeechRate);
   }
   return audioParams;
-}
-
-function buildAliyunRealtimeSession({ voice }) {
-  return {
-    mode: 'commit',
-    voice,
-    language_type: 'Auto',
-    response_format: 'pcm',
-    sample_rate: 24000
-  };
 }
 
 function parseJsonString(value, fallback = null) {
@@ -12775,18 +12723,6 @@ async function proxySseStreamToClient(upstreamRes, req, res, options = {}) {
   }
 }
 
-function normalizeAliyunPreferredName(value) {
-  const cleaned = String(value || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^[_-]+|[_-]+$/g, '')
-    .slice(0, 32);
-
-  if (cleaned.length >= 3) return cleaned;
-  return `voice_${Date.now().toString(36)}`;
-}
-
 function normalizeSiliconFlowCustomName(value) {
   const cleaned = String(value || '')
     .replace(/[^a-zA-Z0-9_-]+/g, '_')
@@ -13027,98 +12963,12 @@ function parseVolcFrame(buffer) {
   };
 }
 
-function connectAliyunRealtime({ apiKey, model, voice, text }) {
-  return new Promise((resolve, reject) => {
-    const url = `wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=${encodeURIComponent(model)}`;
-    const ws = new WebSocket(url, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`
-      }
-    });
-
-    const audioChunks = [];
-    let closed = false;
-    let responseDone = false;
-    let sessionFinished = false;
-
-    const finishIfReady = () => {
-      if (closed || !responseDone || !sessionFinished) return;
-      closed = true;
-      try {
-        ws.close();
-      } catch {}
-      resolve(Buffer.concat(audioChunks));
-    };
-
-    const fail = (error) => {
-      if (closed) return;
-      closed = true;
-      try {
-        ws.close();
-      } catch {}
-      reject(error instanceof Error ? error : new Error(String(error)));
-    };
-
-    const sendEvent = (event) => {
-      event.event_id = `event_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      ws.send(JSON.stringify(event));
-    };
-
-    ws.on('open', () => {
-      sendEvent({
-        type: 'session.update',
-        session: buildAliyunRealtimeSession({ voice })
-      });
-
-      sendEvent({
-        type: 'input_text_buffer.append',
-        text
-      });
-
-      sendEvent({
-        type: 'input_text_buffer.commit'
-      });
-
-      sendEvent({
-        type: 'session.finish'
-      });
-    });
-
-    ws.on('message', (raw) => {
-      try {
-        const event = JSON.parse(raw.toString());
-        const type = event.type;
-        if (type === 'error') {
-          const message = event.error?.message || event.message || '阿里云 TTS 返回错误';
-          fail(new Error(message));
-          return;
-        }
-        if (type === 'response.audio.delta' && event.delta) {
-          audioChunks.push(Buffer.from(event.delta, 'base64'));
-          return;
-        }
-        if (type === 'response.done') {
-          responseDone = true;
-          finishIfReady();
-          return;
-        }
-        if (type === 'session.finished') {
-          sessionFinished = true;
-          finishIfReady();
-        }
-      } catch (error) {
-        fail(error);
-      }
-    });
-
-    ws.on('error', fail);
-    ws.on('close', () => {
-      if (!closed && (!responseDone || !sessionFinished)) {
-        fail(new Error('阿里云 WebSocket 连接意外关闭'));
-      }
-    });
-  });
-}
+const aliyunVoiceService = createAliyunVoiceService({
+  apiBase: process.env.ALIYUN_VOICE_API_BASE_URL || process.env.DASHSCOPE_API_BASE_URL || undefined,
+  publishSample: async (sample, req) => createPublicMediaUrl({
+    file: new File([sample.buffer], sample.name, { type: sample.mimeType }), req,
+  }),
+});
 
 async function handleAliyunTts(req, res) {
   try {
@@ -13142,75 +12992,44 @@ async function handleAliyunTts(req, res) {
       return;
     }
 
-    const pcmBuffer = await connectAliyunRealtime({
+    const wavBuffer = await aliyunVoiceService.synthesize({
       apiKey: resolvedApiKey,
       model,
       voice,
       text
     });
-    const wavBuffer = buildWaveFromPcm(pcmBuffer, 24000, 1, 16);
-
     sendWavResponse(res, wavBuffer);
   } catch (error) {
-    sendJson(res, 500, { error: error.message || '阿里云语音生成失败' });
+    sendJson(res, Number(error?.statusCode) || 500, { error: error.message || '阿里云语音生成失败' });
   }
 }
 
-async function createAliyunRemoteVoice({ apiKey, targetModel, preferredName, audioData, mockMode = false }) {
-  const resolvedApiKey = readValue(apiKey, SERVER_CONFIG.aliyunApiKey);
-  const normalizedPreferredName = normalizeAliyunPreferredName(preferredName);
+async function createAliyunRemoteVoice({ apiKey, preferredName, audioData, mockMode = false }, req) {
   if (shouldUseVoiceCloneMock({ mockMode })) {
-    return buildMockVoiceClonePayload('aliyun', normalizedPreferredName);
+    return { ...buildMockVoiceClonePayload('aliyun', preferredName), engineModel: 'mock-cosyvoice' };
   }
+  const resolvedApiKey = readValue(apiKey, SERVER_CONFIG.aliyunApiKey);
   if (!resolvedApiKey) {
     const error = new Error('阿里云真实模式缺少 API Key，请在 legacy-project/.env 中配置 ALIYUN_API_KEY');
     error.statusCode = 400;
     throw error;
   }
-  if (!targetModel || !audioData) {
-    const error = new Error('阿里云音色创建缺少 targetModel 或 audioData');
-    error.statusCode = 400;
-    throw error;
-  }
-  const upstreamRes = await fetch('https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${resolvedApiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: 'qwen-voice-enrollment',
-      input: {
-        action: 'create',
-        target_model: targetModel,
-        preferred_name: normalizedPreferredName,
-        audio: { data: audioData }
-      }
-    })
-  });
-  const json = await upstreamRes.json();
-  if (!upstreamRes.ok) {
-    const error = new Error(json.message || json.code || '阿里云创建音色失败');
-    error.statusCode = upstreamRes.status;
-    error.raw = json;
-    throw error;
-  }
-  return json;
+  return aliyunVoiceService.create({ apiKey: resolvedApiKey, preferredName, audioData, req });
 }
 
 async function handleAliyunVoiceCreate(req, res) {
   try {
     const body = await readRequestBody(req);
-    const { targetModel, preferredName } = body;
-    const json = await createAliyunRemoteVoice(body);
-    const remoteVoiceId = readValue(json?.output?.voice, json?.voiceId);
+    const { preferredName } = body;
+    const json = await createAliyunRemoteVoice(body, req);
+    const remoteVoiceId = readValue(json?.output?.voice_id, json?.output?.voice, json?.voiceId);
     if (!remoteVoiceId) throw new Error('阿里云创建音色成功但没有返回音色ID');
     await addVoiceToArchive({
       name: readValue(preferredName) || '未命名音色',
       provider: 'aliyun',
       providerLabel: '阿里云',
       remoteVoiceId,
-      engineModel: targetModel,
+      engineModel: json.engineModel,
       createdAt: new Date().toISOString(),
     });
     sendJson(res, 200, json);
@@ -13241,7 +13060,7 @@ function sanitizeLocalEditorShotVoiceLibrary(value) {
       provider: 'aliyun',
       providerLabel: '阿里云·镜头专用',
       remoteVoiceId,
-      engineModel: readValue(item.engineModel) || 'qwen3-tts-vc-realtime-2026-01-15',
+      engineModel: readValue(item.engineModel) || LEGACY_ALIYUN_VOICE_MODEL,
       status: readValue(item.status) || 'ready',
       createdAt: readValue(item.createdAt) || new Date().toISOString(),
       lastUsedAt: readValue(item.lastUsedAt) || readValue(item.createdAt) || new Date().toISOString(),
@@ -13289,7 +13108,8 @@ async function handleResolveLocalEditorShotVoice(req, res) {
     }
     const result = await withLocalEditorShotVoiceLock(async () => {
       const library = await loadLocalEditorShotVoiceLibrary();
-      const existing = library.records.find((item) => item.fingerprint === fingerprint && item.status !== 'disabled');
+      const targetModel = shouldUseVoiceCloneMock(body) ? 'mock-cosyvoice' : ALIYUN_VOICE_MODEL;
+      const existing = library.records.find((item) => canReuseAliyunShotVoice(item, fingerprint, targetModel));
       const now = new Date().toISOString();
       if (existing) {
         existing.lastUsedAt = now;
@@ -13297,18 +13117,16 @@ async function handleResolveLocalEditorShotVoice(req, res) {
         await saveLocalEditorShotVoiceLibrary(library);
         return { voice: existing, reused: true };
       }
-      const targetModel = readValue(body?.targetModel) || 'qwen3-tts-vc-realtime-2026-01-15';
       const json = await createAliyunRemoteVoice({
-        targetModel,
         preferredName: `shot${fingerprint.slice(0, 12)}`,
         audioData: readValue(body?.audioData),
         mockMode: body?.mockMode === true
-      });
-      const remoteVoiceId = readValue(json?.output?.voice, json?.voiceId);
+      }, req);
+      const remoteVoiceId = readValue(json?.output?.voice_id, json?.output?.voice, json?.voiceId);
       if (!remoteVoiceId) throw new Error('阿里云创建镜头音色成功但没有返回音色ID');
       const sourceName = readValue(body?.sourceName).slice(0, 180);
       const record = {
-        id: `shot_voice_${fingerprint.slice(0, 16)}`,
+        id: `shot_voice_${fingerprint.slice(0, 16)}_${randomBytes(4).toString('hex')}`,
         name: sourceName ? `镜头音色-${sourceName.replace(/\.[^.]+$/, '').slice(0, 60)}` : `镜头音色-${fingerprint.slice(0, 8)}`,
         fingerprint,
         sourceName,
@@ -13316,7 +13134,7 @@ async function handleResolveLocalEditorShotVoice(req, res) {
         provider: 'aliyun',
         providerLabel: '阿里云·镜头专用',
         remoteVoiceId,
-        engineModel: targetModel,
+        engineModel: json.engineModel,
         status: 'ready',
         createdAt: now,
         lastUsedAt: now,
@@ -22042,6 +21860,9 @@ if (process.env.KELONG_SKIP_LISTEN !== '1') {
 
 // 供无费测试脚本复用真实逻辑（不调用真实 Seedance / 豆包）。
 export {
+  handleAliyunVoiceCreate,
+  handleAliyunTts,
+  handleResolveLocalEditorShotVoice,
   buildVolcAsrContext,
   normalizeVolcAsrSentences,
   transcribeAudioWithVolcWordTimestamps,

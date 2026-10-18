@@ -150,6 +150,8 @@ export default function ClipExtractionPage({
   const transcriptSelectionFocusRef = useRef<number | null>(null);
   const uploadRequestRef = useRef<XMLHttpRequest | null>(null);
   const sourceRef = useRef<UploadedClipSource | null>(null);
+  const detectionRequestRef = useRef(0);
+  const audioDetectionRequestRef = useRef(0);
   const resultRef = useRef<TrimmedClip | null>(null);
   const clipRangeRevisionRef = useRef(0);
   const trimmingRef = useRef(false);
@@ -290,6 +292,8 @@ export default function ClipExtractionPage({
   }, [audioStartSeconds, audioEndSeconds, timedTranscriptSentences]);
 
   useEffect(() => () => {
+    detectionRequestRef.current++;
+    audioDetectionRequestRef.current++;
     clipRangeRevisionRef.current++;
     if (rangePreviewStopTimerRef.current !== null) window.clearTimeout(rangePreviewStopTimerRef.current);
     if (rangePreviewFrameCallbackRef.current !== null && videoRef.current?.cancelVideoFrameCallback) {
@@ -317,6 +321,9 @@ export default function ClipExtractionPage({
   }
 
   function reset() {
+    detectionRequestRef.current++;
+    audioDetectionRequestRef.current++;
+    setDetecting(false);
     clipRangeRevisionRef.current++;
     uploadRequestRef.current?.abort();
     void cleanupTemporaryFiles(sourceRef.current?.sourceId, resultRef.current?.outputId);
@@ -359,6 +366,8 @@ export default function ClipExtractionPage({
   }
 
   function activateSource(next: UploadedClipSource, message: string) {
+    audioDetectionRequestRef.current++;
+    setAudioShotLoading(0);
     sourceRef.current = next;
     setSource(next);
     setResult(null);
@@ -705,6 +714,8 @@ export default function ClipExtractionPage({
   }
 
   async function detectFirstCutForSource(targetSource: UploadedClipSource, shotCount = 1, automatic = false) {
+    const requestId = ++detectionRequestRef.current;
+    const isCurrent = () => requestId === detectionRequestRef.current && sourceRef.current?.sourceId === targetSource.sourceId;
     const requestedCount = Math.max(1, Math.min(MAX_DETECTABLE_SHOTS, Math.round(shotCount)));
     setDetecting(true);
     setDetectedShots([]);
@@ -718,7 +729,8 @@ export default function ClipExtractionPage({
       });
       if (!response.ok) throw new Error(await readApiError(response, '自动识别失败'));
       const data = await response.json();
-      const shots = Array.isArray(data.shots)
+      if (!isCurrent()) return;
+      const shots = data.detected === true && Array.isArray(data.shots)
         ? data.shots.filter((item: DetectedShot) => Number.isFinite(Number(item?.endSeconds))).slice(0, requestedCount)
         : [];
       setDetectedShots(shots);
@@ -729,11 +741,12 @@ export default function ClipExtractionPage({
       seekTo(nextEnd);
       setNotice(String(data.message || '已给出建议范围，请预览确认。'));
     } catch (caught) {
+      if (!isCurrent()) return;
       setDetectedShots([]);
       const message = caught instanceof Error ? caught.message : '自动识别失败';
       setError(automatic ? `自动识别切镜点失败：${message}。你仍然可以直接拖动两条裁切线。` : message);
     } finally {
-      setDetecting(false);
+      if (isCurrent()) setDetecting(false);
     }
   }
 
@@ -939,6 +952,8 @@ export default function ClipExtractionPage({
 
   async function chooseAudioShotCount(count: number) {
     if (!source) return;
+    const requestId = ++audioDetectionRequestRef.current;
+    const isCurrent = () => requestId === audioDetectionRequestRef.current && sourceRef.current?.sourceId === source.sourceId;
     setAudioShotLoading(count);
     setError('');
     try {
@@ -948,7 +963,8 @@ export default function ClipExtractionPage({
       });
       if (!response.ok) throw new Error(await readApiError(response, '音频镜头范围识别失败'));
       const data = await response.json();
-      const shots = Array.isArray(data.shots) ? data.shots : [];
+      if (!isCurrent()) return;
+      const shots = data.detected === true && Array.isArray(data.shots) ? data.shots : [];
       const target = shots[Math.min(count, shots.length) - 1];
       const nextEnd = Math.min(source.durationSeconds, 60, Math.max(getAudioFrameStep(), Number(target?.endSeconds || data.endSeconds || audioEndSeconds)));
       setAudioStartSeconds(0);
@@ -957,9 +973,10 @@ export default function ClipExtractionPage({
       seekAudio(nextEnd);
       zoomAudioAround(0, nextEnd);
     } catch (caught) {
+      if (!isCurrent()) return;
       setError(caught instanceof Error ? caught.message : '音频镜头范围识别失败');
     } finally {
-      setAudioShotLoading(0);
+      if (isCurrent()) setAudioShotLoading(0);
     }
   }
 

@@ -91,6 +91,7 @@ async function item(id: number, folderName: string, name: string, bytes: Uint8Ar
     durationSeconds: 5,
     variant: 'original',
     sourceItemId: null,
+    shotRole: 0,
     enhancement: null,
     createdAt: 1,
     updatedAt: 1,

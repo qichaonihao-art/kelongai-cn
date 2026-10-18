@@ -2545,8 +2545,7 @@
             <div class="field">
               <label for="cfgAliyunModel">目标模型</label>
               <select id="cfgAliyunModel">
-                <option value="qwen3-tts-vc-realtime-2026-01-15">qwen3-tts-vc-realtime-2026-01-15</option>
-                <option value="qwen3-tts-vc-realtime-2025-11-27">qwen3-tts-vc-realtime-2025-11-27</option>
+                <option value="qwen-audio-3.1-tts-flash">千问语音 3.1（qwen-audio-3.1-tts-flash）</option>
               </select>
             </div>
             <div class="field">
@@ -3293,7 +3292,7 @@
       document.getElementById('cfgProxyBaseUrl').value = p.baseUrl || '';
       document.getElementById('cfgZhipuKey').value = z.apiKey || '';
       document.getElementById('cfgAliyunKey').value = a.apiKey || '';
-      document.getElementById('cfgAliyunModel').value = a.targetModel || 'qwen3-tts-vc-realtime-2026-01-15';
+      document.getElementById('cfgAliyunModel').value = 'qwen-audio-3.1-tts-flash';
       document.getElementById('cfgAliyunPreferredName').value = a.preferredName || '';
       document.getElementById('cfgVolcAppKey').value = v.appKey || '';
       document.getElementById('cfgVolcAccessKey').value = v.accessKey || '';
@@ -3330,7 +3329,7 @@
         document.getElementById('cfgZhipuKey').value = '';
       } else if (provider === 'aliyun') {
         document.getElementById('cfgAliyunKey').value = '';
-        document.getElementById('cfgAliyunModel').value = 'qwen3-tts-vc-realtime-2026-01-15';
+        document.getElementById('cfgAliyunModel').value = 'qwen-audio-3.1-tts-flash';
         document.getElementById('cfgAliyunPreferredName').value = '';
       } else {
         document.getElementById('cfgVolcAppKey').value = '';
@@ -3795,6 +3794,9 @@
       if (!res.ok) {
         throw new Error(json.error || json.message || json.code || '阿里云音色创建失败');
       }
+      if (!(json.output?.voice_id || json.output?.voice || json.voiceId)) {
+        throw new Error('阿里云没有返回音色 ID，请先在百炼后台核对本次结果');
+      }
 
       return {
         id: uid('voice'),
@@ -3802,8 +3804,8 @@
         remark: '阿里云复刻音色已创建',
         provider: 'aliyun',
         providerLabel: PROVIDERS.aliyun.label,
-        remoteVoiceId: json.output && json.output.voice ? json.output.voice : uid('aliyun'),
-        engineModel: configs.aliyun.targetModel,
+        remoteVoiceId: json.output?.voice_id || json.output?.voice || json.voiceId,
+        engineModel: json.engineModel || 'qwen-audio-3.1-tts-flash',
         createdAt: getToday()
       };
     }

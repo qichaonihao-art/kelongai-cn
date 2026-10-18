@@ -35,6 +35,7 @@ import {
 } from '@/src/lib/videoLibraryLocal';
 
 import { cacheVideoLibraryView, getVideoLibraryCacheRevision, readCachedVideoLibraryView, videoLibraryViewKey, type VideoLibraryView } from '@/src/lib/videoLibraryViewCache';
+import { startVideoLibraryBrowserDownload } from '@/src/lib/videoLibraryDownload';
 
 interface VideoLibraryPageProps {
   onBack: () => void;
@@ -168,7 +169,6 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [isFolderOpen, setIsFolderOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(!initialView);
   const [isUploading, setIsUploading] = useState(false);
-  const [downloadingVideoId, setDownloadingVideoId] = useState<number | null>(null);
   const [isDownloadBusy, setIsDownloadBusy] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
@@ -667,12 +667,17 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     setSelectedItem(item);
   }
 
-  async function handleSingleVideoDownload(item: VideoLibraryItem) {
-    if (downloadBusyRef.current || deleteBusyRef.current) return;
-    setSelectedItem(null);
-    setDownloadingVideoId(item.id);
-    try { await handleDownloadNewMaterials([item.id], item.folderName); }
-    finally { setDownloadingVideoId(null); }
+  function handleSingleVideoDownload(item: VideoLibraryItem) {
+    if (deleteBusyRef.current) return;
+    if (!confirmSingleUnenhancedDownload(item)) return;
+    setError('');
+    try {
+      startVideoLibraryBrowserDownload(item);
+      setSelectedItem(null);
+      setNotice('已交给浏览器下载，保存位置按浏览器设置执行，可在浏览器下载列表查看进度。');
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : '启动下载失败，请重试。');
+    }
   }
 
   async function resolveDownloadFolder(forceChoose = false) {
@@ -696,7 +701,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     setError('');
     try {
       const handle = await resolveDownloadFolder(true);
-      setNotice(`保存位置已更换为“${handle.name}”，今天所有素材下载都使用这里。已有文件不会移动。`);
+      setNotice(`批量保存位置已更换为“${handle.name}”，今天的批量下载都使用这里。已有文件不会移动。`);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') setNotice('已取消更换，原保存位置不变。');
       else setError(error instanceof Error ? error.message : '更换保存位置失败');
@@ -739,12 +744,17 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       const handle = await resolveDownloadFolder();
       if (!mountedRef.current) return;
 
-      const [{ items: folderItems }, index] = await Promise.all([
+      const [{ items: folderItems }, index, summary] = await Promise.all([
         getVideoLibrary({ folder, query: '' }),
         loadVideoLibraryLocalIndex(handle, folder),
+        getVideoLibrarySummary(),
       ]);
-      if (!requestedIds) await reconcileVideoLibraryLocalIndex(handle, index, folderItems);
-      const unread = applyUnreadSummary(await getVideoLibrarySummary());
+      if (!mountedRef.current) return;
+      const beforeReconcile = applyUnreadSummary(summary);
+      // Already-read files cannot be pending new materials. Avoid rehashing the
+      // entire local library before every incremental batch.
+      if (!requestedIds) await reconcileVideoLibraryLocalIndex(handle, index, folderItems.filter((item) => beforeReconcile.unreadIds.has(item.id)));
+      const unread = applyUnreadSummary(summary);
       if (!mountedRef.current) return;
       const pendingItems = folderItems.filter((item) => requestedIds ? requestedIds.includes(item.id) : unread.unreadIds.has(item.id));
       if (requestedIds && pendingItems.length !== new Set(requestedIds).size) throw new Error('部分所选素材已被移动、删除或被增强版替换，请刷新后重新勾选。');
@@ -808,7 +818,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       const stopped = localDownloadWasStopped();
       progress = { ...progress, status: stopped ? 'stopped' : 'completed', currentName: '' };
       setLocalDownloadProgress(progress);
-      await refreshUnreadSummary();
+      void refreshUnreadSummary();
       setNotice(stopped
         ? `下载已终止：已保存 ${progress.downloaded} 个，跳过重复 ${progress.duplicates} 个，未完成素材可以点击“重试未完成”。`
         : `已保存到“${handle.name}”：保存 ${progress.downloaded} 个，跳过重复 ${progress.duplicates} 个，失败 ${progress.failed} 个。`);
@@ -959,11 +969,10 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             <button
               type="button"
               onClick={() => void handleSingleVideoDownload(item)}
-              disabled={isDownloadBusy || isLocalBindingLoading}
+              disabled={isDeleting}
               className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-[10px] font-black text-slate-600 hover:bg-slate-200 disabled:cursor-wait disabled:opacity-60"
             >
-              {downloadingVideoId === item.id ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
-              {downloadingVideoId === item.id ? '准备中' : '下载'}
+              <Download className="size-3" />下载
             </button>
             <button type="button" disabled={isChangingShotRole || isDeleting || isDownloadBusy} onClick={() => void handleSetShotRole([item], isShotOne ? 0 : 1)} className="inline-flex flex-1 items-center justify-center rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-black text-amber-700 hover:bg-amber-100 disabled:opacity-50">
               {isShotOne ? '移回普通素材' : '移入镜头一'}
@@ -1031,9 +1040,9 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
         )}
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl bg-sky-50 px-3 py-2 text-xs font-bold text-sky-800">
           <FolderOpen className="size-4" />
-          <span>今日保存位置：{localFolderName && isVideoLibraryDestinationCurrent(localFolderUpdatedAt) ? localFolderName : '首次下载时选择'}</span>
+          <span>批量保存位置：{localFolderName && isVideoLibraryDestinationCurrent(localFolderUpdatedAt) ? localFolderName : '批量下载时选择'}</span>
           <button type="button" onClick={() => void changeDownloadFolder()} disabled={isDownloadBusy || isLocalBindingLoading} className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-white px-3 py-1.5 disabled:opacity-50"><FolderCog className="size-3.5" />更换保存位置</button>
-          <span className="text-[11px] font-medium text-slate-500">单条和批量共用 · 当天有效 · 直接保存到所选目录，不再均分</span>
+          <span className="text-[11px] font-medium text-slate-500">仅批量下载使用 · 当天有效；单条下载无需选择文件夹，按浏览器设置保存</span>
         </div>
       </section>
 
@@ -1230,7 +1239,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
         </div>
       )}
 
-      {selectedItem && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onMouseDown={() => setSelectedItem(null)}><div className="w-full max-w-3xl rounded-3xl bg-white p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-center justify-between gap-3 px-2 pb-3"><div className="min-w-0"><h2 className="truncate text-lg font-black">{selectedItem.originalName}</h2><p className="text-xs font-semibold text-slate-400">{selectedItem.folderName} · {formatVideoLibrarySize(selectedItem.fileSize)}</p></div><button type="button" onClick={() => setSelectedItem(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="size-5" /></button></div><video key={selectedItem.id} src={selectedItem.streamUrl} poster={selectedItem.thumbnailUrl} controls autoPlay playsInline preload="auto" className="max-h-[65vh] w-full rounded-2xl bg-black" /><div className="mt-4 flex gap-2"><input defaultValue={selectedItem.note} onKeyDown={(event) => { if (event.key === 'Enter') void handleSaveNote(selectedItem, event.currentTarget.value); }} placeholder="输入备注后按回车保存" className="h-11 min-w-0 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold outline-none focus:border-sky-300 focus:bg-white" /><button type="button" onClick={() => void handleSingleVideoDownload(selectedItem)} disabled={isDownloadBusy || isLocalBindingLoading} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-black text-white disabled:cursor-wait disabled:opacity-60">{downloadingVideoId === selectedItem.id ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}{downloadingVideoId === selectedItem.id ? '准备中' : '下载'}</button></div></div></div>}
+      {selectedItem && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onMouseDown={() => setSelectedItem(null)}><div className="w-full max-w-3xl rounded-3xl bg-white p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-center justify-between gap-3 px-2 pb-3"><div className="min-w-0"><h2 className="truncate text-lg font-black">{selectedItem.originalName}</h2><p className="text-xs font-semibold text-slate-400">{selectedItem.folderName} · {formatVideoLibrarySize(selectedItem.fileSize)}</p></div><button type="button" onClick={() => setSelectedItem(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="size-5" /></button></div><video key={selectedItem.id} src={selectedItem.streamUrl} poster={selectedItem.thumbnailUrl} controls autoPlay playsInline preload="auto" className="max-h-[65vh] w-full rounded-2xl bg-black" /><div className="mt-4 flex gap-2"><input defaultValue={selectedItem.note} onKeyDown={(event) => { if (event.key === 'Enter') void handleSaveNote(selectedItem, event.currentTarget.value); }} placeholder="输入备注后按回车保存" className="h-11 min-w-0 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold outline-none focus:border-sky-300 focus:bg-white" /><button type="button" onClick={() => handleSingleVideoDownload(selectedItem)} disabled={isDeleting} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 text-sm font-black text-white disabled:cursor-wait disabled:opacity-60"><Download className="size-4" />下载</button></div></div></div>}
     </main>
   );
 }

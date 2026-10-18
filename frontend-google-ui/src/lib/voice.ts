@@ -45,11 +45,16 @@ export interface VoiceCredentials {
   speakerId?: string;
 }
 
-const ALIYUN_TARGET_MODEL = 'qwen3-tts-vc-realtime-2026-01-15';
+const ALIYUN_TARGET_MODEL = 'qwen-audio-3.1-tts-flash';
 const MOCK_ALIYUN_TARGET_MODEL = 'mock-cosyvoice';
 const VOLC_RESOURCE_ID = 'seed-icl-2.0';
 const SILICONFLOW_VOICE_MODEL = 'FunAudioLLM/CosyVoice2-0.5B';
 const SILICONFLOW_RESPONSE_FORMAT = 'wav';
+
+export function isRetiredAliyunVoice(voice: ClonedVoice) {
+  return voice.provider === 'aliyun' && (/^qwen3-tts-vc-realtime(?:-|$)/.test(voice.engineModel || '')
+    || /^qwen3-tts-vc-realtime(?:-|$)/.test(voice.remoteVoiceId || ''));
+}
 
 async function parseJsonSafely(response: Response) {
   try {
@@ -220,13 +225,16 @@ export async function createVoiceClone(options: {
       throw new Error(readApiErrorMessage(json, '阿里云音色创建失败'));
     }
 
+    const remoteVoiceId = json?.output?.voice_id || json?.output?.voice || json?.voiceId;
+    if (!remoteVoiceId) throw new Error('阿里云没有返回音色 ID，请先在百炼后台核对本次创建结果。');
+
     return {
       id: createId('voice'),
       name: preferredName,
       provider: 'aliyun',
       providerLabel: '阿里云',
-      remoteVoiceId: json?.output?.voice || json?.voiceId || createId('aliyun_voice'),
-      engineModel: targetModel,
+      remoteVoiceId,
+      engineModel: json?.engineModel || targetModel,
       createdAt: new Date().toLocaleString(),
     };
   }
@@ -384,6 +392,9 @@ export async function generateSpeech(options: {
   mockMode?: boolean;
 }): Promise<GeneratedAudio> {
   const { voice, text, speechRate = 1, credentials, mockMode = false } = options;
+  if (!mockMode && isRetiredAliyunVoice(voice)) {
+    throw new Error('这个阿里云音色使用的旧模型已下线，请上传原音频，用新版重新克隆。原音色档案会保留。');
+  }
   const speechRateSupported = supportsVoiceSpeechRate(voice.provider);
   const effectiveSpeechRate = speechRateSupported ? speechRate : 1;
   const endpoint = voice.provider === 'zhipu'
