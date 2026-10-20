@@ -4,10 +4,12 @@ import { mkdir, writeFile, copyFile, rename, stat, rm } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { buildSceneEditPrompt, validateSceneEditOptions } from './video-scene-edit.mjs';
 
 export const PERSON_GENERATION_SUBMIT_TIMEOUT_MS = 180000;
 export const PERSON_MODELS = ['doubao-seedance-2-0-260128', 'doubao-seedance-2-5-260628'];
 export function validatePersonOptions(body) {
+  const edit = validateSceneEditOptions(body);
   const model = String(body.model || PERSON_MODELS[0]);
   const resolution = String(body.resolution || '720p');
   const audioMode = String(body.audioMode || 'preserve');
@@ -20,9 +22,9 @@ export function validatePersonOptions(body) {
   if (!['preserve', 'rewrite', 'new-voice', 'silent', 'generate'].includes(audioMode)) throw new Error('请选择有效的声音模式');
   if (['rewrite', 'new-voice'].includes(audioMode) && (!dialogue || dialogue.length > 2000)) throw new Error('请填写新台词，最多2000字');
   if (voiceDescription.length > 500) throw new Error('音色描述最多500字');
-  if (!prompt || prompt.length > 6000) throw new Error('请填写人物替换要求，最多6000字');
+  if ((!edit && !prompt) || prompt.length > 6000) throw new Error('请填写有效的编辑要求，最多6000字');
   if (!/^[a-zA-Z0-9_-]{16,100}$/.test(requestId)) throw new Error('缺少有效的提交编号，请刷新后重试');
-  return { model, resolution, audioMode, prompt, dialogue, voiceDescription, requestId };
+  return { model, resolution, audioMode, prompt, dialogue, voiceDescription, requestId, ...(edit || {}) };
 }
 export function buildPersonPrompt(job) {
   let audioRule;
@@ -34,6 +36,7 @@ export function buildPersonPrompt(job) {
   else if (job.audioMode === 'new-voice') audioRule = `不继承视频1的原人声音色，也不沿用原台词。为替换后的新人物生成新的自然人声。目标音色：${job.voiceDescription || '结合本次人物要求，为新人物匹配自然合适的声音，不沿用原人物声线'}。音色描述只决定声音，不得反过来改变用户指定的人物外貌或性别。只说下方完整新台词，不增删或同义改写，不混入或重复原视频旧台词。人物口型和必要的说话微表情必须根据新声音和新台词的实际发音重新同步，不沿用原台词口型。尽量保留原来的背景音乐、环境声、音效和主要肢体动作，不额外添加配乐。\n新台词：\n${job.dialogue}\n新台词结束。音色描述不朗读，台词不转成字幕，不根据台词增添场景、商品或剧情。`;
   else if (job.audioMode === 'silent') audioRule = '本次输出静音，不生成台词、配音、背景音乐或音效；画面和动作保持完整。';
   else audioRule = '按用户要求生成声音，涉及口播时保持口型与台词同步。';
+  if (job.editVersion === 2) return buildSceneEditPrompt(job, audioRule);
   return `编辑视频1，替换其中唯一的主要人物，并生成面部自然可见的新人物成片。
 【输入视频与成片的区别】
 视频1中脸部的马赛克、像素块、模糊或遮脸层，是上传前添加的临时预处理，不是人物外貌、服装、原片特效或成片风格，不属于需要保留的画面内容。视频1提供镜头、构图、主要肢体动作、朝向、节奏、场景和按下述声音要求使用的音频；它的脸部打码不作为新人物的视觉参考。
@@ -100,6 +103,8 @@ export function createPersonReplacementService(deps) {
     const canRecover = stage === 'awaiting_confirmation' || (stage === 'failed' && ambiguous && failedStage === 'submitting_generation');
     const recoveryError = canRecover && error ? '向Seedance提交请求未收到确认回复，已保留打码结果。可通过火山任务编号恢复查询。' : error;
     return { id, stage, error: recoveryError, notice, model, resolution, audioMode, prompt, dialogue, voiceDescription, createdAt, updatedAt, duration, hasPortrait, sourceName, ambiguous: !!ambiguous,
+      editVersion: job.editVersion, personMode: job.personMode, faceMode: job.faceMode, personDescription: job.personDescription, clothing: job.clothing, scene: job.scene,
+      hasProductReference: !!job.hasProductReference, productReferenceName: job.productReferenceName || '', maskSkipped: !!job.maskSkipped,
       libraryFolder: job.libraryFolder || '', libraryItemId: job.libraryItemId || null,
       canRetry: stage === 'failed' && !ambiguous && failedStage !== 'uploading',
       canRecover, awaitingNotification: canRecover && !!job.callbackToken,
@@ -124,17 +129,17 @@ export function createPersonReplacementService(deps) {
       return view(previous);
     }
     const config = getConfig();
-    if (!config.mediaKey || !config.seedanceKey) throw new Error('服务端需要配置 AI MediaKit 和 Seedance 的访问凭证');
+    if (!config.seedanceKey || (options.faceMode !== 'no-visible-face' && !config.mediaKey)) throw new Error('服务端需要配置所选流程的 AI MediaKit 和 Seedance 访问凭证');
     if (!/^https?:\/\//.test(baseUrl || '')) throw new Error('请先配置可公网访问的素材地址 PUBLIC_BASE_URL');
     const files = Array.isArray(body.files) ? body.files : [];
     const videos = files.filter(file => file.type?.startsWith('video/'));
     const images = files.filter(file => file.type?.startsWith('image/'));
-    if (videos.length !== 1 || images.length > 1 || files.length !== videos.length + images.length) throw new Error('请上传1个单人原视频，最多搭配1张人物参考图');
+    if (videos.length !== 1 || images.length > 1 || files.length !== videos.length + images.length) throw new Error('请上传1个单人原视频，最多搭配1张参考图');
     const video = videos[0];
     if (!/\.(mp4|mov)$/i.test(video.name) || video.size > 50 * 1024 * 1024) throw new Error('原视频请使用50MB以内的MP4或MOV');
-    if (images[0] && (!['image/jpeg', 'image/png', 'image/webp'].includes(images[0].type) || images[0].size > 10 * 1024 * 1024)) throw new Error('人物参考图请使用10MB以内的JPG、PNG或WebP');
+    if (images[0] && (!['image/jpeg', 'image/png', 'image/webp'].includes(images[0].type) || images[0].size > 10 * 1024 * 1024)) throw new Error('参考图请使用10MB以内的JPG、PNG或WebP');
     const job = { ...options, audioVersion: 2, id: randomUUID(), mediaToken: randomUUID(), baseUrl: baseUrl.replace(/\/$/, ''), stage: 'uploading',
-      createdAt: Date.now(), updatedAt: Date.now(), hasPortrait: !!images[0], sourceName: video.name, error: '', notice: '' };
+      createdAt: Date.now(), updatedAt: Date.now(), hasPortrait: !options.editVersion && !!images[0], hasProductReference: options.editVersion === 2 && !!images[0], sourceName: video.name, error: '', notice: '' };
     // Reserve before asynchronous file writes, so repeated clicks cannot create duplicate jobs.
     db().prepare('INSERT INTO person_replacement_jobs (id, request_id, data, device_id) VALUES (?, ?, ?, ?)').run(job.id, job.requestId, JSON.stringify(job), deviceId || '');
     creating.add(job.id);
@@ -148,8 +153,11 @@ export function createPersonReplacementService(deps) {
       job.sourceHasAudio = await hasAudio(filePath(job, 'source.mp4'));
       if (job.audioMode === 'rewrite' && !job.sourceHasAudio) throw new Error('原视频没有音轨，无法参考原音色，请使用含人声的原视频');
       if (images[0]) {
-        job.portraitName = images[0].type === 'image/png' ? 'portrait.png' : images[0].type === 'image/webp' ? 'portrait.webp' : 'portrait.jpg';
-        await writeFile(filePath(job, job.portraitName), Buffer.from(await images[0].arrayBuffer()));
+        const suffix = images[0].type === 'image/png' ? 'png' : images[0].type === 'image/webp' ? 'webp' : 'jpg';
+        const name = `${job.editVersion === 2 ? 'product' : 'portrait'}.${suffix}`;
+        if (job.editVersion === 2) { job.productImageName = name; job.productReferenceName = images[0].name; }
+        else job.portraitName = name;
+        await writeFile(filePath(job, name), Buffer.from(await images[0].arrayBuffer()));
       }
       save(job, { stage: 'queued', duration: metadata.durationSeconds, metadata });
       schedule(10);
@@ -272,6 +280,11 @@ export function createPersonReplacementService(deps) {
     const config = getConfig();
     const headers = { Authorization: `Bearer ${config.mediaKey}` };
     if (job.stage === 'queued') {
+      if (job.editVersion === 2 && job.faceMode === 'no-visible-face') {
+        await copyFile(filePath(job, 'source.mp4'), filePath(job, 'masked.mp4'));
+        save(job, { stage: 'ready', maskedReady: true, maskSkipped: true });
+        return;
+      }
       // MediaKit requires 25-60fps; normalize only when the source falls outside this range.
       if (!(job.metadata.fps >= 25 && job.metadata.fps <= 60)) {
         save(job, { stage: 'normalizing' });
@@ -309,6 +322,7 @@ export function createPersonReplacementService(deps) {
     if (job.stage === 'ready') {
       const content = [{ type: 'text', text: buildPersonPrompt(job) }, { type: 'video_url', video_url: { url: assetUrl(job, 'masked.mp4') }, role: 'reference_video' }];
       if (job.hasPortrait) content.push({ type: 'image_url', image_url: { url: assetUrl(job, job.portraitName) }, role: 'reference_image' });
+      if (job.hasProductReference) content.push({ type: 'image_url', image_url: { url: assetUrl(job, job.productImageName) }, role: 'reference_image' });
       return submit(job, 'generation', 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
         model: job.model, content, duration: job.model === PERSON_MODELS[1] ? -1 : Math.max(4, Math.min(15, Math.ceil(job.duration))),
         ...(job.model === PERSON_MODELS[1] ? { omni_reference_task_type: 'edit' } : {}),
@@ -423,7 +437,7 @@ export function createPersonReplacementService(deps) {
   }
   async function media(req, res, id, token, name) {
     const job = get(id);
-    if (!job || token !== job.mediaToken || !['source.mp4', 'input.mp4', 'masked.mp4', 'result.mp4', 'generated.mp4', 'portrait.jpg', 'portrait.png', 'portrait.webp'].includes(name)) { res.writeHead(404); res.end(); return; }
+    if (!job || token !== job.mediaToken || !['source.mp4', 'input.mp4', 'masked.mp4', 'result.mp4', 'generated.mp4', 'portrait.jpg', 'portrait.png', 'portrait.webp', 'product.jpg', 'product.png', 'product.webp'].includes(name)) { res.writeHead(404); res.end(); return; }
     try {
       const destination = filePath(job, name);
       const info = await stat(destination);
@@ -453,5 +467,5 @@ export function createPersonReplacementService(deps) {
       return view(owned(job, deviceId));
     }, list, retry, media, tick, start: () => schedule(100), stop: () => { clearTimeout(timer); timer = null; },
     markLibrarySaved(id, item, deviceId) { const job = requireOwned(id, deviceId); if (job.stage !== 'completed') throw new Error('视频尚未完成'); save(job, { libraryFolder: item.folderName, libraryItemId: item.id }); },
-    async resultFile(id, deviceId) { const job = requireOwned(id, deviceId); if (job.stage !== 'completed') throw new Error('视频尚未完成'); return { path: filePath(job, 'result.mp4'), name: `人物替换-${job.sourceName.replace(/\.[^.]+$/, '')}.mp4`, model: job.model, prompt: job.prompt, createdAt: job.createdAt }; } };
+    async resultFile(id, deviceId) { const job = requireOwned(id, deviceId); if (job.stage !== 'completed') throw new Error('视频尚未完成'); return { path: filePath(job, 'result.mp4'), name: `${job.editVersion === 2 ? '视频编辑' : '人物替换'}-${job.sourceName.replace(/\.[^.]+$/, '')}.mp4`, model: job.model, prompt: job.prompt, createdAt: job.createdAt }; } };
 }

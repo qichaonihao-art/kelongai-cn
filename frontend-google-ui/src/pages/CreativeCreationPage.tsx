@@ -7765,7 +7765,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   视频直接换画
                 </button>
                 <button type="button" onClick={() => setShowPersonReplacement(true)} className={cn("flex-1 rounded-lg px-2 text-xs font-black transition-colors", showPersonReplacement ? "bg-violet-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-700")}>
-                  视频人物替换
+                  视频局部编辑
                 </button>
               </div>
               <div hidden={!showPersonReplacement}><PersonReplacementPanel onSaveToLibrary={(task, onSaved) => {
