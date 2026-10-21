@@ -4,10 +4,11 @@ import { mkdir, writeFile, copyFile, rename, stat, rm } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { WAN_EDIT_MODEL, isWanEdit, editProviderLabel, editModelLabel, editMaxDuration, buildWanEditPayload, normalizeWanEditTask } from './wan-scene-edit.mjs';
 import { buildSceneEditPrompt, validateSceneEditOptions } from './video-scene-edit.mjs';
 
 export const PERSON_GENERATION_SUBMIT_TIMEOUT_MS = 180000;
-export const PERSON_MODELS = ['doubao-seedance-2-0-260128', 'doubao-seedance-2-5-260628'];
+export const PERSON_MODELS = ['doubao-seedance-2-0-260128', 'doubao-seedance-2-5-260628', WAN_EDIT_MODEL];
 export function validatePersonOptions(body) {
   const edit = validateSceneEditOptions(body);
   const model = String(body.model || PERSON_MODELS[0]);
@@ -17,8 +18,8 @@ export function validatePersonOptions(body) {
   const dialogue = ['rewrite', 'new-voice'].includes(audioMode) ? String(body.dialogue || '').trim() : '';
   const voiceDescription = audioMode === 'new-voice' ? String(body.voiceDescription || '').trim() : '';
   const requestId = String(body.creationRequestId || '');
-  if (!PERSON_MODELS.includes(model)) throw new Error('人物替换请选择 Seedance 2.0 或 2.5');
-  if (!['480p', '720p'].includes(resolution)) throw new Error('人物替换支持480P或720P');
+  if (!PERSON_MODELS.includes(model)) throw new Error('视频编辑请选择 Seedance 2.0、2.5 或万相 3.0');
+  if (!(model === WAN_EDIT_MODEL ? ['480p', '720p', '1080p'] : ['480p', '720p']).includes(resolution)) throw new Error('所选模型不支持此分辨率');
   if (!['preserve', 'rewrite', 'new-voice', 'silent', 'generate'].includes(audioMode)) throw new Error('请选择有效的声音模式');
   if (['rewrite', 'new-voice'].includes(audioMode) && (!dialogue || dialogue.length > 2000)) throw new Error('请填写新台词，最多2000字');
   if (voiceDescription.length > 500) throw new Error('音色描述最多500字');
@@ -101,7 +102,7 @@ export function createPersonReplacementService(deps) {
     if (!job) return null;
     const { id, stage, error, notice, model, resolution, audioMode, prompt, dialogue, voiceDescription, createdAt, updatedAt, duration, hasPortrait, sourceName, ambiguous, failedStage } = job;
     const canRecover = stage === 'awaiting_confirmation' || (stage === 'failed' && ambiguous && failedStage === 'submitting_generation');
-    const recoveryError = canRecover && error ? '向Seedance提交请求未收到确认回复，已保留打码结果。可通过火山任务编号恢复查询。' : error;
+    const recoveryError = canRecover && error ? `向${editModelLabel(job)}提交请求未收到确认回复，已保留打码结果。可通过${editProviderLabel(job)}任务编号恢复查询。` : error;
     return { id, stage, error: recoveryError, notice, model, resolution, audioMode, prompt, dialogue, voiceDescription, createdAt, updatedAt, duration, hasPortrait, sourceName, ambiguous: !!ambiguous,
       editVersion: job.editVersion, personMode: job.personMode, faceMode: job.faceMode, personDescription: job.personDescription, clothing: job.clothing, scene: job.scene,
       hasProductReference: !!job.hasProductReference, productReferenceName: job.productReferenceName || '', maskSkipped: !!job.maskSkipped,
@@ -129,7 +130,7 @@ export function createPersonReplacementService(deps) {
       return view(previous);
     }
     const config = getConfig();
-    if (!config.seedanceKey || (options.faceMode !== 'no-visible-face' && !config.mediaKey)) throw new Error('服务端需要配置所选流程的 AI MediaKit 和 Seedance 访问凭证');
+    if (!(isWanEdit(options) ? config.wanKey : config.seedanceKey) || (options.faceMode !== 'no-visible-face' && !config.mediaKey)) throw new Error(`服务端需要配置所选流程的 AI MediaKit 和 ${editModelLabel(options)} 访问凭证`);
     if (!/^https?:\/\//.test(baseUrl || '')) throw new Error('请先配置可公网访问的素材地址 PUBLIC_BASE_URL');
     const files = Array.isArray(body.files) ? body.files : [];
     const videos = files.filter(file => file.type?.startsWith('video/'));
@@ -138,7 +139,7 @@ export function createPersonReplacementService(deps) {
     const video = videos[0];
     if (!/\.(mp4|mov)$/i.test(video.name) || video.size > 50 * 1024 * 1024) throw new Error('原视频请使用50MB以内的MP4或MOV');
     if (images[0] && (!['image/jpeg', 'image/png', 'image/webp'].includes(images[0].type) || images[0].size > 10 * 1024 * 1024)) throw new Error('参考图请使用10MB以内的JPG、PNG或WebP');
-    const job = { ...options, audioVersion: 2, id: randomUUID(), mediaToken: randomUUID(), baseUrl: baseUrl.replace(/\/$/, ''), stage: 'uploading',
+    const job = { ...options, ...(isWanEdit(options) ? { wanBase: (config.wanBase || 'https://dashscope.aliyuncs.com').replace(/\/$/, '') } : {}), audioVersion: 2, id: randomUUID(), mediaToken: randomUUID(), baseUrl: baseUrl.replace(/\/$/, ''), stage: 'uploading',
       createdAt: Date.now(), updatedAt: Date.now(), hasPortrait: !options.editVersion && !!images[0], hasProductReference: options.editVersion === 2 && !!images[0], sourceName: video.name, error: '', notice: '' };
     // Reserve before asynchronous file writes, so repeated clicks cannot create duplicate jobs.
     db().prepare('INSERT INTO person_replacement_jobs (id, request_id, data, device_id) VALUES (?, ?, ?, ?)').run(job.id, job.requestId, JSON.stringify(job), deviceId || '');
@@ -147,7 +148,7 @@ export function createPersonReplacementService(deps) {
       await mkdir(path.join(root, job.id), { recursive: true });
       await writeFile(filePath(job, 'source.mp4'), Buffer.from(await video.arrayBuffer()));
       const metadata = await probe(filePath(job, 'source.mp4'));
-      const maxDuration = options.model === PERSON_MODELS[0] ? 15 : 30;
+      const maxDuration = editMaxDuration(options.model);
       if (metadata.durationSeconds < 4 || metadata.durationSeconds > maxDuration) throw new Error(`所选模型支持4-${maxDuration}秒视频，当前为${metadata.durationSeconds.toFixed(1)}秒，请先裁剪或切换模型`);
       if (Math.max(metadata.width, metadata.height) > 4096) throw new Error('原视频分辨率不能超过4K');
       job.sourceHasAudio = await hasAudio(filePath(job, 'source.mp4'));
@@ -168,13 +169,13 @@ export function createPersonReplacementService(deps) {
     return view(job);
   }
   async function jsonRequest(url, options = {}) {
-    const { timeoutMs = 60000, ...fetchOptions } = options;
+    const { timeoutMs = 60000, rejectCode = false, ...fetchOptions } = options;
     const response = await fetcher(url, { ...fetchOptions, signal: AbortSignal.timeout(timeoutMs) });
     const json = await response.json().catch(() => null);
-    if (!response.ok || json?.success === false) {
+    if (!response.ok || json?.success === false || (rejectCode && json?.code && !json?.output?.task_id)) {
       const error = new Error(json?.error?.message || json?.error || json?.message || `服务请求失败（HTTP ${response.status}）`);
       // A 4xx definitively rejected the request; 5xx or missing/malformed success is ambiguous.
-      error.definite = response.status >= 400 && response.status < 500;
+      error.definite = (response.status >= 400 && response.status < 500) || (response.ok && rejectCode && !!json?.code);
       throw error;
     }
     if (!json) throw new Error('服务未返回有效结果，需核对任务是否已提交');
@@ -202,17 +203,17 @@ export function createPersonReplacementService(deps) {
   }
   function markSubmissionUnknown(job, message) {
     return save(job, { stage: 'awaiting_confirmation', failedStage: 'submitting_generation', ambiguous: true,
-      error: '', notice: `${message}。尚未确认火山是否已接单，${job.callbackToken ? '正在等待任务通知，' : ''}已保留打码结果。可填入火山后台的任务编号恢复查询，不会自动重新提交或重复扣费。` });
+      error: '', notice: `${message}。尚未确认${editProviderLabel(job)}是否已接单，${job.callbackToken ? '正在等待任务通知，' : ''}已保留打码结果。可填入${editProviderLabel(job)}后台的任务编号恢复查询，不会自动重新提交或重复扣费。` });
   }
   async function submit(job, kind, url, payload, key) {
     const stage = kind === 'blur' ? 'submitting_blur' : 'submitting_generation';
-    const callbackToken = kind === 'generation' ? randomUUID() : '';
-    save(job, { stage, ...(callbackToken ? { callbackToken, generationSubmittedAt: Date.now() } : {}) });
+    const callbackToken = kind === 'generation' && !isWanEdit(job) ? randomUUID() : '';
+    save(job, { stage, ...(kind === 'generation' ? { callbackToken, generationSubmittedAt: Date.now(), generationPrompt: isWanEdit(job) ? payload.input.prompt : payload.content[0].text } : {}) });
     const requestPayload = callbackToken ? { ...payload, callback_url: `${job.baseUrl}/api/person-replacement/callback/${job.id}/${callbackToken}` } : payload;
     try {
-      const result = await jsonRequest(url, { method: 'POST', timeoutMs: kind === 'generation' ? PERSON_GENERATION_SUBMIT_TIMEOUT_MS : 60000,
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(requestPayload) });
-      const externalId = kind === 'blur' ? result.task_id : result.id || result.data?.id || result.task_id;
+      const result = await jsonRequest(url, { method: 'POST', rejectCode: kind === 'generation' && isWanEdit(job), timeoutMs: kind === 'generation' ? PERSON_GENERATION_SUBMIT_TIMEOUT_MS : 60000,
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...(kind === 'generation' && isWanEdit(job) ? { 'X-DashScope-Async': 'enable' } : {}) }, body: JSON.stringify(requestPayload) });
+      const externalId = kind === 'blur' ? result.task_id : result.output?.task_id || result.id || result.data?.id || result.task_id;
       if (!externalId) throw new Error('服务未返回任务编号');
       const current = get(job.id);
       // A callback may have arrived while the POST response was still in flight.
@@ -227,9 +228,9 @@ export function createPersonReplacementService(deps) {
       if (kind === 'generation' && current.generationTaskId) { Object.assign(job, current); return; }
       const timedOut = error?.name === 'TimeoutError' || /timeout|timed out|超时/i.test(error.message || '');
       if (kind === 'generation' && !error.definite) {
-        markSubmissionUnknown(job, timedOut ? '向Seedance提交请求超时' : '向Seedance提交时未收到确认回复');
+        markSubmissionUnknown(job, timedOut ? `向${editModelLabel(job)}提交请求超时` : `向${editModelLabel(job)}提交时未收到确认回复`);
       } else save(job, { stage: 'failed', failedStage: stage, ambiguous: !error.definite,
-        error: error.definite ? error.message : `${error.message}。提交结果未确认，为避免重复扣费，不会自动重新提交，请先在火山后台核对。` });
+        error: error.definite ? error.message : `${error.message}。提交结果未确认，为避免重复扣费，不会自动重新提交，请先在${kind === 'blur' ? '打码平台' : editProviderLabel(job)}后台核对。` });
     }
   }
   function isRecoverable(job) {
@@ -237,14 +238,14 @@ export function createPersonReplacementService(deps) {
       || (job.stage === 'failed' && job.ambiguous && job.failedStage === 'submitting_generation'));
   }
   function ensureTaskIdAvailable(id, job) {
-    if (!/^[a-zA-Z0-9_-]{1,160}$/.test(id)) throw new Error('请填写有效的火山视频任务编号');
+    if (!/^[a-zA-Z0-9_-]{1,160}$/.test(id)) throw new Error(`请填写有效的${editProviderLabel(job)}视频任务编号`);
     const used = db().prepare('SELECT id, data FROM person_replacement_jobs WHERE id <> ?').all(job.id)
-      .some(row => JSON.parse(row.data).generationTaskId === id);
-    if (used) throw new Error('这个火山任务编号已经关联其他人物替换记录，请核对');
+      .some(row => isWanEdit(JSON.parse(row.data)) === isWanEdit(job) && JSON.parse(row.data).generationTaskId === id);
+    if (used) throw new Error('这个视频任务编号已经关联其他编辑记录，请核对');
   }
   function acceptCallback(id, token, payload) {
     const job = get(id);
-    if (!job || !job.callbackToken || token !== job.callbackToken) throw Object.assign(new Error('任务通知地址无效'), { statusCode: 404 });
+    if (!job || isWanEdit(job) || !job.callbackToken || token !== job.callbackToken) throw Object.assign(new Error('任务通知地址无效'), { statusCode: 404 });
     const taskId = String(payload?.id || '').trim();
     ensureTaskIdAvailable(taskId, job);
     if (payload?.model && payload.model !== job.model) throw new Error('任务通知的模型与当前记录不一致');
@@ -260,12 +261,15 @@ export function createPersonReplacementService(deps) {
     const normalizedId = String(taskId || '').trim();
     ensureTaskIdAvailable(normalizedId, job);
     // Read-only upstream request: never creates a video or touches the completed mask.
-    const task = await fetchTask(normalizedId);
+    const task = await queryGeneration(job, normalizedId);
+    if (isWanEdit(job)) {
+      if (!job.generationPrompt || task.originalPrompt !== job.generationPrompt || !Number.isFinite(task.createdAt)) throw new Error('阿里云任务的原始提示词或提交时间无法与这条记录核对，请确认任务编号');
+    }
     const model = String(task.payload?.model || task.model || '');
-    if (model !== job.model) throw new Error('火山任务的模型与这条记录不一致，请核对任务编号');
-    const resolution = task.payload?.resolution;
-    if (resolution && resolution !== job.resolution) throw new Error('火山任务的分辨率与这条记录不一致，请核对任务编号');
-    if (task.createdAt && (task.createdAt * 1000 < job.createdAt - 120000 || task.createdAt * 1000 > Date.now() + 120000)) throw new Error('火山任务的创建时间与这条记录不符，请核对任务编号');
+    if (!isWanEdit(job) && model !== job.model) throw new Error('上游任务的模型与这条记录不一致，请核对任务编号');
+    const resolution = isWanEdit(job) ? (task.payload?.usage?.SR ? `${task.payload.usage.SR}p` : '') : task.payload?.resolution;
+    if (resolution && resolution !== job.resolution) throw new Error('上游任务的分辨率与这条记录不一致，请核对任务编号');
+    if (task.createdAt && (task.createdAt * 1000 < job.createdAt - 120000 || task.createdAt * 1000 > Date.now() + 120000)) throw new Error('上游任务的创建时间与这条记录不符，请核对任务编号');
     const current = get(id);
     // Callback and manual recovery must not overwrite each other's progress or IDs.
     if (!isRecoverable(current)) {
@@ -275,6 +279,12 @@ export function createPersonReplacementService(deps) {
     save(current, { stage: 'generating', generationTaskId: normalizedId, ambiguous: false, error: '', notice: '已找回原任务，正在继续查询结果，无需重新提交。' });
     schedule(10);
     return view(current);
+  }
+  async function queryGeneration(job, id) {
+    if (!isWanEdit(job)) return fetchTask(id);
+    const result = await jsonRequest(`${job.wanBase}/api/v1/tasks/${encodeURIComponent(id)}`, { rejectCode: true, headers: { Authorization: `Bearer ${getConfig().wanKey}` } });
+    if (!result.output?.task_status || result.output.task_id !== id) throw new Error('阿里云未返回匹配任务的有效状态');
+    return normalizeWanEditTask(result);
   }
   async function step(job) {
     const config = getConfig();
@@ -320,6 +330,10 @@ export function createPersonReplacementService(deps) {
       return;
     }
     if (job.stage === 'ready') {
+      if (isWanEdit(job)) {
+        return submit(job, 'generation', `${job.wanBase}/api/v1/services/aigc/video-generation/video-synthesis`,
+          buildWanEditPayload(job, buildPersonPrompt(job), assetUrl(job, 'masked.mp4'), job.hasProductReference ? assetUrl(job, job.productImageName) : job.hasPortrait ? assetUrl(job, job.portraitName) : ''), config.wanKey);
+      }
       const content = [{ type: 'text', text: buildPersonPrompt(job) }, { type: 'video_url', video_url: { url: assetUrl(job, 'masked.mp4') }, role: 'reference_video' }];
       if (job.hasPortrait) content.push({ type: 'image_url', image_url: { url: assetUrl(job, job.portraitName) }, role: 'reference_image' });
       if (job.hasProductReference) content.push({ type: 'image_url', image_url: { url: assetUrl(job, job.productImageName) }, role: 'reference_image' });
@@ -333,8 +347,8 @@ export function createPersonReplacementService(deps) {
     }
     if (job.stage === 'awaiting_confirmation') return;
     if (job.stage === 'generating') {
-      const task = await fetchTask(job.generationTaskId);
-      if (['failed', 'cancelled', 'canceled', 'expired'].includes(String(task.status).toLowerCase())) {
+      const task = await queryGeneration(job, job.generationTaskId);
+      if (['failed', 'cancelled', 'canceled', 'expired', 'unknown'].includes(String(task.status).toLowerCase())) {
         save(job, { stage: 'failed', failedStage: 'generating', generationTaskFailed: true, error: task.errorMessage || '人物替换生成失败' });
       } else if (task.videoUrl) save(job, { stage: 'finalizing', generatedUrl: task.videoUrl });
       return;
@@ -396,7 +410,7 @@ export function createPersonReplacementService(deps) {
         if (creating.has(job.id)) return;
         if (job.stage === 'submitting_generation') {
           if (job.generationTaskId) save(job, { stage: 'generating', ambiguous: false, error: '' });
-          else { markSubmissionUnknown(job, '服务重启前的Seedance提交尚未确认'); return; }
+          else { markSubmissionUnknown(job, `服务重启前的${editModelLabel(job)}提交尚未确认`); return; }
         }
         if (job.stage === 'submitting_blur') {
           save(job, { stage: 'failed', failedStage: job.stage, ambiguous: true, error: '服务重启时打码提交尚未确认，请先在火山后台核对，避免重复扣费。' }); return;
@@ -419,7 +433,7 @@ export function createPersonReplacementService(deps) {
   }
   function retry(id, deviceId) {
     const job = requireOwned(id, deviceId);
-    if (job.ambiguous) throw new Error('提交结果未确认，请先在火山后台核对并填入任务编号恢复，不可重复提交');
+    if (job.ambiguous) throw new Error(`提交结果未确认，请先在${editProviderLabel(job)}后台核对并填入任务编号恢复，不可重复提交`);
     if (job.stage !== 'failed') return view(job);
     if (job.failedStage === 'uploading') throw new Error('上传未完成，请重新上传');
     let stage;

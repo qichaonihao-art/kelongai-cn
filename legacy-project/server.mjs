@@ -21004,7 +21004,7 @@ const personReplacement = createPersonReplacementService({
   root: path.join(RUNTIME_STATE_DIR, 'person-replacement'),
   probe: probeVideoMetadata,
   exec: execFileAsync,
-  getConfig: () => ({ mediaKey: readValue(SERVER_CONFIG.mediakitApiKey), seedanceKey: readValue(SERVER_CONFIG.seedanceApiKey), mediaBase: MEDIAKIT_API_BASE_URL }),
+  getConfig: () => ({ mediaKey: readValue(SERVER_CONFIG.mediakitApiKey), seedanceKey: readValue(SERVER_CONFIG.seedanceApiKey), mediaBase: MEDIAKIT_API_BASE_URL, wanKey: readValue(SERVER_CONFIG.dashscopeApiKey), wanBase: DASHSCOPE_VIDEO_BASE_URL }),
   fetchTask: fetchManualVideoGenerationTask,
 });
 

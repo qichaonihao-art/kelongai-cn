@@ -65,7 +65,7 @@ async function drive(id, target = 'completed') {
 try {
   assert.equal(PERSON_GENERATION_SUBMIT_TIMEOUT_MS, 180000);
   assert.throws(() => validatePersonOptions(options({ audioMode: 'bad' })), /声音/);
-  assert.throws(() => validatePersonOptions(options({ model: 'wan3.0-video' })), /请选择/);
+  assert.throws(() => validatePersonOptions(options({ model: 'unknown-video' })), /请选择/);
   for (const model of PERSON_MODELS) {
     assert.equal(validatePersonOptions(options({ model, resolution: undefined })).resolution, '480p');
     for (const resolution of ['480p', '720p']) assert.equal(validatePersonOptions(options({ model, resolution })).resolution, resolution);

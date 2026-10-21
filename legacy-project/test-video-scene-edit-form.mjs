@@ -10,6 +10,7 @@ process.env.RUNTIME_STATE_DIR = root;
 process.env.VIDEO_LIBRARY_DIR = path.join(root, 'library');
 process.env.MEDIAKIT_API_KEY = '';
 process.env.SEEDANCE_API_KEY = '';
+process.env.DASHSCOPE_API_KEY = '';
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error('This multipart test must never contact an upstream'); };
 try {
@@ -28,6 +29,8 @@ try {
     return result.error;
   }
   assert.match(await submit({}), /访问凭证/, 'empty optional prompt is accepted by the actual multipart route');
+  assert.match(await submit({ model: 'wan3.0-video', resolution: '480p' }), /访问凭证/);
+  assert.match(await submit({ model: 'wan3.0-video', resolution: '1080p' }), /访问凭证/);
   assert.match(await submit({ personMode: 'bad' }), /人物处理/);
   assert.match(await submit({ faceMode: 'bad' }), /人脸预处理/);
   assert.match(await submit({ personMode: 'generate', personDescription: '人'.repeat(1001) }), /新人物描述/);

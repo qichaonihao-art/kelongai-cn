@@ -5,7 +5,7 @@ import HistoryVideoThumbnail from '@/src/components/HistoryVideoThumbnail';
 import { getKelongDeviceId, getSeedanceRatePerSecond } from '@/src/lib/creative';
 import { blobToFile, getUploadHistoryItem, loadUploadHistorySummaries, saveUploadHistory, formatHistoryTime, type UploadHistoryItem, type UploadHistorySummaryItem } from '@/src/lib/uploadHistory';
 
-type Model = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-5-260628';
+type Model = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-5-260628' | 'wan3.0-video';
 type PersonMode = 'keep' | 'generate';
 type FaceMode = 'mask' | 'no-visible-face';
 type AudioMode = 'preserve' | 'rewrite' | 'new-voice' | 'silent' | 'generate';
@@ -39,10 +39,12 @@ function readPromptHistory(): PromptHistoryItem[] {
 const STAGES: Record<string, string> = {
   uploading: '正在保存原视频', queued: '等待视频预处理', normalizing: '正在准备视频格式',
   submitting_blur: '正在提交人脸打码', blurring: '正在识别人脸并打码', saving_mask: '正在保存打码结果',
-  ready: '预处理完成，准备视频编辑', submitting_generation: '正在提交视频编辑', generating: 'Seedance 正在编辑原视频',
-  awaiting_confirmation: '提交待确认，正在等待火山任务通知',
+  ready: '预处理完成，准备视频编辑', submitting_generation: '正在提交视频编辑', generating: '模型正在编辑原视频',
+  awaiting_confirmation: '提交待确认，请核对上游任务',
   finalizing: '正在处理声音并保存成片', completed: '视频编辑完成', failed: '处理未完成',
 };
+const modelLabel = (model: Model) => model === 'wan3.0-video' ? '万相 3.0（千问）' : model.includes('2-5') ? 'Seedance 2.5' : 'Seedance 2.0';
+const providerLabel = (model: Model) => model === 'wan3.0-video' ? '阿里云' : '火山';
 const busyTask = (task: PersonTask | null) => !!task && !['completed', 'failed'].includes(task.stage);
 function deviceIdForRequest() {
   const deviceId = getKelongDeviceId();
@@ -185,9 +187,9 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
   const productReferenceUrl = usePreview(productReference);
   const historyPreviewUrl = usePreview(historyPreview?.item.blob);
   const locked = uploading || recovering || busyTask(task) || acting;
-  const maxDuration = model === 'doubao-seedance-2-0-260128' ? 15 : 30;
+  const maxDuration = model === 'doubao-seedance-2-5-260628' ? 30 : 15;
   const rate = getSeedanceRatePerSecond(model, resolution);
-  const estimate = rate !== null && duration > 0 ? (rate * Math.round(duration)).toFixed(2) : null;
+  const estimate = rate !== null && duration > 0 ? (rate * (model === 'wan3.0-video' ? duration * 2 : Math.round(duration))).toFixed(2) : null;
   const promptHistory = mergePromptHistory([...savedPrompts, ...tasks.map(item => ({ prompt: item.prompt, timestamp: item.createdAt }))]);
   const filteredPrompts = promptHistory.filter(item => item.prompt.toLocaleLowerCase().includes(promptSearch.trim().toLocaleLowerCase()));
 
@@ -395,10 +397,10 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <label className="text-xs font-bold">生成模型<select aria-label="视频编辑模型" value={model} onChange={event => { const next = event.target.value as Model; setModel(next); setResolution('480p'); }} className={`${inputClass} mt-2`}>
-          <option value="doubao-seedance-2-0-260128">Seedance 2.0</option><option value="doubao-seedance-2-5-260628">Seedance 2.5</option>
+          <option value="doubao-seedance-2-0-260128">Seedance 2.0</option><option value="doubao-seedance-2-5-260628">Seedance 2.5</option><option value="wan3.0-video">万相 3.0（千问）</option>
         </select></label>
         <label className="text-xs font-bold">分辨率<select aria-label="视频编辑分辨率" value={resolution} onChange={event => setResolution(event.target.value)} className={`${inputClass} mt-2`}>
-          <option value="480p">480P</option><option value="720p">720P</option>
+          <option value="480p">480P</option><option value="720p">720P</option>{model === 'wan3.0-video' && <option value="1080p">1080P</option>}
         </select></label>
       </div>
       <label className="block text-xs font-bold">声音<select aria-label="视频编辑声音" value={audioMode} onChange={event => setAudioMode(event.target.value as AudioMode)} className={`${inputClass} mt-2`}>
@@ -406,7 +408,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
       </select></label>
       {audioMode === 'new-voice' && <label className="block text-xs font-bold">目标音色描述（选填）<input aria-label="人物替换目标音色" value={voiceDescription} onChange={event => setVoiceDescription(event.target.value)} maxLength={500} className={`${inputClass} mt-2`} placeholder="例如：自然亲切的成年女声，普通话，语速适中" /><span className="mt-1 block text-[11px] font-normal leading-5 text-slate-500">不填时按人物要求匹配新声音，不沿用原人物音色。</span></label>}
       {['rewrite', 'new-voice'].includes(audioMode) ? <label className="block text-xs font-bold">新台词<textarea aria-label="人物替换新台词" value={dialogue} onChange={event => setDialogue(event.target.value)} maxLength={2000} rows={4} className={`${inputClass} mt-2`} placeholder="填写希望人物说的完整台词，口型将跟随新台词。" /><span className="mt-1 block text-[11px] font-normal leading-5 text-slate-500">{audioMode === 'rewrite' ? '原视频需要有清晰人声，用于参考原音色。' : '使用新音色，不要求原视频有人声。'}台词长度尽量适合原视频时长，声音与新口型由模型一同处理。</span></label> : audioMode === 'preserve' ? <p className="text-[11px] leading-5 text-slate-500">默认保留原台词、音色、背景音乐与环境声，口型由视频编辑模型同步处理。</p> : null}
-      <p className="text-[11px] leading-5 text-slate-500">支持4–{maxDuration}秒，尽量保留原片比例和动作。{estimate ? `视频生成预估 ¥${estimate}` : duration ? '当前分辨率暂无费用估算' : '上传视频后显示可用的生成费用估算'}；{faceMode === 'mask' ? '另含人脸打码费用，' : '已选择跳过人脸打码，'}实际费用以平台账单为准。</p>
+      <p className="text-[11px] leading-5 text-slate-500">支持4–{maxDuration}秒，尽量保留原片比例和动作。{estimate ? `视频生成预估 ¥${estimate}` : duration ? '当前分辨率暂无费用估算' : '上传视频后显示可用的生成费用估算'}{model === 'wan3.0-video' && '（按输入与输出等长估算，阿里云合计计费）'}；{faceMode === 'mask' ? '另含人脸打码费用，' : '已选择跳过人脸打码，'}实际费用以平台账单为准。</p>
     </fieldset>
     <button type="button" disabled={locked || !!pendingRequest || !video || (['rewrite', 'new-voice'].includes(audioMode) && !dialogue.trim())} onClick={() => void submit()} className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-5 py-3 text-xs font-bold text-white disabled:opacity-50">
       {locked ? <Loader2 size={16} className="animate-spin" /> : <UserRound size={16} />}{uploading ? `正在上传 ${uploadProgress}%` : '开始视频编辑'}
@@ -416,7 +418,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
     {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-xs leading-5 text-red-600">{error}</p>}
     {task && <div aria-live="polite" className="space-y-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
       <div className="flex items-center gap-2 text-xs font-bold text-violet-700">{busyTask(task) ? <Loader2 size={16} className="animate-spin" /> : task.stage === 'completed' ? <Check size={16} /> : <RefreshCw size={16} />}{STAGES[task.stage] || task.stage}</div>
-      <p className="break-all text-[11px] text-slate-500">{task.sourceName} · {task.model.includes('2-5') ? 'Seedance 2.5' : 'Seedance 2.0'} · {task.resolution.toUpperCase()} · {new Date(task.createdAt).toLocaleString('zh-CN')}</p>
+      <p className="break-all text-[11px] text-slate-500">{task.sourceName} · {modelLabel(task.model)} · {task.resolution.toUpperCase()} · {new Date(task.createdAt).toLocaleString('zh-CN')}</p>
       {task.editVersion === 2 && <div className="text-xs leading-5 text-slate-600"><p>{task.hasProductReference ? `画作参考：${task.productReferenceName}` : '保留原画，未上传产品参考图'} · {task.personMode === 'generate' ? '文字生成新人物' : '保留原人物形象'}</p>{task.personDescription && <p>新人物：{task.personDescription}</p>}{task.clothing && <p>服装调整：{task.clothing}</p>}{task.scene && <p>场景调整：{task.scene}</p>}</div>}
       {task.voiceDescription && <p className="text-xs leading-5 text-slate-600">目标音色：{task.voiceDescription}</p>}
       {task.dialogue && <details className="text-xs text-slate-600"><summary className="cursor-pointer">查看本次新台词</summary><p className="mt-2 whitespace-pre-wrap leading-5">{task.dialogue}</p></details>}
@@ -424,12 +426,12 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
       {task.error && <p role="alert" className="text-xs leading-5 text-red-600">{task.error}</p>}
       {task.stage === 'failed' && task.generatedVideoUrl && <details className="text-xs text-slate-600"><summary className="cursor-pointer">查看已生成的画面</summary><video src={task.generatedVideoUrl} controls preload="none" className="mt-2 max-h-60 w-full rounded-lg bg-slate-950" /></details>}
       {task.canRecover && <div className="space-y-2 rounded-lg border border-amber-200 bg-white p-3">
-        <p className="text-xs leading-5 text-slate-600">已保留打码视频。{task.awaitingNotification ? '可等待火山任务通知，或填入火山后台对应这条视频的任务编号，直接找回结果。' : '请填入火山后台对应这条视频的任务编号，直接找回结果。'}这里只查询已有任务，不会重新生成。</p>
-        <label className="block text-xs font-bold">火山任务编号<input aria-label="恢复人物替换任务编号" value={upstreamTaskId} onChange={event => setUpstreamTaskId(event.target.value)} placeholder="例如 cgt- 开头的任务编号" className={`${inputClass} mt-2`} disabled={acting} /></label>
+        <p className="text-xs leading-5 text-slate-600">已保留打码视频。{task.awaitingNotification ? '可等待火山任务通知，或填入火山后台对应这条视频的任务编号，直接找回结果。' : `请填入${providerLabel(task.model)}后台对应这条视频的任务编号，直接找回结果。`}这里只查询已有任务，不会重新生成。</p>
+        <label className="block text-xs font-bold">{providerLabel(task.model)}任务编号<input aria-label="恢复人物替换任务编号" value={upstreamTaskId} onChange={event => setUpstreamTaskId(event.target.value)} placeholder="填写平台返回的任务编号" className={`${inputClass} mt-2`} disabled={acting} /></label>
         <button type="button" disabled={acting || !upstreamTaskId.trim()} onClick={() => void recoverUpstreamTask()} className="text-xs font-bold text-violet-700">{acting ? '正在查询…' : '找回已有任务（不重新生成）'}</button>
         {recoveryError && <p role="alert" className="text-xs text-red-600">{recoveryError}</p>}
       </div>}
-      {task.generationTaskId && <p className="break-all text-[11px] text-slate-500">火山任务：{task.generationTaskId}</p>}
+      {task.generationTaskId && <p className="break-all text-[11px] text-slate-500">{providerLabel(task.model)}任务：{task.generationTaskId}</p>}
       {task.canRetry && <button type="button" disabled={acting} onClick={() => void retry()} className="text-xs font-bold text-violet-700">按原要求重试（复用已完成的打码）</button>}
       {task.maskedVideoUrl && <details className="text-xs text-slate-600"><summary className="cursor-pointer">{task.maskSkipped ? "查看预处理视频（未打码）" : "查看打码结果"}</summary><video src={task.maskedVideoUrl} controls preload="none" className="mt-2 max-h-60 w-full rounded-lg bg-slate-950" /></details>}
       {task.videoUrl && <><video src={task.videoUrl} controls playsInline className="max-h-96 w-full rounded-xl bg-slate-950" />

@@ -765,6 +765,8 @@ const SEEDANCE_DURATIONS = Array.from({ length: 12 }, (_, index) => index + 4);
 const SEEDANCE_DURATIONS_2_5 = Array.from({ length: 27 }, (_, index) => index + 4);
 const WAN3_DURATIONS = Array.from({ length: 29 }, (_, index) => index + 2);
 type SeedanceModelId = 'doubao-seedance-2-0-260128' | 'doubao-seedance-2-0-fast-260128' | 'doubao-seedance-2-0-mini-260615' | 'doubao-seedance-2-5-260628' | 'MiniMax-H3' | 'wan3.0-video';
+// Temporarily retired; retain existing task playback, polling and library saving.
+const VIDEO_DIRECT_PAINTING_ENABLED = false;
 type SeedanceTaskMode = 'generate' | 'video-edit-painting';
 type SeedanceResolution = '480p' | '720p' | '768p' | '1080p' | '4k';
 
@@ -3360,6 +3362,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   }
 
   function switchSeedanceTaskMode(nextMode: SeedanceTaskMode) {
+    if (!VIDEO_DIRECT_PAINTING_ENABLED && nextMode === 'video-edit-painting') { setShowPersonReplacement(true); return; }
     if (nextMode === seedanceTaskMode || isSeedanceLoading) return;
     if ((seedancePrompt.trim() || seedanceReferences.length > 0) && !window.confirm('切换模式会清空当前提示词和参考素材，确定继续吗？')) {
       return;
@@ -3472,6 +3475,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     creativeSessionId?: string;
   }) {
     const isVideoEdit = seedanceTaskMode === 'video-edit-painting';
+    if (isVideoEdit && !VIDEO_DIRECT_PAINTING_ENABLED) {
+      setSeedanceError('视频直接换画已暂时下线，请使用“视频局部编辑”。');
+      return;
+    }
     // 右侧面板当前显示什么，手动和单条自动生成就提交什么；不再回读另一套旧偏好覆盖界面。
     const generationModel: SeedanceModelId = isVideoEdit ? 'doubao-seedance-2-5-260628' : seedanceModel;
     const generationResolution: SeedanceResolution = isVideoEdit ? '720p' : seedanceResolution;
@@ -7754,16 +7761,6 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 >
                   常规生成
                 </button>
-                <button
-                  type="button"
-                  onClick={() => { setShowPersonReplacement(false); switchSeedanceTaskMode('video-edit-painting'); }}
-                  className={cn(
-                    "flex-1 rounded-lg px-4 text-xs font-black transition-colors",
-                    !showPersonReplacement && seedanceTaskMode === 'video-edit-painting' ? "bg-violet-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  )}
-                >
-                  视频直接换画
-                </button>
                 <button type="button" onClick={() => setShowPersonReplacement(true)} className={cn("flex-1 rounded-lg px-2 text-xs font-black transition-colors", showPersonReplacement ? "bg-violet-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-700")}>
                   视频局部编辑
                 </button>
@@ -7772,6 +7769,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 void openSeedanceLibrarySave({ taskId: task.id, personReplacementId: task.id, model: task.model, prompt: task.prompt, createdAt: task.createdAt, onSaved });
               }} /></div>
               <div hidden={showPersonReplacement}>
+              {!VIDEO_DIRECT_PAINTING_ENABLED && seedanceTaskMode === 'video-edit-painting' && (
+                <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+                  这是旧版直接换画任务，仍可查看进度、预览和保存成片。新的视频编辑请使用“视频局部编辑”。
+                  <button type="button" onClick={() => setShowPersonReplacement(true)} className="ml-2 font-bold text-violet-700">进入视频局部编辑</button>
+                </div>
+              )}
 
               {seedanceTaskMode === 'generate' && seedanceModel === 'MiniMax-H3' && (
                 <div className={cn(
@@ -7799,7 +7802,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               )}
 
               <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3 relative">
-                {seedanceTaskMode === 'video-edit-painting' && (
+                {VIDEO_DIRECT_PAINTING_ENABLED && seedanceTaskMode === 'video-edit-painting' && (
                   <div className="mb-3 rounded-xl border border-violet-200 bg-white p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                       <div>
@@ -8283,7 +8286,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   type="button"
                   onClick={() => handleCreateSeedanceVideo()}
                   disabled={
-                    !seedancePrompt.trim()
+                    (!VIDEO_DIRECT_PAINTING_ENABLED && seedanceTaskMode === 'video-edit-painting')
+                    || !seedancePrompt.trim()
                     || isSeedanceLoading
                     || (seedanceModel === 'MiniMax-H3' ? !minimaxApiConfigured : seedanceModel === 'wan3.0-video' ? !dashscopeApiConfigured : !seedanceApiConfigured)
                     || (seedanceTaskMode === 'video-edit-painting' && (
@@ -8296,7 +8300,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   className="inline-flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isSeedanceLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-                  {seedanceTaskMode === 'video-edit-painting' ? '开始直接换画' : '开始生成视频'}
+                  {seedanceTaskMode === 'video-edit-painting' ? '旧版换画已下线' : '开始生成视频'}
                 </button>
                 {seedanceTaskMode === 'generate' && <button
                   type="button"
