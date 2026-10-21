@@ -47,8 +47,19 @@ try {
     assert.equal(payload.parameters.audio,mode!=='silent');
   }
   assert.equal(buildWanEditPayload({resolution:'480p',audioMode:'preserve',sourceHasAudio:false},'p','https://v').parameters.audio,false);
-  const body=opts(), first=await service.create(body,'https://app.test','deviceA');
+  const body=opts(), first=await service.create(body,'https://app.test','deviceA',Date.now()-6000);
   const completed=await drive(first.id); assert.equal(completed.stage,'completed',completed.error);
+  assert.ok(completed.startedAt <= completed.createdAt - 5900, 'the request start includes upload time');
+  assert.ok(completed.finishedAt >= completed.createdAt);
+  assert.ok(completed.elapsedMs >= 6000);
+  const total = completed.elapsedMs, finishedAt = completed.finishedAt;
+  const realNow = Date.now;
+  try {
+    Date.now = () => realNow() + 30000;
+    service.markLibrarySaved(first.id,{folderName:'作品',id:1},'deviceA');
+    assert.equal(service.get(first.id,'deviceA').elapsedMs,total,'saving to library cannot inflate completion time');
+    assert.equal(service.get(first.id,'deviceA').finishedAt,finishedAt);
+  } finally { Date.now = realNow; }
   assert.equal(completed.resolution,'480p'); assert.equal(completed.hasProductReference,true);
   const request=posts.find(p=>p.body.model==='wan3.0-video');
   assert.match(request.url,/workspace.cn-beijing.maas.aliyuncs.com\/api\/v1\/services/);
@@ -62,7 +73,7 @@ try {
   assert.ok(queries.some(q=>q.url.startsWith(config.wanBase)&&q.headers.Authorization==='Bearer wan-key'));
   const final=await service.resultFile(first.id,'deviceA'); assert.equal(String(await readFile(final.path)),'video-bytes');
   service.stop();service=createPersonReplacementService(deps);
-  const before=count(); assert.equal((await service.create(body,'https://app.test','deviceA')).id,first.id);assert.equal(count(),before);
+  const before=count(); assert.equal((await service.create(body,'https://app.test','deviceA')).id,first.id);assert.equal(count(),before);assert.equal(service.get(first.id,'deviceA').elapsedMs,total,'elapsed survives restart');
   assert.equal(service.get(first.id,'deviceB'),null);
   const pending=await service.create(opts({resolution:'1080p',faceMode:'no-visible-face',files:[new File(['source'],'clip.mp4',{type:'video/mp4'})]}),'https://app.test');
   const previousMasks=masks(); failQuery=true;
@@ -74,7 +85,7 @@ try {
   assert.equal(posts.at(-1).body.input.media.length,1,'reference image remains optional');
   const failing=await service.create(opts(),'https://app.test');failTask=true;
   assert.equal((await drive(failing.id)).stage,'failed');
-  const beforeRetryMasks=masks();failTask=false;service.retry(failing.id);assert.equal((await drive(failing.id)).stage,'completed');assert.equal(masks(),beforeRetryMasks);
+  const beforeRetryMasks=masks();assert.ok(service.get(failing.id).finishedAt);failTask=false;service.retry(failing.id);assert.equal(service.get(failing.id).finishedAt,null);assert.equal((await drive(failing.id)).stage,'completed');assert.equal(masks(),beforeRetryMasks);
   const uncertainBody=opts(), uncertain=await service.create(uncertainBody,'https://app.test');failPost=true;
   const unknown=await drive(uncertain.id);assert.equal(unknown.stage,'awaiting_confirmation');assert.equal(unknown.awaitingNotification,false);
   assert.match(unknown.notice,/阿里云/);assert.ok(!unknown.notice.includes('火山'));

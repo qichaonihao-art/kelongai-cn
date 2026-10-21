@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, History, X, Download, RefreshCw, UserRound, Check, Upload, Film, FolderOpen, Play, ZoomIn, Image as ImageIcon } from 'lucide-react';
+import VideoEditElapsed, { formatVideoEditElapsed } from '@/src/components/VideoEditElapsed';
 import UploadHistoryPreview from '@/src/components/UploadHistoryPreview';
 import HistoryVideoThumbnail from '@/src/components/HistoryVideoThumbnail';
 import { getKelongDeviceId, getSeedanceRatePerSecond } from '@/src/lib/creative';
@@ -13,6 +14,7 @@ interface PersonTask {
   id: string; stage: string; model: Model; resolution: string; audioMode: AudioMode; prompt: string; dialogue?: string; voiceDescription?: string;
   editVersion?: number; personMode?: PersonMode; faceMode?: FaceMode; personDescription?: string; clothing?: string; scene?: string;
   hasProductReference?: boolean; productReferenceName?: string; maskSkipped?: boolean;
+  startedAt?: number; finishedAt?: number; elapsedMs?: number | null;
   sourceName: string; duration: number; createdAt: number; updatedAt: number; libraryFolder?: string;
   videoUrl: string; maskedVideoUrl: string; generatedVideoUrl: string; error: string; notice: string; canRetry: boolean; canRecover: boolean; awaitingNotification?: boolean; generationTaskId?: string; ambiguous: boolean;
 }
@@ -163,6 +165,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
   const [tasks, setTasks] = useState<PersonTask[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStartedAt, setUploadStartedAt] = useState(0);
   const [recovering, setRecovering] = useState(false);
   const [missingRequest, setMissingRequest] = useState(false);
   const [pendingRequest, setPendingRequest] = useState(() => { try { return localStorage.getItem(PENDING_KEY) || ''; } catch { return ''; } });
@@ -305,7 +308,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
     if (!duration || duration < 4 || duration > maxDuration) { setError(`所选模型支持4-${maxDuration}秒视频，请先裁剪或切换模型`); return; }
     let deviceId: string;
     try { deviceId = deviceIdForRequest(); } catch (err) { setError(err instanceof Error ? err.message : '无法识别当前设备'); return; }
-    submitting.current = true; setUploading(true); setUploadProgress(0); setError(''); setNotice('');
+    submitting.current = true; setUploadStartedAt(Date.now()); setUploading(true); setUploadProgress(0); setError(''); setNotice('');
     const requestId = reusePending ? pendingRequest : crypto.randomUUID(); rememberPending(requestId);
     const form = new FormData();
     form.append('files', video); if (productReference) form.append('files', productReference);
@@ -416,8 +419,15 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
     {pendingRequest && missingRequest && !uploading && <button type="button" disabled={locked || !video} onClick={() => void submit(true)} className="ml-2 text-xs font-bold text-violet-600">用相同编号重新上传</button>}
     {pendingRequest && !uploading && <button type="button" disabled={recovering} onClick={() => void recover()} className="ml-2 text-xs font-bold text-violet-600">查询上次提交结果</button>}
     {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-xs leading-5 text-red-600">{error}</p>}
-    {task && <div aria-live="polite" className="space-y-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
-      <div className="flex items-center gap-2 text-xs font-bold text-violet-700">{busyTask(task) ? <Loader2 size={16} className="animate-spin" /> : task.stage === 'completed' ? <Check size={16} /> : <RefreshCw size={16} />}{STAGES[task.stage] || task.stage}</div>
+    {uploading && <div className="flex items-center justify-between gap-4 rounded-xl border border-violet-200 bg-violet-50 p-3">
+      <div className="text-xs leading-5 text-violet-800"><p className="font-bold">正在上传视频 · {uploadProgress}%</p><p className="text-[11px]">上传、打码、视频生成全程计时</p></div>
+      <VideoEditElapsed elapsedMs={0} startedAt={uploadStartedAt} running />
+    </div>}
+    {!uploading && task && <div aria-live="polite" className="space-y-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0 text-xs leading-5 text-violet-700"><div className="flex items-center gap-2 font-bold">{busyTask(task) ? <Loader2 size={16} className="animate-spin motion-reduce:animate-none" /> : task.stage === 'completed' ? <Check size={16} /> : <RefreshCw size={16} />}{STAGES[task.stage] || task.stage}</div><p className="mt-1 text-[11px] font-normal">{task.stage === 'completed' ? '已完成全流程，计时已停止' : '上传、打码、视频生成全程计时'}</p></div>
+        <VideoEditElapsed elapsedMs={task.elapsedMs} running={busyTask(task)} completed={task.stage === 'completed'} />
+      </div>
       <p className="break-all text-[11px] text-slate-500">{task.sourceName} · {modelLabel(task.model)} · {task.resolution.toUpperCase()} · {new Date(task.createdAt).toLocaleString('zh-CN')}</p>
       {task.editVersion === 2 && <div className="text-xs leading-5 text-slate-600"><p>{task.hasProductReference ? `画作参考：${task.productReferenceName}` : '保留原画，未上传产品参考图'} · {task.personMode === 'generate' ? '文字生成新人物' : '保留原人物形象'}</p>{task.personDescription && <p>新人物：{task.personDescription}</p>}{task.clothing && <p>服装调整：{task.clothing}</p>}{task.scene && <p>场景调整：{task.scene}</p>}</div>}
       {task.voiceDescription && <p className="text-xs leading-5 text-slate-600">目标音色：{task.voiceDescription}</p>}
@@ -445,7 +455,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
     <div className="space-y-2 border-t border-slate-200 pt-3"><div className="text-xs font-bold">视频编辑记录 <span className="ml-1 text-[10px] font-normal text-slate-400">仅当前设备</span></div>
       {!tasks.length && <p className="text-xs text-slate-400">当前设备暂无记录，处理进度会自动保存，刷新后可继续查看。</p>}
       {tasks.map(item => <button type="button" key={item.id} disabled={uploading || acting} onClick={() => { selectedId.current = item.id; setTask(item); setNotice(''); }} className={`flex w-full items-center justify-between gap-2 rounded-lg border p-2 text-left text-xs ${task?.id === item.id ? 'border-violet-300 bg-violet-50' : 'border-slate-200'}`}>
-        <span className="min-w-0"><span className="block truncate">{item.sourceName}</span><span className="text-[10px] text-slate-400">{new Date(item.createdAt).toLocaleString('zh-CN')}</span></span><span className="shrink-0 text-[11px]">{STAGES[item.stage] || item.stage}</span>
+        <span className="min-w-0"><span className="block truncate">{item.sourceName}</span><span className="text-[10px] text-slate-400">{new Date(item.createdAt).toLocaleString('zh-CN')}{item.elapsedMs != null && item.stage === 'completed' ? ` · 用时 ${formatVideoEditElapsed(item.elapsedMs)}` : ''}</span></span><span className="shrink-0 text-[11px]">{STAGES[item.stage] || item.stage}</span>
       </button>)}
     </div>
     {promptHistoryOpen && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 p-4" onClick={() => setPromptHistoryOpen(false)} onKeyDown={event => { if (event.key === 'Escape') setPromptHistoryOpen(false); }}>

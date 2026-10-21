@@ -80,7 +80,12 @@ export function createPersonReplacementService(deps) {
     return row ? JSON.parse(row.data) : null;
   }
   function save(job, update = {}) {
-    Object.assign(job, update, { updatedAt: Date.now() });
+    const now = Date.now();
+    if (update.stage && update.stage !== job.stage) {
+      if (['failed', 'completed'].includes(update.stage)) update.finishedAt = now;
+      else if (job.finishedAt) update.finishedAt = null;
+    }
+    Object.assign(job, update, { updatedAt: now });
     db().prepare('UPDATE person_replacement_jobs SET data = ? WHERE id = ?').run(JSON.stringify(job), job.id);
     return job;
   }
@@ -104,6 +109,8 @@ export function createPersonReplacementService(deps) {
     const canRecover = stage === 'awaiting_confirmation' || (stage === 'failed' && ambiguous && failedStage === 'submitting_generation');
     const recoveryError = canRecover && error ? `向${editModelLabel(job)}提交请求未收到确认回复，已保留打码结果。可通过${editProviderLabel(job)}任务编号恢复查询。` : error;
     return { id, stage, error: recoveryError, notice, model, resolution, audioMode, prompt, dialogue, voiceDescription, createdAt, updatedAt, duration, hasPortrait, sourceName, ambiguous: !!ambiguous,
+      startedAt: job.startedAt || null, finishedAt: job.finishedAt || null,
+      elapsedMs: job.startedAt ? Math.max(0, (job.finishedAt || Date.now()) - job.startedAt) : null,
       editVersion: job.editVersion, personMode: job.personMode, faceMode: job.faceMode, personDescription: job.personDescription, clothing: job.clothing, scene: job.scene,
       hasProductReference: !!job.hasProductReference, productReferenceName: job.productReferenceName || '', maskSkipped: !!job.maskSkipped,
       libraryFolder: job.libraryFolder || '', libraryItemId: job.libraryItemId || null,
@@ -121,7 +128,7 @@ export function createPersonReplacementService(deps) {
       : db().prepare('SELECT data FROM person_replacement_jobs WHERE device_id = ? ORDER BY rowid DESC LIMIT 50').all(deviceId);
     return rows.map(row => view(JSON.parse(row.data)));
   }
-  async function create(body, baseUrl, deviceId) {
+  async function create(body, baseUrl, deviceId, requestStartedAt = Date.now()) {
     if (deviceId !== undefined) owned(null, deviceId);
     const options = validatePersonOptions(body);
     const previous = byRequest(options.requestId);
@@ -140,7 +147,7 @@ export function createPersonReplacementService(deps) {
     if (!/\.(mp4|mov)$/i.test(video.name) || video.size > 50 * 1024 * 1024) throw new Error('原视频请使用50MB以内的MP4或MOV');
     if (images[0] && (!['image/jpeg', 'image/png', 'image/webp'].includes(images[0].type) || images[0].size > 10 * 1024 * 1024)) throw new Error('参考图请使用10MB以内的JPG、PNG或WebP');
     const job = { ...options, ...(isWanEdit(options) ? { wanBase: (config.wanBase || 'https://dashscope.aliyuncs.com').replace(/\/$/, '') } : {}), audioVersion: 2, id: randomUUID(), mediaToken: randomUUID(), baseUrl: baseUrl.replace(/\/$/, ''), stage: 'uploading',
-      createdAt: Date.now(), updatedAt: Date.now(), hasPortrait: !options.editVersion && !!images[0], hasProductReference: options.editVersion === 2 && !!images[0], sourceName: video.name, error: '', notice: '' };
+      startedAt: Math.min(Date.now(), requestStartedAt), createdAt: Date.now(), updatedAt: Date.now(), hasPortrait: !options.editVersion && !!images[0], hasProductReference: options.editVersion === 2 && !!images[0], sourceName: video.name, error: '', notice: '' };
     // Reserve before asynchronous file writes, so repeated clicks cannot create duplicate jobs.
     db().prepare('INSERT INTO person_replacement_jobs (id, request_id, data, device_id) VALUES (?, ?, ?, ?)').run(job.id, job.requestId, JSON.stringify(job), deviceId || '');
     creating.add(job.id);

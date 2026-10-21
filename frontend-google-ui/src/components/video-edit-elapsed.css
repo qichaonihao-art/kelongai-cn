@@ -1,0 +1,14 @@
+.ve-elapsed { color:#5b21b6; flex-shrink:0; text-align:right; min-width:88px; }
+.ve-elapsed-caption { display:flex; align-items:center; justify-content:flex-end; gap:4px; font-size:10px; font-weight:600; line-height:16px; }
+.ve-elapsed-time { font-size:25px; font-weight:650; font-variant-numeric:tabular-nums; letter-spacing:-.025em; line-height:31px; }
+.ve-elapsed-visual { display:inline-flex; }
+.ve-elapsed-slot { display:inline-flex; overflow:hidden; }
+.ve-elapsed-digit { display:inline-block; min-width:.66em; text-align:center; animation:ve-elapsed-tick .18s cubic-bezier(.16,1,.3,1); }
+.ve-elapsed-colon { padding:0 .055em; opacity:.65; }
+.ve-elapsed-activity { display:block; position:relative; margin-top:3px; margin-left:auto; width:64px; height:2px; overflow:hidden; background:#ddd6fe; border-radius:2px; }
+.ve-elapsed-activity > span { display:block; width:22px; height:2px; background:#7c3aed; border-radius:2px; animation:ve-elapsed-travel 1.8s ease-in-out infinite; }
+.ve-elapsed-completed { color:#047857; }
+.ve-elapsed-missing { color:#64748b; font-size:10px; }
+@keyframes ve-elapsed-tick { from {transform:translateY(5px);opacity:.45} to {transform:translateY(0);opacity:1} }
+@keyframes ve-elapsed-travel { from {transform:translateX(-22px)} to {transform:translateX(64px)} }
+@media (prefers-reduced-motion:reduce) { .ve-elapsed-digit, .ve-elapsed-activity > span { animation:none; } }

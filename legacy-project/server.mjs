@@ -21021,8 +21021,9 @@ async function handlePersonReplacement(req, res, url) {
       sendJson(res, 200, { task: personReplacement.byRequest(suffix[1], deviceId) }); return;
     }
     if (req.method === 'POST' && suffix.length === 0) {
+      const requestStartedAt = Date.now(); // Include multipart upload time in the durable elapsed time.
       const body = await readSeedanceTaskFormBody(req);
-      const task = await personReplacement.create(body, getConfiguredPublicBaseUrl(), deviceId);
+      const task = await personReplacement.create(body, getConfiguredPublicBaseUrl(), deviceId, requestStartedAt);
       sendJson(res, 201, { task }); return;
     }
     const id = suffix[0];
