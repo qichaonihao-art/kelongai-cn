@@ -11,14 +11,14 @@ export const PERSON_MODELS = ['doubao-seedance-2-0-260128', 'doubao-seedance-2-5
 export function validatePersonOptions(body) {
   const edit = validateSceneEditOptions(body);
   const model = String(body.model || PERSON_MODELS[0]);
-  const resolution = String(body.resolution || '720p');
+  const resolution = String(body.resolution || '480p');
   const audioMode = String(body.audioMode || 'preserve');
   const prompt = String(body.prompt || '').trim();
   const dialogue = ['rewrite', 'new-voice'].includes(audioMode) ? String(body.dialogue || '').trim() : '';
   const voiceDescription = audioMode === 'new-voice' ? String(body.voiceDescription || '').trim() : '';
   const requestId = String(body.creationRequestId || '');
   if (!PERSON_MODELS.includes(model)) throw new Error('人物替换请选择 Seedance 2.0 或 2.5');
-  if (!(model === PERSON_MODELS[1] ? ['720p'] : ['480p', '720p']).includes(resolution)) throw new Error('人物替换支持480P或720P');
+  if (!['480p', '720p'].includes(resolution)) throw new Error('人物替换支持480P或720P');
   if (!['preserve', 'rewrite', 'new-voice', 'silent', 'generate'].includes(audioMode)) throw new Error('请选择有效的声音模式');
   if (['rewrite', 'new-voice'].includes(audioMode) && (!dialogue || dialogue.length > 2000)) throw new Error('请填写新台词，最多2000字');
   if (voiceDescription.length > 500) throw new Error('音色描述最多500字');

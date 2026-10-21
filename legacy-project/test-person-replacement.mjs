@@ -66,7 +66,11 @@ try {
   assert.equal(PERSON_GENERATION_SUBMIT_TIMEOUT_MS, 180000);
   assert.throws(() => validatePersonOptions(options({ audioMode: 'bad' })), /声音/);
   assert.throws(() => validatePersonOptions(options({ model: 'wan3.0-video' })), /请选择/);
-  assert.throws(() => validatePersonOptions(options({ model: PERSON_MODELS[1], resolution: '480p' })), /支持/);
+  for (const model of PERSON_MODELS) {
+    assert.equal(validatePersonOptions(options({ model, resolution: undefined })).resolution, '480p');
+    for (const resolution of ['480p', '720p']) assert.equal(validatePersonOptions(options({ model, resolution })).resolution, resolution);
+    assert.throws(() => validatePersonOptions(options({ model, resolution: 'bad' })), /支持/);
+  }
   // The temporary input mask must be explicitly excluded from fidelity constraints in every mode.
   for (const model of PERSON_MODELS) for (const audioMode of ['preserve', 'rewrite', 'new-voice', 'silent']) for (const hasPortrait of [false, true]) {
     const prompt = buildPersonPrompt({ model, audioMode, hasPortrait, audioVersion: 2, sourceHasAudio: true,
@@ -347,7 +351,7 @@ try {
   assert.throws(() => validatePersonOptions(editOptions({ clothing: '衣'.repeat(501) })), /服装/);
   assert.throws(() => validatePersonOptions(editOptions({ scene: '景'.repeat(1001) })), /场景/);
   const productBytes = new TextEncoder().encode('product-reference-only');
-  const editBody = editOptions({ files: [new File([sourceBytes], 'clip.mp4', { type: 'video/mp4' }), new File([productBytes], '牡丹挂画.png', { type: 'image/png' })] });
+  const editBody = editOptions({ resolution: '480p', files: [new File([sourceBytes], 'clip.mp4', { type: 'video/mp4' }), new File([productBytes], '牡丹挂画.png', { type: 'image/png' })] });
   const edit = await service.create(editBody, 'https://app.test');
   let edited = await drive(edit.id);
   assert.equal(edited.stage, 'completed', edited.error);
@@ -359,6 +363,8 @@ try {
   const editRequest = posts.at(-1).body;
   assert.equal(editRequest.omni_reference_task_type, 'edit');
   assert.equal(editRequest.duration, -1);
+  assert.equal(editRequest.resolution, '480p');
+  assert.equal(editRequest.watermark, false);
   assert.match(editRequest.content.find(item => item.type === 'image_url').image_url.url, /product.png$/);
   assert.ok(!JSON.stringify(editRequest).includes('portrait.'), 'the product image cannot be sent as a portrait');
   const editPrompt = editRequest.content[0].text;
@@ -366,6 +372,12 @@ try {
   assert.match(editPrompt, /不是人脸、人物、服装、背景或新场景参考/);
   assert.match(editPrompt, /保留原人物形象/);
   assert.match(editPrompt, /不重新设计演员/);
+  assert.match(editPrompt, /默认清除原片叠加水印/);
+  assert.match(editPrompt, /不以裁剪、放大画面/);
+  assert.match(editPrompt, /保留装饰画本身的书法、题字/);
+  assert.match(editPrompt, /不是对马赛克做锐化/);
+  assert.match(editPrompt, /均不适用于原片叠加水印和临时人脸打码/);
+  assert.match(editPrompt, /不要求从遮罩中还原原始身份/);
   assert.match(editPrompt, /原服装的颜色、款式、材质全部保持原样/);
   assert.match(editPrompt, /原场景、背景、家具、光照及其他陈设全部保持原样/);
   assert.ok(!editPrompt.includes('只替换人物形象'));

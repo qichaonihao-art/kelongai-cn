@@ -154,7 +154,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
   const [dialogue, setDialogue] = useState('');
   const [voiceDescription, setVoiceDescription] = useState('');
   const [model, setModel] = useState<Model>('doubao-seedance-2-5-260628');
-  const [resolution, setResolution] = useState('720p');
+  const [resolution, setResolution] = useState('480p');
   const [audioMode, setAudioMode] = useState<AudioMode>('preserve');
   const [duration, setDuration] = useState(0);
   const [task, setTask] = useState<PersonTask | null>(null);
@@ -359,7 +359,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
   }
   const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-violet-400 disabled:opacity-60';
   return <div className="space-y-4">
-    <p className="text-xs leading-5 text-slate-500">直接编辑上传的原视频，默认只把主要展示的装饰画换成参考图款式，保留原人物形象、镜头、动作、场景与原声。含人脸时先打码，成片要求面部清晰、无马赛克。</p>
+    <p className="text-xs leading-5 text-slate-500">直接编辑上传的原视频，默认只把主要展示的装饰画换成参考图款式，保留原人物形象、镜头、动作、场景与原声。含人脸时先打码，成片要求重绘清晰面部并清除原片水印；画作图案与文字保留。</p>
     <fieldset disabled={locked} className="space-y-4 disabled:opacity-70">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <MediaUploadCard kind="video" file={video} previewUrl={videoUrl} duration={duration} disabled={locked} onFile={file => void selectFile(file, 'video')}
@@ -369,8 +369,8 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
       </div>
       <p className="text-[11px] leading-5 text-slate-500">参考图只用于指定画的款式，不用于指定人脸或场景。尽量上传主体清晰的产品图；不上传时保留原画，只执行人物和其他明确选中的调整。</p>
       <label className="block text-xs font-bold">人物处理方式<select aria-label="人物处理方式" value={personMode} onChange={event => setPersonMode(event.target.value as PersonMode)} className={`${inputClass} mt-2`}>
-        <option value="keep">保留原人物形象，面部清晰（默认）</option><option value="generate">按文字生成新人物</option>
-      </select><span className="mt-1 block text-[11px] font-normal leading-5 text-slate-500">尽量保持原人物整体外观，无法保证被遮挡五官精确还原；不需要上传指定人脸图片。</span></label>
+        <option value="keep">保留人物整体形象，重绘清晰面部（默认）</option><option value="generate">按文字生成新人物</option>
+      </select><span className="mt-1 block text-[11px] font-normal leading-5 text-slate-500">默认保留年龄、发型、体态和服装，重新生成自然清晰五官，无法精确还原被打码的原脸。若不要求接近原人物，可选“按文字生成新人物”；两种方式都不能保证模型每次完全清除打码。</span></label>
       {personMode === 'generate' && <label className="block text-xs font-bold">新人物描述（选填）<textarea aria-label="新人物描述" value={personDescription} onChange={event => setPersonDescription(event.target.value)} rows={3} maxLength={1000} className={`${inputClass} mt-2`} placeholder="例如：40岁左右的女性，气质亲切自然。不填时由 AI 生成自然成年人物。" /></label>}
       <details className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
         <summary className="cursor-pointer text-xs font-bold text-slate-600">更多调整（选填）：服装、场景与人脸预处理</summary>
@@ -394,11 +394,11 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
         {promptHistoryNotice && <p role="status" className="mt-1 text-[11px] text-slate-500">{promptHistoryNotice}</p>}
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <label className="text-xs font-bold">生成模型<select aria-label="视频编辑模型" value={model} onChange={event => { const next = event.target.value as Model; setModel(next); if (next === 'doubao-seedance-2-5-260628') setResolution('720p'); }} className={`${inputClass} mt-2`}>
+        <label className="text-xs font-bold">生成模型<select aria-label="视频编辑模型" value={model} onChange={event => { const next = event.target.value as Model; setModel(next); setResolution('480p'); }} className={`${inputClass} mt-2`}>
           <option value="doubao-seedance-2-0-260128">Seedance 2.0</option><option value="doubao-seedance-2-5-260628">Seedance 2.5</option>
         </select></label>
         <label className="text-xs font-bold">分辨率<select aria-label="视频编辑分辨率" value={resolution} onChange={event => setResolution(event.target.value)} className={`${inputClass} mt-2`}>
-          {model === 'doubao-seedance-2-0-260128' && <option value="480p">480P</option>}<option value="720p">720P</option>
+          <option value="480p">480P</option><option value="720p">720P</option>
         </select></label>
       </div>
       <label className="block text-xs font-bold">声音<select aria-label="视频编辑声音" value={audioMode} onChange={event => setAudioMode(event.target.value as AudioMode)} className={`${inputClass} mt-2`}>
@@ -406,7 +406,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
       </select></label>
       {audioMode === 'new-voice' && <label className="block text-xs font-bold">目标音色描述（选填）<input aria-label="人物替换目标音色" value={voiceDescription} onChange={event => setVoiceDescription(event.target.value)} maxLength={500} className={`${inputClass} mt-2`} placeholder="例如：自然亲切的成年女声，普通话，语速适中" /><span className="mt-1 block text-[11px] font-normal leading-5 text-slate-500">不填时按人物要求匹配新声音，不沿用原人物音色。</span></label>}
       {['rewrite', 'new-voice'].includes(audioMode) ? <label className="block text-xs font-bold">新台词<textarea aria-label="人物替换新台词" value={dialogue} onChange={event => setDialogue(event.target.value)} maxLength={2000} rows={4} className={`${inputClass} mt-2`} placeholder="填写希望人物说的完整台词，口型将跟随新台词。" /><span className="mt-1 block text-[11px] font-normal leading-5 text-slate-500">{audioMode === 'rewrite' ? '原视频需要有清晰人声，用于参考原音色。' : '使用新音色，不要求原视频有人声。'}台词长度尽量适合原视频时长，声音与新口型由模型一同处理。</span></label> : audioMode === 'preserve' ? <p className="text-[11px] leading-5 text-slate-500">默认保留原台词、音色、背景音乐与环境声，口型由视频编辑模型同步处理。</p> : null}
-      <p className="text-[11px] leading-5 text-slate-500">支持4–{maxDuration}秒，尽量保留原片比例和动作。{estimate ? `视频生成预估 ¥${estimate}` : '上传视频后显示生成费用估算'}；{faceMode === 'mask' ? '另含人脸打码费用，' : '已选择跳过人脸打码，'}实际费用以平台账单为准。</p>
+      <p className="text-[11px] leading-5 text-slate-500">支持4–{maxDuration}秒，尽量保留原片比例和动作。{estimate ? `视频生成预估 ¥${estimate}` : duration ? '当前分辨率暂无费用估算' : '上传视频后显示可用的生成费用估算'}；{faceMode === 'mask' ? '另含人脸打码费用，' : '已选择跳过人脸打码，'}实际费用以平台账单为准。</p>
     </fieldset>
     <button type="button" disabled={locked || !!pendingRequest || !video || (['rewrite', 'new-voice'].includes(audioMode) && !dialogue.trim())} onClick={() => void submit()} className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-5 py-3 text-xs font-bold text-white disabled:opacity-50">
       {locked ? <Loader2 size={16} className="animate-spin" /> : <UserRound size={16} />}{uploading ? `正在上传 ${uploadProgress}%` : '开始视频编辑'}
