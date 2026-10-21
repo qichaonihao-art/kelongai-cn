@@ -13,7 +13,7 @@ type AudioMode = 'preserve' | 'rewrite' | 'new-voice' | 'silent' | 'generate';
 interface PersonTask {
   id: string; stage: string; model: Model; resolution: string; audioMode: AudioMode; prompt: string; dialogue?: string; voiceDescription?: string;
   editVersion?: number; personMode?: PersonMode; faceMode?: FaceMode; personDescription?: string; clothing?: string; scene?: string;
-  hasProductReference?: boolean; productReferenceName?: string; maskSkipped?: boolean;
+  hasProductReference?: boolean; productReferenceName?: string; maskSkipped?: boolean; maskReused?: boolean;
   startedAt?: number; finishedAt?: number; elapsedMs?: number | null;
   sourceName: string; duration: number; createdAt: number; updatedAt: number; libraryFolder?: string;
   videoUrl: string; maskedVideoUrl: string; generatedVideoUrl: string; error: string; notice: string; canRetry: boolean; canRecover: boolean; awaitingNotification?: boolean; generationTaskId?: string; ambiguous: boolean;
@@ -411,7 +411,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
       </select></label>
       {audioMode === 'new-voice' && <label className="block text-xs font-bold">目标音色描述（选填）<input aria-label="人物替换目标音色" value={voiceDescription} onChange={event => setVoiceDescription(event.target.value)} maxLength={500} className={`${inputClass} mt-2`} placeholder="例如：自然亲切的成年女声，普通话，语速适中" /><span className="mt-1 block text-[11px] font-normal leading-5 text-slate-500">不填时按人物要求匹配新声音，不沿用原人物音色。</span></label>}
       {['rewrite', 'new-voice'].includes(audioMode) ? <label className="block text-xs font-bold">新台词<textarea aria-label="人物替换新台词" value={dialogue} onChange={event => setDialogue(event.target.value)} maxLength={2000} rows={4} className={`${inputClass} mt-2`} placeholder="填写希望人物说的完整台词，口型将跟随新台词。" /><span className="mt-1 block text-[11px] font-normal leading-5 text-slate-500">{audioMode === 'rewrite' ? '原视频需要有清晰人声，用于参考原音色。' : '使用新音色，不要求原视频有人声。'}台词长度尽量适合原视频时长，声音与新口型由模型一同处理。</span></label> : audioMode === 'preserve' ? <p className="text-[11px] leading-5 text-slate-500">默认保留原台词、音色、背景音乐与环境声，口型由视频编辑模型同步处理。</p> : null}
-      <p className="text-[11px] leading-5 text-slate-500">支持4–{maxDuration}秒，尽量保留原片比例和动作。{estimate ? `视频生成预估 ¥${estimate}` : duration ? '当前分辨率暂无费用估算' : '上传视频后显示可用的生成费用估算'}{model === 'wan3.0-video' && '（按输入与输出等长估算，阿里云合计计费）'}；{faceMode === 'mask' ? '另含人脸打码费用，' : '已选择跳过人脸打码，'}实际费用以平台账单为准。</p>
+      <p className="text-[11px] leading-5 text-slate-500">支持4–{maxDuration}秒，尽量保留原片比例和动作。{estimate ? `视频生成预估 ¥${estimate}` : duration ? '当前分辨率暂无费用估算' : '上传视频后显示可用的生成费用估算'}{model === 'wan3.0-video' && '（按输入与输出等长估算，阿里云合计计费）'}；{faceMode === 'mask' ? '首次打码另计费用，可复用时不重复打码，' : '已选择跳过人脸打码，'}实际费用以平台账单为准。</p>
     </fieldset>
     <button type="button" disabled={locked || !!pendingRequest || !video || (['rewrite', 'new-voice'].includes(audioMode) && !dialogue.trim())} onClick={() => void submit()} className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-5 py-3 text-xs font-bold text-white disabled:opacity-50">
       {locked ? <Loader2 size={16} className="animate-spin" /> : <UserRound size={16} />}{uploading ? `正在上传 ${uploadProgress}%` : '开始视频编辑'}
@@ -429,6 +429,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
         <VideoEditElapsed elapsedMs={task.elapsedMs} running={busyTask(task)} completed={task.stage === 'completed'} />
       </div>
       <p className="break-all text-[11px] text-slate-500">{task.sourceName} · {modelLabel(task.model)} · {task.resolution.toUpperCase()} · {new Date(task.createdAt).toLocaleString('zh-CN')}</p>
+      {task.maskReused && <p className="text-xs leading-5 text-emerald-700">已复用此原视频的历史打码结果，本次未再次提交打码。</p>}
       {task.editVersion === 2 && <div className="text-xs leading-5 text-slate-600"><p>{task.hasProductReference ? `画作参考：${task.productReferenceName}` : '保留原画，未上传产品参考图'} · {task.personMode === 'generate' ? '文字生成新人物' : '保留原人物形象'}</p>{task.personDescription && <p>新人物：{task.personDescription}</p>}{task.clothing && <p>服装调整：{task.clothing}</p>}{task.scene && <p>场景调整：{task.scene}</p>}</div>}
       {task.voiceDescription && <p className="text-xs leading-5 text-slate-600">目标音色：{task.voiceDescription}</p>}
       {task.dialogue && <details className="text-xs text-slate-600"><summary className="cursor-pointer">查看本次新台词</summary><p className="mt-2 whitespace-pre-wrap leading-5">{task.dialogue}</p></details>}

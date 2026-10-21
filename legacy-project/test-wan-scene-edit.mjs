@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -18,6 +19,7 @@ const deps = {getDb:()=>db,root, getConfig:()=>config,
     if(options.method==='POST') {
       const body = JSON.parse(options.body); posts.push({url,body,headers:options.headers});
       if(url.includes('face-blur')) return Response.json({task_id:'mask-'+posts.length});
+      if(url.includes('ark.cn-beijing')) return Response.json({id:'seedance-'+posts.length});
       const id='wan-'+posts.length; tasks.set(id,{body});
       if(failPost) throw new Error('timeout');
       if(rejectPost) return Response.json({code:'InvalidParameter',message:'bad input'});
@@ -104,5 +106,46 @@ try {
   assert.equal(normalizeWanEditTask({output:{task_status:'CANCELED'}}).status,'canceled');
   assert.equal(normalizeWanEditTask({output:{submit_time:'2026-10-21 10:00:00.000'}}).createdAt,Date.parse('2026-10-21T10:00:00+08:00')/1000);
   assert.equal(posts.every(p=>!p.url.includes('ark.cn-beijing.volces.com')),true);
+  // A new attempt is distinct paid video generation, but reuses verified masks within its device.
+  duration=8;config.seedanceKey='seedance-key';
+  service.stop();service=createPersonReplacementService({...deps,fetchTask:async()=>({status:'succeeded',videoUrl:'https://files.test/generated.mp4'})});
+  const cacheMasks=masks();
+  const renamed=await service.create(opts({model:'doubao-seedance-2-0-260128',resolution:'720p',prompt:'只换画的款式',files:[new File(['source'],'renamed.mp4',{type:'video/mp4'}),new File(['new-art'],'另一款.png',{type:'image/png'})]}),'https://app.test','deviceA');
+  assert.notEqual(renamed.id,first.id);
+  const reused=await drive(renamed.id);assert.equal(reused.stage,'completed',reused.error);assert.equal(reused.maskReused,true);
+  assert.equal(masks(),cacheMasks,'changing filename, model, resolution, art and prompt does not re-mask identical bytes');
+  assert.equal(posts.at(-1).body.model,'doubao-seedance-2-0-260128');assert.equal(posts.at(-1).body.resolution,'720p');
+  assert.match(posts.at(-1).body.content.find(m=>m.type==='video_url').video_url.url,new RegExp(renamed.id+'/[^/]+/masked.mp4$'));
+  const different=await service.create(opts({files:[new File(['different-original'],'clip.mp4',{type:'video/mp4'})]}),'https://app.test','deviceA');
+  assert.equal((await drive(different.id)).maskReused,false);assert.equal(masks(),cacheMasks+1,'same filename with different contents is not a cache hit');
+  const isolated=await service.create(opts(),'https://app.test','deviceB');assert.equal((await drive(isolated.id)).maskReused,false);assert.equal(masks(),cacheMasks+2,'devices do not share mask cache');
+  const sourceHash=createHash('sha256').update('source').digest('hex');
+  for(const row of db.prepare('SELECT data FROM person_replacement_jobs WHERE device_id = ?').all('deviceA')) {
+    const job=JSON.parse(row.data);if(job.sourceHash===sourceHash)await rm(path.join(root,job.id,'masked.mp4'),{force:true});
+  }
+  const missing=await service.create(opts(),'https://app.test','deviceA');assert.equal((await drive(missing.id)).maskReused,false);assert.equal(masks(),cacheMasks+3,'missing cached files are regenerated');
+  // Simulate an existing pre-cache job. No schema migration rewrites the original media.
+  const old=JSON.parse(db.prepare('SELECT data FROM person_replacement_jobs WHERE id = ?').get(missing.id).data);
+  delete old.sourceHash;delete old.maskProfile;db.prepare('UPDATE person_replacement_jobs SET data = ? WHERE id = ?').run(JSON.stringify(old),old.id);
+  service.stop();service=createPersonReplacementService(deps);
+  const legacy=await service.create(opts(),'https://app.test','deviceA');assert.equal((await drive(legacy.id)).maskReused,true);assert.equal(masks(),cacheMasks+3);
+  assert.equal(JSON.parse(db.prepare('SELECT data FROM person_replacement_jobs WHERE id = ?').get(old.id).data).sourceHash,sourceHash,'legacy hashes backfill once');
+  // Face-free copies must never be mistaken for completed paid masking.
+  const free=await service.create(opts({faceMode:'no-visible-face'}),'https://app.test','deviceC');assert.equal((await drive(free.id)).maskSkipped,true);
+  const face=await service.create(opts(),'https://app.test','deviceC');assert.equal((await drive(face.id)).maskReused,false);assert.equal(masks(),cacheMasks+4);
+  // A reused legacy mask lacking sound gets the original audio restored locally, not another masking bill.
+  await writeFile(path.join(root,legacy.id,'masked.mp4'),'silent-mask');
+  service.stop();service=createPersonReplacementService({...deps,exec:async(cmd,args)=>{
+    if(cmd==='ffmpeg') {await writeFile(args.at(-1),'audio-restored');return {stdout:''};}
+    const bytes=String(await readFile(args.at(-1)));return {stdout:JSON.stringify({streams:bytes==='silent-mask'?[]:[{codec_type:'audio'}]})};
+  }});
+  const audio=await service.create(opts(),'https://app.test','deviceA');assert.equal((await drive(audio.id)).maskReused,true);assert.equal(masks(),cacheMasks+4);
+  assert.equal(String(await readFile(path.join(root,audio.id,'masked.mp4'))),'audio-restored');
+  service.stop();service=createPersonReplacementService({...deps,probe:async(file)=>{
+    if(file.endsWith('masked.mp4'))throw new Error('cached video cannot decode');
+    return deps.probe(file);
+  }});
+  const broken=await service.create(opts(),'https://app.test','deviceA');assert.equal((await drive(broken.id)).maskReused,false);assert.equal(masks(),cacheMasks+5,'undecodable cache is not sent to a model');
+  console.log('PASS: same-device content-hash mask reuse across models, old-job backfill, cache restart, missing/corrupt file fallback, skipped-mask isolation and local audio restoration');
   console.log('PASS: Wan direct-edit multipart media roles, 480/720/1080, native audio, masked input, provider keys/endpoints, restart, per-device ownership, retry, ambiguous-submit recovery, logical rejection, input duration, and no paid calls');
 } finally { service.stop();db.close();await rm(root,{recursive:true,force:true}); }

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, writeFile, copyFile, rename, stat, rm } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { Readable, Transform } from 'node:stream';
@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { WAN_EDIT_MODEL, isWanEdit, editProviderLabel, editModelLabel, editMaxDuration, buildWanEditPayload, normalizeWanEditTask } from './wan-scene-edit.mjs';
 import { buildSceneEditPrompt, validateSceneEditOptions } from './video-scene-edit.mjs';
 
+const MASK_PROFILE = 'face-mosaic-medium-v1';
 export const PERSON_GENERATION_SUBMIT_TIMEOUT_MS = 180000;
 export const PERSON_MODELS = ['doubao-seedance-2-0-260128', 'doubao-seedance-2-5-260628', WAN_EDIT_MODEL];
 export function validatePersonOptions(body) {
@@ -67,6 +68,7 @@ export function createPersonReplacementService(deps) {
         connection.exec("ALTER TABLE person_replacement_jobs ADD COLUMN device_id TEXT NOT NULL DEFAULT ''");
       }
       connection.exec('CREATE INDEX IF NOT EXISTS person_replacement_jobs_device ON person_replacement_jobs(device_id)');
+      connection.exec("CREATE INDEX IF NOT EXISTS person_replacement_mask_source ON person_replacement_jobs(device_id, json_extract(data, '$.sourceHash'))");
       initialized = true;
     }
     return connection;
@@ -112,7 +114,7 @@ export function createPersonReplacementService(deps) {
       startedAt: job.startedAt || null, finishedAt: job.finishedAt || null,
       elapsedMs: job.startedAt ? Math.max(0, (job.finishedAt || Date.now()) - job.startedAt) : null,
       editVersion: job.editVersion, personMode: job.personMode, faceMode: job.faceMode, personDescription: job.personDescription, clothing: job.clothing, scene: job.scene,
-      hasProductReference: !!job.hasProductReference, productReferenceName: job.productReferenceName || '', maskSkipped: !!job.maskSkipped,
+      hasProductReference: !!job.hasProductReference, productReferenceName: job.productReferenceName || '', maskSkipped: !!job.maskSkipped, maskReused: !!job.maskReused,
       libraryFolder: job.libraryFolder || '', libraryItemId: job.libraryItemId || null,
       canRetry: stage === 'failed' && !ambiguous && failedStage !== 'uploading',
       canRecover, awaitingNotification: canRecover && !!job.callbackToken,
@@ -153,7 +155,10 @@ export function createPersonReplacementService(deps) {
     creating.add(job.id);
     try {
       await mkdir(path.join(root, job.id), { recursive: true });
-      await writeFile(filePath(job, 'source.mp4'), Buffer.from(await video.arrayBuffer()));
+      const sourceBytes = Buffer.from(await video.arrayBuffer());
+      job.sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+      job.maskProfile = MASK_PROFILE;
+      await writeFile(filePath(job, 'source.mp4'), sourceBytes);
       const metadata = await probe(filePath(job, 'source.mp4'));
       const maxDuration = editMaxDuration(options.model);
       if (metadata.durationSeconds < 4 || metadata.durationSeconds > maxDuration) throw new Error(`所选模型支持4-${maxDuration}秒视频，当前为${metadata.durationSeconds.toFixed(1)}秒，请先裁剪或切换模型`);
@@ -287,6 +292,46 @@ export function createPersonReplacementService(deps) {
     schedule(10);
     return view(current);
   }
+  async function tryReuseMask(job) {
+    // Reuse only within the owning device; never accept a client-supplied path or hash.
+    const owner = db().prepare('SELECT device_id FROM person_replacement_jobs WHERE id = ?').get(job.id)?.device_id;
+    if (!owner || !job.sourceHash) return false;
+    const rows = db().prepare("SELECT data FROM person_replacement_jobs WHERE device_id = ? AND id <> ? AND (json_extract(data, '$.sourceHash') = ? OR json_extract(data, '$.sourceHash') IS NULL) AND json_extract(data, '$.maskedReady') = 1 ORDER BY rowid DESC").all(owner, job.id, job.sourceHash);
+    for (const row of rows) {
+      const candidate = JSON.parse(row.data);
+      if (candidate.maskSkipped || candidate.blurTaskFailed || (candidate.maskProfile || 'face-mosaic-medium-v1') !== MASK_PROFILE) continue;
+      try {
+        if (!candidate.sourceHash) {
+          // Existing jobs can be reused too. Backfill once, streaming the source rather than loading it into memory.
+          const sourceInfo = await stat(filePath(candidate, 'source.mp4'));
+          const currentInfo = await stat(filePath(job, 'source.mp4'));
+          if (sourceInfo.size !== currentInfo.size) continue;
+          const hash = createHash('sha256');
+          for await (const bytes of createReadStream(filePath(candidate, 'source.mp4'))) hash.update(bytes);
+          candidate.sourceHash = hash.digest('hex');
+          db().prepare('UPDATE person_replacement_jobs SET data = ? WHERE id = ?').run(JSON.stringify(candidate), candidate.id);
+        }
+        if (candidate.sourceHash !== job.sourceHash) continue;
+        const info = await stat(filePath(candidate, 'masked.mp4'));
+        if (!info.size || info.size > 50 * 1024 * 1024) continue;
+        const metadata = await probe(filePath(candidate, 'masked.mp4'));
+        if (!(metadata.width > 0 && metadata.height > 0 && metadata.durationSeconds > 0) || Math.abs(metadata.durationSeconds - job.duration) > .5) continue;
+      } catch { continue; } // Deleted, incomplete or invalid historical files are never reused.
+      await copyFile(filePath(candidate, 'masked.mp4'), filePath(job, 'masked.mp4'));
+      await prepareMaskedAudio(job);
+      save(job, { stage: 'ready', maskedReady: true, maskReused: true, maskReusedFrom: candidate.id });
+      return true;
+    }
+    return false;
+  }
+  async function prepareMaskedAudio(job) {
+    if (job.audioVersion === 2 && job.sourceHasAudio && !await hasAudio(filePath(job, 'masked.mp4'))) {
+      await exec('ffmpeg', ['-y', '-i', filePath(job, 'masked.mp4'), '-i', filePath(job, 'source.mp4'), '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', filePath(job, 'masked-audio.mp4')], { timeout: 180000 });
+      await rename(filePath(job, 'masked-audio.mp4'), filePath(job, 'masked.mp4'));
+    }
+    const info = await stat(filePath(job, 'masked.mp4'));
+    if (info.size > 50 * 1024 * 1024) throw new Error('打码结果超过模型50MB限制，请缩短视频后再试');
+  }
   async function queryGeneration(job, id) {
     if (!isWanEdit(job)) return fetchTask(id);
     const result = await jsonRequest(`${job.wanBase}/api/v1/tasks/${encodeURIComponent(id)}`, { rejectCode: true, headers: { Authorization: `Bearer ${getConfig().wanKey}` } });
@@ -302,6 +347,7 @@ export function createPersonReplacementService(deps) {
         save(job, { stage: 'ready', maskedReady: true, maskSkipped: true });
         return;
       }
+      if (await tryReuseMask(job)) return;
       // MediaKit requires 25-60fps; normalize only when the source falls outside this range.
       if (!(job.metadata.fps >= 25 && job.metadata.fps <= 60)) {
         save(job, { stage: 'normalizing' });
@@ -326,13 +372,8 @@ export function createPersonReplacementService(deps) {
     }
     if (job.stage === 'saving_mask') {
       await download(job.maskDownloadUrl, filePath(job, 'masked.mp4'));
-      // Keep the source voice available to the model even if MediaKit returns only masked video.
-      if (job.audioVersion === 2 && job.sourceHasAudio && !await hasAudio(filePath(job, 'masked.mp4'))) {
-        await exec('ffmpeg', ['-y', '-i', filePath(job, 'masked.mp4'), '-i', filePath(job, 'source.mp4'), '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', filePath(job, 'masked-audio.mp4')], { timeout: 180000 });
-        await rename(filePath(job, 'masked-audio.mp4'), filePath(job, 'masked.mp4'));
-      }
-      const info = await stat(filePath(job, 'masked.mp4'));
-      if (info.size > 50 * 1024 * 1024) throw new Error('打码结果超过模型50MB限制，请缩短视频后再试');
+      // Also restore source audio when a reused legacy mask has no audio.
+      await prepareMaskedAudio(job);
       save(job, { stage: 'ready', maskedReady: true });
       return;
     }
