@@ -1,3 +1,4 @@
+import { resolvePaintingVideoLibraryFolder, type VideoLibraryFolderChoiceSource } from '@/src/lib/paintingVideoLibraryFolder';
 import PersonReplacementPanel from '@/src/components/PersonReplacementPanel';
 import UploadHistoryPreview from '@/src/components/UploadHistoryPreview';
 import HistoryVideoThumbnail from '@/src/components/HistoryVideoThumbnail';
@@ -206,8 +207,6 @@ interface SeedanceLibrarySaveTarget {
   paintingUploadHistoryId?: number;
 }
 
-type VideoLibraryFolderChoiceSource = 'remembered' | 'matched' | 'last-used' | 'fallback' | 'manual';
-
 interface PaintingHistoryItem {
   id: string;
   savedAt: string;
@@ -337,11 +336,11 @@ function getPaintingBatchStatusTone(status?: string): string {
 }
 
 function loadLastVideoLibraryFolder(): string {
-  if (typeof window === 'undefined') return '通用素材';
+  if (typeof window === 'undefined') return '';
   try {
-    return window.localStorage.getItem(VIDEO_LIBRARY_LAST_FOLDER_KEY)?.trim() || '通用素材';
+    return window.localStorage.getItem(VIDEO_LIBRARY_LAST_FOLDER_KEY)?.trim() || '';
   } catch {
-    return '通用素材';
+    return '';
   }
 }
 
@@ -352,61 +351,6 @@ function saveLastVideoLibraryFolder(folder: string) {
   } catch {
     // 浏览器禁止本地存储时，仍允许本次保存流程正常进行。
   }
-}
-
-const GENERIC_VIDEO_LIBRARY_FOLDERS = new Set(['通用素材', '待分类', '未分类', '默认文件夹']);
-
-function normalizePaintingFolderMatchText(value: unknown): string {
-  return String(value || '')
-    .toLocaleLowerCase('zh-CN')
-    .replace(/[\s\p{P}\p{S}_]+/gu, '')
-    .replace(/(?:装饰画|挂画|挂轴|卷轴|书法作品|书法|国画|画作|画芯|竖版|竖幅|产品)/g, '');
-}
-
-function scorePaintingFolderText(folderText: string, sourceText: string, baseScore: number): number {
-  if (!folderText || !sourceText || folderText.length < 2) return 0;
-  if (folderText === sourceText) return baseScore + 20;
-  if (sourceText.includes(folderText) || folderText.includes(sourceText)) return baseScore;
-
-  const folderCharacters = Array.from(new Set(folderText));
-  const sourceCharacters = new Set(sourceText);
-  const overlap = folderCharacters.filter((character) => sourceCharacters.has(character)).length;
-  if (overlap >= 2 && overlap / folderCharacters.length >= 0.75) return baseScore - 25;
-  return 0;
-}
-
-function suggestPaintingVideoLibraryFolder(
-  folders: string[],
-  painting?: { name?: string; subject?: string; prompt?: string } | null
-): string | null {
-  const normalizedName = normalizePaintingFolderMatchText(painting?.name);
-  const normalizedSubject = normalizePaintingFolderMatchText(painting?.subject);
-  const normalizedPrompt = normalizePaintingFolderMatchText(painting?.prompt);
-  let best: { folder: string; score: number } | null = null;
-
-  for (const folder of folders) {
-    if (GENERIC_VIDEO_LIBRARY_FOLDERS.has(folder.trim())) continue;
-    const normalizedFolder = normalizePaintingFolderMatchText(folder);
-    const score = Math.max(
-      scorePaintingFolderText(normalizedFolder, normalizedName, 100),
-      scorePaintingFolderText(normalizedFolder, normalizedSubject, 85),
-      scorePaintingFolderText(normalizedFolder, normalizedPrompt, 82)
-    );
-    if (score < 70) continue;
-    if (!best || score > best.score || (score === best.score && folder.length > best.folder.length)) {
-      best = { folder, score };
-    }
-  }
-
-  return best?.folder || null;
-}
-
-function getFallbackVideoLibraryFolder(folders: string[]): string {
-  const lastFolder = loadLastVideoLibraryFolder();
-  if (folders.includes(lastFolder)) return lastFolder;
-  if (folders.includes('通用素材')) return '通用素材';
-  if (folders.includes('待分类')) return '待分类';
-  return folders[0] || '通用素材';
 }
 
 function getVideoLibraryFolderChoiceLabel(source: VideoLibraryFolderChoiceSource): string {
@@ -3747,42 +3691,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     try {
       const folders = await getVideoLibraryFolders();
       const availableFolders = folders.length ? folders : ['通用素材'];
-      let nextFolder = '';
-      let nextSource: VideoLibraryFolderChoiceSource = 'fallback';
-
-      if (target.paintingImageHash) {
-        try {
-          const binding = await getPaintingFolderBinding(target.paintingImageHash, target.paintingName, paintingProductTypeFromPrompt(target.prompt));
-          if (binding && availableFolders.includes(binding.folderName)) {
-            nextFolder = binding.folderName;
-            nextSource = 'remembered';
-          }
-        } catch {
-          // 历史绑定暂时不可用时，继续使用内容匹配，不阻断视频入库。
-        }
-      }
-
-      if (!nextFolder) {
-        const matchedFolder = suggestPaintingVideoLibraryFolder(availableFolders, {
-          name: target.paintingName,
-          subject: target.paintingSubject,
-          prompt: target.prompt,
-        });
-        if (matchedFolder) {
-          nextFolder = matchedFolder;
-          nextSource = 'matched';
-        }
-      }
-
-      if (!nextFolder) {
-        const recentSavedFolder = seedanceHistory.find((item) => item.libraryFolder && availableFolders.includes(item.libraryFolder))?.libraryFolder || '';
-        const lastFolder = loadLastVideoLibraryFolder();
-        nextFolder = availableFolders.includes(lastFolder) ? lastFolder : recentSavedFolder || getFallbackVideoLibraryFolder(availableFolders);
-        nextSource = recentSavedFolder || availableFolders.includes(lastFolder) ? 'last-used' : 'fallback';
-      }
+      const choice = await resolvePaintingVideoLibraryFolder({
+        folders: availableFolders,
+        lastFolder: loadLastVideoLibraryFolder(),
+        painting: { name: target.paintingName, subject: target.paintingSubject, prompt: target.prompt },
+        loadBinding: target.paintingImageHash
+          ? () => getPaintingFolderBinding(target.paintingImageHash!, target.paintingName, paintingProductTypeFromPrompt(target.prompt))
+          : undefined,
+        recentSavedFolder: seedanceHistory.find((item) => item.libraryFolder && availableFolders.includes(item.libraryFolder))?.libraryFolder,
+      });
       setVideoLibraryFolders(availableFolders);
-      setSelectedVideoLibraryFolder(nextFolder);
-      setVideoLibraryFolderChoiceSource(nextSource);
+      setSelectedVideoLibraryFolder(choice.folder);
+      setVideoLibraryFolderChoiceSource(choice.source);
     } catch (error) {
       setVideoLibrarySaveError(error instanceof Error ? error.message : '读取视频素材库文件夹失败');
     } finally {
@@ -4887,33 +4807,20 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       const folders = await getVideoLibraryFolders().catch(() => [] as string[]);
       const availableFolders = folders.length ? folders : ['通用素材'];
       setPaintingBatchFolderList(availableFolders);
-      let prefillFolder = '';
-      let prefillFolderId: number | null = null;
-      let prefillSource: VideoLibraryFolderChoiceSource = 'fallback';
       let imageHash = '';
       try {
         imageHash = await sha256File(paintingImage.file);
-        const binding = await getPaintingFolderBinding(imageHash, String(paintingProfile.name || ''), paintingProductType);
-        if (binding && availableFolders.includes(binding.folderName)) {
-          prefillFolder = binding.folderName;
-          prefillFolderId = binding.folderId;
-          prefillSource = 'remembered';
-        }
       } catch {
-        // 图片哈希计算失败或尚未绑定文件夹时，继续按产品内容匹配。
+        // 图片哈希计算失败时，仍可沿用上次选择或按内容匹配。
       }
-      if (!prefillFolder) {
-        const matchedFolder = suggestPaintingVideoLibraryFolder(availableFolders, paintingProfile);
-        if (matchedFolder) {
-          prefillFolder = matchedFolder;
-          prefillSource = 'matched';
-        }
-      }
-      if (!prefillFolder) {
-        const lastFolder = loadLastVideoLibraryFolder();
-        prefillFolder = getFallbackVideoLibraryFolder(availableFolders);
-        prefillSource = availableFolders.includes(lastFolder) ? 'last-used' : 'fallback';
-      }
+      const choice = await resolvePaintingVideoLibraryFolder({
+        folders: availableFolders,
+        lastFolder: loadLastVideoLibraryFolder(),
+        painting: paintingProfile,
+        loadBinding: imageHash
+          ? () => getPaintingFolderBinding(imageHash, String(paintingProfile.name || ''), paintingProductType)
+          : undefined,
+      });
       setPaintingBatchPrepareStage('正在读取已使用方向');
       if (imageHash) {
         try {
@@ -4925,9 +4832,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       } else {
         setPaintingUsedDirections([]);
       }
-      setPaintingBatchFolder(prefillFolder);
-      setPaintingBatchFolderId(prefillFolderId);
-      setPaintingBatchFolderChoiceSource(prefillSource);
+      setPaintingBatchFolder(choice.folder);
+      setPaintingBatchFolderId(choice.folderId);
+      setPaintingBatchFolderChoiceSource(choice.source);
       setShowPaintingBatchFolderChoices(false);
       if (paintingBatchStartOrder === 'random') {
         setPaintingBatchRandomOrder(createRandomPaintingDirectionOrder());

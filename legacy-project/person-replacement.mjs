@@ -6,6 +6,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { WAN_EDIT_MODEL, isWanEdit, editProviderLabel, editModelLabel, editMaxDuration, buildWanEditPayload, normalizeWanEditTask } from './wan-scene-edit.mjs';
 import { buildSceneEditPrompt, validateSceneEditOptions } from './video-scene-edit.mjs';
+import { observeMediaTransfer } from './media-transfer-diagnostics.mjs';
 
 const MASK_PROFILE = 'face-mosaic-medium-v1';
 export const PERSON_GENERATION_SUBMIT_TIMEOUT_MS = 180000;
@@ -513,9 +514,11 @@ export function createPersonReplacementService(deps) {
         if (start > end || start >= info.size) { res.writeHead(416, { 'Content-Range': `bytes */${info.size}` }); res.end(); return; }
       }
       const type = name.endsWith('.mp4') ? 'video/mp4' : name.endsWith('.png') ? 'image/png' : name.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+      const countBytes = observeMediaTransfer(res, { jobId: job.id, model: job.model, file: name,
+        method: req.method, partial: !!range, expectedBytes: end - start + 1 }, deps.mediaLog);
       res.writeHead(range ? 206 : 200, { 'Content-Type': type, 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=300', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${info.size}` } : {}) });
       if (req.method === 'HEAD') res.end();
-      else { const stream = createReadStream(destination, { start, end }); stream.on('error', () => res.destroy()); res.on('close', () => stream.destroy()); stream.pipe(res); }
+      else { const stream = createReadStream(destination, { start, end }); stream.on('data', countBytes); stream.on('error', () => res.destroy()); res.on('close', () => stream.destroy()); stream.pipe(res); }
     } catch { if (!res.headersSent) res.writeHead(404); res.end(); }
   }
   return { create, acceptCallback, recoverTask, get: (id, deviceId) => view(owned(get(id), deviceId)),
