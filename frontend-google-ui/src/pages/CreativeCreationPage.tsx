@@ -1956,12 +1956,19 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     ...seedanceManualPreferenceRef.current,
   });
   const consumedIncomingClipTokenRef = useRef<number | null>(null);
+  const [incomingEditClip, setIncomingEditClip] = useState<IncomingCreativeClip | null>(null);
 
   useEffect(() => {
     if (!incomingClip || consumedIncomingClipTokenRef.current === incomingClip.token) return;
     consumedIncomingClipTokenRef.current = incomingClip.token;
     if (!incomingClip.file.type.startsWith('video/')) {
       setRequestError('镜头截取结果不是有效的视频文件。');
+      onIncomingClipConsumed?.();
+      return;
+    }
+    if (incomingClip.mode === 'video-edit') {
+      setIncomingEditClip(incomingClip);
+      setShowPersonReplacement(true);
       onIncomingClipConsumed?.();
       return;
     }
@@ -7672,7 +7679,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   视频局部编辑
                 </button>
               </div>
-              <div hidden={!showPersonReplacement}><PersonReplacementPanel onSaveToLibrary={(task, onSaved) => {
+              <div hidden={!showPersonReplacement}><PersonReplacementPanel incomingClip={incomingEditClip} onSaveToLibrary={(task, onSaved) => {
                 void openSeedanceLibrarySave({ taskId: task.id, personReplacementId: task.id, model: task.model, prompt: task.prompt, createdAt: task.createdAt, onSaved });
               }} /></div>
               <div hidden={showPersonReplacement}>

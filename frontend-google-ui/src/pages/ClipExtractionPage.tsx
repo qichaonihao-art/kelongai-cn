@@ -1068,7 +1068,15 @@ export default function ClipExtractionPage({
     setError('');
     try {
       const sourceId = sourceRef.current?.sourceId;
-      const file = new File([], result.fileName, { type: 'video/mp4', lastModified: Date.now() });
+      let file = new File([], result.fileName, { type: 'video/mp4', lastModified: Date.now() });
+      if (mode === 'video-edit') {
+        const response = await fetch(result.url, { credentials: 'include' });
+        if (!response.ok) throw new Error('剪裁视频载入失败，请重试。');
+        const blob = await response.blob();
+        if (!blob.size) throw new Error('剪裁视频为空，请重新截取。');
+        if (blob.size > 50 * 1024 * 1024) throw new Error('视频编辑支持50MB以内的视频，请缩短截取范围后重试。');
+        file = new File([blob], result.fileName, { type: 'video/mp4', lastModified: Date.now() });
+      }
       let audioFile: File | undefined;
       let requiredImageFile: File | undefined;
       let audioDurationSeconds: number | undefined;
@@ -1257,9 +1265,11 @@ export default function ClipExtractionPage({
                 <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
                   <div className="text-xs font-black text-violet-900">需要单独使用原视频声音？</div>
                   <div className="mt-1 text-[11px] leading-5 text-violet-600">MP3可以和画面选择不同长度，并支持波形、逐帧微调和区间试听。</div>
-                  <button type="button" onClick={() => openCreativePicker('original')} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 text-sm font-black text-white hover:bg-violet-700"><Scissors className="size-4" />精细截取MP3（可选）</button>
+                  <button type="button" disabled={preparingCreative} onClick={() => openCreativePicker('original')} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 text-sm font-black text-white hover:bg-violet-700"><Scissors className="size-4" />精细截取MP3（可选）</button>
                 </div>
-                <button type="button" onClick={() => openCreativePicker('none')} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-black text-white hover:bg-emerald-700"><Play className="size-4 fill-current" />不截音频，进入视频创作</button>
+                <button type="button" disabled={preparingCreative} onClick={() => openCreativePicker('none')} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-black text-white hover:bg-emerald-700"><Play className="size-4 fill-current" />不截音频，进入视频创作</button>
+                <button type="button" disabled={preparingCreative} onClick={() => void useInCreative('video-edit', 'none')} className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-black text-violet-700 hover:bg-violet-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-600 disabled:cursor-wait disabled:opacity-60">{preparingCreative ? <LoaderCircle className="size-4 animate-spin" /> : <Film className="size-4" />}{preparingCreative ? '正在载入视频…' : '发送到视频编辑'}</button>
+                <p className="mt-1 text-center text-xs text-slate-600">直接载入右侧视频编辑，无需选择产品或提取音频</p>
                 <a href={result.url} download={result.fileName} className="mt-2 flex h-9 items-center justify-center gap-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50"><Download className="size-4" />下载到电脑</a>
               </section>}
             </aside>

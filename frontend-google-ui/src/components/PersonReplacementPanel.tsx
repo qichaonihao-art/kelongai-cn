@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, History, X, Download, RefreshCw, UserRound, Check, Upload, Film, FolderOpen, Play, ZoomIn, Image as ImageIcon } from 'lucide-react';
 import VideoEditElapsed, { formatVideoEditElapsed } from '@/src/components/VideoEditElapsed';
+import type { IncomingCreativeClip } from '@/src/lib/clipCreative';
 import UploadHistoryPreview from '@/src/components/UploadHistoryPreview';
 import HistoryVideoThumbnail from '@/src/components/HistoryVideoThumbnail';
 import { getKelongDeviceId, getSeedanceRatePerSecond } from '@/src/lib/creative';
@@ -140,7 +141,8 @@ function MediaUploadCard({ kind, file, previewUrl, duration = 0, disabled, onFil
   </div>;
 }
 
-export default function PersonReplacementPanel({ onSaveToLibrary }: {
+export default function PersonReplacementPanel({ onSaveToLibrary, incomingClip }: {
+  incomingClip?: IncomingCreativeClip | null;
   onSaveToLibrary: (target: PersonLibrarySaveTarget, onSaved: (folder: string) => void) => void;
 }) {
   const [video, setVideo] = useState<File | null>(null);
@@ -255,6 +257,12 @@ export default function PersonReplacementPanel({ onSaveToLibrary }: {
     try { await saveUploadHistory(file, kind); } catch { /* Selecting a file does not depend on history storage. */ }
     return true;
   }
+  const consumedClipToken = useRef<number | null>(null);
+  useEffect(() => {
+    if (!incomingClip || consumedClipToken.current === incomingClip.token || locked) return;
+    consumedClipToken.current = incomingClip.token;
+    void selectFile(incomingClip.file, 'video');
+  }, [incomingClip?.token, locked]);
   async function openHistory(kind: 'video' | 'image') {
     if (locked) return;
     historyPreviewRequest.current++; setHistoryPreview(null); setHistoryPreviewError(''); setHistoryOpening(null);

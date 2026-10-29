@@ -4,6 +4,7 @@ import { resolveClipProductType } from './src/lib/clipCreative';
 for (const type of ['hanging', 'sticker', 'ornament', 'generic'] as const) {
   assert.equal(resolveClipProductType(type, 'replace'), type);
   assert.equal(resolveClipProductType(type, 'direct'), 'generic', '直接反推忽略旧交接数据里的产品类型');
+  assert.equal(resolveClipProductType(type, 'video-edit'), 'generic', '视频编辑不携带产品类型');
 }
 assert.equal(resolveClipProductType(undefined, 'direct'), 'generic');
 assert.equal(resolveClipProductType(undefined, 'replace'), 'hanging');

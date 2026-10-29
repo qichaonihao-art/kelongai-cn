@@ -1248,6 +1248,7 @@ export async function querySeedanceTask(taskId: string): Promise<SeedanceTaskRes
     createdAt: typeof json?.createdAt === 'number' ? json.createdAt : undefined,
     updatedAt: typeof json?.updatedAt === 'number' ? json.updatedAt : undefined,
     executionExpiresAfter: typeof json?.executionExpiresAfter === 'number' ? json.executionExpiresAfter : undefined,
+    errorMessage: typeof json?.errorMessage === 'string' ? json.errorMessage : undefined,
     response: json?.response || json,
   };
 }
