@@ -52,22 +52,38 @@ const req = body => {
 };
 const res = () => ({ status: 0, body: '', writeHead(status) { this.status = status; }, end(body) { this.body = String(body); } });
 assert.equal(ORNAMENT_FRAMEWORKS.length, 40);
+assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group.startsWith('人物')).length, 10);
+assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group === '人物同框推进特写').length, 5);
+const square25 = normalizeOrnamentProfile({ widthCm: 25, heightCm: 25 });
+for (const f of ORNAMENT_FRAMEWORKS.slice(5, 10)) {
+ const prompt = ensureOrnamentPrompt('连续推近展示。', square25, f.directionNumber);
+ assert.match(prompt, /外框宽25厘米、高25厘米/);
+ assert.ok(prompt.includes(f.shotRule));
+ assert.equal(ensureOrnamentPrompt(prompt, square25, f.directionNumber), prompt);
+}
 assert.equal(new Set(ORNAMENT_FRAMEWORKS.map(f => f.title)).size, 40);
 assert.doesNotMatch(ORNAMENT_FRAMEWORKS.map(f => f.title + f.action).join('\n'), /胸前偏下|胸前双手|坐姿托扶展示/);
-for (const n of [13, 14, 15]) assert.match(ORNAMENT_FRAMEWORKS[n - 1].action, /台面|桌面|柜面/);
+for (const n of [13, 14, 15]) assert.match(ORNAMENT_FRAMEWORKS[n - 1].action, /书桌|茶台|餐边柜/);
 const reveal = ORNAMENT_FRAMEWORKS[ORNAMENT_RED_CLOTH_DIRECTION - 1];
 assert.equal(reveal.directionNumber, 29);
 assert.equal(reveal.title, '红布揭幕展示');
 assert.equal(reveal.action, '开场摆台已经站稳在台面，正面主图由一块不透明红布遮盖；一只手抓住红布上角，向上并向侧方连续揭开，真实布料逐渐露出完整摆台；红布最后被手持带到主体侧外，摆台与固定支架全程原位不动，完整正面清楚展示，镜头仅轻推。可换玄关柜、书桌、茶台或陈列柜等场景，红布与揭幕动作保持不变。');
 assert.equal(reveal.shotRule, '', '红布框架不追加新的占比或景别约束');
 assert.deepEqual(Object.fromEntries([...new Set(ORNAMENT_FRAMEWORKS.map(f => f.group))].map(group => [group, ORNAMENT_FRAMEWORKS.filter(f => f.group === group).length])), {
- '人物全景搬放': 12, '人物中景展示': 8, '生活场景全景': 8, '整体产品展示': 6, '局部特写': 6,
+ '人物同框展示': 5, '人物同框推进特写': 5, '产品场景扫拍': 10, '产品角度运镜': 8, '产品揭幕与景别变化': 6, '局部特写': 6,
 });
 for (const f of ORNAMENT_FRAMEWORKS.filter(f => f.directionNumber !== 29)) {
  const request = buildOrnamentVideoRequest(profile, { ...f, summary: '旧框架：镜头推近摆台特写' }, plan, {});
  assert.ok(request.includes(f.shotRule), '新景别规则必须进入实际请求');
- if (f.directionNumber <= 12) { assert.match(request, /从头到脚/); assert.match(request, /全程不推近/); }
- if (f.directionNumber >= 21 && f.directionNumber <= 28) assert.match(request, /不收束成产品近景/);
+ if (f.directionNumber <= 5) assert.match(f.shotRule, /全程不推近/);
+ if (f.directionNumber >= 6 && f.directionNumber <= 10) {
+  assert.match(f.shotRule, /撤手后才推进/);
+  assert.match(f.shotRule, /人物停在旁侧并可自然退出构图/);
+  assert.match(f.shotRule, /文字可读性服从真实尺寸/);
+  assert.match(f.shotRule, /全程一镜到底/);
+  assert.doesNotMatch(f.shotRule, /全程不推近|人物与产品始终同框/);
+ }
+ if (f.directionNumber >= 11) assert.match(f.shotRule, /无人场景/);
  assert.ok(ensureOrnamentPrompt('模型正文', profile, f.directionNumber).includes(f.shotRule), '提交模型前也确定性保留构图要求');
 }
 
@@ -153,7 +169,7 @@ assert.match(safeVideoRequest, /已按风格展开的创意方案/);
 assert.match(safeVideoRequest, /方案仅决定这些约束内的具体执行/);
 assert.match(safeVideoRequest, /不采纳方案中相冲突的拆架/);
 assert.match(safeVideoRequest, /书桌另一侧铺素白宣纸/);
-assert.match(safeVideoRequest, /书写后将笔放好并看向摆台/);
+assert.ok(safeVideoRequest.includes(ORNAMENT_FRAMEWORKS[21].action));
 const forbidden = /【挂画生成尺寸补偿锁定】|【挂画真实尺寸强制锁定】|【卷轴打开方式固定要求】|【千问 Wan3.0 专用·(?:静态挂画|安装|展开)/;
 for (const f of ORNAMENT_FRAMEWORKS) {
  reply = `创意内容：${f.action}\n总时长：6秒`;

@@ -1,3 +1,4 @@
+import { createMediaProcessExecutor } from './media-process-queue.mjs';
 import { createClipSceneDetectionService, getClipEndBeforeDetectedCut } from './clip-scene-detection.mjs';
 import { ALIYUN_VOICE_MODEL, LEGACY_ALIYUN_VOICE_MODEL, canReuseAliyunShotVoice, createAliyunVoiceService } from './aliyun-voice.mjs';
 import { createPersonReplacementService } from './person-replacement.mjs';
@@ -142,7 +143,7 @@ const RESOLVED_FRONTEND_DIR = HAS_ACTIVE_FRONTEND_DIR
   : (HAS_FALLBACK_FRONTEND_DIR ? FALLBACK_FRONTEND_DIR : ACTIVE_FRONTEND_DIR);
 const RESOLVED_FRONTEND_MODE = RESOLVED_FRONTEND_DIR === REACT_FRONTEND_DIR ? 'react' : 'legacy';
 const IS_REACT_FRONTEND_ACTIVE = RESOLVED_FRONTEND_MODE === 'react';
-const execFileAsync = promisify(execFile);
+const execFileAsync = createMediaProcessExecutor(promisify(execFile));
 
 const SERVER_CONFIG = {
   zhipuApiKey: process.env.ZHIPU_API_KEY || '',

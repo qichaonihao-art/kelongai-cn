@@ -4295,7 +4295,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       variationRound,
       creativeSessionId: paintingCreativeSessionId,
       profile: {
-        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-two-stage-style-v6' : undefined,
+        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-product-focus-v7' : undefined,
         productType: paintingProductType,
         widthCm: paintingProfile?.widthCm,
         heightCm: paintingProfile?.heightCm,
@@ -6403,7 +6403,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500">
                             第 {paintingFrameworkBatch + 1}/{paintingTotalBatches} 批 · 第 {paintingVariationRound + 1} 轮
-                            {isOrnament && ` · ${['人物全景搬放10条', '人物全景搬放2条＋中景展示8条', '生活场景全景8条＋整体展示2条', '整体展示4条＋局部特写6条'][paintingFrameworkBatch]}`}
+                            {isOrnament && ` · ${['人物同框5条＋人物推进特写5条', '产品场景扫拍10条', '产品角度运镜8条＋揭幕与推进2条', '产品景别变化4条＋局部特写6条'][paintingFrameworkBatch]}`}
                             {isSticker && ` · ${['人物展示', '生活场景', '运镜与细节', '形态与安装'][paintingFrameworkBatch]}`}
                           </span>
                           <button
