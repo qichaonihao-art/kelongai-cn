@@ -3779,6 +3779,7 @@ async function ensureVideoLibraryThumbnail(row) {
   const promise = enqueueVideoLibraryThumbnailJob(async () => {
     if (existsSync(thumbnailPath)) return thumbnailPath;
     const videoPath = path.join(VIDEO_LIBRARY_DIR, row.stored_name);
+    await stat(videoPath);
     await execFileAsync('ffmpeg', [
       '-y',
       '-i', videoPath,
@@ -3817,6 +3818,7 @@ async function ensureVideoLibraryPreview(rowOrItem) {
 
   const promise = enqueueVideoLibraryThumbnailJob(async () => {
     if (existsSync(previewPath)) return previewPath;
+    await stat(sourcePath);
     const temporaryPath = `${previewPath}.${process.pid}-${randomBytes(4).toString('hex')}.mp4`;
     try {
       await execFileAsync('ffmpeg', [
@@ -3901,9 +3903,6 @@ async function handleGetVideoLibrary(req, res, url) {
   const query = readValue(url.searchParams.get('q'));
   const items = dbGetVideoLibraryItems({ folderName: url.searchParams.get('folder') ? folderName : '', query });
   const folders = dbGetVideoLibraryFolders();
-  items.slice(0, 4).forEach((item) => {
-    void ensureVideoLibraryPreview(item).catch(() => {});
-  });
   sendJson(res, 200, { ok: true, items, folders });
 }
 
@@ -4243,9 +4242,15 @@ async function handleVideoLibraryFile(req, res, id, url) {
       return;
     }
     const wantsFastPreview = url.searchParams.get('preview') === '1' && url.searchParams.get('download') !== '1';
-    const filePath = wantsFastPreview
-      ? await ensureVideoLibraryPreview(row)
-      : path.join(VIDEO_LIBRARY_DIR, row.stored_name);
+    const sourcePath = path.join(VIDEO_LIBRARY_DIR, row.stored_name);
+    const previewPath = path.join(VIDEO_LIBRARY_DIR, getVideoLibraryPreviewName(row));
+    // Never hold a browser connection while a derivative waits in the media queue.
+    const usesReadyPreview = wantsFastPreview && existsSync(previewPath);
+    const filePath = usesReadyPreview ? previewPath : sourcePath;
+    if (wantsFastPreview && !usesReadyPreview) {
+      await stat(sourcePath);
+      void ensureVideoLibraryPreview(row).catch(() => {});
+    }
     const info = await stat(filePath);
     const range = req.headers.range;
     const asAttachment = url.searchParams.get('download') === '1';
@@ -4253,17 +4258,17 @@ async function handleVideoLibraryFile(req, res, id, url) {
     const encodedFilename = encodeURIComponent(downloadName);
     const fallbackFilename = `video-${Number(row.id)}${getVideoLibraryExtension(row.stored_name, row.mime_type)}`;
     const etagBase = readValue(row.sha256) || `${Number(row.id)}-${info.size}`;
-    const etag = `"${etagBase}${wantsFastPreview ? '-preview' : ''}"`;
+    const etag = `"${etagBase}${usesReadyPreview ? '-preview' : ''}"`;
     const headers = {
       'Accept-Ranges': 'bytes',
-      'Content-Type': wantsFastPreview ? 'video/mp4' : (normalizeVideoLibraryMimeType(row.stored_name, row.mime_type) || 'video/mp4'),
+      'Content-Type': usesReadyPreview ? 'video/mp4' : (normalizeVideoLibraryMimeType(row.stored_name, row.mime_type) || 'video/mp4'),
       'Content-Disposition': `${asAttachment ? 'attachment' : 'inline'}; filename="${fallbackFilename}"; filename*=UTF-8''${encodedFilename}`,
-      'Cache-Control': 'private, max-age=31536000, immutable',
+      'Cache-Control': wantsFastPreview && !usesReadyPreview ? 'private, no-store' : 'private, max-age=31536000, immutable',
       'ETag': etag,
       'X-Content-Type-Options': 'nosniff',
       'X-Accel-Buffering': 'no',
       'Content-Encoding': 'identity',
-      'X-Video-Library-Variant': wantsFastPreview ? 'preview' : 'original',
+      'X-Video-Library-Variant': usesReadyPreview ? 'preview' : 'original',
     };
     if (!range && req.headers['if-none-match'] === etag) {
       res.writeHead(304, headers);
@@ -4311,7 +4316,14 @@ async function handleVideoLibraryThumbnail(req, res, id) {
       sendJson(res, 404, { error: '视频不存在' });
       return;
     }
-    const thumbnailPath = await ensureVideoLibraryThumbnail(row);
+    const thumbnailPath = path.join(VIDEO_LIBRARY_DIR, getVideoLibraryThumbnailName(row));
+    if (!existsSync(thumbnailPath)) {
+      await stat(path.join(VIDEO_LIBRARY_DIR, row.stored_name));
+      void ensureVideoLibraryThumbnail(row).catch(() => {});
+      res.writeHead(503, { 'Retry-After': '5', 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
     const info = await stat(thumbnailPath);
     res.writeHead(200, {
       'Content-Type': 'image/jpeg',
@@ -21880,6 +21892,8 @@ export {
   generatePaintingIdeaPromptCore,
   getCollectionDb,
   handleGetVideoLibraryFolders,
+  handleVideoLibraryFile,
+  handleVideoLibraryThumbnail,
   handleUploadVideoLibrary,
   handleSaveSeedanceVideoToLibrary,
   handlePersonReplacement,

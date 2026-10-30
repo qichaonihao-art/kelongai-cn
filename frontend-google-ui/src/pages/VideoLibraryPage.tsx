@@ -1,3 +1,4 @@
+import VideoLibraryThumbnail from '../components/VideoLibraryThumbnail';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, CheckCircle2, Download, FolderCog, FolderInput, FolderOpen, Loader2, Pause, Play, Plus, RefreshCw, Search, Square, Trash2, Upload, Video, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
@@ -904,14 +905,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
           className="group relative flex aspect-video w-full items-center justify-center overflow-hidden bg-slate-900 text-left"
         >
           <Video className="size-8 text-slate-600" />
-          <img
-            src={item.thumbnailUrl}
-            alt=""
-            loading="lazy"
-            decoding="async"
-            onError={(event) => { event.currentTarget.style.display = 'none'; }}
-            className="absolute inset-0 h-full w-full object-cover"
-          />
+          <VideoLibraryThumbnail src={item.thumbnailUrl} />
           <span className="absolute inset-0 flex items-center justify-center bg-slate-950/0 text-white transition-colors group-hover:bg-slate-950/30">
             <Play className="size-7 opacity-0 drop-shadow transition-opacity group-hover:opacity-100" />
           </span>
