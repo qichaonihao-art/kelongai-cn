@@ -61,7 +61,6 @@ const APIMART_IMAGE_RETRY_DELAYS_MS = [1000];
 const APIMART_CHAT_FETCH_TIMEOUT_MS = 8 * 60 * 1000;
 const UPLOAD_TEMP_DIR = path.join(__dirname, '.runtime-uploads');
 const CLIP_SOURCE_MAX_BYTES = 1024 * 1024 * 1024;
-const CLIP_SOURCE_MAX_DURATION_SECONDS = 10 * 60;
 const CLIP_REMOTE_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const CLIP_OUTPUT_MAX_DURATION_SECONDS = 60;
 const CLIP_MEDIA_TTL_MS = 15 * 60 * 1000;
@@ -1087,8 +1086,8 @@ async function importClipRemoteSource(body, onProgress = () => {}) {
       });
       onProgress({ stage: 'checking', percent: 84, message: '下载完成，正在校验视频时长和画面…', downloadedBytes: size, totalBytes: size });
       const metadata = await probeVideoMetadata(filePath);
-      if (!metadata.durationSeconds || metadata.durationSeconds > CLIP_SOURCE_MAX_DURATION_SECONDS + 0.25) {
-        throw new Error('源视频时长不能超过 10 分钟');
+      if (!Number.isFinite(metadata.durationSeconds) || metadata.durationSeconds <= 0) {
+        throw new Error('无法读取源视频的有效时长');
       }
       const storedFileName = path.basename(filePath);
       clipSourceMimeTypes.set(storedFileName, 'video/mp4');
@@ -1306,8 +1305,8 @@ async function handleClipSourceUpload(req, res) {
     await pipeline(req, sizeGuard, createWriteStream(filePath, { flags: 'wx' }));
     await ensureVideoCompressionTools();
     const metadata = await probeVideoMetadata(filePath);
-    if (!metadata.durationSeconds || metadata.durationSeconds > CLIP_SOURCE_MAX_DURATION_SECONDS + 0.25) {
-      throw new Error('CLIP_DURATION_TOO_LONG');
+    if (!Number.isFinite(metadata.durationSeconds) || metadata.durationSeconds <= 0) {
+      throw new Error('CLIP_DURATION_INVALID');
     }
     const storedFileName = path.basename(filePath);
     clipSourceMimeTypes.set(storedFileName, contentType.startsWith('video/') ? contentType : 'video/mp4');
@@ -1327,8 +1326,8 @@ async function handleClipSourceUpload(req, res) {
       sendJson(res, 413, { error: '源视频不能超过 1GB' });
       return;
     }
-    if (error?.message === 'CLIP_DURATION_TOO_LONG') {
-      sendJson(res, 400, { error: '源视频时长不能超过 10 分钟' });
+    if (error?.message === 'CLIP_DURATION_INVALID') {
+      sendJson(res, 400, { error: '无法读取源视频的有效时长' });
       return;
     }
     sendJson(res, 400, { error: error?.message?.includes('ffmpeg') ? error.message : '无法读取这个视频，请换一个常见格式的视频再试' });

@@ -455,7 +455,6 @@ export default function ClipExtractionPage({
     setTranscriptStatus('');
     try {
       const parsed = await resolveCpExtract(input);
-      if (Number(parsed.duration || 0) > 600.25) throw new Error('源视频时长不能超过 10 分钟');
       const candidates = collectOnlineVideoCandidates(parsed);
       if (candidates.length === 0) throw new Error('没有解析到可用视频，请改用本地上传。');
       setNotice('解析成功，正在把视频载入镜头截取…');
@@ -1138,7 +1137,7 @@ export default function ClipExtractionPage({
           <ModuleQuickNav current="creative" onNavigate={onNavigate} />
           <CreativeSubNav current="clip" onSwitchVideo={onSwitchToVideo} onSwitchClip={() => {}} onSwitchCopy={onSwitchToCopy} />
         </div>
-        <div className="hidden text-xs font-bold text-slate-500 sm:block">最长 10 分钟 · 最大 1GB · 临时使用</div>
+        <div className="hidden text-xs font-bold text-slate-500 sm:block">最大 1GB · 临时使用</div>
       </header>
 
       <main className="relative mx-auto w-full max-w-6xl flex-1 p-4 md:p-6">
@@ -1147,7 +1146,7 @@ export default function ClipExtractionPage({
             <h1 className="flex items-center gap-2 text-xl font-black tracking-tight text-slate-950"><Scissors className="size-5 text-cyan-600" />镜头截取</h1>
             <p className="mt-1 text-sm text-slate-500">自动找到第一个镜头，也可按需识别前 2–5 个镜头。</p>
           </div>
-          <div className="text-xs font-semibold text-slate-400">最长 10 分钟 · 最大 1GB · 临时文件自动清理</div>
+          <div className="text-xs font-semibold text-slate-400">最大 1GB · 临时文件自动清理</div>
         </div>
 
         {(error || notice) && <div className={cn('mb-4 flex items-start gap-2 rounded-xl border px-4 py-3 text-sm font-bold', error ? 'border-red-200 bg-red-50 text-red-700' : 'border-cyan-200 bg-cyan-50 text-cyan-900')}><span className={cn('mt-0.5 grid size-4 shrink-0 place-items-center rounded-full text-[9px] text-white', error ? 'bg-red-500' : 'bg-cyan-500')}>{error ? '!' : 'i'}</span><span>{error || notice}</span></div>}
@@ -1186,7 +1185,7 @@ export default function ClipExtractionPage({
             </div> : <div className="p-5 md:p-7"><button type="button" disabled={uploading} onClick={() => inputRef.current?.click()} className="group flex min-h-52 w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/40 px-6 transition hover:border-violet-400 hover:bg-violet-50 disabled:cursor-wait">
               <span className="grid size-14 place-items-center rounded-2xl bg-violet-600 text-white shadow-md"><Upload className="size-6" /></span>
               <div className="mt-4 text-base font-black text-slate-900">{uploading ? `正在上传 ${uploadProgress}%` : '选择本地视频'}</div>
-              <div className="mt-1 text-xs text-slate-400">最长 10 分钟，最大 1GB</div>
+              <div className="mt-1 text-xs text-slate-400">最大 1GB</div>
               {uploading && <div className="mt-4 h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${uploadProgress}%` }} /></div>}
             </button></div>}
           </section>

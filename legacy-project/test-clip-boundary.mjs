@@ -25,7 +25,7 @@ await symlink(path.join(import.meta.dirname, 'node_modules'), path.join(serverRo
 await symlink(path.join(import.meta.dirname, 'copypilot-api'), path.join(serverRoot, 'copypilot-api'), 'dir');
 await writeFile(path.join(serverRoot, '.env'), `KELONG_SKIP_LISTEN=1\nVOICE_CLONE_MOCK_MODE=true\nRUNTIME_STATE_DIR=${process.env.RUNTIME_STATE_DIR}\nVIDEO_LIBRARY_DIR=${process.env.VIDEO_LIBRARY_DIR}\n`);
 const { getClipEndBeforeDetectedCut, parseClipRange, handleClipSourceUpload,
-  getFfmpegFrameSyncArgs, handleDetectFirstClipCut, handleClipTrim, handleClipCleanup } = await import(path.join(serverRoot, 'server.mjs'));
+  getFfmpegFrameSyncArgs, handleDetectFirstClipCut, handleClipTrim, handleClipCleanup, handleClipRemoteImport } = await import(path.join(serverRoot, 'server.mjs'));
 
 async function invoke(handler, data, headers = {}) {
   const req = Readable.from([Buffer.isBuffer(data) ? data : Buffer.from(JSON.stringify(data))]);
@@ -52,6 +52,30 @@ try {
   assert.equal(getClipEndBeforeDetectedCut(4, 30, 3.99), 3.995, '可变帧率采用真实相邻帧');
   assert.deepEqual(parseClipRange({ startSeconds: 0, endSeconds: 4 }, 10), { start: 0, end: 4, duration: 4 });
   assert.equal(parseClipRange({ startSeconds: 0, endSeconds: 1.000999 }, 10).end, 1.000999);
+
+  // Long sources must work through both entry points, including trimming beyond minute ten.
+  const longFile = path.join(temporaryRoot, 'long-source.mp4');
+  await exec('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=black:s=16x16:r=1:d=660', '-c:v', 'libx264', longFile]);
+  const longBytes = await readFile(longFile);
+  const longLocal = await invoke(handleClipSourceUpload, longBytes, { 'content-type': 'video/mp4', 'content-length': longBytes.length });
+  assert.ok(longLocal.durationSeconds > 600);
+  const originalFetch = globalThis.fetch;
+  let longRemote;
+  try {
+    globalThis.fetch = async url => {
+      assert.equal(String(url), 'https://clip-test.invalid/long.mp4');
+      return new Response(longBytes, { headers: { 'content-type': 'video/mp4', 'content-length': String(longBytes.length) } });
+    };
+    longRemote = await invoke(handleClipRemoteImport, { downloadUrl: 'https://clip-test.invalid/long.mp4' });
+    assert.ok(longRemote.durationSeconds > 600);
+  } finally { globalThis.fetch = originalFetch; }
+  for (const source of [longLocal, longRemote]) {
+    const clip = await invoke(handleClipTrim, { sourceId: source.sourceId, startSeconds: 620, endSeconds: 625 });
+    assert.ok((await readFile(outputPath(clip))).length > 0);
+    await invoke(handleClipCleanup, { outputId: clip.outputId });
+    await invoke(handleClipCleanup, { sourceId: source.sourceId });
+  }
+  console.log('通过：11分钟源视频本地上传、在线导入及10分钟以后的片段截取');
 
   // 真实上传→识别→截取→解码末帧，覆盖不同帧率及切点前一帧过渡。
   for (const sample of [
