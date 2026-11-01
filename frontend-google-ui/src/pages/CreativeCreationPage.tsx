@@ -4824,6 +4824,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         folders: availableFolders,
         lastFolder: loadLastVideoLibraryFolder(),
         painting: paintingProfile,
+        productType: paintingProductType,
         loadBinding: imageHash
           ? () => getPaintingFolderBinding(imageHash, String(paintingProfile.name || ''), paintingProductType)
           : undefined,

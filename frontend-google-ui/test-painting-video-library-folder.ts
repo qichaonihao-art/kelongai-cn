@@ -53,3 +53,25 @@ assert.deepEqual(await resolve({ folders: [], lastFolder: '已删除文件夹' }
 });
 assert.equal((await resolve({ folders, lastFolder: '', recentSavedFolder: '新款青云志' })).folder, '新款青云志');
 console.log('PASS: repeated variant saves, last-save priority, changed painting, first save, unavailable binding and missing folders');
+
+const mixedFolders = ['通用素材', '喜居宝地千年旺', '喜居宝地千年旺挂画', '千年旺摆台'];
+for (const name of ['千年旺', '千年旺摆台', '喜居宝地千年旺']) {
+  for (const lastFolder of mixedFolders) {
+    assert.equal((await resolve({
+      folders: mixedFolders, lastFolder,
+      painting: { name, prompt: '【固定一体摆件物理锁定】展示喜居宝地千年旺的细节' },
+      loadBinding: async () => ({ folderName: '喜居宝地千年旺', folderId: 9 }),
+    })).folder, '千年旺摆台');
+  }
+}
+assert.equal((await resolve({
+  folders: mixedFolders, lastFolder: '喜居宝地千年旺',
+  painting: { name: '千年旺' }, productType: 'ornament',
+})).folder, '千年旺摆台');
+assert.equal((await resolve({
+  folders: ['通用素材', '千年旺挂画'], lastFolder: '千年旺挂画',
+  recentSavedFolder: '千年旺挂画', productType: 'ornament',
+  painting: { name: '千年旺' },
+  loadBinding: async () => ({ folderName: '千年旺挂画' }),
+})).folder, '通用素材');
+console.log('PASS: ornament versus hanging folder isolation');
