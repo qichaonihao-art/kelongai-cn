@@ -22,6 +22,7 @@ import { ORNAMENT_STRUCTURE_RULE, isOrnamentProduct, normalizeOrnamentProfile, O
 import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, stickerProfileFromPrompt } from './sticker-creative.mjs';
 import { setVideoLibraryShotRole } from './video-library-shot-role.mjs';
 import { deleteEmptyVideoLibraryFolder } from './video-library-folder-delete.mjs';
+import { renameVideoLibraryFolder } from './video-library-folder-rename.mjs';
 import { normalizeWechatCookie, parseWechatChannelWithYuanbao } from './wechat-channels.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -3938,6 +3939,33 @@ async function handleDeleteVideoLibraryFolder(req, res, encodedName) {
     else sendJson(res, 200, { ok: true, folder: folderName });
   } catch (error) {
     sendJson(res, error instanceof URIError ? 400 : 500, { error: error instanceof URIError ? '文件夹名称不合法' : (error.message || '删除文件夹失败') });
+  }
+}
+
+async function handleRenameVideoLibraryFolder(req, res, encodedName) {
+  try {
+    const folderName = decodeURIComponent(encodedName).trim();
+    const body = await readRequestBody(req);
+    const rawNextName = readValue(body?.newFolderName).trim();
+    if (!folderName || sanitizeVideoLibraryFolder(folderName) !== folderName) {
+      sendJson(res, 400, { error: '文件夹名称不合法' });
+      return;
+    }
+    if (!rawNextName) {
+      sendJson(res, 400, { error: '请输入新的文件夹名称' });
+      return;
+    }
+    if (!rawNextName.replace(/[\\/:*?"<>|]/g, '').trim()) {
+      sendJson(res, 400, { error: '文件夹名称不能只包含符号，请输入有效名称' });
+      return;
+    }
+    const result = renameVideoLibraryFolder(getCollectionDb(), folderName, sanitizeVideoLibraryFolder(rawNextName));
+    if (result.status === 'missing') sendJson(res, 404, { error: result.message });
+    else if (result.status === 'conflict') sendJson(res, 409, { error: result.message });
+    else if (result.status === 'default' || result.status === 'invalid') sendJson(res, 400, { error: result.message });
+    else sendJson(res, 200, { ok: true, folder: result.folder, previousFolder: result.previousFolder });
+  } catch (error) {
+    sendJson(res, error instanceof URIError ? 400 : 500, { error: error instanceof URIError ? '文件夹名称不合法' : (error.message || '重命名文件夹失败') });
   }
 }
 
@@ -21720,6 +21748,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'PATCH' && url.pathname.startsWith('/api/video-library/folders/')) {
+    await handleRenameVideoLibraryFolder(req, res, url.pathname.slice('/api/video-library/folders/'.length));
+    return;
+  }
+
   if (req.method === 'DELETE' && url.pathname.startsWith('/api/video-library/folders/')) {
     await handleDeleteVideoLibraryFolder(req, res, url.pathname.slice('/api/video-library/folders/'.length));
     return;
@@ -21891,6 +21924,7 @@ export {
   generatePaintingIdeaPromptCore,
   getCollectionDb,
   handleGetVideoLibraryFolders,
+  handleRenameVideoLibraryFolder,
   handleVideoLibraryFile,
   handleVideoLibraryThumbnail,
   handleUploadVideoLibrary,

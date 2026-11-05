@@ -1,6 +1,6 @@
 import VideoLibraryThumbnail from '../components/VideoLibraryThumbnail';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, CheckCircle2, Download, FolderCog, FolderInput, FolderOpen, Loader2, Pause, Play, Plus, RefreshCw, Search, Square, Trash2, Upload, Video, X } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Download, FolderCog, FolderInput, FolderOpen, Loader2, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, Upload, Video, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import HomeBackButton from '@/src/components/HomeBackButton';
@@ -8,6 +8,7 @@ import {
   deleteVideoLibrarySelection,
   createVideoLibraryFolder,
   deleteVideoLibraryFolder,
+  renameVideoLibraryFolder,
   formatVideoLibrarySize,
   formatVideoLibraryTime,
   calculateVideoLibraryUnread,
@@ -15,6 +16,7 @@ import {
   getVideoLibraryView,
   getVideoLibrarySummary,
   markVideoLibraryItemsRead,
+  renameVideoLibraryReadFolder,
   retryVideoEnhancement,
   sortVideoLibraryFoldersByCount,
   setVideoLibraryShotRole,
@@ -173,6 +175,9 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [isDownloadBusy, setIsDownloadBusy] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  const [renameFolderDraft, setRenameFolderDraft] = useState('');
+  const [isRenamingFolder, setIsRenamingFolder] = useState(false);
   const [isChangingShotRole, setIsChangingShotRole] = useState(false);
   const [shotRoleView, setShotRoleView] = useState<'regular' | 'shot-one'>('regular');
   const [checkedVideoIds, setCheckedVideoIds] = useState<Set<number>>(new Set());
@@ -381,6 +386,11 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             <span className="mt-1 text-[11px] font-bold text-slate-400">{folderCounts.get(folder) || 0} 个视频</span>
           </button>
           {folder !== DEFAULT_FOLDER && (
+            <button type="button" onClick={() => startRenameFolder(folder)} disabled={deletingFolder !== null || isDeleting || isDownloadBusy || isRenamingFolder} className="pointer-events-none absolute bottom-2 left-2 inline-flex size-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-sky-50 hover:text-sky-600 disabled:cursor-not-allowed disabled:opacity-50" title={`重命名文件夹“${folder}”`} aria-label={`重命名${folder}文件夹`}>
+              <Pencil className="size-4" />
+            </button>
+          )}
+          {folder !== DEFAULT_FOLDER && (
             <button type="button" onClick={() => void handleDeleteFolder(folder)} disabled={deletingFolder !== null || isDeleting || isDownloadBusy} className={cn('pointer-events-none absolute bottom-2 right-2 inline-flex size-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-red-50 hover:text-red-600 disabled:cursor-wait disabled:opacity-50', deletingFolder === folder && 'pointer-events-auto opacity-100')} title={`删除文件夹“${folder}”（仅限空文件夹）`} aria-label={`删除${folder}文件夹`}>
               {deletingFolder === folder ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
             </button>
@@ -509,6 +519,80 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     } finally {
       deleteBusyRef.current = false;
       if (mountedRef.current) setDeletingFolder(null);
+    }
+  }
+
+  function startRenameFolder(folder: string) {
+    if (folder === DEFAULT_FOLDER || isRenamingFolder) return;
+    setError('');
+    setNotice('');
+    setRenamingFolder(folder);
+    setRenameFolderDraft(folder);
+  }
+
+  function closeRenameFolder() {
+    if (isRenamingFolder) return;
+    setRenamingFolder(null);
+    setRenameFolderDraft('');
+    setError('');
+  }
+
+  async function handleRenameFolder() {
+    if (!renamingFolder || isRenamingFolder) return;
+    const previousFolder = renamingFolder;
+    const nextFolder = renameFolderDraft.trim();
+    if (!nextFolder) {
+      setError('请输入文件夹名称');
+      return;
+    }
+    if (nextFolder === previousFolder) {
+      closeRenameFolder();
+      return;
+    }
+    if (folders.some((folder) => folder === nextFolder)) {
+      setError(`文件夹“${nextFolder}”已存在，请换一个名称。`);
+      return;
+    }
+    setIsRenamingFolder(true);
+    setError('');
+    try {
+      const renamedFolder = await renameVideoLibraryFolder(previousFolder, nextFolder);
+      if (!mountedRef.current) return;
+      // 先迁移本机已读标记，再更新界面，避免改名后整库突然变成“新”。
+      renameVideoLibraryReadFolder(previousFolder, renamedFolder);
+      setFolders((previous) => Array.from(new Set(previous.map((folder) => folder === previousFolder ? renamedFolder : folder))));
+      setOverviewCounts((previous) => {
+        if (!(previousFolder in previous)) return previous;
+        const next = { ...previous };
+        next[renamedFolder] = next[previousFolder];
+        delete next[previousFolder];
+        return next;
+      });
+      setFolderUnreadCounts((previous) => {
+        const count = previous.get(previousFolder);
+        if (count === undefined) return previous;
+        const next = new Map(previous);
+        next.delete(previousFolder);
+        next.set(renamedFolder, (next.get(renamedFolder) || 0) + count);
+        return next;
+      });
+      setItems((previous) => previous.map((item) => item.folderName === previousFolder ? { ...item, folderName: renamedFolder } : item));
+      setSelectedItem((previous) => previous && previous.folderName === previousFolder ? { ...previous, folderName: renamedFolder } : previous);
+      setMovingItem((previous) => previous && previous.folderName === previousFolder ? { ...previous, folderName: renamedFolder } : previous);
+      setFolderDraft((previous) => previous === previousFolder ? renamedFolder : previous);
+      setMoveTargetFolder((previous) => previous === previousFolder ? renamedFolder : previous);
+      if (retryDownloadRef.current.folder === previousFolder) retryDownloadRef.current.folder = renamedFolder;
+      setLocalDownloadProgress((previous) => previous && previous.folderName === previousFolder ? { ...previous, folderName: renamedFolder } : previous);
+      setSelectedFolder((previous) => previous === previousFolder ? renamedFolder : previous);
+      setRenamingFolder(null);
+      setRenameFolderDraft('');
+      setNotice(`文件夹“${previousFolder}”已重命名为“${renamedFolder}”，所有设备都会同步`);
+      void refreshUnreadSummary();
+      void refresh({ folder: selectedFolder === previousFolder ? renamedFolder : selectedFolder, query: activeQuery }, true);
+    } catch (renameError) {
+      if (mountedRef.current) setError(renameError instanceof Error ? renameError.message : '重命名文件夹失败');
+    } finally {
+      if (mountedRef.current) setIsRenamingFolder(false);
     }
   }
 
@@ -1091,6 +1175,11 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             <div className="mb-4 flex flex-wrap items-center gap-2">
               <FolderOpen className="size-4 text-sky-500" />
               <h2 className="text-base font-black">{folder}</h2>
+              {folder !== DEFAULT_FOLDER && (
+                <button type="button" onClick={() => startRenameFolder(folder)} disabled={deletingFolder !== null || isDeleting || isDownloadBusy || isRenamingFolder} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-black text-slate-500 hover:border-sky-300 hover:text-sky-600 disabled:cursor-not-allowed disabled:opacity-50" title="重命名文件夹" aria-label={`重命名${folder}文件夹`}>
+                  <Pencil className="size-3" />重命名
+                </button>
+              )}
               <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-black text-slate-500">{folderItems.length}</span>
               {(folderUnreadCounts.get(folder) || 0) > 0 && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-black text-red-500">{folderUnreadCounts.get(folder)} 个未看</span>}
               <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -1177,6 +1266,44 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
       )}
 
       {isFolderOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" onMouseDown={() => setIsFolderOpen(false)}><div className="w-full max-w-sm rounded-3xl border border-white/80 bg-white p-6 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex items-center justify-between"><h2 className="text-xl font-black">新建文件夹</h2><button type="button" onClick={() => setIsFolderOpen(false)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="size-5" /></button></div><input autoFocus value={newFolderDraft} onChange={(event) => setNewFolderDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void handleCreateFolder(); }} placeholder="例如：富贵牡丹" className="mt-5 h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold outline-none focus:border-sky-300 focus:bg-white" /><button type="button" onClick={() => void handleCreateFolder()} className="mt-4 w-full rounded-2xl bg-slate-900 py-3 text-sm font-black text-white hover:bg-slate-800">创建文件夹</button></div></div>}
+
+      {renamingFolder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" onMouseDown={closeRenameFolder}>
+          <div className="w-full max-w-sm rounded-3xl border border-white/80 bg-white p-6 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-black">重命名文件夹</h2>
+              <button type="button" onClick={closeRenameFolder} disabled={isRenamingFolder} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 disabled:opacity-40"><X className="size-5" /></button>
+            </div>
+            <p className="mt-1 truncate text-xs font-semibold text-slate-400">当前名称：{renamingFolder}</p>
+            <label htmlFor="video-library-rename-folder" className="mt-5 block text-sm font-black text-slate-600">新的文件夹名称</label>
+            <input
+              id="video-library-rename-folder"
+              autoFocus
+              value={renameFolderDraft}
+              maxLength={80}
+              disabled={isRenamingFolder}
+              onChange={(event) => {
+                setRenameFolderDraft(event.target.value);
+                if (error) setError('');
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleRenameFolder();
+                if (event.key === 'Escape') closeRenameFolder();
+              }}
+              placeholder="例如：富贵牡丹"
+              className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold outline-none focus:border-sky-300 focus:bg-white disabled:opacity-60"
+            />
+            {error && <p className="mt-2 text-xs font-bold text-red-600">{error}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" disabled={isRenamingFolder} onClick={closeRenameFolder} className="h-10 rounded-xl border border-slate-200 px-4 text-xs font-black text-slate-600 hover:bg-slate-50 disabled:opacity-40">取消</button>
+              <button type="button" disabled={isRenamingFolder || !renameFolderDraft.trim() || renameFolderDraft.trim() === renamingFolder} onClick={() => void handleRenameFolder()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-sky-500 px-4 text-xs font-black text-white hover:bg-sky-600 disabled:cursor-not-allowed disabled:bg-slate-300">
+                {isRenamingFolder ? <Loader2 className="size-4 animate-spin" /> : <Pencil className="size-4" />}
+                {isRenamingFolder ? '正在保存' : '保存名称'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {movingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={() => !isMoving && setMovingItem(null)}>

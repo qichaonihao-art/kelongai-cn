@@ -137,6 +137,25 @@ export function markVideoLibraryItemsRead(items: Array<Pick<VideoLibrarySummaryI
   saveVideoLibraryReadState({ readKeys: Array.from(readKeys) }, true);
 }
 
+// 已读标记按“文件夹 + 视频编号”保存在本机；文件夹改名后同步迁移，
+// 避免整个文件夹的视频突然全部变成“新”。
+export function renameVideoLibraryReadFolder(previousFolderName: string, nextFolderName: string) {
+  if (typeof window === 'undefined') return;
+  const previous = encodeURIComponent(String(previousFolderName || ''));
+  const next = encodeURIComponent(String(nextFolderName || ''));
+  if (!previous || !next || previous === next) return;
+  const state = loadVideoLibraryReadState();
+  if (!state) return;
+  const prefix = `${previous}:`;
+  let changed = false;
+  const readKeys = state.readKeys.map((key) => {
+    if (!key.startsWith(prefix)) return key;
+    changed = true;
+    return `${next}:${key.slice(prefix.length)}`;
+  });
+  if (changed) saveVideoLibraryReadState({ readKeys }, true);
+}
+
 async function readJson(response: Response) {
   return response.json().catch(() => null);
 }
@@ -232,6 +251,19 @@ export async function deleteVideoLibraryFolder(folderName: string) {
   const json = await readJson(response);
   if (!response.ok) throw new Error(errorMessage(json, '删除文件夹失败'));
   invalidateVideoLibraryCache();
+}
+
+export async function renameVideoLibraryFolder(folderName: string, newFolderName: string) {
+  const response = await fetch(`/api/video-library/folders/${encodeURIComponent(folderName)}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ newFolderName }),
+  });
+  const json = await readJson(response);
+  if (!response.ok) throw new Error(errorMessage(json, '重命名文件夹失败'));
+  invalidateVideoLibraryCache();
+  return String(json?.folder || newFolderName);
 }
 
 export async function getVideoLibraryFolders() {
