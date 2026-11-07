@@ -57,28 +57,32 @@ const entries = [
   ['贴墙平面质感', '4—6秒保持近乎正面的轻微侧光近景，展示画芯内部的哑光PVC印刷纹理与墙面完全贴平的整体效果；不拍产品侧面，不沿四周外沿移动，不掀边、不生成第二层画。'],
   ['前景遮挡揭示', '独立茶室的木格屏风或茶桌旁绿植一开始真实遮挡部分已贴好字画，镜头小幅横移让完整横画可见，以画为主体收尾；场景内不混入客厅家具。'],
   ['低位升起看画', '书房由桌边略低机位沿短路径平稳升起，到完整横款字画居中即停止上扫，最后微动仍围绕画，不扫向天花板。'],
-  // 31—40：柔性形态、揭膜及局部安装。一次只演示可完成的一段，不压缩完整施工。
+  // 31—40：柔性形态、成品除尘及局部安装。
   ['双人正面展示', '两位不同脸型发型衣着的成年人在书房空地各扶长幅贴画一端，正面朝镜头，画身有自然轻微弯曲与下垂，保持横向原比例；只展示未安装成品，不揭膜不上墙。'],
   ['双人搬运比位', '两名不同外貌衣着的成年人各扶一端，把尚带背膜的长幅贴画移到茶室宽墙前短暂比位；双手始终承托，不松手、不假装已粘牢。'],
-  ['桌面揭膜起角', '4—6秒近景在足够长的干净操作台上，一手稳住贴画，另一手从背面角部提起单独的背膜；白色背面属于画身，背膜与画身清楚分离，只揭一小段，不演示完整施工。'],
-  ['双人局部揭膜', '两人在宽阔整洁的铺贴工作区各承托一端，一人保持画身稳定，另一人从背面揭开一小段背膜；揭下的膜始终被手持有并可追踪，白色画背仍留在PVC主体上；结束仍为手持未安装状态。'],
-  ['左端向右局部贴合', '茶室墙面上左端已粘牢，中部尚未贴合由手承托；一手向右揭开少量背膜，一手沿新增裸露背胶区域向右压贴，只完成短区间，右端余料仍合理由手托住。'],
-  ['右端向左局部贴合', '书房墙面右端已粘牢，左侧未贴区域由手支撑；一手向左揭少量背膜，另一手跟随由右向左压贴，已贴区域不移动，白色画背不被撕成第二幅画。'],
+  ['抹布正面近景除尘', '书房中用正面固定近景拍画芯与手部。一只手拿折叠好的干燥软抹布，在正面印刷区域中部从左向右轻擦一次，再收手，让镜头停在无遮挡的印刷细节上。'],
+  ['抹布侧前方中景除尘', '餐厅从侧前方拍人物、餐边柜和整幅贴画。人物站在柜旁地面，用干燥软抹布在画面中部由上往下轻擦一小段，随后把手放低。镜头短距离缓慢拉远，以贴画和餐边柜的整体搭配收尾。'],
+  ['鸡毛掸子斜侧近景除尘', '茶室用轻微斜侧近景拍掸头与画芯。一只手持短柄鸡毛掸子，让羽毛尖在画芯中部从右向左轻扫一次，掸头离开后镜头停在原本的印刷笔触上。'],
+  ['鸡毛掸子正面中全景除尘', '书房用正面中全景交代书桌、人物和墙上整幅贴画。人物从书桌侧边站稳，手持鸡毛掸子在贴画正面中部轻扫一小段，再垂下掸子侧让。镜头始终保留整幅贴画，结尾焦点落在书房里的成品。'],
   ['卷材沿轴展开', '操作长桌上由双手控制未安装的横幅卷材，卷体绕自身竖向轴线旋转并向一侧释放画身；只拍一段滚动展开，背膜仍附着，不凭空新增木杆、不把卷体横滑当展开。'],
   ['未贴区域落墙压实', '局部近景开始时其余画面已粘牢，仅右端小段未粘且自然弯曲露出白色画背，背膜已揭除并置于台面；一手托住，一手使小段落墙压实，不能先撕起已粘部位。'],
   ['安装最后压边', '客厅字画已完成贴合，仅做最后检查，人物手掌从中部向边缘轻压并移开，镜头拉至完整成品；不重复揭膜，不卷起，不移动已贴区域。'],
   ['双人完成后让出', '两名外貌衣着不同的成年人在茶室分别对已基本贴合的左右端做最后轻压，先后松手侧退让出完整画面；只展示收尾，不再安装第二次。'],
 ];
 
-export const STICKER_FRAMEWORKS = entries.map(([title, action], index) => ({
-  directionNumber: index + 1, title, action,
-  state: index < 30 ? 'installed' : 'installation',
-  closeDetail: [25, 26, 27, 28, 33].includes(index + 1),
-}));
-const STICKER_WALL_INSTALL_DIRECTIONS = new Set([35, 36, 38, 39, 40]);
+export const STICKER_FRAMEWORKS = entries.map(([title, action], index) => {
+  const directionNumber = index + 1;
+  const cleaning = directionNumber >= 33 && directionNumber <= 36;
+  return {
+    directionNumber, title, action, cleaning,
+    state: directionNumber <= 30 || cleaning ? 'installed' : 'installation',
+    closeDetail: [25, 26, 27, 28, 33, 35].includes(directionNumber),
+  };
+});
+const STICKER_WALL_INSTALL_DIRECTIONS = new Set([38, 39, 40]);
 const STICKER_LIVING_ROOM_DIRECTIONS = new Set([2, 5, 10, 12, 16, 19, 23, 39]);
 const STICKER_TEA_ROOM_DIRECTIONS = new Set([1, 4, 7, 11, 17, 20, 29, 32, 35, 40]);
-const STICKER_STUDY_DIRECTIONS = new Set([3, 6, 9, 13, 18, 24, 28, 30, 31, 36, 38]);
+const STICKER_STUDY_DIRECTIONS = new Set([3, 6, 9, 13, 18, 24, 28, 30, 31, 33, 36, 38]);
 
 const STICKER_LIVING_ROOM_LAYOUTS = {
   2: '暖灰色低靠背布艺三人沙发',
@@ -112,13 +116,13 @@ function stickerSceneLayoutRule(direction) {
   if (number === 22) {
     return '本方向固定为现代会议室，使用会议桌边缘和两把独立办公椅形成前景，贴画位于会议室企业文化墙中心；不得使用住宅三人沙发、客厅茶几组合或成排沙发靠垫。';
   }
-  if (number === 15) {
+  if ([15, 34].includes(number)) {
     return '本方向固定为餐厅，使用餐桌、独立餐椅、餐边柜和花瓶，贴画与餐桌或餐边柜组合水平居中；严禁出现沙发及客厅茶几。';
   }
   if ([21, 25, 26, 27].includes(number)) {
     return '本方向使用安静的文化走廊、展陈墙或纯墙面产品近景，只出现连续墙面、窄边柜或局部绿植；严禁出现沙发、客厅茶几和成排靠垫。';
   }
-  if ([33, 34, 37].includes(number)) {
+  if (number === 37) {
     return '本方向使用宽阔整洁的工作室或铺贴操作区，以长操作台和独立工作椅为主；严禁出现沙发、客厅茶几和成排靠垫。';
   }
   return '本方向使用与创意正文一致的单一功能空间，主家具必须服务于该空间；除正文明确写明客厅外，严禁自动补入沙发、客厅茶几或成排靠垫。';
@@ -146,7 +150,7 @@ function stickerSceneScaleRule(profile, direction) {
   if ([8, 14, 22].includes(number)) {
     return `${common}办公室或会客室主墙按宽360—450厘米表现，贴画宽度应约占主墙宽的${visiblePercentRange(p.widthCm, 360, 450)}；贴画视觉中心离地约145—160厘米，与会议桌、办公桌或独立会客椅组合居中，周围保留克制而清楚的空墙。`;
   }
-  if (number === 15) {
+  if ([15, 34].includes(number)) {
     return `${common}餐桌或餐边柜对应的功能墙按宽320—400厘米表现，贴画宽度应约占墙宽的${visiblePercentRange(p.widthCm, 320, 400)}；贴画下沿与餐边柜顶部保留约25—45厘米空墙，画、柜与餐桌中心轴协调。`;
   }
   if ([21, 25, 26, 27].includes(number)) {
@@ -219,7 +223,7 @@ export function getStickerFramework(direction) {
 }
 export function stickerDuration(direction, min = 5, max = 10) {
   if ([1, 21, 22].includes(Number(direction))) return { durationMin: 5, durationMax: 6 };
-  if ([25, 26, 27, 28, 33].includes(Number(direction))) return { durationMin: 4, durationMax: 6 };
+  if ([25, 26, 27, 28, 33, 35].includes(Number(direction))) return { durationMin: 4, durationMax: 6 };
   const durationMin = Math.min(15, Math.max(4, Number(min) || 5));
   return { durationMin, durationMax: Math.min(15, Math.max(durationMin, Number(max) || 10)) };
 }
@@ -231,11 +235,11 @@ function stickerHeaderRule(p, f) {
 }
 
 function stickerCompositionRule(p, f, sceneLayoutRule, sceneScaleRule) {
-  return `${f.state === 'installed' ? `本方向为已安装成品展示，以下状态高于创意正文：第0秒起墙上已经存在最终完成态的整张横画，整个表面与墙面全幅无缝贴合，四角及四边全部压实，二者之间没有空气层或可见间距。参考图对应的完整正面位图从第0帧起一次性、完整、清晰存在，所有像素的颜色和相对位置逐帧不变。人物始终空手并与产品表面保持距离，产品全片都是同一个贴墙静态平面；唯一变化来自镜头、人物和合理环境微动。贴画主体逐帧保持同一${p.widthCm}:${p.heightCm}横向外形和同一墙面坐标，首帧状态就是末帧状态。` : `本方向只执行以下初始状态和动作：${f.action} 未粘区域允许在手支撑下自然弯曲和下垂，不得拉伸或橡胶变形；已粘区域保持固定。贴合只能随手揭膜与压贴逐段推进，已完成后不能再次展开或揭起。演员站地面，不站床、柜子或沙发。`}
+  return `${f.state === 'installed' ? `本方向为已安装成品展示，以下状态高于创意正文：第0秒起墙上已经存在最终完成态的整张横画，整个表面与墙面全幅无缝贴合，四角及四边全部压实，二者之间没有空气层或可见间距。参考图对应的完整正面位图从第0帧起一次性、完整、清晰存在，所有像素的颜色和相对位置逐帧不变。${f.cleaning ? '只允许指定清洁工具轻触画芯中部，手不直接触画，工具远离四边和四角。' : '人物始终空手并与产品表面保持距离。'}产品全片都是同一个贴墙静态平面；唯一变化来自镜头、人物和合理环境微动。贴画主体逐帧保持同一${p.widthCm}:${p.heightCm}横向外形和同一墙面坐标，首帧状态就是末帧状态。` : `本方向只执行以下初始状态和动作：${f.action} 未粘区域允许在手支撑下自然弯曲和下垂，不得拉伸或橡胶变形；已粘区域保持固定。贴合只能随手揭膜与压贴逐段推进，已完成后不能再次展开或揭起。演员站地面，不站床、柜子或沙发。`}
 ${f.directionNumber === 6 ? '方向6开场连续性强制要求：第0秒直接采用无遮挡的正面中景，空手人物、墙面和完整贴画立即处于正常空间关系中；完整横向贴画从首帧起占9:16视频画面宽度约55%—65%，参考图对应的整张正面位图在首帧已经一次性完整清楚，严禁随着推近补充或加深任何外围颜色区域。禁止全屋大远景，禁止把贴画缩在画面远处后再依靠推近补全产品。方向6全片不使用书本、散页、白纸、白布、薄膜、幕布或任何大面积白色物体，不设计放书或翻页动作，镜头前方始终无遮挡；禁止用掀开、翻开、抽走、滑走、擦镜、遮挡后移开的方式揭示场景或贴画。方向6的收尾只能聚焦文字、印章或画芯内部纹理，不得同时展示、靠近或强化产品四周外沿。' : ''}
 ${(f.state === 'installed' || STICKER_WALL_INSTALL_DIRECTIONS.has(f.directionNumber)) && !f.closeDetail ? `成品位置或预定安装位置必须按本方向功能空间和主家具组合的几何中心布置，不得偏贴在家具一端、门边、墙角或狭窄墙柱上。构图需要人物时让人物站到侧边，不得把贴画挪离中心给人物让位。${sceneLayoutRule}` : sceneLayoutRule}
 【本方向空间比例锁定】${sceneScaleRule}${f.state === 'installed' && !f.closeDetail ? '贴画在视频画面中的宽度占比始终不低于40%，人物同框的中景里也不低于此值，保证外围印刷边框清晰可辨。' : ''}
-${f.state === 'installed' ? '人物动作只服务于生活化展示或讲解，人物与产品始终分离；产品区域内没有任何自主运动或形态变化。' : '所有物体运动必须由明确手部接触带动。一个动作不能同时既揭膜又凭空压平整幅长画；时长不足时只拍可真实完成的局部步骤，禁止加速赶施工。'}
+${f.cleaning ? '人物只做一次指定的干式除尘动作，站在地面。产品不位移、不翘边、不变形，不改变原有印刷颜色，不生成灰尘团、水痕或划痕。' : f.state === 'installed' ? '人物动作只服务于生活化展示或讲解，人物与产品始终分离；产品区域内没有任何自主运动或形态变化。' : '所有物体运动必须由明确手部接触带动。一个动作不能同时既揭膜又凭空压平整幅长画；时长不足时只拍可真实完成的局部步骤，禁止加速赶施工。'}
 ${f.closeDetail ? '本方向是局部近景，不强制人物全身或房间全景；只因相机靠近呈现细节，产品物理尺寸不变。' : '空间展示用宽阔连续墙面与同景深家具交代尺寸，横幅完整可见且不拉伸；人物不要遮住字画主体。场景严格服从本方向指定的唯一功能空间，不跨场景混搭家具，不默认床头场景。'}
 人物数量全程一致；多人必须脸型、发型和服装明显不同，不得复制同一个人。人物正常速度，镜头一条短而明确的路径均匀分配到整个时长，无急加速、急推急拉、甩镜或末尾冲刺。摄影机移动不得导致贴画形态变化。
 最后视觉焦点必须落在贴画整体或本方向指定的画内细节，不能扫过贴画继续拍空墙或天花板。保留需要的推进特写，不统一改为中远景收尾。结尾可以自然减速，并保留人物或前景微动，不追加独立静态定妆镜头。`;
@@ -274,7 +278,11 @@ export function ensureStickerPrompt(prompt, profile, direction) {
   const f = getStickerFramework(direction);
   const rawBody = (bodyMatch ? bodyMatch[0] : extracted.split(STICKER_FINAL_MARKER)[0].split(/\n[ \t]*【/)[0]).trim();
   const bodyWithoutConstruction = f.state === 'installed' ? sanitizeInstalledStickerCreativeBody(rawBody) : rawBody;
-  const body = compactStickerCreativeBody(sanitizeStickerProductColorLabels(bodyWithoutConstruction));
+  const durationLine = rawBody.match(/(?:^|\n)\s*(总时长[：:]\s*\d+秒)/)?.[1];
+  // 除尘方向使用固定动作，避免旧任务或模型正文重新带入安装动作。
+  const body = f.cleaning
+    ? `创意内容：${f.action}${durationLine ? `\n${durationLine}` : ''}`
+    : compactStickerCreativeBody(sanitizeStickerProductColorLabels(bodyWithoutConstruction));
   const positionRule = (f.state === 'installed' || STICKER_WALL_INSTALL_DIRECTIONS.has(f.directionNumber)) && !f.closeDetail
     ? '墙贴的水平中心对准所在功能背景墙及主家具组合的水平中心，人物只能侧让，不能让产品偏离中心。'
     : '';
@@ -334,7 +342,7 @@ export function buildStickerIdeasRequest(profile, plan, batch, variationRound, a
   return `你为PVC背胶贴画设计短视频。只输出10个对象的合法JSON数组：[{"id":"1","title":"标题","summary":"具体创意"}]，严格按下面10个方向一一对应，不改变初始状态、安装/成品分类、运镜方向或结尾目标。
 档案：${JSON.stringify(normalizeStickerProfile(profile))}
 偏好：${JSON.stringify(plan)}；风格：${style.label}，${style.direction}。第${variationRound + 1}轮；避免复述这些旧创意：${JSON.stringify(avoidIdeas || [])}。
-40个方向中前30个是已安装展示，后10个才涉及柔性形态和安装。前30个方向的贴画必须在第0秒以前已经贴好，创意不得给它增加手持、搬运、展开、旋转或贴墙动作。每个方向必须服从该方向指定的唯一功能空间及家具，不跨场景混搭；茶室、书房、餐厅、办公室、走廊和工作区不得自动补入住宅沙发或成排靠垫，只有明确标为客厅的方向才允许使用该方向指定的沙发。每条明确地点和2件符合该空间用途的陈设，局部特写例外。产品无挂钩木条挂绳，不使用定位胶带，不套用卷轴尺寸补偿。参考图整个正面只能描述为一张不可拆分的平面印刷位图，不得把任何颜色区域命名或描述成独立框体、相框、匾或外围部件，也不得设计专门拍摄产品四周外沿的镜头。上传参考图是产品内容、颜色、外观、纹理和表面效果的唯一依据；产品只描述为哑光柔性PVC印刷薄片，不根据场景风格给产品换颜色或材质；所选风格只改变环境、人物、家具、服装和光线，不改变产品本身。成品与本方向主家具组合对应的功能墙几何中心对齐。白色画背属于主体，背膜另行揭离。已贴好不能二次展开。人物正常速度，镜头全程平稳均匀推进，结束焦点在画，允许文字、印章和画芯内部纹理特写结尾。只拍时长内真实可完成的动作。
+方向1—30和33—36都是已贴好成品，必须在第0秒以前已经贴平，不得增加手持贴画、搬运、展开、旋转或贴墙动作。方向33—36只用指定的清洁工具轻扫画芯中部一次，避开边角。方向31、32及37—40才涉及柔性形态或局部安装。每个方向必须服从该方向指定的唯一功能空间及家具，不跨场景混搭；茶室、书房、餐厅、办公室、走廊和工作区不得自动补入住宅沙发或成排靠垫，只有明确标为客厅的方向才允许使用该方向指定的沙发。每条明确地点和2件符合该空间用途的陈设，局部特写例外。产品无挂钩木条挂绳，不使用定位胶带，不套用卷轴尺寸补偿。参考图整个正面只能描述为一张不可拆分的平面印刷位图，不得把任何颜色区域命名或描述成独立框体、相框、匾或外围部件，也不得设计专门拍摄产品四周外沿的镜头。上传参考图是产品内容、颜色、外观、纹理和表面效果的唯一依据；产品只描述为哑光柔性PVC印刷薄片，不根据场景风格给产品换颜色或材质；所选风格只改变环境、人物、家具、服装和光线，不改变产品本身。成品与本方向主家具组合对应的功能墙几何中心对齐。白色画背属于主体，背膜另行揭离。已贴好不能二次展开。人物正常速度，镜头全程平稳均匀推进，结束焦点在画，允许文字、印章和画芯内部纹理特写结尾。只拍时长内真实可完成的动作。
 ${frameworks.map((f, index) => `${index + 1}. 方向${f.directionNumber}：${f.title}。${f.action}。${stickerSceneLayoutRule(f.directionNumber)}${stickerSceneScaleRule(profile, f.directionNumber)}一镜到底。人物如出现，主色${style.wardrobe[(batch * 10 + index + variationRound * 3) % style.wardrobe.length]}。`).join('\n')}
 每条一句具体创意，写明连续动作和镜头路径；同一条只一个场景，人物、布置不得中途变化。不要写完整提示词。`;
 }
@@ -350,7 +358,7 @@ export function buildStickerVideoRequest(profile, idea, context, style) {
 ${stickerPhysicalRules(profile, f.directionNumber)}
 固定档案：${JSON.stringify(promptProfile)}
 方向${f.directionNumber}：${f.title}。${f.action}
-本轮具体创意：${idea.title}；${idea.summary}
+${f.cleaning ? '本轮具体创意服从上述固定除尘动作和机位。' : `本轮具体创意：${idea.title}；${idea.summary}`}
 风格：${style.label}，${style.direction}。用户偏好：${JSON.stringify(context)}
 上次提示词和avoidElements只是避重资料，不能覆盖当前物理状态。换元素保留本方向动作结构，可更换同类房间布置、人物服装、光线和陈设，不改变产品。视频画幅为${context.ratio || '9:16'}，不是产品实体比例。
 按场景陈设、人物动作、镜头路径的顺序写，一个连续镜头，不切镜。时间轴从0秒无重叠连续到结束；按时长每1—2秒交代实际动作或取景变化，但不为了凑节点给贴好的画增加施工动作。镜头路径长度按整段时间均匀分配；保留近景特写方向。全景看不清小字时不重写小字，不放大实物，不强制远景识别笔画。

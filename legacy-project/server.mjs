@@ -5756,8 +5756,8 @@ async function handleCreateImageTask(req, res) {
       fine: { resolution: '4k', quality: 'xhigh' },
     };
     const legacyResolutionMode = { '1k': 'quick', '2k': 'standard', '4k': 'fine' }[String(body.resolution || '').toLowerCase()];
-    const requestedMode = String(body.generation_mode || legacyResolutionMode || 'standard').toLowerCase();
-    const generationMode = Object.hasOwn(generationModes, requestedMode) ? requestedMode : 'standard';
+    const requestedMode = String(body.generation_mode || legacyResolutionMode || 'quick').toLowerCase();
+    const generationMode = Object.hasOwn(generationModes, requestedMode) ? requestedMode : 'quick';
     const { resolution, quality } = generationModes[generationMode];
 
     if (!prompt) {
@@ -16587,7 +16587,8 @@ async function generateStickerIdeasCore(body, apiKey) {
         ...idea, id: `sticker-${framework.directionNumber}`, productType: 'sticker',
         directionNumber: framework.directionNumber,
         ...stickerDuration(framework.directionNumber, plan.durationMin, plan.durationMax),
-        summary: `【一镜到底·${framework.title}】${idea.summary}`,
+        ...(framework.cleaning ? { title: framework.title } : {}),
+        summary: `【一镜到底·${framework.title}】${framework.cleaning ? framework.action : idea.summary}`,
       };
     }),
   };

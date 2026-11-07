@@ -68,8 +68,8 @@ const GENERATION_MODES: Array<{
   resolution: string;
   quality: string;
 }> = [
-  { value: 'quick', label: '快速预览', description: '速度优先', resolution: '1k', quality: 'medium' },
-  { value: 'standard', label: '标准出图', description: '日常默认', resolution: '2k', quality: 'high' },
+  { value: 'quick', label: '快速预览', description: '速度优先，默认选中', resolution: '1k', quality: 'medium' },
+  { value: 'standard', label: '标准出图', description: '日常出图', resolution: '2k', quality: 'high' },
   { value: 'fine', label: '精细成品', description: '最终交付', resolution: '4k', quality: 'xhigh' },
 ];
 
@@ -104,7 +104,7 @@ const STATUS_META: Record<string, { label: string; color: string; icon: typeof L
 export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerationPageProps) {
   const [prompt, setPrompt] = useState('');
   const [size, setSize] = useState('1:1');
-  const [generationMode, setGenerationMode] = useState<GenerationMode>('standard');
+  const [generationMode, setGenerationMode] = useState<GenerationMode>(GENERATION_MODES[0].value);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [tasks, setTasks] = useState<ImageTask[]>([]);
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
@@ -320,7 +320,7 @@ export default function ImageGenerationPage({ onBack, onNavigate }: ImageGenerat
     // Capture current input state before clearing
     const currentPrompt = trimmed;
     const currentSize = size;
-    const currentMode = GENERATION_MODES.find((mode) => mode.value === generationMode) || GENERATION_MODES[1];
+    const currentMode = GENERATION_MODES.find((mode) => mode.value === generationMode) || GENERATION_MODES[0];
     const currentResolution = currentMode.resolution;
     const currentRefImages = [...referenceImages];
     const currentModel = currentRefImages.length > 0 ? 'gpt-image-2.5-sunburst' : 'gpt-image-2.5-flare';

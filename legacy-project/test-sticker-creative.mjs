@@ -33,8 +33,9 @@ const forbidden = /【挂画生成尺寸补偿锁定】|【挂画真实尺寸强
 
 assert.equal(STICKER_FRAMEWORKS.length, 40);
 assert.equal(new Set(STICKER_FRAMEWORKS.map((f) => f.title)).size, 40);
-assert.equal(STICKER_FRAMEWORKS.filter((f) => f.state === 'installed').length, 30);
-assert.equal(STICKER_FRAMEWORKS.filter((f) => f.state === 'installation').length, 10);
+assert.equal(STICKER_FRAMEWORKS.filter((f) => f.state === 'installed').length, 34);
+assert.equal(STICKER_FRAMEWORKS.filter((f) => f.state === 'installation').length, 6);
+assert.deepEqual(STICKER_FRAMEWORKS.filter((f) => f.cleaning).map((f) => f.directionNumber), [33, 34, 35, 36]);
 assert.equal(profile.widthCm, 180);
 assert.equal(profile.heightCm, 60);
 assert.throws(() => normalizeStickerProfile({ widthCm: -10 }));
@@ -61,7 +62,17 @@ for (const f of STICKER_FRAMEWORKS) {
   assert.ok(!forbidden.test(rule));
   if (f.state === 'installed') {
     assert.match(rule, /第0秒起墙上已经存在最终完成态/);
-    assert.match(rule, /人物始终空手并与产品表面保持距离/);
+    if (f.cleaning) {
+      assert.match(rule, /只允许指定清洁工具轻触画芯中部/);
+      assert.doesNotMatch(rule, /人物始终空手/);
+      const oldPrompt = '创意内容：人物揭开背膜后边揭边贴。\n总时长：6秒';
+      const result = ensureStickerPrompt(oldPrompt, profile, f.directionNumber);
+      assert.ok(result.includes(f.action));
+      assert.match(result, /总时长：6秒/);
+      assert.doesNotMatch(result, /背膜|揭膜|边揭边贴/);
+    } else {
+      assert.match(rule, /人物始终空手并与产品表面保持距离/);
+    }
     assert.match(rule, /完整正面位图从第0帧起一次性、完整、清晰存在/);
     if (!f.closeDetail) assert.match(rule, /宽度占比始终不低于40%/);
     else assert.ok(!rule.includes('宽度占比始终不低于40%'));
@@ -73,7 +84,7 @@ for (const f of STICKER_FRAMEWORKS) {
     assert.match(rule, /白色画背/);
     assert.match(rule, /可揭离的背膜/);
   }
-  if ([35, 36, 38, 39, 40].includes(f.directionNumber)) assert.match(rule, /几何中心布置/);
+  if ([38, 39, 40].includes(f.directionNumber)) assert.match(rule, /几何中心布置/);
   const result = ensureStickerPrompt('创意正文', profile, f.directionNumber);
   assert.equal(ensureStickerPrompt(result, profile, f.directionNumber), result);
   assert.ok(result.includes(STICKER_FINAL_MARKER));
@@ -93,7 +104,7 @@ for (const direction of [1, 4, 7, 11, 17, 20, 29, 32, 35, 40]) {
   assert.match(rule, /固定为独立茶室/);
   assert.match(rule, /茶室内严禁出现三人沙发/);
 }
-for (const direction of [3, 6, 9, 13, 18, 24, 28, 30, 31, 36, 38]) {
+for (const direction of [3, 6, 9, 13, 18, 24, 28, 30, 31, 33, 36, 38]) {
   const rule = stickerPhysicalRules(profile, direction);
   assert.match(rule, /固定为书房或阅读区/);
   assert.match(rule, /书房内严禁出现三人沙发/);
@@ -105,7 +116,8 @@ assert.match(stickerPhysicalRules(profile, 3), /贴画宽度应约占这段墙�
 assert.match(stickerPhysicalRules(profile, 14), /贴画宽度应约占主墙宽的40%—50%/);
 assert.match(stickerPhysicalRules(profile, 15), /贴画宽度应约占墙宽的45%—56%/);
 assert.match(stickerPhysicalRules(profile, 21), /贴画宽度应约占墙段宽的43%—60%/);
-assert.match(stickerPhysicalRules(profile, 34), /贴画展开宽度应约占操作台长度的75%—90%/);
+assert.match(stickerPhysicalRules(profile, 34), /贴画宽度应约占墙宽的45%—56%/);
+assert.match(stickerPhysicalRules(profile, 37), /贴画展开宽度应约占操作台长度的75%—90%/);
 assert.match(stickerPhysicalRules({ ...profile, widthCm: 150, heightCm: 50 }, 2), /贴画宽度应约占沙发总宽的63%—71%/);
 assert.match(stickerPhysicalRules({ ...profile, widthCm: 120, heightCm: 40 }, 1), /贴画宽度应约占这段墙宽的30%—38%/);
 for (const f of STICKER_FRAMEWORKS) assert.match(stickerPhysicalRules(profile, f.directionNumber), /【本方向空间比例锁定】/);
@@ -117,9 +129,10 @@ assert.match(stickerPhysicalRules(profile, 14), /固定为小型办公室会客�
 assert.match(stickerPhysicalRules(profile, 22), /固定为现代会议室/);
 assert.match(stickerPhysicalRules(profile, 15), /固定为餐厅/);
 assert.match(stickerPhysicalRules(profile, 21), /文化走廊、展陈墙或纯墙面产品近景/);
-assert.match(stickerPhysicalRules(profile, 34), /工作室或铺贴操作区/);
+assert.match(stickerPhysicalRules(profile, 34), /固定为餐厅/);
+assert.match(stickerPhysicalRules(profile, 37), /工作室或铺贴操作区/);
 assert.match(STICKER_FRAMEWORKS[28].action, /场景内不混入客厅家具/);
-assert.match(STICKER_FRAMEWORKS[33].action, /铺贴工作区/);
+assert.deepEqual(STICKER_FRAMEWORKS.slice(32, 36).map(({ action }) => action.match(/抹布|鸡毛掸子/)?.[0]), ['抹布', '抹布', '鸡毛掸子', '鸡毛掸子']);
 assert.match(STICKER_FRAMEWORKS[26].title, /正面印刷纹理巡游/);
 assert.match(STICKER_FRAMEWORKS[26].action, /不得靠近、追踪或突出产品四周外沿/);
 assert.match(STICKER_FRAMEWORKS[27].title, /贴墙平面质感/);
@@ -213,6 +226,13 @@ for (let batch = 0; batch < 4; batch++) {
   assert.equal(result.ideas.length, 10);
   assert.deepEqual(result.ideas.map((i) => i.directionNumber), Array.from({ length: 10 }, (_, i) => batch * 10 + i + 1));
   assert.ok(result.ideas.every((idea) => idea.productType === 'sticker'));
+  if (batch === 3) {
+    for (const idea of result.ideas.slice(2, 6)) {
+      const framework = STICKER_FRAMEWORKS[idea.directionNumber - 1];
+      assert.equal(idea.title, framework.title);
+      assert.ok(idea.summary.endsWith(framework.action));
+    }
+  }
   assert.ok(!payloads.at(-1).payload.input[0].content[0].text.includes('40×80'));
 }
 
