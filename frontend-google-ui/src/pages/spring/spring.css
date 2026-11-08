@@ -1,0 +1,2069 @@
+/* ==========================================================================
+   2027 新春主题 · 仅作用于登录页与工作台首页
+   ========================================================================== */
+
+.spring-login,
+.spring-home {
+  --cny-red-950: #4a0b09;
+  --cny-red-900: #5e100c;
+  --cny-red-800: #7a1712;
+  --cny-red-700: #9a241b;
+  --cny-red-600: #b83226;
+  --cny-red-500: #c94534;
+  --cny-gold-800: #8a5a23;
+  --cny-gold-700: #a8762e;
+  --cny-gold-600: #b5812f;
+  --cny-gold-500: #c99a45;
+  --cny-gold-400: #d9ae5f;
+  --cny-gold-300: #e8c77e;
+  --cny-gold-200: #f3d9a4;
+  --cny-ivory: #fff9ee;
+  --cny-paper: #fbf2e3;
+  --cny-paper-deep: #f5e5ce;
+  --cny-ink: #2b1712;
+  --cny-ink-soft: #5c3a30;
+  --cny-jade: #2f6b56;
+  --font-cny-serif: "Songti SC", "STSong", "Noto Serif CJK SC", "Noto Serif SC",
+    "Source Han Serif SC", "SimSun", serif;
+  --cny-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+}
+
+body:has(.spring-login),
+body:has(.spring-home) {
+  background: #fbf2e3;
+}
+
+.spring-login ::selection,
+.spring-home ::selection {
+  background: rgba(201, 154, 69, 0.4);
+  color: var(--cny-red-950);
+}
+
+/* ==========================================================================
+   登录页 · 左侧红金舞台
+   ========================================================================== */
+
+.spring-login {
+  position: relative;
+  display: flex;
+  min-height: 100dvh;
+  overflow-x: clip;
+  background: var(--cny-paper);
+  color: var(--cny-ink);
+  font-family: var(--font-sans);
+}
+
+.spring-login-grid {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.spring-login-left {
+  position: relative;
+  display: none;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  isolation: isolate;
+  padding: clamp(28px, 3.4vw, 52px);
+  color: var(--cny-ivory);
+  border-right: 1px solid rgba(201, 154, 69, 0.35);
+  background:
+    radial-gradient(ellipse at 50% 82%, rgba(233, 183, 101, 0.24), transparent 56%),
+    radial-gradient(ellipse at 6% 2%, rgba(232, 118, 82, 0.3), transparent 46%),
+    linear-gradient(148deg, #6e120e 0%, #851a13 30%, #a2271d 58%, #7a1510 100%);
+}
+
+.spring-login-left::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.07;
+  background-image: var(--cny-grain);
+  background-size: 180px 180px;
+  mix-blend-mode: soft-light;
+}
+
+.spring-login-left::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 42%, transparent 32%, rgba(42, 5, 3, 0.4) 100%),
+    linear-gradient(180deg, rgba(255, 238, 204, 0.05), transparent 18%);
+}
+
+.spring-login-left-watermark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 0;
+  transform: translate(-50%, -50%);
+  color: rgba(255, 230, 180, 0.035);
+  font-family: var(--font-cny-serif);
+  font-size: clamp(360px, 36vw, 540px);
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+}
+
+.spring-left-hairline {
+  position: absolute;
+  inset: 17px;
+  z-index: 2;
+  border: 1px solid rgba(243, 217, 164, 0.16);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.spring-left-hairline::before,
+.spring-left-hairline::after {
+  content: "";
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border: 1px solid rgba(243, 217, 164, 0.5);
+  transform: rotate(45deg);
+}
+
+.spring-left-hairline::before {
+  top: -4px;
+  left: -4px;
+}
+
+.spring-left-hairline::after {
+  right: -4px;
+  bottom: -4px;
+}
+
+.spring-login-head {
+  position: relative;
+  z-index: 4;
+  max-width: 440px;
+}
+
+.spring-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.spring-brand-mark {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 1px solid rgba(239, 208, 139, 0.78);
+  border-radius: 4px;
+  background: rgba(74, 11, 9, 0.22);
+  box-shadow:
+    inset 0 0 0 3px rgba(110, 18, 14, 0.6),
+    inset 0 0 0 4px rgba(239, 208, 139, 0.42);
+  color: var(--cny-gold-200);
+  font-family: var(--font-cny-serif);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.spring-brand-name {
+  font-family: var(--font-cny-serif);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #fff3de;
+  line-height: 1.3;
+}
+
+.spring-brand-sub {
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  color: rgba(243, 217, 164, 0.82);
+}
+
+.spring-login-tagline {
+  position: relative;
+  max-width: 320px;
+  margin-top: 30px;
+  padding-left: 16px;
+  border-left: 1px solid rgba(239, 208, 139, 0.4);
+  color: rgba(255, 243, 222, 0.8);
+  font-size: 13px;
+  line-height: 1.95;
+  letter-spacing: 0.06em;
+}
+
+.spring-couplet {
+  position: absolute;
+  top: 50%;
+  right: clamp(16px, 2.2vw, 30px);
+  z-index: 4;
+  display: flex;
+  flex-direction: row-reverse;
+  gap: 15px;
+  transform: translateY(-50%);
+  writing-mode: vertical-rl;
+  color: rgba(243, 217, 164, 0.76);
+  font-family: var(--font-cny-serif);
+  font-size: 13px;
+  letter-spacing: 0.34em;
+  pointer-events: none;
+}
+
+.spring-character-wrap {
+  position: relative;
+  z-index: 3;
+  flex: 0 1 auto;
+  width: 100%;
+  max-width: 620px;
+  height: clamp(305px, 42vh, 460px);
+  margin: 0 auto;
+}
+
+.spring-stage-halo {
+  position: absolute;
+  bottom: 2%;
+  left: 50%;
+  width: min(660px, 94%);
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(
+    circle,
+    rgba(245, 199, 121, 0.3) 0%,
+    rgba(233, 164, 88, 0.11) 36%,
+    rgba(233, 164, 88, 0.03) 58%,
+    transparent 72%
+  );
+  animation: spring-halo-breathe 9s ease-in-out infinite;
+}
+
+.spring-stage-window {
+  position: absolute;
+  top: 46%;
+  left: 50%;
+  z-index: 0;
+  width: min(560px, 82%);
+  transform: translate(-50%, -50%);
+  color: var(--cny-gold-200);
+  opacity: 0.17;
+  pointer-events: none;
+}
+
+.spring-stage-floor {
+  position: absolute;
+  bottom: -16px;
+  left: 50%;
+  z-index: 0;
+  width: min(540px, 86%);
+  height: 70px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(245, 199, 121, 0.42), transparent 68%);
+  filter: blur(11px);
+  pointer-events: none;
+}
+
+.spring-character-stage {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 550px;
+  height: 400px;
+  transform: translateX(-50%) scale(1);
+  transform-origin: bottom center;
+  transition: transform 0.5s ease;
+}
+
+.spring-character {
+  box-shadow:
+    0 32px 64px -24px rgba(28, 4, 3, 0.82),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 0 0 1px rgba(255, 222, 168, 0.1),
+    inset -24px -10px 40px -26px rgba(20, 2, 2, 0.55),
+    inset 18px 12px 34px -26px rgba(255, 235, 200, 0.18);
+}
+
+.spring-char-vermilion {
+  background: linear-gradient(160deg, #d95a40 0%, #b83226 56%, #93231b 100%);
+}
+
+.spring-char-ink {
+  background: linear-gradient(160deg, #37221c 0%, #211310 62%, #160d0b 100%);
+}
+
+.spring-char-persimmon {
+  background: linear-gradient(160deg, #f0a164 0%, #de7a45 56%, #c56437 100%);
+}
+
+.spring-char-gold {
+  background: linear-gradient(160deg, #f0cd78 0%, #deaf4c 56%, #c9973a 100%);
+}
+
+.spring-stage-particles {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* 灯笼 / 梅花 / 云纹 / 印章 / 金屑 */
+
+.spring-lantern {
+  transform-origin: 50% 0;
+  animation: spring-lantern-sway 7.5s ease-in-out infinite;
+  animation-delay: var(--lantern-delay, 0s);
+  pointer-events: none;
+}
+
+.spring-lantern-glow {
+  position: absolute;
+  animation: spring-lantern-glow 7s ease-in-out infinite;
+  animation-delay: var(--lantern-delay, 0s);
+  top: 24%;
+  left: 50%;
+  width: 150%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 196, 108, 0.22), transparent 68%);
+  pointer-events: none;
+}
+
+.spring-lantern-tassel {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+  animation: spring-tassel-sway 6.2s ease-in-out infinite;
+  animation-delay: calc(var(--lantern-delay, 0s) + 0.35s);
+}
+
+.spring-lantern-svg {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0 18px 22px rgba(58, 8, 5, 0.35));
+}
+
+.spring-seal {
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 1px solid var(--cny-gold-300);
+  border-radius: 5px;
+  background: var(--cny-red-700);
+  box-shadow:
+    inset 0 0 0 3px var(--cny-red-700),
+    inset 0 0 0 4px rgba(247, 227, 180, 0.55);
+  color: #f7e3b4;
+  font-family: var(--font-cny-serif);
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 1;
+  transform: rotate(-5deg);
+  user-select: none;
+}
+
+.spring-divider {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 160px;
+}
+
+.spring-divider span {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(184, 138, 72, 0.6));
+}
+
+.spring-divider span:last-child {
+  transform: scaleX(-1);
+}
+
+.spring-divider i {
+  width: 6px;
+  height: 6px;
+  border: 1px solid rgba(184, 138, 72, 0.7);
+  transform: rotate(45deg);
+}
+
+.spring-particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.spring-particle {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--cny-gold-200);
+  box-shadow: 0 0 7px rgba(243, 217, 164, 0.75);
+  opacity: 0;
+  animation: spring-particle-float 13s linear infinite;
+}
+
+/* ==========================================================================
+   登录页 · 右侧春纸表单
+   ========================================================================== */
+
+.spring-login-right {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background:
+    radial-gradient(ellipse at 88% 0%, rgba(184, 50, 38, 0.09), transparent 42%),
+    radial-gradient(ellipse at 0% 100%, rgba(201, 154, 69, 0.16), transparent 46%),
+    linear-gradient(160deg, #fffcf4 0%, #fbf2e2 52%, #f8ead6 100%);
+}
+
+.spring-login-right::before {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  z-index: 1;
+  border: 1px solid rgba(176, 126, 58, 0.26);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.spring-login-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: var(--cny-grain);
+  background-size: 180px 180px;
+  mix-blend-mode: multiply;
+}
+
+.spring-frame-corners {
+  position: absolute;
+  inset: 24px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.spring-frame-corners span {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border-color: rgba(168, 118, 46, 0.55);
+  border-style: solid;
+}
+
+.spring-frame-corners span:nth-child(1) {
+  top: 0;
+  left: 0;
+  border-width: 1.5px 0 0 1.5px;
+}
+
+.spring-frame-corners span:nth-child(2) {
+  top: 0;
+  right: 0;
+  border-width: 1.5px 1.5px 0 0;
+}
+
+.spring-frame-corners span:nth-child(3) {
+  right: 0;
+  bottom: 0;
+  border-width: 0 1.5px 1.5px 0;
+}
+
+.spring-frame-corners span:nth-child(4) {
+  bottom: 0;
+  left: 0;
+  border-width: 0 0 1.5px 1.5px;
+}
+
+.spring-plum-login {
+  position: absolute;
+  top: -18px;
+  right: -38px;
+  z-index: 1;
+  width: clamp(240px, 26vw, 360px);
+  opacity: 0.82;
+  pointer-events: none;
+  transform: rotate(-3deg);
+}
+
+.spring-login-watermark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 0;
+  transform: translate(-50%, -50%);
+  color: rgba(154, 36, 27, 0.035);
+  font-family: var(--font-cny-serif);
+  font-size: clamp(280px, 34vw, 470px);
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+  pointer-events: none;
+}
+
+.spring-login-mini-lantern {
+  position: absolute;
+  top: 0;
+  left: 7%;
+  z-index: 2;
+  width: 86px;
+  opacity: 0.92;
+  pointer-events: none;
+}
+
+.spring-login-cloud {
+  position: absolute;
+  bottom: 58px;
+  left: -46px;
+  z-index: 1;
+  width: 220px;
+  color: var(--cny-gold-700);
+  opacity: 0.17;
+  pointer-events: none;
+}
+
+.spring-login-cloud-right {
+  position: absolute;
+  right: -38px;
+  bottom: 156px;
+  z-index: 1;
+  width: 176px;
+  transform: scaleX(-1);
+  color: var(--cny-gold-700);
+  opacity: 0.14;
+  pointer-events: none;
+}
+
+.spring-login-main {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 54px 34px 18px;
+}
+
+.spring-login-card {
+  position: relative;
+  width: 100%;
+  max-width: 424px;
+  padding: 46px 40px 28px;
+  border: 1px solid #e7cda2;
+  border-radius: 22px;
+  background: linear-gradient(180deg, #fffefa 0%, #fff9ed 100%);
+  box-shadow:
+    0 38px 74px -38px rgba(101, 29, 18, 0.52),
+    0 12px 30px -22px rgba(101, 29, 18, 0.3),
+    inset 0 1px 0 #ffffff;
+}
+
+.spring-login-card::before {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border: 1px solid rgba(184, 138, 72, 0.32);
+  border-radius: 16px;
+  pointer-events: none;
+}
+
+.spring-card-seal {
+  position: absolute;
+  top: -25px;
+  left: 50%;
+  z-index: 2;
+  width: 50px;
+  height: 50px;
+  margin-left: -25px;
+  font-size: 23px;
+  box-shadow:
+    0 12px 22px -12px rgba(120, 20, 12, 0.72),
+    inset 0 0 0 3px var(--cny-red-700),
+    inset 0 0 0 4px rgba(247, 227, 180, 0.55);
+}
+
+.spring-card-overline {
+  padding-left: 0.34em;
+  color: var(--cny-gold-700);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  text-align: center;
+}
+
+.spring-card-title {
+  margin-top: 10px;
+  color: var(--cny-ink);
+  font-family: var(--font-cny-serif);
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.24;
+  text-align: center;
+}
+
+.spring-card-rule {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 156px;
+  margin: 13px auto 11px;
+}
+
+.spring-card-rule span {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(184, 138, 72, 0.58));
+}
+
+.spring-card-rule span:last-child {
+  transform: scaleX(-1);
+}
+
+.spring-card-rule i {
+  width: 6px;
+  height: 6px;
+  border: 1px solid rgba(184, 138, 72, 0.68);
+  transform: rotate(45deg);
+}
+
+.spring-card-sub {
+  color: #7a5a4c;
+  font-size: 12.5px;
+  letter-spacing: 0.05em;
+  text-align: center;
+}
+
+.spring-login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 17px;
+  margin-top: 27px;
+}
+
+.spring-field-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 2px;
+  color: var(--cny-ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.spring-field-label::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  background: var(--cny-red-700);
+  transform: rotate(45deg);
+}
+
+.spring-input-wrap {
+  position: relative;
+}
+
+.spring-password-input {
+  width: 100%;
+  height: 52px;
+  padding: 0 46px;
+  border: 1px solid #e3c9a0;
+  border-radius: 12px;
+  background: rgba(255, 251, 242, 0.92);
+  color: var(--cny-ink);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-align: center;
+  outline: none;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+.spring-password-input::placeholder {
+  color: #b79d83;
+  letter-spacing: 0.12em;
+}
+
+.spring-password-input:focus {
+  border-color: var(--cny-red-600);
+  background: #fffdf8;
+  box-shadow:
+    0 0 0 4px rgba(184, 50, 38, 0.1),
+    0 12px 26px -20px rgba(126, 23, 17, 0.6);
+}
+
+.spring-eye-button {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  border-radius: 8px;
+  color: #a47a5a;
+  transform: translateY(-50%);
+  transition:
+    color 0.2s ease,
+    background 0.2s ease;
+}
+
+.spring-eye-button:hover {
+  color: var(--cny-red-700);
+  background: rgba(184, 50, 38, 0.06);
+}
+
+.spring-eye-button:focus-visible {
+  outline: 2px solid var(--cny-gold-500);
+  outline-offset: 1px;
+}
+
+.spring-login-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #f1cfc2;
+  border-radius: 10px;
+  background: #fdf1ec;
+  color: #a32b1e;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.spring-login-submit {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 52px;
+  border: 1px solid var(--cny-gold-500);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #b83226 0%, #95231a 55%, #7a1711 100%);
+  box-shadow:
+    0 16px 32px -18px rgba(122, 23, 17, 0.78),
+    inset 0 1px 0 rgba(255, 220, 150, 0.3);
+  color: #f8e5b8;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-indent: 0.26em;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    filter 0.2s ease;
+}
+
+.spring-login-submit::after {
+  content: "";
+  position: absolute;
+  top: -40%;
+  bottom: -40%;
+  left: -62%;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, rgba(255, 231, 178, 0.3), transparent);
+  transform: skewX(-18deg);
+  transition: left 0.7s ease;
+}
+
+.spring-login-submit:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow:
+    0 22px 38px -18px rgba(122, 23, 17, 0.82),
+    inset 0 1px 0 rgba(255, 220, 150, 0.38);
+}
+
+.spring-login-submit:hover:not(:disabled)::after {
+  left: 132%;
+}
+
+.spring-login-submit:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.spring-login-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.66;
+}
+
+.spring-login-submit:focus-visible {
+  outline: 2px solid var(--cny-gold-500);
+  outline-offset: 3px;
+}
+
+.spring-card-blessing {
+  margin-top: 19px;
+  padding-left: 0.28em;
+  color: #b08a4e;
+  font-family: var(--font-cny-serif);
+  font-size: 10.5px;
+  letter-spacing: 0.28em;
+  text-align: center;
+}
+
+.spring-login-footer {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 24px 16px;
+}
+
+.spring-legal-links {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #96705a;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+
+.spring-legal-links i {
+  width: 1px;
+  height: 9px;
+  background: rgba(150, 112, 90, 0.35);
+}
+
+.spring-site-footer a {
+  color: #96705a !important;
+}
+
+.spring-site-footer a:hover {
+  color: var(--cny-red-700) !important;
+}
+
+.spring-site-footer img {
+  opacity: 0.62;
+}
+
+.spring-site-footer > div > span[aria-hidden] {
+  color: rgba(150, 112, 90, 0.4) !important;
+}
+
+/* 移动端顶部红纸 */
+
+.spring-mobile-hero {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  padding: 22px 22px 70px;
+  border-radius: 0 0 28px 28px;
+  background:
+    radial-gradient(ellipse at 88% 0%, rgba(232, 118, 82, 0.34), transparent 46%),
+    linear-gradient(148deg, #6e120e 0%, #8c1c15 44%, #a2271d 100%);
+  color: var(--cny-ivory);
+}
+
+.spring-mobile-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.08;
+  background-image: var(--cny-grain);
+  background-size: 160px 160px;
+  mix-blend-mode: soft-light;
+  pointer-events: none;
+}
+
+.spring-mobile-hero::after {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border: 1px solid rgba(243, 217, 164, 0.16);
+  border-radius: 0 0 20px 20px;
+  pointer-events: none;
+}
+
+.spring-mobile-hero-inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.spring-mobile-hero .spring-brand-mark {
+  width: 38px;
+  height: 38px;
+  font-size: 14px;
+}
+
+.spring-mobile-hero .spring-brand-name {
+  font-size: 15px;
+  letter-spacing: 0.12em;
+}
+
+.spring-mobile-hero .spring-brand-sub {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+}
+
+.spring-mobile-hero-title {
+  margin-top: 24px;
+  font-family: var(--font-cny-serif);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.32em;
+  color: var(--cny-gold-300);
+}
+
+.spring-mobile-hero-desc {
+  margin-top: 6px;
+  color: rgba(255, 243, 222, 0.76);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.spring-mobile-lantern {
+  position: absolute;
+  top: 0;
+  right: 30px;
+  z-index: 1;
+  width: 66px;
+  opacity: 0.96;
+}
+
+.spring-mobile-cloud {
+  position: absolute;
+  right: 96px;
+  bottom: 26px;
+  width: 120px;
+  color: var(--cny-gold-300);
+  opacity: 0.18;
+}
+
+.spring-mobile-bottom-cloud {
+  position: absolute;
+  bottom: 78px;
+  left: 50%;
+  z-index: 1;
+  display: block;
+  width: 210px;
+  transform: translateX(-50%);
+  color: var(--cny-red-700);
+  opacity: 0.06;
+  pointer-events: none;
+}
+
+@media (min-width: 1024px) {
+  .spring-mobile-bottom-cloud {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   工作台首页
+   ========================================================================== */
+
+.spring-home {
+  position: relative;
+  min-height: 100dvh;
+  overflow-x: clip;
+  background: var(--cny-paper);
+  color: var(--cny-ink);
+  font-family: var(--font-sans);
+}
+
+.spring-home-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% -8%, rgba(213, 84, 58, 0.16), transparent 48%),
+    radial-gradient(ellipse at 100% 0%, rgba(201, 154, 69, 0.22), transparent 38%),
+    radial-gradient(ellipse at 0% 32%, rgba(184, 50, 38, 0.08), transparent 42%),
+    linear-gradient(180deg, #fffaf0 0%, #fbf1e0 46%, #f7e8d2 100%);
+}
+
+.spring-home-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.045;
+  background-image: var(--cny-grain);
+  background-size: 180px 180px;
+  mix-blend-mode: multiply;
+}
+
+.spring-home-moon {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  z-index: 0;
+  width: min(640px, 74vw);
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+  border: 1px solid rgba(154, 106, 37, 0.16);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 13px rgba(201, 154, 69, 0.04),
+    inset 0 0 90px rgba(201, 154, 69, 0.06);
+  pointer-events: none;
+}
+
+.spring-home-moon::before {
+  content: "";
+  position: absolute;
+  inset: 20px;
+  border: 1px solid rgba(154, 106, 37, 0.08);
+  border-radius: 50%;
+}
+
+.spring-home-moon span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -52%);
+  color: rgba(154, 36, 27, 0.042);
+  font-family: var(--font-cny-serif);
+  font-size: min(300px, 34vw);
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.spring-home-lantern {
+  position: absolute;
+  top: 0;
+  z-index: 1;
+  width: clamp(70px, 6.2vw, 88px);
+  pointer-events: none;
+}
+
+.spring-home-lantern-left {
+  left: 30%;
+}
+
+.spring-home-lantern-right {
+  right: 30%;
+  top: 6px;
+  width: clamp(62px, 5.6vw, 84px);
+}
+
+.spring-home-plum {
+  position: absolute;
+  top: 18px;
+  right: -56px;
+  z-index: 0;
+  width: clamp(210px, 24vw, 330px);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.spring-home-cloud-left {
+  position: absolute;
+  top: 42%;
+  left: -54px;
+  z-index: 0;
+  width: 250px;
+  color: var(--cny-red-700);
+  opacity: 0.09;
+  pointer-events: none;
+}
+
+.spring-home-cloud-right {
+  position: absolute;
+  right: -30px;
+  bottom: 9%;
+  z-index: 0;
+  width: 210px;
+  color: var(--cny-gold-700);
+  opacity: 0.14;
+  pointer-events: none;
+}
+
+.spring-home-particles {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.55;
+}
+
+.spring-home-shell {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 80rem;
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: 18px clamp(16px, 3vw, 40px) 18px;
+}
+
+.spring-home-top {
+  position: relative;
+  z-index: 6;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 72px;
+}
+
+.spring-home-mobile-brand {
+  display: none;
+  align-items: center;
+  gap: 10px;
+}
+
+.spring-home-mobile-brand .spring-brand-mark {
+  width: 36px;
+  height: 36px;
+  border-color: rgba(168, 118, 46, 0.45);
+  background: rgba(255, 252, 244, 0.6);
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 252, 244, 0.7),
+    inset 0 0 0 4px rgba(168, 118, 46, 0.35);
+  color: var(--cny-red-700);
+  font-size: 13px;
+}
+
+.spring-home-mobile-brand .spring-brand-name {
+  color: var(--cny-ink);
+  font-size: 14px;
+  letter-spacing: 0.12em;
+}
+
+.spring-home-mobile-brand .spring-brand-sub {
+  color: var(--cny-gold-700);
+  font-size: 8.5px;
+  letter-spacing: 0.24em;
+}
+
+.spring-motto-zone {
+  position: relative;
+  width: 292px;
+  min-height: 74px;
+}
+
+.spring-motto-note {
+  position: relative;
+  overflow: hidden;
+  padding: 9px 14px 9px 17px;
+  border: 1px solid rgba(184, 138, 72, 0.3);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 252, 244, 0.9), rgba(255, 247, 234, 0.78));
+  box-shadow: 0 14px 30px -24px rgba(122, 23, 17, 0.55);
+  transform: rotate(-0.5deg);
+}
+
+.spring-motto-note::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 2px;
+  background: linear-gradient(180deg, var(--cny-red-500), var(--cny-red-800));
+}
+
+.spring-motto-pin {
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cny-gold-500);
+  box-shadow: 0 0 0 2px rgba(201, 154, 69, 0.16);
+}
+
+.spring-motto-label {
+  padding-left: 0.3em;
+  color: var(--cny-gold-700);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+}
+
+.spring-motto-window {
+  position: relative;
+  height: 44px;
+  margin-top: 2px;
+  overflow: hidden;
+}
+
+.spring-motto-window::before,
+.spring-motto-window::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 2;
+  height: 11px;
+  pointer-events: none;
+}
+
+.spring-motto-window::before {
+  top: 0;
+  background: linear-gradient(180deg, #fffbf2, rgba(255, 251, 242, 0));
+}
+
+.spring-motto-window::after {
+  bottom: 0;
+  background: linear-gradient(0deg, #fff8ec, rgba(255, 248, 236, 0));
+}
+
+.spring-motto-scroll {
+  animation: spring-motto-scroll 9s ease-in-out infinite;
+}
+
+.spring-motto-line {
+  overflow: hidden;
+  color: #6e3a2e;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 22px;
+  letter-spacing: 0.12em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spring-motto-editor {
+  position: relative;
+  padding: 12px;
+  border: 1px solid rgba(184, 138, 72, 0.4);
+  border-radius: 12px;
+  background: rgba(255, 252, 244, 0.94);
+  box-shadow: 0 20px 40px -26px rgba(122, 23, 17, 0.55);
+}
+
+.spring-motto-textarea {
+  width: 100%;
+  height: 92px;
+  resize: none;
+  padding: 10px 12px;
+  border: 1px solid #e3c9a0;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: var(--cny-ink-soft);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.7;
+  outline: none;
+}
+
+.spring-motto-textarea:focus {
+  border-color: var(--cny-red-600);
+  box-shadow: 0 0 0 3px rgba(184, 50, 38, 0.08);
+}
+
+.spring-motto-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.spring-motto-hint {
+  color: #a18670;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.spring-motto-hint-error {
+  color: #b83226;
+}
+
+.spring-motto-buttons {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.spring-motto-cancel,
+.spring-motto-save {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.spring-motto-cancel {
+  color: #8a5a45;
+}
+
+.spring-motto-cancel:hover {
+  background: rgba(184, 138, 72, 0.1);
+}
+
+.spring-motto-save {
+  border: 1px solid var(--cny-gold-500);
+  background: var(--cny-red-700);
+  color: #f7e3b4;
+}
+
+.spring-motto-save:hover {
+  background: var(--cny-red-800);
+}
+
+.spring-motto-save:disabled,
+.spring-motto-cancel:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.spring-logout {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 16px;
+  border: 1px solid rgba(184, 138, 72, 0.42);
+  border-radius: 999px;
+  background: rgba(255, 252, 244, 0.72);
+  box-shadow: 0 8px 20px -16px rgba(122, 23, 17, 0.6);
+  color: #7a3a2e;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  transition:
+    color 0.25s ease,
+    background 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.spring-logout:hover {
+  border-color: var(--cny-gold-500);
+  background: var(--cny-red-700);
+  box-shadow: 0 12px 26px -16px rgba(122, 23, 17, 0.68);
+  color: #f7e3b4;
+}
+
+.spring-logout:focus-visible {
+  outline: 2px solid var(--cny-gold-500);
+  outline-offset: 3px;
+}
+
+.spring-home-main {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.spring-home-hero {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: clamp(24px, 5vh, 58px);
+  text-align: center;
+}
+
+.spring-home-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--cny-gold-700);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.32em;
+}
+
+.spring-home-eyebrow-line {
+  width: clamp(26px, 4vw, 54px);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cny-gold-500));
+}
+
+.spring-home-eyebrow-line:last-child {
+  transform: scaleX(-1);
+}
+
+.spring-home-eyebrow-diamond {
+  width: 5px;
+  height: 5px;
+  border: 1px solid var(--cny-gold-500);
+  transform: rotate(45deg);
+}
+
+.spring-home-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0 0.28em;
+  margin-top: 11px;
+  color: var(--cny-ink);
+  font-family: var(--font-cny-serif);
+  font-size: clamp(2.35rem, 4.9vw, 4.25rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.16;
+}
+
+.spring-title-welcome {
+  color: #3a221b;
+}
+
+.spring-title-ai {
+  padding: 0 0.04em;
+  background: linear-gradient(120deg, #b5812f 0%, #e8c77e 38%, #c99a45 62%, #a8762e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.spring-title-brand {
+  position: relative;
+  color: var(--cny-red-700);
+}
+
+.spring-title-brand::after {
+  content: "";
+  position: absolute;
+  right: 2%;
+  bottom: -5px;
+  left: 2%;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--cny-gold-400) 12%,
+    #f0d394 50%,
+    var(--cny-gold-400) 88%,
+    transparent
+  );
+  opacity: 0.55;
+}
+
+.spring-title-seal {
+  align-self: center;
+  width: 42px;
+  height: 42px;
+  margin-left: 6px;
+  font-size: 20px;
+  transform: rotate(7deg);
+}
+
+.spring-home-sub {
+  margin-top: 17px;
+  padding-left: 0.3em;
+  color: var(--cny-ink-soft);
+  font-family: var(--font-cny-serif);
+  font-size: 15px;
+  letter-spacing: 0.3em;
+}
+
+.spring-home-sub-en {
+  margin-top: 7px;
+  color: var(--cny-gold-700);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
+.spring-home-grid {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 16px;
+  width: 100%;
+  max-width: 1180px;
+  margin-top: clamp(28px, 4.5vh, 44px);
+}
+
+.spring-module-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  min-height: 192px;
+  padding: 26px 22px 24px;
+  border: 1px solid rgba(178, 128, 64, 0.28);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 253, 247, 0.95) 0%, rgba(255, 248, 236, 0.9) 100%);
+  box-shadow:
+    0 18px 40px -32px rgba(103, 35, 22, 0.48),
+    inset 0 1px 0 #ffffff;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 0.35s ease,
+    box-shadow 0.35s ease,
+    background 0.35s ease;
+}
+
+.spring-module-card::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border: 1px solid rgba(201, 160, 98, 0.17);
+  border-radius: 14px;
+  pointer-events: none;
+  transition: border-color 0.35s ease;
+}
+
+.spring-module-card:hover {
+  border-color: rgba(184, 130, 58, 0.58);
+  background: linear-gradient(180deg, #fffefb 0%, #fff9ed 100%);
+  box-shadow:
+    0 28px 56px -32px rgba(122, 23, 17, 0.46),
+    inset 0 1px 0 #ffffff;
+}
+
+.spring-module-card:hover::before {
+  border-color: rgba(201, 154, 69, 0.34);
+}
+
+.spring-module-card:focus-visible {
+  outline: 2px solid var(--cny-gold-500);
+  outline-offset: 3px;
+}
+
+.spring-module-number {
+  position: absolute;
+  top: 13px;
+  right: 16px;
+  color: rgba(168, 118, 46, 0.55);
+  font-family: var(--font-cny-serif);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+.spring-module-accent {
+  position: absolute;
+  top: 0;
+  right: 32%;
+  left: 32%;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  opacity: 0.72;
+  transition:
+    right 0.35s ease,
+    left 0.35s ease,
+    opacity 0.35s ease;
+}
+
+.spring-module-card:hover .spring-module-accent {
+  right: 18%;
+  left: 18%;
+  opacity: 1;
+}
+
+.spring-module-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgba(239, 208, 139, 0.5);
+  border-radius: 15px;
+  background-image: linear-gradient(155deg, rgba(255, 255, 255, 0.2), rgba(0, 0, 0, 0.16));
+  box-shadow:
+    0 10px 22px -13px rgba(43, 23, 18, 0.68),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  color: #f6e2b4;
+  transition:
+    transform 0.35s ease,
+    box-shadow 0.35s ease;
+}
+
+.spring-module-icon::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 1px solid rgba(201, 154, 69, 0.18);
+  border-radius: 19px;
+}
+
+.spring-module-card:hover .spring-module-icon {
+  transform: translateY(-2px) scale(1.04);
+  box-shadow:
+    0 16px 30px -14px rgba(43, 23, 18, 0.72),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.spring-module-title {
+  margin-top: 16px;
+  color: var(--cny-ink);
+  font-size: 18.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.spring-module-desc {
+  max-width: 232px;
+  margin-top: 8px;
+  color: #7a5a4c;
+  font-size: 12px;
+  line-height: 1.75;
+}
+
+.spring-module-cloud {
+  position: absolute;
+  right: -10px;
+  bottom: -9px;
+  width: 86px;
+  color: var(--cny-red-700);
+  opacity: 0.07;
+  pointer-events: none;
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
+}
+
+.spring-module-card:hover .spring-module-cloud {
+  opacity: 0.12;
+  transform: translate(-3px, -3px);
+}
+
+.spring-module-badge {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 23px;
+  height: 23px;
+  padding: 0 5px;
+  border: 1.5px solid #fff8ea;
+  border-radius: 999px;
+  background: var(--cny-red-700);
+  box-shadow: 0 6px 14px -6px rgba(122, 23, 17, 0.7);
+  color: #fff3de;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.spring-home-wish {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: clamp(30px, 5vh, 46px);
+  color: var(--cny-gold-700);
+  font-family: var(--font-cny-serif);
+  font-size: 11px;
+  letter-spacing: 0.32em;
+}
+
+.spring-home-wish::before,
+.spring-home-wish::after {
+  content: "";
+  width: clamp(26px, 4vw, 44px);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(168, 118, 46, 0.55));
+}
+
+.spring-home-wish::after {
+  transform: scaleX(-1);
+}
+
+.spring-home-footer {
+  margin-top: auto;
+  padding-top: 22px;
+}
+
+.spring-home-footer .spring-site-footer a {
+  color: #8a5a45 !important;
+}
+
+.spring-home-footer .spring-site-footer a:hover {
+  color: var(--cny-red-700) !important;
+}
+
+.spring-home-footer .spring-site-footer img {
+  opacity: 0.62;
+}
+
+.spring-home-footer .spring-site-footer > div > span[aria-hidden] {
+  color: rgba(138, 90, 69, 0.38) !important;
+}
+
+/* ==========================================================================
+   响应式
+   ========================================================================== */
+
+@media (min-width: 640px) {
+  .spring-home-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .spring-login {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .spring-login-grid {
+    grid-template-columns: minmax(0, 1.16fr) minmax(420px, 0.84fr);
+  }
+
+  .spring-login-left {
+    display: flex;
+  }
+
+  .spring-mobile-hero {
+    display: none;
+  }
+
+  .spring-login-main {
+    padding: 52px 36px 14px;
+  }
+
+  .spring-login-footer {
+    padding-bottom: 13px;
+  }
+}
+
+@media (max-width: 1279px) {
+  .spring-couplet {
+    display: none;
+  }
+
+  .spring-home-lantern {
+    display: none;
+  }
+
+  .spring-login-mini-lantern {
+    width: 72px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .spring-home-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .spring-login-right::before,
+  .spring-frame-corners,
+  .spring-login-mini-lantern,
+  .spring-login-cloud,
+  .spring-login-cloud-right {
+    display: none;
+  }
+
+  .spring-login-right {
+    min-height: 100dvh;
+    overflow-y: visible;
+  }
+
+  .spring-login-main {
+    align-items: flex-start;
+    padding: 0 18px 8px;
+  }
+
+  .spring-login-card {
+    max-width: 448px;
+    margin-top: -36px;
+    padding: 42px 24px 26px;
+    box-shadow:
+      0 22px 46px -30px rgba(101, 29, 18, 0.42),
+      0 6px 16px -14px rgba(101, 29, 18, 0.22),
+      inset 0 1px 0 #ffffff;
+  }
+
+  .spring-card-title {
+    font-size: 33px;
+  }
+
+  .spring-login-footer {
+    padding: 4px 20px 18px;
+  }
+
+  .spring-plum-login {
+    display: none;
+  }
+
+  .spring-login-watermark {
+    font-size: 320px;
+  }
+}
+
+@media (max-width: 767px) {
+  .spring-motto-zone {
+    display: none;
+  }
+
+  .spring-home-mobile-brand {
+    display: flex;
+  }
+
+  .spring-home-top {
+    min-height: 56px;
+    align-items: center;
+  }
+
+  .spring-home-hero {
+    margin-top: 26px;
+  }
+
+  .spring-logout {
+    height: 34px;
+    padding: 0 13px;
+    font-size: 10.5px;
+  }
+
+  .spring-home-plum {
+    top: 42px;
+    right: -74px;
+    width: 210px;
+    opacity: 0.28;
+  }
+
+  .spring-home-lantern {
+    display: none;
+  }
+
+  .spring-home-moon {
+    top: 92px;
+    width: 390px;
+  }
+
+  .spring-home-cloud-left,
+  .spring-home-cloud-right {
+    display: none;
+  }
+
+  .spring-home-sub {
+    font-size: 12.5px;
+    letter-spacing: 0.24em;
+  }
+
+  .spring-home-sub-en {
+    font-size: 8.5px;
+    letter-spacing: 0.2em;
+  }
+
+  .spring-module-card {
+    min-height: 172px;
+    padding: 22px 18px 20px;
+  }
+
+  .spring-home-grid {
+    gap: 14px;
+  }
+
+  .spring-home-wish {
+    font-size: 10px;
+    letter-spacing: 0.26em;
+  }
+}
+
+@media (max-width: 420px) {
+  .spring-home-title {
+    gap: 0 0.2em;
+    font-size: clamp(1.95rem, 9vw, 2.5rem);
+  }
+
+  .spring-title-seal {
+    width: 32px;
+    height: 32px;
+    margin-left: 2px;
+    font-size: 16px;
+  }
+
+  .spring-home-eyebrow {
+    font-size: 9.5px;
+    letter-spacing: 0.24em;
+  }
+
+  .spring-home-eyebrow-line {
+    width: 20px;
+  }
+
+  .spring-login-main {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .spring-login-card {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+}
+
+@media (min-width: 1600px) and (min-height: 900px) {
+  .spring-character-stage {
+    transform: translateX(-50%) scale(1.1);
+  }
+}
+
+@media (min-width: 1024px) and (max-height: 800px) {
+  .spring-character-stage {
+    transform: translateX(-50%) scale(0.9);
+  }
+
+  .spring-login-tagline {
+    margin-top: 20px;
+  }
+
+  .spring-login-card {
+    padding-top: 40px;
+  }
+}
+
+@media (min-width: 1024px) and (max-height: 700px) {
+  .spring-character-stage {
+    transform: translateX(-50%) scale(0.78);
+  }
+
+  .spring-character-wrap {
+    height: 315px;
+  }
+
+  .spring-login-tagline {
+    display: none;
+  }
+
+  .spring-card-title {
+    font-size: 32px;
+  }
+
+  .spring-login-form {
+    gap: 14px;
+    margin-top: 22px;
+  }
+
+  .spring-card-blessing {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   动效
+   ========================================================================== */
+
+@keyframes spring-lantern-sway {
+  0%,
+  100% {
+    transform: rotate(-1.4deg);
+  }
+  50% {
+    transform: rotate(1.6deg);
+  }
+}
+
+@keyframes spring-lantern-glow {
+  0%,
+  100% {
+    opacity: 0.8;
+    transform: translate(-50%, -50%) scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.04);
+  }
+}
+
+@keyframes spring-tassel-sway {
+  0%,
+  100% {
+    transform: rotate(-0.9deg);
+  }
+  50% {
+    transform: rotate(1.1deg);
+  }
+}
+
+@keyframes spring-halo-breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: translateX(-50%) scale(0.97);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1.03);
+  }
+}
+
+@keyframes spring-particle-float {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.6);
+  }
+  14% {
+    opacity: 0.7;
+  }
+  62% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(12px, -140px, 0) scale(1);
+  }
+}
+
+@keyframes spring-motto-scroll {
+  0%,
+  12% {
+    transform: translateY(0);
+  }
+  48%,
+  68% {
+    transform: translateY(var(--motto-shift, 0px));
+  }
+  88%,
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spring-lantern,
+  .spring-lantern-glow,
+  .spring-lantern-tassel,
+  .spring-particle,
+  .spring-stage-halo,
+  .spring-motto-scroll,
+  .spring-login-submit::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .spring-character,
+  .spring-character * {
+    transition-duration: 1ms !important;
+  }
+
+  .spring-particle {
+    opacity: 0.35;
+  }
+}

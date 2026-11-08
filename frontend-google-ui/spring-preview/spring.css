@@ -1,0 +1,280 @@
+.spring-preview-bar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  min-height: 52px;
+  padding: 7px clamp(12px, 3vw, 44px);
+  background: #282321;
+  color: #fff8ef;
+  font: 13px/1.4 system-ui, sans-serif;
+}
+
+.spring-preview-label,
+.spring-preview-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.spring-preview-label span { color: #decac2; }
+.spring-preview-group { gap: 2px; padding: 2px; border: 1px solid #62534e; border-radius: 7px; }
+.spring-preview-group button { min-height: 32px; padding: 4px 12px; border-radius: 4px; }
+.spring-preview-group button:hover { background: #473934; }
+.spring-preview-group button[aria-pressed="true"] { color: #351d18; background: #f7e3cf; }
+.spring-preview-group button:focus-visible { outline: 2px solid #f4bd76; outline-offset: 2px; }
+
+/* Direct page roots keep these palette changes out of the tool modules. */
+.spring-preview-stage[data-theme="spring"] > div > .h-dvh:has(> div > .login-tech-right-panel) {
+  --color-background: #fbede0;
+  --color-indigo-100: #ffe2cb;
+  --color-indigo-200: #ffdbb5;
+  --color-indigo-400: #d57456;
+  --color-indigo-500: #ad352b;
+  --color-indigo-600: #ad3028;
+  --color-indigo-700: #98251e;
+  --color-indigo-800: #7b1d19;
+  --color-indigo-900: #591917;
+  --color-slate-400: #795b55;
+  --color-slate-500: #654742;
+
+  & .login-tech-right-panel {
+    background:
+      url("./plum-spring.svg") right top / var(--plum-branch-width, clamp(210px, 24vw, 340px)) auto no-repeat,
+      radial-gradient(circle at 18% 22%, rgb(246 174 113 / 26%), transparent 34%),
+      radial-gradient(circle at 72% 74%, rgb(228 105 87 / 20%), transparent 36%),
+      linear-gradient(135deg, #fff4e5, #fbe8e4 46%, #fff1dc);
+  }
+
+  & .login-aurora-purple { background-color: rgb(189 56 43 / 56%); }
+  & .login-aurora-cyan { background-color: rgb(234 166 81 / 50%); }
+  & .login-panel-card {
+    box-shadow: 0 32px 90px -32px rgb(127 38 28 / 38%), inset 0 1px 0 rgb(255 255 255 / 90%);
+  }
+  & .login-panel-card > .text-center > p::after {
+    content: "年年皆胜意，岁岁常欢愉";
+    display: table;
+    margin: 12px auto 0;
+    padding-inline: 17px;
+    color: #8a4938;
+    font-family: "Songti SC", "Noto Serif CJK SC", SimSun, serif;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.5;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    background:
+      linear-gradient(#d9ab76, #d9ab76) left center / 10px 1px no-repeat,
+      linear-gradient(#d9ab76, #d9ab76) right center / 10px 1px no-repeat;
+  }
+
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    & .login-panel-card > .text-center > p::after {
+      color: transparent;
+      background-image:
+        linear-gradient(105deg, #7e3929 36%, #b87527 43%, #f7cf75 50%, #b87527 57%, #7e3929 64%),
+        linear-gradient(#d9ab76, #d9ab76),
+        linear-gradient(#d9ab76, #d9ab76);
+      background-size: 250% 100%, 10px 1px, 10px 1px;
+      background-clip: text, border-box, border-box;
+      -webkit-text-stroke: 0.22px rgb(105 44 23 / 58%);
+      animation: spring-wish-light 3.2s linear infinite;
+    }
+  }
+
+  @media (max-width: 360px) {
+    & .login-panel-card > .text-center > p::after {
+      padding-inline: 12px;
+      font-size: 13px;
+      background-size: 7px 1px;
+
+      @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+        background-size: 250% 100%, 7px 1px, 7px 1px;
+      }
+    }
+  }
+
+  & .login-password-input:focus {
+    box-shadow: 0 0 0 4px rgb(173 53 43 / 16%), 0 12px 30px -20px rgb(152 37 30 / 55%);
+  }
+  & .login-panel-card button[type="submit"] {
+    --color-violet-600: #94261f;
+    --color-cyan-500: #a14625;
+    --tw-shadow-color: rgb(145 41 28 / 64%);
+  }
+  /* The lead character's original purple is set inline. Its motion stays intact. */
+  & .items-end > div > .shadow-2xl:first-child { background-color: #e56d54 !important; }
+}
+
+@keyframes spring-wish-light {
+  0% { background-position: 100% center, left center, right center; }
+  72%, 100% { background-position: 0% center, left center, right center; }
+}
+
+.spring-preview-stage[data-theme="spring"] > div > .bg-background:has(> div > h1 .animate-shimmer) {
+  --color-background: #f9eadd;
+  --color-slate-200: #e7cabb;
+  --color-slate-400: #795850;
+  --color-slate-500: #68463f;
+  --color-slate-700: #513731;
+  --color-slate-900: #412722;
+  --color-indigo-100: #edbf9b;
+
+  & h1 .animate-shimmer {
+    --color-indigo-600: #a22c22;
+    --color-violet-600: #962920;
+    --color-emerald-600: #a44424;
+    --color-white: #a75426;
+  }
+
+  & .group:not(:hover) { border-color: #e9ccba; }
+}
+
+/* Decorative backgrounds are confined to the two themed pages and ignore input. */
+.spring-preview-stage[data-theme="spring"] {
+  --spring-lantern: url("./lantern-ink.webp");
+  --spring-firecracker-art:
+    url("./firecracker-plaque.webp") center top / 100% auto no-repeat border-box,
+    url("./firecracker-tassel.webp") center bottom / 100% auto no-repeat border-box,
+    url("./firecracker-strand.webp") center top / 100% auto repeat-y content-box;
+}
+
+.spring-preview-stage[data-theme="spring"] > div > .h-dvh:has(> div > .login-tech-right-panel) {
+  & .bg-gradient-to-br::before,
+  & .bg-gradient-to-br::after,
+  & .login-tech-right-panel::before,
+  & .login-tech-right-panel::after {
+    content: "";
+    display: none;
+    position: absolute;
+    top: 0;
+    background: center top / contain no-repeat;
+    pointer-events: none;
+  }
+
+  & .bg-gradient-to-br::after,
+  & .login-tech-right-panel::after {
+    /* All three slices keep the source width-to-height ratio. Only the
+       number of complete middle sections changes with the viewport. */
+    --plaque-height: calc(var(--firecracker-width) * 235 / 144);
+    --strand-height: calc(var(--firecracker-width) * 326 / 144);
+    --tassel-height: calc(var(--firecracker-width) * 123 / 144);
+    --ends-height: calc(var(--plaque-height) + var(--tassel-height));
+    --target-height: 50%;
+
+    box-sizing: border-box;
+    width: var(--firecracker-width);
+    height: var(--target-height);
+    height: calc(var(--ends-height) + round(nearest, calc(var(--target-height) - var(--ends-height)), var(--strand-height)));
+    padding-block: var(--plaque-height) var(--tassel-height);
+    background: var(--spring-firecracker-art);
+  }
+
+  @media (min-width: 75rem) {
+    & .bg-gradient-to-br::after {
+      --firecracker-width: 65px;
+      display: block;
+      right: 14px;
+    }
+  }
+
+  @media (width < 75rem) {
+    & .login-tech-right-panel::after {
+      --firecracker-width: 28px;
+      display: block;
+      left: 2px;
+    }
+  }
+
+  @media (min-width: 64rem) and (width < 75rem) {
+    & .login-tech-right-panel::after {
+      --firecracker-width: 40px;
+      left: 6px;
+    }
+  }
+
+  @media (min-width: 64rem) {
+    & .bg-gradient-to-br::before {
+      display: block;
+      right: 78px;
+      width: 126px;
+      height: 225px;
+      background-image: var(--spring-lantern);
+    }
+  }
+
+  @media (width < 64rem) {
+    --plum-branch-width: clamp(138px, 45vw, 215px);
+  }
+
+  @media (width < 64rem) and (max-height: 599px) {
+    --plum-branch-width: 122px;
+  }
+
+  @media (width < 64rem) and (min-height: 600px) {
+    & .login-tech-right-panel::before {
+      display: block;
+      left: 51px;
+      width: 80px;
+      height: 142px;
+      background-image: var(--spring-lantern);
+    }
+  }
+}
+
+.spring-preview-stage[data-theme="spring"] > div > .bg-background:has(> div > h1 .animate-shimmer) {
+  & > div:has(> h1 .animate-shimmer)::before,
+  & > div:has(> h1 .animate-shimmer)::after {
+    content: "";
+    position: absolute;
+    bottom: -50px;
+    height: 53px;
+    background: center / contain no-repeat;
+    pointer-events: none;
+  }
+
+  & > div:has(> h1 .animate-shimmer)::before {
+    --firecracker-width: 18px;
+
+    box-sizing: border-box;
+    left: -18px;
+    bottom: -56px;
+    width: var(--firecracker-width);
+    height: calc(var(--firecracker-width) * 684 / 144);
+    padding-block: calc(var(--firecracker-width) * 235 / 144) calc(var(--firecracker-width) * 123 / 144);
+    background: var(--spring-firecracker-art);
+  }
+
+  & > div:has(> h1 .animate-shimmer)::after {
+    right: 0;
+    bottom: -52px;
+    width: 34px;
+    height: 58px;
+    background-image: var(--spring-lantern);
+  }
+
+  @media (min-width: 64rem) {
+    & > div:has(> h1 .animate-shimmer)::before,
+    & > div:has(> h1 .animate-shimmer)::after {
+      top: 27px;
+      bottom: auto;
+    }
+
+    & > div:has(> h1 .animate-shimmer)::before {
+      --firecracker-width: 25px;
+
+      top: 62px;
+      left: -51px;
+    }
+
+    & > div:has(> h1 .animate-shimmer)::after {
+      right: -92px;
+      width: 72px;
+      height: 130px;
+    }
+  }
+}
