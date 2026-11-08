@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 350 246" fill="none">
+  <title>梅枝与春字挂签</title>
+  <defs>
+    <g id="blossom">
+      <path d="M0-4C-7-6-8-15-2-17 4-20 9-12 5-5 13-10 19-6 18 0 17 6 10 7 5 4 10 10 8 17 2 18-5 19-8 11-4 5-9 11-17 9-18 3-20-3-12-8-5-4-8-11-4-16 0-14Z" fill="currentColor"/>
+      <circle r="3.7" fill="#f7d58c"/>
+      <circle r="1.25" fill="#a5563b"/>
+    </g>
+    <path id="spring" d="M10 10h46l-2 4H9zM14 20h39l-2 4H13zM5 30h57l-2 5H3zM34 3l6 2c-5 20-16 36-37 47l-2-3C18 38 28 24 34 3zM39 25c7 11 16 18 27 21l-5 6C50 47 42 38 36 27zM18 43h31v26h-5v-3H23v3h-5zM23 47v6h21v-6zM23 57v5h21v-5z"/>
+  </defs>
+
+  <path d="M353 0C314 10 281 29 254 48c-34 25-64 54-93 78-34 27-59 51-93 64" stroke="#825140" stroke-width="5" stroke-linecap="round"/>
+  <path d="M272 36c-19-11-42-15-70-15m51 31c-7 12-12 24-13 34m-54 17c-20-13-38-16-56-15m29 41c-13 9-26 15-42 18m-10 22c-12 1-22-1-31-5" stroke="#93624f" stroke-width="2.2" stroke-linecap="round"/>
+  <g>
+    <use href="#blossom" transform="translate(342 9) rotate(-12) scale(.95)" color="#bf5447"/>
+    <use href="#blossom" transform="translate(312 22) rotate(22) scale(.75)" color="#da8068"/>
+    <use href="#blossom" transform="translate(281 36) rotate(-19) scale(1.08)" color="#bd5145"/>
+    <use href="#blossom" transform="translate(231 23) rotate(18) scale(.76)" color="#dba953"/>
+    <use href="#blossom" transform="translate(237 65) rotate(12) scale(.92)" color="#c45848"/>
+    <use href="#blossom" transform="translate(207 61) rotate(-17) scale(.56)" color="#ce6952"/>
+    <use href="#blossom" transform="translate(192 93) rotate(13) scale(.68)" color="#db8067"/>
+    <use href="#blossom" transform="translate(171 119) rotate(-12) scale(1.02)" color="#c65b49"/>
+    <use href="#blossom" transform="translate(143 92) rotate(12) scale(.63)" color="#dba953"/>
+    <use href="#blossom" transform="translate(143 144) rotate(13) scale(.77)" color="#ba5244"/>
+    <use href="#blossom" transform="translate(117 163) rotate(-21) scale(.88)" color="#cf6b55"/>
+    <use href="#blossom" transform="translate(86 180) rotate(7) scale(.6)" color="#dc8468"/>
+  </g>
+  <path d="m73 182-18 12" stroke="#9e6346" stroke-width="1.9" stroke-linecap="round"/>
+  <g transform="translate(30 191) rotate(-8 24 24)">
+    <rect width="48" height="48" rx="3" fill="#9c3127" stroke="#c99858" stroke-width="1.6"/>
+    <rect x="3.5" y="3.5" width="41" height="41" rx="1.4" stroke="#e4b776" stroke-width=".75"/>
+    <use href="#spring" transform="translate(12.4 10.4) scale(.35)" fill="#ffe2a7" fill-rule="evenodd"/>
+  </g>
+</svg>
