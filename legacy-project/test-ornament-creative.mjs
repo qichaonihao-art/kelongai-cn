@@ -15,6 +15,7 @@ let reply = '{}'; const replies = []; const payloads = [];
 globalThis.fetch = async (url, init = {}) => {
   const payload = JSON.parse(String(init.body || '{}')); payloads.push({ url: String(url), payload });
   if (String(url).endsWith('/responses')) return Response.json({ output: [{ type: 'message', content: [{ type: 'output_text', text: replies.length ? replies.shift() : reply }] }] });
+  if (String(url).endsWith('/chat/completions')) return Response.json({ choices: [{ message: { content: reply } }] });
   return Response.json({ id: 'stub-video', task_id: 'stub-video', output: { task_id: 'stub-video', task_status: 'PENDING' }, base_resp: { status_code: 0 } });
 };
 const server = await import('./server.mjs');
@@ -46,11 +47,41 @@ for (const framework of ORNAMENT_FRAMEWORKS) {
 const plan = { durationMin: 5, durationMax: 8, stylePreset: 'modern-minimal', ratio: '9:16', productType: 'ornament' };
 const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 const imagePath = join(process.env.RUNTIME_STATE_DIR, 'test.png'); writeFileSync(imagePath, Buffer.from(imageData, 'base64'));
+const imageBytes = Buffer.from(imageData, 'base64');
+const front = new File([imageBytes], 'front.png', { type: 'image/png' });
+const back = new File([imageBytes, 'new-back'], 'back.png', { type: 'image/png' });
+const sideView = new File([imageBytes, 'new-side'], 'side.png', { type: 'image/png' });
+const backPath = join(process.env.RUNTIME_STATE_DIR, 'back.png');
+writeFileSync(backPath, Buffer.concat([imageBytes, Buffer.from('new-back')]));
+const batchOptions = { ornamentReferences: { back: { imagePath: backPath } } };
+async function formRequest(form, pathname = '/api/seedance/tasks') {
+ const webRequest = new Request(`http://localhost${pathname}`, { method: 'POST', body: form });
+ const request = Readable.from([Buffer.from(await webRequest.arrayBuffer())]);
+ request.headers = { 'content-type': webRequest.headers.get('content-type'), host: 'localhost' };
+ request.url = pathname;
+ return request;
+}
+async function ornamentReq(body, views = { front, back }) {
+ const form = new FormData();
+ for (const [key, value] of Object.entries(body)) form.append(key, String(value));
+ for (const [view, file] of Object.entries(views)) form.append(`ornament${view[0].toUpperCase()}${view.slice(1)}File`, file);
+ return formRequest(form);
+}
+const dataUrl = async file => `data:${file.type};base64,${Buffer.from(await file.arrayBuffer()).toString('base64')}`;
+const frontUrl = await dataUrl(front);
+const backUrl = await dataUrl(back);
+const sideUrl = await dataUrl(sideView);
+function sentVideoImages() {
+ const payload = payloads.at(-1).payload;
+ return payload.input?.media
+   ? payload.input.media.filter(item => item.type === 'reference_image').map(item => item.url)
+   : payload.content.filter(item => item.type === 'image_url').map(item => item.image_url.url);
+}
 const req = body => {
  const listeners = {}; const request = { url: '/api/seedance/tasks', headers: { host: 'localhost' }, on(event, cb) { listeners[event] = cb; return request; }, destroy() {} };
  queueMicrotask(() => { listeners.data?.(JSON.stringify(body)); listeners.end?.(); }); return request;
 };
-const res = () => ({ status: 0, body: '', writeHead(status) { this.status = status; }, end(body) { this.body = String(body); } });
+const res = () => ({ status: 0, body: '', writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body) { this.body = String(body); } });
 assert.equal(ORNAMENT_FRAMEWORKS.length, 40);
 assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group.startsWith('人物')).length, 10);
 assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group === '人物同框推进特写').length, 5);
@@ -104,10 +135,10 @@ assert.deepEqual(ORNAMENT_FRAMEWORKS.map(f => f.directionNumber), Array.from({ l
 assert.throws(() => normalizeOrnamentProfile({ supportStructure: 'separate' }), /分离式/);
 assert.equal(productUsageHash('same', 'ornament'), 'ornament:same');
 assert.equal(productUsageHash('same', 'hanging'), 'same');
-const corrected = normalizeOrnamentProfile({ name: '换款式', material: 'PVC', frameMaterial: '实木', backboardMaterial: '金属', frameStructure: '独立盘架', subject: '另一款正面图案' });
-assert.equal(corrected.frameMaterial, '铝合金'); assert.equal(corrected.backboardMaterial, '木板');
-assert.equal(corrected.subject, '另一款正面图案'); assert.match(corrected.frameStructure, /单根|一根/);
-assert.ok(inspectOrnamentPromptIssues('实木边框配金属背板。').length);
+const corrected = normalizeOrnamentProfile({ name: '换款式', frameMaterial: '实木', backboardMaterial: '金属', frameStructure: '固定宽支撑', subject: '另一款正面图案' });
+assert.equal(corrected.frameMaterial, '实木'); assert.equal(corrected.backboardMaterial, '金属');
+assert.equal(corrected.subject, '另一款正面图案'); assert.equal(corrected.frameStructure, '固定宽支撑');
+assert.equal(inspectOrnamentPromptIssues('实木边框配金属背板。').length, 0);
 assert.ok(inspectOrnamentPromptIssues('正面是立体佛像。').length);
 assert.ok(inspectOrnamentPromptIssues('正面覆盖玻璃。').length);
 assert.ok(inspectOrnamentPromptIssues('折叠后撑杆，移入圆形框体。').length);
@@ -119,22 +150,54 @@ assert.ok(inspectOrnamentPromptIssues('金马活过来奔跑。').length);
 assert.equal(inspectOrnamentPromptIssues('禁止拆下主体；不得揭膜。').length, 0);
 assert.ok(inspectOrnamentPromptIssues('禁止拆架，但把盘面取下单独展示。').length);
 assert.ok(inspectOrnamentPromptIssues('将圆盘放回独立托架。').length);
-reply = JSON.stringify({ name: '固定一体摆台', supportStructure: 'fixed', frameStructure: '固定连接的后撑' });
-const analysis = await server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'ornament' }, 'test', 'analysis');
-assert.equal(analysis.profile.frameMaterial, '铝合金'); assert.equal(analysis.profile.backboardMaterial, '木板');
+reply = JSON.stringify({ name: '固定一体摆台', supportStructure: 'fixed', frameMaterial: '实木', backboardColor: '白色', frameStructure: '固定连接的宽支撑' });
+const analysis = await server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'ornament', ornamentBackFile: back }, 'test', 'analysis');
+assert.equal(analysis.profile.frameMaterial, '实木'); assert.equal(analysis.profile.backboardColor, '白色'); assert.equal(analysis.profile.backboardMaterial, undefined);
 assert.equal(analysis.profile.widthCm, 20); assert.equal(analysis.profile.heightCm, 20);
 assert.equal(analysis.profile.productType, 'ornament'); assert.equal(analysis.profile.supportStructure, 'fixed');
-assert.match(payloads.at(-1).payload.input?.[0]?.content?.[1]?.text || JSON.stringify(payloads.at(-1)), /主体独立放在可分离托架/);
+const analysisContent = payloads.at(-1).payload.input[0].content;
+assert.deepEqual(analysisContent.filter(item => item.type === 'input_image').map(item => item.image_url), [frontUrl, backUrl]);
+assert.match(analysisContent.at(-1).text, /主体与托架分离/);
+const beforeMissingAnalysis = payloads.length;
+await assert.rejects(server.analyzePaintingCore({ file: front, productType: 'ornament' }, 'test', 'missing-back'), /背面/);
+assert.equal(payloads.length, beforeMissingAnalysis);
 reply = JSON.stringify({ supportStructure: 'fixed', widthCm: 999, heightCm: 999 });
-const customAnalysis = await server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'ornament', widthCm: 25, heightCm: 30 }, 'test', 'custom-size');
+const customAnalysis = await server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'ornament', ornamentBackFile: back, ornamentSideFile: sideView, widthCm: 25, heightCm: 30 }, 'test', 'custom-size');
 assert.equal(customAnalysis.profile.widthCm, 25); assert.equal(customAnalysis.profile.heightCm, 30);
+assert.deepEqual(payloads.at(-1).payload.input[0].content.filter(item => item.type === 'input_image').map(item => item.image_url), [frontUrl, backUrl, sideUrl]);
 reply = JSON.stringify({ supportStructure: 'separate' });
-await assert.rejects(server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'ornament' }, 'test', 'separate'), /分离式/);
+await assert.rejects(server.analyzePaintingCore({ image: `data:image/png;base64,${imageData}`, productType: 'ornament', ornamentBackFile: back }, 'test', 'separate'), /分离式/);
+const sourceVideo = new File(['mock-video'], 'source.mp4', { type: 'video/mp4' });
+for (const [provider, handler] of [['doubao', server.handleDoubaoMultimodal], ['qwen', server.handleQwenCreativeMultimodal]]) {
+ for (const hasBack of [false, true]) {
+  const form = new FormData();
+  form.append('question', '【产品元素替换：ornament】按新款照片替换原视频摆台。');
+  form.append('files', sourceVideo);
+  form.append('ornamentFrontFile', front);
+  if (hasBack) form.append('ornamentBackFile', back);
+  form.append('ornamentSideFile', sideView);
+  const response = res();
+  const before = payloads.length;
+  await handler(await formRequest(form, `/api/${provider}/multimodal`), response);
+  if (!hasBack) {
+   assert.equal(response.status, 400, response.body);
+   assert.equal(payloads.length, before);
+   continue;
+  }
+  assert.equal(response.status, 200, response.body);
+  const sent = payloads.at(-1).payload;
+  const media = provider === 'doubao' ? sent.input[0].content : sent.messages[0].content;
+  const mediaUrls = provider === 'doubao'
+   ? media.filter(item => item.type === 'input_image' || item.type === 'input_video').map(item => item.image_url || item.video_url)
+   : media.filter(item => item.type === 'image_url' || item.type === 'video_url').map(item => item.image_url?.url || item.video_url?.url);
+  assert.deepEqual(mediaUrls, [await dataUrl(sourceVideo), frontUrl, backUrl, sideUrl]);
+ }
+}
 for (let batch = 0; batch < 4; batch++) {
  reply = JSON.stringify(ORNAMENT_FRAMEWORKS.slice(batch * 10, batch * 10 + 10).map(f => ({ title: f.title, summary: f.action })));
  const ideasRequest = buildOrnamentIdeasRequest(profile, plan, batch, 0, {});
  assert.doesNotMatch(ideasRequest, /框架方向：|固定动作框架：/);
- assert.match(ideasRequest, /铝合金边框/); assert.match(ideasRequest, /木质背板/);
+ assert.doesNotMatch(ideasRequest, /铝合金|木背板|木质背板|金色边框|公共背面/);
  const result = await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch }, 'test', 'ideas');
  assert.equal(result.totalBatches, 4); assert.equal(result.ideas.length, 10);
  assert.deepEqual(result.ideas.map(i => i.directionNumber), Array.from({ length: 10 }, (_, i) => batch * 10 + i + 1));
@@ -175,12 +238,12 @@ for (const f of ORNAMENT_FRAMEWORKS) {
  reply = `创意内容：${f.action}\n总时长：6秒`;
  const result = await server.generatePaintingIdeaPromptCore('prompt', 'test', profile, { ...f, productType: 'ornament' }, plan);
  assert.ok(result.prompt.startsWith(ORNAMENT_MARKER)); assert.equal(result.duration, 6);
- assert.match(result.prompt, /铝合金边框/); assert.match(result.prompt, /木质背板/); assert.match(result.prompt, /单根|一根/);
- assert.match(result.prompt, /主体与后撑杆固定连接/); assert.doesNotMatch(result.prompt, forbidden);
+ assert.doesNotMatch(result.prompt, /铝合金|木背板|木质背板|金色边框|公共背面/);
+ assert.match(result.prompt, /主体与本款支撑保持固定连接/); assert.doesNotMatch(result.prompt, forbidden);
  assert.equal(ornamentProfileFromPrompt(result.prompt).productType, 'ornament');
  assert.equal(ensureOrnamentPrompt(result.prompt, profile, f.directionNumber), result.prompt);
  assert.equal(inspectOrnamentPromptIssues(result.prompt).length, 0);
- const specs = server.getPaintingBatchReferenceSpecs({ directionNumber: f.directionNumber }, { profile, imagePath, options: { woodReferences: { upper: { imagePath } } } });
+ const specs = server.getPaintingBatchReferenceSpecs({ directionNumber: f.directionNumber }, { profile, imagePath, options: { ...batchOptions, woodReferences: { upper: { imagePath } } } });
  assert.equal(specs.length, 2); assert.equal(specs[1].baseName, 'ornament-back'); assert.equal(specs[0].baseName, 'ornament-main');
 }
 reply = '创意内容：开场摆台完整可见，镜头推近。\n总时长：6秒';
@@ -200,61 +263,85 @@ for (const [handler, body] of [[server.handlePaintingAnalyze, { productType: 'or
 }
 const prompt = ensureOrnamentPrompt('创意内容：双手整体落台，站稳后撤手。\n总时长：6秒', customProfile, 1);
 for (const model of ['doubao-seedance-2-0-mini-260615', 'wan3.0-video', 'MiniMax-H3']) {
- const response = res(); await server.handleSeedanceCreateTask(req({ model, prompt, productType: 'ornament', directionNumber: 1, duration: 6, imageHash: 'manual-ornament-test', resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: true }), response);
+ const response = res(); await server.handleSeedanceCreateTask(await ornamentReq({ model, prompt, productType: 'ornament', directionNumber: 1, duration: 6, imageHash: 'manual-ornament-test', resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: true }), response);
  assert.equal(response.status, 200, response.body);
  assert.match(JSON.stringify(payloads.at(-1).payload), /外框宽25厘米、高30厘米/);
  assert.ok(JSON.stringify(payloads.at(-1).payload).includes(JSON.stringify(customScale).slice(1, -1)));
  if (model === 'wan3.0-video') assert.equal(payloads.at(-1).payload.parameters.audio, true);
  if (model.startsWith('doubao')) assert.equal(payloads.at(-1).payload.generate_audio, true); assert.doesNotMatch(JSON.stringify(payloads.at(-1)), forbidden);
- assert.ok(JSON.stringify(payloads.at(-1).payload).includes('data:image/jpeg;base64,'));
- await server.submitSeedanceTaskForBatchTask({ directionNumber: 30, prompt, duration: 6 }, { model, profile: customProfile, imagePath, resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: true });
+ assert.deepEqual(sentVideoImages(), [frontUrl, backUrl]);
+ await server.submitSeedanceTaskForBatchTask({ directionNumber: 30, prompt, duration: 6 }, { model, profile: customProfile, imagePath, options: batchOptions, resolution: model === 'MiniMax-H3' ? '768p' : '480p', ratio: '9:16', generateAudio: true });
  assert.doesNotMatch(JSON.stringify(payloads.at(-1)), forbidden);
  const sent = payloads.at(-1).payload;
  assert.match(JSON.stringify(sent), /外框宽25厘米、高30厘米/);
  assert.ok(JSON.stringify(sent).includes(JSON.stringify(customScale).slice(1, -1)));
  if (model === 'wan3.0-video') assert.equal(sent.parameters.audio, true);
  if (model.startsWith('doubao')) assert.equal(sent.generate_audio, true);
- assert.equal(model === 'wan3.0-video' ? sent.input.media.length : sent.content.filter(item => item.type === 'image_url').length, 2);
+ assert.deepEqual(sentVideoImages(), [frontUrl, backUrl]);
 }
 for (const audio of [false, true]) {
  const response = res();
  await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', prompt: '普通反推：人物展示。背景音乐为古风音乐。', resolution: '480p', duration: 6, generateAudio: audio }), response);
  assert.equal(response.status, 200, response.body); assert.equal(payloads.at(-1).payload.parameters.audio, audio);
- await server.submitSeedanceTaskForBatchTask({ directionNumber: 1, prompt: '摆台无真实立体雕塑结构，背景有陶瓷摆件。', duration: 6 }, { model: 'wan3.0-video', profile, imagePath, resolution: '480p', ratio: '9:16', generateAudio: audio });
+ await server.submitSeedanceTaskForBatchTask({ directionNumber: 1, prompt: '摆台无真实立体雕塑结构，背景有陶瓷摆件。', duration: 6 }, { model: 'wan3.0-video', profile, imagePath, options: batchOptions, resolution: '480p', ratio: '9:16', generateAudio: audio });
  assert.equal(payloads.at(-1).payload.parameters.audio, audio);
 }
 assert.deepEqual(server.dbGetPaintingUsedDirections('manual-ornament-test', 0, 'ornament'), [1]);
 assert.deepEqual(server.dbGetPaintingUsedDirections('manual-ornament-test', 0, 'hanging'), []);
 assert.equal(server.paintingPromptSimilarity(ensureOrnamentPrompt('竹林雨声', profile, 1), ensureOrnamentPrompt('都市霓虹', profile, 2)), 0);
 const before = payloads.length; const response = res();
-await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', productType: 'ornament', prompt: '把主体从支架取下。', directionNumber: 1 }), response);
+await server.handleSeedanceCreateTask(await ornamentReq({ model: 'wan3.0-video', productType: 'ornament', prompt: '把主体从支架取下。', directionNumber: 1 }), response);
 assert.equal(response.status, 200, response.body); assert.ok(payloads.length > before);
-for (const [side, frame] of [[false, false], [true, false], [false, true], [true, true]]) {
+for (const [hasBack, hasSide] of [[false, false], [true, false], [true, true]]) {
  const form = new FormData();
- form.append('file', new File([Buffer.from(imageData, 'base64')], 'front.png', { type: 'image/png' }));
- for (const [key, value] of Object.entries({ profile, plan, model: 'wan3.0-video', resolution: '480p', ratio: '9:16', requestedCount: 1, onlyUnused: false, ideas: [{ ...ORNAMENT_FRAMEWORKS[0], productType: 'ornament' }], creationRequestId: `ornament-optional-${side}-${frame}` })) form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+ form.append('file', front);
+ for (const [key, value] of Object.entries({ profile, plan, model: 'wan3.0-video', resolution: '480p', ratio: '9:16', requestedCount: 1, onlyUnused: false, ideas: [{ ...ORNAMENT_FRAMEWORKS[35], productType: 'ornament' }], creationRequestId: `ornament-views-${hasBack}-${hasSide}` })) form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
  form.append('upperWoodFile', new File(['ignored wrong-product attachment'], 'wood.txt', { type: 'text/plain' }));
- if (side) form.append('ornamentSideFile', new File([Buffer.from(imageData, 'base64')], 'side.png', { type: 'image/png' }));
- if (frame) form.append('ornamentFrameFile', new File([Buffer.from(imageData, 'base64')], 'frame.png', { type: 'image/png' }));
- const webRequest = new Request('http://localhost/api/painting/batch-runs', { method: 'POST', body: form });
- const request = Readable.from([Buffer.from(await webRequest.arrayBuffer())]);
- request.headers = { 'content-type': webRequest.headers.get('content-type'), host: 'localhost' }; request.url = '/api/painting/batch-runs';
- const response = res(); await server.handleCreatePaintingBatchRun(request, response);
+ if (hasBack) form.append('ornamentBackFile', back);
+ if (hasSide) form.append('ornamentSideFile', sideView);
+ const response = res();
+ await server.handleCreatePaintingBatchRun(await formRequest(form, '/api/painting/batch-runs'), response);
+ if (!hasBack) {
+  assert.equal(response.status, 400, response.body);
+  assert.match(response.body, /背面/);
+  continue;
+ }
  assert.ok([200, 201, 202].includes(response.status), response.body);
  const id = JSON.parse(response.body).batchRunId;
  server.dbUpdatePaintingBatchRun(id, { status: 'paused', controlStatus: 'paused' });
  const run = server.dbGetPaintingBatchRun(id);
  assert.equal(run.options.woodReferences.upper, null);
- assert.equal(Boolean(run.options.ornamentReferences.side), side);
- assert.equal(Boolean(run.options.ornamentReferences.frame), frame);
- for (const reference of Object.values(run.options.ornamentReferences).filter(Boolean)) assert.equal(readFileSync(reference.imagePath).toString('base64'), imageData);
- const specs = server.getPaintingBatchReferenceSpecs({ directionNumber: 34 }, run);
- assert.equal(specs.length, 2 + Number(side) + Number(frame));
- if (side) assert.ok(specs.some(spec => spec.baseName === 'ornament-side'));
- if (frame) assert.ok(specs.some(spec => spec.baseName === 'ornament-frame'));
- await server.submitSeedanceTaskForBatchTask({ directionNumber: 34, prompt, duration: 6 }, run);
- assert.equal(payloads.at(-1).payload.input.media.length, specs.length);
+ assert.equal(Boolean(run.options.ornamentReferences.side), hasSide);
+ assert.deepEqual(readFileSync(run.options.ornamentReferences.back.imagePath), Buffer.from(await back.arrayBuffer()));
+ const restoredBack = res();
+ const backHash = run.options.ornamentReferences.back.imageHash;
+ const historyUrl = new URL(`http://localhost/api/painting/history-images/${backHash}/file?batchRunId=${id}&ornamentView=back`);
+ await server.handleGetPaintingHistoryImageFile({ method: 'HEAD' }, restoredBack, backHash, historyUrl);
+ assert.equal(restoredBack.status, 200, restoredBack.body);
+ assert.equal(restoredBack.headers['Content-Type'], back.type);
+ assert.equal(restoredBack.headers['Content-Length'], String(back.size));
+ await server.submitSeedanceTaskForBatchTask({ directionNumber: 36, prompt, duration: 6 }, run);
+ assert.deepEqual(sentVideoImages(), hasSide ? [frontUrl, backUrl, sideUrl] : [frontUrl, backUrl]);
 }
+for (const model of ['doubao-seedance-2-0-260128', 'wan3.0-video']) {
+ for (const submittedPrompt of [ensureOrnamentPrompt('背面展示。', profile, 36), '【产品元素替换：ornament】保留原片转向动作，展示新款白色背板。']) {
+  const response = res();
+  await server.handleSeedanceCreateTask(await ornamentReq({ model, prompt: submittedPrompt, resolution: '480p', duration: 6 }, { side: sideView, back, front }), response);
+  assert.equal(response.status, 200, response.body);
+  assert.deepEqual(sentVideoImages(), [frontUrl, backUrl, sideUrl]);
+ }
+}
+const beforeMissingVideo = payloads.length;
+for (const submittedPrompt of [prompt, '【产品元素替换：ornament】本款摆台在桌上。']) {
+ const response = res();
+ await server.handleSeedanceCreateTask(await ornamentReq({ model: 'wan3.0-video', prompt: submittedPrompt, resolution: '480p' }, { front }), response);
+ assert.equal(response.status, 400, response.body);
+ assert.match(response.body, /背面/);
+}
+await assert.rejects(server.submitSeedanceTaskForBatchTask({ directionNumber: 36, prompt, duration: 6 }, { model: 'wan3.0-video', profile, imagePath }), /背面/);
+const legacyProfile = { ...profile, structureVersion: 'aluminum-wood-rear-rod-v1' };
+await assert.rejects(server.submitSeedanceTaskForBatchTask({ directionNumber: 36, prompt, duration: 6 }, { model: 'wan3.0-video', profile: legacyProfile, imagePath, options: batchOptions }), /重新分析/);
+assert.equal(payloads.length, beforeMissingVideo);
 const productTypes = ['hanging', 'sticker', 'ornament'];
 const markers = { hanging: '【挂画真实尺寸强制锁定】', sticker: '【PVC背胶贴画物理锁定】', ornament: '【固定一体摆件物理锁定】' };
 for (const chosen of productTypes) {
@@ -292,11 +379,11 @@ assert.equal(mixedResponse.status, 400); assert.equal(payloads.length, beforeMix
 for (const type of ['hanging', 'sticker', 'ornament']) {
  for (const model of ['doubao-seedance-2-0-260128', 'MiniMax-H3', 'wan3.0-video']) {
   const response = res();
-  await server.handleSeedanceCreateTask(req({ model, resolution: model === 'MiniMax-H3' ? '768p' : '480p', duration: 6, prompt: `【产品元素替换：${type}】\n【替换动作兼容性：兼容】\n原视频机位固定，替换同类产品正面图案，原动作不改变。` }), response);
+  await server.handleSeedanceCreateTask(await (type === 'ornament' ? ornamentReq : body => ornamentReq(body, {}))({ model, resolution: model === 'MiniMax-H3' ? '768p' : '480p', duration: 6, prompt: `【产品元素替换：${type}】\n【替换动作兼容性：兼容】\n原视频机位固定，替换同类产品正面图案，原动作不改变。` }), response);
   assert.equal(response.status, 200, response.body);
   const sent = JSON.stringify(payloads.at(-1).payload);
   assert.doesNotMatch(sent, forbidden);
-  if (type === 'ornament') { assert.match(sent, /木质背板/); assert.match(sent, /data:image\/jpeg;base64/); assert.doesNotMatch(sent, /双手整体落台/); }
+  if (type === 'ornament') { assert.match(sent, /图2是同一款的背面/); assert.deepEqual(sentVideoImages(), [frontUrl, backUrl]); assert.doesNotMatch(sent, /双手整体落台/); }
   if (type === 'sticker') { assert.match(sent, /PVC/); assert.doesNotMatch(sent, /尺寸：宽180/); }
  }
 }
@@ -304,7 +391,7 @@ for (const type of ['hanging', 'sticker', 'ornament']) {
 const sourceToAluminum = '将原视频中的木质边框笑纳百财大肚佛摆台替换为金色矩形铝合金边框、四角斜接、木质背板、背部下边中央连接单根细金属后撑杆的固定一体摆台';
 assert.deepEqual(validateReplacementPrompt(sourceToAluminum, 'ornament'), []);
 const actualReplacement = res();
-await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', duration: 7, prompt: `【产品元素替换：ornament】\n复刻目标与允许变化：${sourceToAluminum}；人物整体搬放，红布完全盖住摆台，手抓红布上角向上揭开，展示正面平面图案。` }), actualReplacement);
+await server.handleSeedanceCreateTask(await ornamentReq({ model: 'wan3.0-video', resolution: '480p', duration: 7, prompt: `【产品元素替换：ornament】\n复刻目标与允许变化：${sourceToAluminum}；人物整体搬放，红布完全盖住摆台，手抓红布上角向上揭开，展示正面平面图案。` }), actualReplacement);
 assert.equal(actualReplacement.status, 200, actualReplacement.body);
 for (const descriptivePrompt of [
  sourceToAluminum.replace('金色矩形铝合金边框', '木质边框'),
@@ -320,7 +407,7 @@ assert.deepEqual(validateReplacementPrompt('将原视频中的带挂绳挂画替
 for (const type of ['hanging', 'sticker', 'ornament']) {
  for (const status of ['', '**替换动作兼容性: 兼容**\n']) {
   const response = res();
-  await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', duration: 6, prompt: `【产品元素替换：${type}】\n${status}原视频固定机位，人物整体搬放同类产品，只替换正面图案，原动作不改变。` }), response);
+  await server.handleSeedanceCreateTask(await (type === 'ornament' ? ornamentReq : body => ornamentReq(body, {}))({ model: 'wan3.0-video', resolution: '480p', duration: 6, prompt: `【产品元素替换：${type}】\n${status}原视频固定机位，人物整体搬放同类产品，只替换正面图案，原动作不改变。` }), response);
   assert.equal(response.status, 200, response.body);
  }
 }
@@ -333,10 +420,10 @@ for (const [type, body] of [
  ['sticker', '背景墙上有实木边框贴画样片，前景展示替换后的PVC平面产品。'],
 ]) {
  const response = res();
- await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', duration: 7, prompt: `【产品元素替换：${type}】\n${body}` }), response);
+ await server.handleSeedanceCreateTask(await (type === 'ornament' ? ornamentReq : body => ornamentReq(body, {}))({ model: 'wan3.0-video', resolution: '480p', duration: 7, prompt: `【产品元素替换：${type}】\n${body}` }), response);
  assert.equal(response.status, 200, response.body);
  const sent = JSON.stringify(payloads.at(-1).payload);
- if (type === 'ornament') { assert.match(sent, /木质背板/); assert.match(sent, /data:image\/jpeg;base64/); }
+ if (type === 'ornament') { assert.match(sent, /图2是同一款的背面/); assert.deepEqual(sentVideoImages(), [frontUrl, backUrl]); }
  if (type === 'sticker') assert.match(sent, /PVC柔性平面印刷膜/);
 }
 
@@ -349,7 +436,7 @@ console.log('PASS: 40 fixed frameworks, analysis, separate-stand rejection, four
 
 for (const size of [{ widthCm: 20, heightCm: 20 }, { widthCm: 25, heightCm: 30 }]) {
  const response = res();
- await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', duration: 6, prompt: `【产品元素替换：ornament】\n${ornamentSizeRule(size)}\n原视频人物整体搬放，动作不变。` }), response);
+ await server.handleSeedanceCreateTask(await ornamentReq({ model: 'wan3.0-video', resolution: '480p', duration: 6, prompt: `【产品元素替换：ornament】\n${ornamentSizeRule(size)}\n原视频人物整体搬放，动作不变。` }), response);
  assert.equal(response.status, 200, response.body);
  assert.match(JSON.stringify(payloads.at(-1).payload), new RegExp(`外框宽${size.widthCm}厘米、高${size.heightCm}厘米`));
  if (size.widthCm !== 20) assert.doesNotMatch(JSON.stringify(payloads.at(-1).payload), /外框宽20厘米/);
@@ -396,10 +483,10 @@ for (const [stylePreset, label, feature] of styleCases) {
    assert.equal((restyled.match(/【摆台场景与服饰风格】/g) || []).length, 1);
  }
  const response = res();
- await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', prompt: generated.prompt, duration: 6, resolution: '480p' }), response);
+ await server.handleSeedanceCreateTask(await ornamentReq({ model: 'wan3.0-video', prompt: generated.prompt, duration: 6, resolution: '480p' }), response);
  assert.equal(response.status, 200, response.body);
  assert.ok(JSON.stringify(payloads.at(-1).payload).includes(feature));
- await server.submitSeedanceTaskForBatchTask({ directionNumber: 13, prompt: generated.prompt, duration: 6 }, { model: 'wan3.0-video', profile, imagePath, resolution: '480p', ratio: '9:16', generateAudio: false });
+ await server.submitSeedanceTaskForBatchTask({ directionNumber: 13, prompt: generated.prompt, duration: 6 }, { model: 'wan3.0-video', profile, imagePath, options: batchOptions, resolution: '480p', ratio: '9:16', generateAudio: false });
  assert.ok(JSON.stringify(payloads.at(-1).payload).includes(feature));
 }
 console.log('PASS: 9 styles carry concrete scenery and wardrobe through prompt generation, manual and batch video payloads; natural side/table display replaces chest-held poses.');

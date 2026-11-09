@@ -1,3 +1,4 @@
+import { ORNAMENT_MARKER, ORNAMENT_STRUCTURE_VERSION, ornamentReferenceGuide } from '../../../legacy-project/ornament-creative.mjs';
 import { resolvePaintingVideoLibraryFolder, type VideoLibraryFolderChoiceSource } from '@/src/lib/paintingVideoLibraryFolder';
 import PersonReplacementPanel from '@/src/components/PersonReplacementPanel';
 import UploadHistoryPreview from '@/src/components/UploadHistoryPreview';
@@ -99,6 +100,7 @@ import {
   type CreativeReverseModel,
   type CreativeHistoryItem,
   type SeedanceReferenceFile,
+  type OrnamentView,
   type SeedanceTaskResult,
   type SelectedCreativeMedia,
   type PaintingProfile,
@@ -217,7 +219,7 @@ interface PaintingHistoryItem {
   thumbnail?: string;
   uploadHistoryId?: number;
   imageFileName?: string;
-  ornamentReferenceHistoryIds?: Partial<Record<'side' | 'frame', number>>;
+  ornamentReferenceHistoryIds?: Partial<Record<'side' | 'back', number>>;
   upperWoodUploadHistoryId?: number;
   upperWoodImageFileName?: string;
   lowerWoodUploadHistoryId?: number;
@@ -1761,11 +1763,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [reverseMode, setReverseMode] = useState<ReverseMode>('direct');
   const [paintingImage, setPaintingImage] = useState<SelectedCreativeMedia | null>(null);
   const [paintingUploadHistoryId, setPaintingUploadHistoryId] = useState<number | null>(null);
-  const [ornamentReferences, setOrnamentReferences] = useState<Record<'side' | 'frame', SelectedCreativeMedia | null>>({ side: null, frame: null });
-  const [ornamentReferenceHistoryIds, setOrnamentReferenceHistoryIds] = useState<Partial<Record<'side' | 'frame', number>>>({});
+  const [ornamentReferences, setOrnamentReferences] = useState<Record<'side' | 'back', SelectedCreativeMedia | null>>({ side: null, back: null });
+  const [ornamentReferenceHistoryIds, setOrnamentReferenceHistoryIds] = useState<Partial<Record<'side' | 'back', number>>>({});
   const [ornamentReferenceUploading, setOrnamentReferenceUploading] = useState(false);
   const ornamentSideInputRef = useRef<HTMLInputElement>(null);
-  const ornamentFrameInputRef = useRef<HTMLInputElement>(null);
+  const ornamentBackInputRef = useRef<HTMLInputElement>(null);
   const [paintingUpperWoodImage, setPaintingUpperWoodImage] = useState<SelectedCreativeMedia | null>(null);
   const [paintingUpperWoodUploadHistoryId, setPaintingUpperWoodUploadHistoryId] = useState<number | null>(null);
   const [paintingLowerWoodImage, setPaintingLowerWoodImage] = useState<SelectedCreativeMedia | null>(null);
@@ -1868,7 +1870,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [paintingBatchUnconfirmed, setPaintingBatchUnconfirmed] = useState(false);
   const [paintingBatchSubmitError, setPaintingBatchSubmitError] = useState('');
   const [replacementProductType, setReplacementProductType] = useState<ReplacementProductType>('hanging');
-  const [replacementReferences, setReplacementReferences] = useState<Record<'side' | 'frame', SelectedCreativeMedia | null>>({ side: null, frame: null });
+  const [replacementReferences, setReplacementReferences] = useState<Record<'side' | 'back', SelectedCreativeMedia | null>>({ side: null, back: null });
   const [replacementReferenceUploading, setReplacementReferenceUploading] = useState(false);
   const [ornamentHistoryTarget, setOrnamentHistoryTarget] = useState<'painting' | 'replacement'>('painting');
   const [replaceImage, setReplaceImage] = useState<SelectedCreativeMedia | null>(null);
@@ -1885,11 +1887,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   const [additionalChangeHistory, setAdditionalChangeHistory] = useState<AdditionalChangeHistoryItem[]>([]);
   const [videoHistory, setVideoHistory] = useState<UploadHistoryPreviewItem[]>([]);
   const [imageHistory, setImageHistory] = useState<UploadHistoryPreviewItem[]>([]);
-  const [ornamentImageHistory, setOrnamentImageHistory] = useState<Record<'side' | 'frame', UploadHistoryPreviewItem[]>>({ side: [], frame: [] });
+  const [ornamentImageHistory, setOrnamentImageHistory] = useState<Record<'side' | 'back', UploadHistoryPreviewItem[]>>({ side: [], back: [] });
   const videoHistoryRef = useRef<UploadHistoryPreviewItem[]>([]);
   const imageHistoryRef = useRef<UploadHistoryPreviewItem[]>([]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance' | 'video-edit-video' | 'video-edit-image' | 'ornament-side' | 'ornament-frame'>('video');
+  const [historyModalKind, setHistoryModalKind] = useState<'video' | 'image-creative' | 'image-seedance' | 'video-edit-video' | 'video-edit-image' | 'ornament-side' | 'ornament-back'>('video');
   const [historyPreviewItem, setHistoryPreviewItem] = useState<HistoryPreviewItem | null>(null);
   const [historyVideoDurations, setHistoryVideoDurations] = useState<Record<number, number>>({});
   const [isUploadHistoryLoading, setIsUploadHistoryLoading] = useState(true);
@@ -2222,13 +2224,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   async function refreshUploadHistories() {
     const knownReferences = loadPaintingHistory().flatMap(item => Object.entries(item.ornamentReferenceHistoryIds || {}));
     for (const [kind, id] of knownReferences) {
-      if (id && (kind === 'side' || kind === 'frame')) await classifyUploadHistory(id, `ornament-${kind}`);
+      if (id && (kind === 'side' || kind === 'back')) await classifyUploadHistory(id, `ornament-${kind}`);
     }
-    const [videos, images, sideImages, frameImages] = await Promise.all([
+    const [videos, images, sideImages, backImages] = await Promise.all([
       loadUploadHistorySummaries('video'),
       loadUploadHistorySummaries('image'),
       loadUploadHistorySummaries('image', 'ornament-side'),
-      loadUploadHistorySummaries('image', 'ornament-frame'),
+      loadUploadHistorySummaries('image', 'ornament-back'),
     ]);
 
     setVideoHistory((previous) => {
@@ -2262,7 +2264,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setOrnamentImageHistory(previous => {
       Object.values(previous).flat().forEach(item => URL.revokeObjectURL(item.previewUrl));
       const previews = (items: typeof sideImages) => items.map(item => ({ id: item.id, name: item.name, timestamp: item.timestamp, previewUrl: item.previewBlob ? URL.createObjectURL(item.previewBlob) : '' }));
-      return { side: previews(sideImages), frame: previews(frameImages) };
+      return { side: previews(sideImages), back: previews(backImages) };
     });
     uploadHistoryLoadedRef.current = true;
   }
@@ -2950,6 +2952,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
 
+    if (reverseMode === 'replace' && replacementProductType === 'ornament' && !replacementReferences.back) {
+      setRequestError('请上传本款摆件背面图片。');
+      return;
+    }
     if (reverseMode === 'replace' && (!replaceImage || !replaceTarget.trim() || !replaceWith.trim())) {
       setRequestError('请填写需要替换的元素和目标元素');
       return;
@@ -2982,17 +2988,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       return;
     }
 
-    let replacementBack: SelectedCreativeMedia | null = null;
-    if (reverseMode === 'replace' && replacementProductType === 'ornament') {
-      try {
-        const response = await fetch('/api/ornament/back-reference', { credentials: 'include' });
-        if (!response.ok) throw new Error('公共背面参考读取失败，请稍后重试。');
-        const file = new File([await response.blob()], 'ornament-back.jpg', { type: 'image/jpeg' });
-        replacementBack = { kind: 'image', file, fileName: file.name, previewUrl: '' };
-      } catch (error) { setRequestError(error instanceof Error ? error.message : '背面参考读取失败'); return; }
-    }
     if (reverseMode === 'replace' && replacementRevision !== replacementInputRevisionRef.current) { setRequestError('视频或参考图已更换，请重新点击分析。'); return; }
-    const replacementImages = [replaceImage, ...(replacementProductType === 'ornament' ? [replacementReferences.side, replacementReferences.frame, replacementBack] : [])].filter((image): image is SelectedCreativeMedia => Boolean(image));
+    const replacementImages: SelectedCreativeMedia[] = [];
+    if (reverseMode === 'replace' && replaceImage) {
+      if (replacementProductType === 'ornament') {
+        replacementImages.push({ ...replaceImage, ornamentView: 'front' });
+        const { back, side } = replacementReferences;
+        if (back) replacementImages.push({ ...back, ornamentView: 'back' });
+        if (side) replacementImages.push({ ...side, ornamentView: 'side' });
+      } else {
+        replacementImages.push(replaceImage);
+      }
+    }
     // 先确定唯一权威时长；AI提示词和右侧生成参数始终共用这个整数值。
     setSeedanceDuration(durationSeconds);
     pendingReverseSeedanceSyncRef.current = {
@@ -3008,7 +3015,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     lastReverseDialogueInputRef.current = additionalChange;
 
     if (reverseMode === 'replace') {
-      const prompt = replacementProductRules(replacementProductType) + '\n' + (replacementProductType === 'ornament' ? ornamentSizeRule({ widthCm: replacementOrnamentWidthCm, heightCm: replacementOrnamentHeightCm }) + '\n' : '') + (replacementProductType === 'ornament' ? '参考顺序：首个素材是原视频，第一张图片是本款正面，最后一张图片是公共背面，中间选传图片只补充侧面或边框结构。正面图决定本款图案，其他图不复制图案、背景或手。\n' : '') + VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText, clipAudioMode: activeClipAudioMode });
+      const prompt = replacementProductRules(replacementProductType) + '\n' + (replacementProductType === 'ornament' ? ornamentSizeRule({ widthCm: replacementOrnamentWidthCm, heightCm: replacementOrnamentHeightCm }) + '\n' : '') + (replacementProductType === 'ornament' ? `第一个素材是原视频，以下图号只对后续产品照片计数。\n${ornamentReferenceGuide(Boolean(replacementReferences.side))}\n` : '') + VIDEO_REPLACE_PROMPT(replaceTarget.trim(), replaceWith.trim(), { durationSeconds, sourceDurationSeconds, additionalChange, includeSubtitles, characterRemix: characterRemixText, clipAudioMode: activeClipAudioMode });
       setInput(prompt);
       setRequestError("");
       saveAdditionalChangeHistory(additionalChange);
@@ -3037,6 +3044,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     // 也没有读写顺序错位导致判定到别的模块的余地。
     // 这中间没有 await，提前清空不会漏掉任何重新赋值的时机。
     const snapshot = pendingReverseSeedanceSyncRef.current || (reverseMode === 'replace' ? lastReplacementSyncSnapshotRef.current : null);
+    if (reverseMode === 'replace' && replacementProductType === 'ornament' && !snapshot?.referenceImages.some(image => image.ornamentView === 'back')) {
+      setRequestError('请使用本款摆件正面和背面图重新分析后再同步。');
+      return;
+    }
     pendingReverseSeedanceSyncRef.current = null;
     const activeMode = snapshot?.mode || reverseMode;
     let checkedReplacementPrompt: string | null = null;
@@ -3456,6 +3467,18 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       || (paintingDirectionNumber ? paintingUploadHistoryId || undefined : undefined);
 
     const references = overrides?.references ?? seedanceReferences;
+    const isOrnamentPrompt = prompt.includes(ORNAMENT_MARKER) || prompt.includes('【产品元素替换：ornament】');
+    const ornamentImages = references.filter(item => item.ornamentView);
+    if (!isVideoEdit && (isOrnamentPrompt || ornamentImages.length)) {
+      if (!isOrnamentPrompt || !['front', 'back'].every(view => ornamentImages.some(image => image.ornamentView === view))) {
+        setSeedanceError('请从摆件流程上传本款正面和背面，重新分析并同步提示词与参考图。');
+        return;
+      }
+      if (references.some(item => item.kind === 'image' && !item.ornamentView)) {
+        setSeedanceError('请移除额外的图片，只保留本款摆件正面、背面和选传侧面。');
+        return;
+      }
+    }
     const requestedDuration = overrides?.duration ?? seedanceDuration;
     const { min: minGenerationDuration, max: maxGenerationDuration } = getVideoGenerationDurationLimits(generationModel);
     const duration = isVideoEdit ? -1 : Math.round(requestedDuration);
@@ -3945,6 +3968,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
   function removeSeedanceReference(referenceId: string) {
     const target = seedanceReferences.find((item) => item.id === referenceId);
+    if (target?.ornamentView) {
+      setSeedanceError('请在左侧摆件流程更换或移除参考图，并重新分析。');
+      return;
+    }
     if (target?.source === 'clip-audio' || target?.source === 'clip-required-image') {
       clearClipAudioFlow();
       return;
@@ -4002,7 +4029,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingBatchSubmitError('');
     setPaintingBatchPreparedBatches(0);
     batchCreationRequestIdRef.current = null;
-    if (paintingSeedanceSourceRef.current?.prompt.trim() === seedancePrompt.trim()) {
+    if (paintingSeedanceSourceRef.current?.prompt.trim() === seedancePrompt.trim() || seedancePrompt.includes(ORNAMENT_MARKER)) {
       setSeedancePrompt('');
       setSeedanceReferences((previous) => {
         previous.forEach((ref) => URL.revokeObjectURL(ref.previewUrl));
@@ -4061,32 +4088,27 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
-  function syncOrnamentSeedanceReferences(next: Record<'side' | 'frame', SelectedCreativeMedia | null>) {
-    const source = paintingSeedanceSourceRef.current;
-    if (!isOrnament || source?.productType !== 'ornament' || source.prompt.trim() !== seedancePrompt.trim()) return;
-    const references = computeNextSeedanceReferencesWithPainting(source.directionNumber, next);
-    setSeedanceReferences(previous => {
-      previous.forEach(reference => URL.revokeObjectURL(reference.previewUrl));
-      return references;
-    });
-  }
-
-  function clearOrnamentReference(kind: 'side' | 'frame') {
+  function clearOrnamentReference(kind: 'side' | 'back') {
     const current = ornamentReferences[kind];
     if (current) URL.revokeObjectURL(current.previewUrl);
     setOrnamentReferences(previous => ({ ...previous, [kind]: null }));
-    syncOrnamentSeedanceReferences({ ...ornamentReferences, [kind]: null });
+    resetPaintingProductDraft();
     setOrnamentReferenceHistoryIds(previous => ({ ...previous, [kind]: undefined }));
-    const input = kind === 'side' ? ornamentSideInputRef.current : ornamentFrameInputRef.current;
+    const input = kind === 'side' ? ornamentSideInputRef.current : ornamentBackInputRef.current;
     if (input) input.value = '';
   }
 
   function clearOrnamentReferences() {
-    clearOrnamentReference('side');
-    clearOrnamentReference('frame');
+    for (const image of Object.values(ornamentReferences)) {
+      if (image) URL.revokeObjectURL(image.previewUrl);
+    }
+    setOrnamentReferences({ back: null, side: null });
+    setOrnamentReferenceHistoryIds({});
+    if (ornamentBackInputRef.current) ornamentBackInputRef.current.value = '';
+    if (ornamentSideInputRef.current) ornamentSideInputRef.current.value = '';
   }
 
-  async function handleOrnamentReferenceChange(kind: 'side' | 'frame', file: File | null) {
+  async function handleOrnamentReferenceChange(kind: 'side' | 'back', file: File | null) {
     if (paintingDraftBusy || !isOrnament || !paintingImage || !file) return;
     setPaintingError('');
     setOrnamentReferenceUploading(true);
@@ -4098,26 +4120,25 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       if (current) URL.revokeObjectURL(current.previewUrl);
       const nextReference: SelectedCreativeMedia = { kind: 'image', file, previewUrl: createMediaPreviewUrl(file), fileName: file.name };
       setOrnamentReferences(previous => ({ ...previous, [kind]: nextReference }));
-      syncOrnamentSeedanceReferences({ ...ornamentReferences, [kind]: nextReference });
+      resetPaintingProductDraft();
       setOrnamentReferenceHistoryIds(previous => ({ ...previous, [kind]: historyId || undefined }));
       await refreshUploadHistories();
     } catch (error) {
       setPaintingError(error instanceof Error ? error.message : '辅助参考图读取失败，请重新上传。');
     } finally {
       setOrnamentReferenceUploading(false);
-      const input = kind === 'side' ? ornamentSideInputRef.current : ornamentFrameInputRef.current;
+      const input = kind === 'side' ? ornamentSideInputRef.current : ornamentBackInputRef.current;
       if (input) input.value = '';
     }
   }
 
   function clearReplacementReferences() {
     Object.values(replacementReferences).forEach(image => { if (image) URL.revokeObjectURL(image.previewUrl); });
-    setReplacementReferences({ side: null, frame: null });
+    setReplacementReferences({ side: null, back: null });
   }
 
   function switchReplacementProduct(type: ReplacementProductType) {
     if (isLoading || replacementReferenceUploading || type === replacementProductType) return;
-    clearReplacementReferences();
     clearReplaceImage();
     setReplacementProductType(type);
     setReplaceTarget(type === 'generic' ? '' : `视频中的${replacementElementLabel(type)}`);
@@ -4127,7 +4148,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setSeedanceReferences(previous => { previous.forEach(item => URL.revokeObjectURL(item.previewUrl)); return []; });
   }
 
-  async function handleReplacementReferenceChange(kind: 'side' | 'frame', file: File | null) {
+  async function handleReplacementReferenceChange(kind: 'side' | 'back', file: File | null) {
     if (isLoading || replacementReferenceUploading || !replaceImage || replacementProductType !== 'ornament' || !file) return;
     setReplacementReferenceUploading(true);
     try {
@@ -4141,7 +4162,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     finally { setReplacementReferenceUploading(false); }
   }
 
-  async function selectOrnamentReferenceHistory(kind: 'side' | 'frame', id: number) {
+  async function selectOrnamentReferenceHistory(kind: 'side' | 'back', id: number) {
     if (ornamentHistoryTarget === 'painting' ? (paintingDraftBusy || !isOrnament || !paintingImage) : (isLoading || replacementReferenceUploading || !replaceImage)) return;
     try {
       const item = await getUploadHistoryItem(id);
@@ -4251,10 +4272,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingError('请先上传一张产品正面图。');
       return;
     }
+    if (isOrnament && !ornamentReferences.back) {
+      setPaintingError('请上传本款摆件背面图片。');
+      return;
+    }
     setPaintingError('');
     setPaintingLoading('analyze');
     try {
-      const profile = await analyzePainting(paintingImage.file, paintingProductType, isOrnament ? ornamentWidthCm : stickerWidthCm, isOrnament ? ornamentHeightCm : stickerHeightCm);
+      const profile = await analyzePainting(paintingImage.file, paintingProductType, isOrnament ? ornamentWidthCm : stickerWidthCm, isOrnament ? ornamentHeightCm : stickerHeightCm, isOrnament ? { back: ornamentReferences.back?.file, side: ornamentReferences.side?.file } : undefined);
       setPaintingProfile(profile);
       setPaintingIdeas([]);
       setPaintingIdeaBatchCache({});
@@ -4295,7 +4320,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       variationRound,
       creativeSessionId: paintingCreativeSessionId,
       profile: {
-        structureVersion: isOrnament ? 'aluminum-wood-rear-rod-product-focus-v7' : undefined,
+        structureVersion: isOrnament ? ORNAMENT_STRUCTURE_VERSION : undefined,
         productType: paintingProductType,
         widthCm: paintingProfile?.widthCm,
         heightCm: paintingProfile?.heightCm,
@@ -4444,7 +4469,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         character: paintingPlan.character,
         audio: paintingPlan.audio,
         scene: paintingPlan.scene,
-        extraRequirements: [paintingPlan.extraRequirements, woodReferenceRequirement, isOrnament ? `图1决定本款正面图案。${ornamentReferences.side ? '附带侧面参考仅用于框体厚度、倾角与支撑连接。' : ''}${ornamentReferences.frame ? '附带边框细节参考仅用于铝合金表面与斜接角。' : ''}辅助图片中的图案、背景、手或工具不复制，不改写铝合金框、木背板与固定后撑杆。` : ''].filter(Boolean).join('\n'),
+        extraRequirements: [paintingPlan.extraRequirements, woodReferenceRequirement, isOrnament ? ornamentReferenceGuide(Boolean(ornamentReferences.side)) : ''].filter(Boolean).join('\n'),
         elementVariationIndex,
         previousPrompt: shouldAvoidPreviousPrompt ? paintingIdeaLastPrompts[usageKey] || '' : '',
       });
@@ -4741,7 +4766,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingBatchModel(run.model);
       setPaintingBatchResolution(run.resolution);
       paintingBatchPreferenceRef.current[getPaintingProductType(run.profile)] = { model: run.model, resolution: run.resolution };
-      setPaintingProfile(run.profile);
+      if (run.profile.productType !== 'ornament') setPaintingProfile(run.profile);
       setPaintingPlan(run.plan);
       if (run.profile.productType === 'ornament') {
         setOrnamentWidthCm(Number(run.profile.widthCm) || 20);
@@ -4757,24 +4782,31 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       clearPaintingWoodReference('upper');
       clearPaintingWoodReference('lower');
       if (getPaintingProductType(run.profile) === 'ornament') {
-        const refs = run.options?.ornamentReferences as Partial<Record<'side' | 'frame', { imageHash?: string; fileName?: string }>> | undefined;
-        await Promise.all((['side', 'frame'] as const).map(async kind => {
+        const refs = run.options?.ornamentReferences as Partial<Record<'side' | 'back', { imageHash?: string; fileName?: string }>> | undefined;
+        const restoredViews = await Promise.all((['back', 'side'] as const).map(async kind => {
           const reference = refs?.[kind];
-          if (!reference?.imageHash) return;
+          if (!reference?.imageHash) return kind === 'side';
           try {
-            const response = await fetch(`/api/painting/history-images/${encodeURIComponent(reference.imageHash)}/file`, { credentials: 'include' });
-            if (!response.ok) throw new Error('辅助参考图无法恢复');
+            const query = new URLSearchParams({ batchRunId: run.batchRunId, ornamentView: kind });
+            const response = await fetch(`/api/painting/history-images/${encodeURIComponent(reference.imageHash)}/file?${query}`, { credentials: 'include' });
+            if (!response.ok) return false;
             const blob = await response.blob();
-            const file = new File([blob], reference.fileName || '辅助参考图.jpg', { type: blob.type || 'image/jpeg' });
-            if (await sha256File(file) !== reference.imageHash) throw new Error('辅助参考图校验失败');
+            const file = new File([blob], reference.fileName || '摆件参考图.jpg', { type: blob.type || 'image/jpeg' });
+            if (await sha256File(file) !== reference.imageHash) return false;
             const historyId = await saveUploadHistory(file, 'image', `ornament-${kind}`);
             const nextReference: SelectedCreativeMedia = { kind: 'image', file, previewUrl: createMediaPreviewUrl(file), fileName: file.name };
             setOrnamentReferences(previous => ({ ...previous, [kind]: nextReference }));
             setOrnamentReferenceHistoryIds(previous => ({ ...previous, [kind]: historyId || undefined }));
+            return true;
           } catch {
-            setPaintingError('部分辅助参考图无法恢复，可重新上传；正面图与公共背面参考仍可正常使用。');
+            return false;
           }
         }));
+        if (run.profile.structureVersion === ORNAMENT_STRUCTURE_VERSION && restoredViews.every(Boolean)) {
+          setPaintingProfile(run.profile);
+        } else {
+          setPaintingError('此批次缺少可用的本款参考图，请补齐本款正面和背面后重新分析。');
+        }
       }
       setPaintingBatchOnlyUnused(true);
       setPaintingBatchRequestedCount('');
@@ -4878,7 +4910,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       upperWoodFile: !isHanging ? null : paintingUpperWoodImage?.file || null,
       lowerWoodFile: !isHanging ? null : paintingLowerWoodImage?.file || null,
       ornamentSideFile: isOrnament ? ornamentReferences.side?.file || null : null,
-      ornamentFrameFile: isOrnament ? ornamentReferences.frame?.file || null : null,
+      ornamentBackFile: isOrnament ? ornamentReferences.back?.file || null : null,
       profile: getCurrentPaintingRequestProfile(),
       plan: paintingPlan,
       ideas,
@@ -5133,10 +5165,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         previewUrl: createMediaPreviewUrl(image.file),
         fileName: image.fileName,
         source: 'reverse-image' as const,
+        ornamentView: image.ornamentView,
       }));
 
     setSeedanceReferences((previous) => {
-      const clipAssets = previous.filter((item) => item.source === 'clip-audio' || item.source === 'clip-required-image');
+      const clipAssets = previous.filter((item) => item.source === 'clip-audio' || (item.source === 'clip-required-image' && !nextReferences.some(reference => reference.ornamentView)));
       previous.forEach((item) => {
         if (!clipAssets.includes(item) && item.previewUrl) URL.revokeObjectURL(item.previewUrl);
       });
@@ -5148,20 +5181,19 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     return computeSeedanceReferencesWithImages(image ? [image] : []);
   }
 
-  function computeNextSeedanceReferencesWithPainting(directionNumber = 0, references = ornamentReferences): SeedanceReferenceFile[] {
-    const images = [paintingImage];
-    if (isOrnament) images.push(references.side, references.frame);
-    if (isHanging && directionNumber === 30) images.push(paintingUpperWoodImage, paintingLowerWoodImage);
-    // 挂画自动流程使用一组全新、顺序固定的参考图，避免右侧面板残留其他流程的图片打乱“主图→上木条→下木条”顺序。
-    return images
-      .filter((item): item is SelectedCreativeMedia => Boolean(item))
-      .map((image) => ({
-        id: createMessageId('seedance_ref'),
-        kind: 'image' as const,
-        file: image.file,
-        previewUrl: createMediaPreviewUrl(image.file),
-        fileName: image.fileName,
-      }));
+  function computeNextSeedanceReferencesWithPainting(directionNumber = 0): SeedanceReferenceFile[] {
+    const images: Array<{ image: SelectedCreativeMedia | null; ornamentView?: OrnamentView }> = isOrnament
+      ? [{ image: paintingImage, ornamentView: 'front' }, { image: ornamentReferences.back, ornamentView: 'back' }, { image: ornamentReferences.side, ornamentView: 'side' }]
+      : [{ image: paintingImage }];
+    if (isHanging && directionNumber === 30) images.push({ image: paintingUpperWoodImage }, { image: paintingLowerWoodImage });
+    return images.flatMap(({ image, ornamentView }) => image ? [{
+      id: createMessageId('seedance_ref'),
+      kind: 'image' as const,
+      file: image.file,
+      previewUrl: createMediaPreviewUrl(image.file),
+      fileName: image.fileName,
+      ornamentView,
+    }] : []);
   }
 
   function appendPaintingToSeedanceReferences() {
@@ -5232,15 +5264,22 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
 
     clearOrnamentReferences();
     if (restoredType === 'ornament') {
-      await Promise.all((['side', 'frame'] as const).map(async kind => {
+      const restoredViews = await Promise.all((['back', 'side'] as const).map(async kind => {
         const historyId = item.ornamentReferenceHistoryIds?.[kind];
-        const history = historyId ? await getUploadHistoryItem(historyId).catch(() => null) : null;
-        if (history?.kind !== 'image') return;
+        if (!historyId) return kind === 'side';
+        const history = await getUploadHistoryItem(historyId).catch(() => null);
+        if (history?.kind !== 'image' || history.scope !== `ornament-${kind}`) return false;
         const file = blobToFile(history);
         const nextReference: SelectedCreativeMedia = { kind: 'image', file, previewUrl: createMediaPreviewUrl(file), fileName: file.name };
         setOrnamentReferences(previous => ({ ...previous, [kind]: nextReference }));
         setOrnamentReferenceHistoryIds(previous => ({ ...previous, [kind]: historyId }));
+        return true;
       }));
+      if (item.profile.structureVersion !== ORNAMENT_STRUCTURE_VERSION || !restoredFile || !restoredViews.every(Boolean)) {
+        if (item.plan) setPaintingPlan(item.plan);
+        setPaintingError('请补齐本款正面和背面，重新分析摆件后再生成。');
+        return;
+      }
     }
 
     const restoreWoodReference = async (kind: 'upper' | 'lower', historyId?: number) => {
@@ -5653,6 +5692,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
         ? rawQuestion + IMAGE_REVERSE_FORMAT_SUFFIX
         : rawQuestion;
     const isReplaceMode = reverseMode === 'replace' && selectedMedia?.kind === 'video' && replaceImage;
+    if (isReplaceMode && replacementProductType === 'ornament' && !pendingReverseSeedanceSyncRef.current?.referenceImages.some(image => image.ornamentView === 'back')) {
+      setRequestError('请上传本款摆件正面和背面后，点击分析原视频。');
+      return;
+    }
     const isImageToVideoWithPainting = reverseMode === 'image' && selectedMedia?.kind === 'image' && imageToVideoAddPainting && imageToVideoPainting;
     const shouldIsolateReverseTask = !!selectedMedia && (isReversePrompt || isReplaceMode);
     const mediaToSend: SelectedCreativeMedia | SelectedCreativeMedia[] | null = isReplaceMode
@@ -5998,7 +6041,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <label className="flex items-center gap-1">高<input aria-label="贴画高度（厘米）" type="number" min={10} max={500} value={stickerHeightCm} disabled={paintingDraftBusy} onChange={(event) => changeStickerDimension('height', Number(event.target.value))} className="w-20 rounded-lg border border-slate-200 px-2 py-1" />厘米</label>
                       </div>
                       <p className="mt-2 text-[11px] leading-5 text-slate-500">PVC柔性背胶 · 白色画背 · 可揭背膜 · 二维印刷装饰边线。以茶室、客厅、书房为主，30个成品展示＋10个形态与安装方向。</p>
-                    </> : isOrnament ? <p className="mt-2 text-[11px] leading-5 text-slate-500">全系列统一为金色矩形铝合金框、木质背板、背部连接的单根金属后撑杆，只更换正面平面图案。系统自动附带公共背面结构参考；40个方向不含拆架、盘面分离、上墙或揭膜动作。</p> : <p className="mt-2 text-[11px] leading-5 text-slate-500">沿用原有40个挂画框架及尺寸补偿规则。</p>}
+                    </> : isOrnament ? <p className="mt-2 text-[11px] leading-5 text-slate-500">使用本款正面与背面确定外观和固定支撑结构。40个方向沿用原镜头与动作框架。</p> : <p className="mt-2 text-[11px] leading-5 text-slate-500">沿用原有40个挂画框架及尺寸补偿规则。</p>}
                         {isOrnament && (
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <div className="mb-2 text-xs font-bold text-slate-600">摆台外框尺寸</div>
@@ -6047,7 +6090,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           <Plus className="size-5" />
                         </span>
                         <span className="text-sm font-bold text-slate-700">{isOrnament ? '上传固定一体摆件图片' : isSticker ? '上传贴画正面图片' : '上传挂画图片'}</span>
-                        <span className="max-w-xs text-xs leading-5 text-slate-400">{isOrnament ? '上传本款摆台完整正面图，保留四周铝合金框；木背板和后撑杆使用系统公共背面参考，无需拆开或重复上传。' : isSticker ? '上传贴画印刷正面主图，AI识别画面内容，物理结构按贴画规则执行。' : '上传一张挂画/卷轴图片，AI 会分析成产品固定档案。'}</span>
+                        <span className="max-w-xs text-xs leading-5 text-slate-400">{isOrnament ? '上传本款摆台完整正面图，保留完整边缘。正面和背面均为必传。' : isSticker ? '上传贴画印刷正面主图，AI识别画面内容，物理结构按贴画规则执行。' : '上传一张挂画/卷轴图片，AI 会分析成产品固定档案。'}</span>
                       </button>
                     )}
                     <input
@@ -6065,15 +6108,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   {isOrnament && (
                     <div className="rounded-2xl border border-sky-200 bg-sky-50/50 p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="text-xs font-bold text-slate-700">辅助结构参考（选传）</div>
-                        <span className="text-[10px] font-semibold text-sky-700">可传任意一张，也可都不传</span>
+                        <div className="text-xs font-bold text-slate-700">本款背面与侧面</div>
+                        <span className="text-[10px] font-semibold text-sky-700">背面必传 · 侧面选传</span>
                       </div>
-                      <p className="mt-1 text-[11px] leading-5 text-slate-500">不上传也能生成，系统仍使用正面图和公共背面图。辅助图只补充结构细节，不替换本款正面图案。每张不超过10MB。</p>
+                      <p className="mt-1 text-[11px] leading-5 text-slate-500">请上传与正面同一款的背面图。侧面可补充厚度和支撑角度。每张不超过10MB。</p>
                       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        {(['side', 'frame'] as const).map(kind => {
+                        {(['back', 'side'] as const).map(kind => {
                           const image = ornamentReferences[kind];
-                          const label = kind === 'side' ? '侧面结构参考' : '边框细节参考';
-                          const inputRef = kind === 'side' ? ornamentSideInputRef : ornamentFrameInputRef;
+                          const label = kind === 'side' ? '侧面结构参考（选传）' : '本款背面（必传）';
+                          const inputRef = kind === 'side' ? ornamentSideInputRef : ornamentBackInputRef;
                           return (
                             <div key={kind} className="relative rounded-xl border border-sky-100 bg-white p-2">
                               {image ? (
@@ -6088,8 +6131,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                 <button type="button" disabled={!paintingImage || paintingDraftBusy} onClick={() => inputRef.current?.click()} className="flex min-h-36 w-full flex-col items-center justify-center gap-2 px-2 text-center disabled:cursor-not-allowed disabled:opacity-50">
                                   <Plus className="size-4 text-sky-600" />
                                   <span className="text-xs font-bold text-slate-700">{label}</span>
-                                  <span className="text-[10px] leading-4 text-slate-400">{kind === 'side' ? '拍到框体厚度、后倾角度与后撑杆' : '拍清铝合金表面、直边与斜接角'}</span>
-                                  <span className="text-[10px] text-sky-600">点击上传 · 可选</span>
+                                  <span className="text-[10px] leading-4 text-slate-400">{kind === 'side' ? '拍到框体厚度和支撑角度' : '拍清背板颜色与支撑连接'}</span>
+                                  <span className="text-[10px] text-sky-600">点击上传 · {kind === 'back' ? '必传' : '选传'}</span>
                                 </button>
                               )}
                               <button type="button" disabled={!paintingImage || paintingDraftBusy} onClick={() => { setOrnamentHistoryTarget('painting'); setHistoryModalKind(`ornament-${kind}`); setShowHistoryModal(true); }} className="mt-2 inline-flex items-center gap-1 rounded-full border border-sky-100 px-2 py-1 text-[10px] font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50">
@@ -6207,7 +6250,15 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                           ['主体', paintingProfile.subject],
                           ['材质', paintingProfile.material],
                           ['构图', paintingProfile.composition],
-                          [isOrnament ? '固定支撑结构' : '外框结构', paintingProfile.frameStructure],
+                          ['外框结构', paintingProfile.frameStructure],
+                          ...(isOrnament ? [
+                            ['边框颜色', paintingProfile.frameColor],
+                            ['边框材质', paintingProfile.frameMaterial],
+                            ['背板颜色', paintingProfile.backboardColor],
+                            ['背板材质', paintingProfile.backboardMaterial],
+                            ['背板纹理', paintingProfile.backboardTexture],
+                            ['固定支撑', paintingProfile.supportDescription],
+                          ] : []),
                           ['纹理', paintingProfile.texture],
                           ['氛围', paintingProfile.atmosphere],
                           ['比例', paintingProfile.ratio],
@@ -7097,7 +7148,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-3">
                     <div className="mb-2 text-xs font-bold text-slate-700">替换产品类型</div>
                     <div className="flex flex-wrap gap-2">{(['hanging', 'sticker', 'ornament', 'generic'] as const).map(type => <button key={type} type="button" disabled={isLoading || replacementReferenceUploading} onClick={() => switchReplacementProduct(type)} className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold', replacementProductType === type ? 'border-indigo-500 bg-indigo-500 text-white' : 'border-slate-200 bg-white text-slate-600')}>{replacementProductLabel(type)}</button>)}</div>
-                    <p className="mt-2 text-[11px] leading-5 text-slate-500">使用同类产品视频换款，保留原镜头和动作；原动作不兼容时会提示重新选择视频。{replacementProductType === 'ornament' ? '摆件自动附带公共背面参考，主体与后撑杆保持固定连接。' : ''}</p>
+                    <p className="mt-2 text-[11px] leading-5 text-slate-500">使用同类产品视频换款，保留原镜头和动作；原动作不兼容时会提示重新选择视频。{replacementProductType === 'ornament' ? '摆件需上传本款正面和背面，侧面选传。原视频提供镜头与动作，新款照片决定摆件外观。' : ''}</p>
                   </div>
 
                   <div className="rounded-2xl border border-slate-300 bg-slate-100 p-3">
@@ -7111,7 +7162,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0 text-xs font-semibold text-slate-500">
                             <span className="block truncate">{replaceImage.fileName}</span>
-                            <span className="text-slate-400">替换参考图</span>
+                            <span className="text-slate-400">{replacementProductType === 'ornament' ? '本款正面（必传）' : '替换参考图'}</span>
                           </div>
                           <button
                             type="button"
@@ -7133,7 +7184,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <span className="flex size-10 items-center justify-center rounded-full bg-amber-50 text-amber-600">
                           <ImageIcon className="size-4" />
                         </span>
-                        <span className="text-sm font-bold text-slate-700">上传替换参考图</span>
+                        <span className="text-sm font-bold text-slate-700">{replacementProductType === 'ornament' ? '上传本款正面（必传）' : '上传替换参考图'}</span>
                         <span className="max-w-xs text-xs leading-5 text-slate-400">
                           上传你想替换成的元素图片
                         </span>
@@ -7157,8 +7208,8 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   )}
 
                   {replacementProductType === 'ornament' && <div className="grid grid-cols-2 gap-2">
-                    {(['side', 'frame'] as const).map(kind => <div key={kind} className="rounded-xl border border-sky-100 bg-sky-50/50 p-2">
-                      <div className="text-xs font-bold text-slate-700">{kind === 'side' ? '侧面结构参考' : '边框细节参考'}（选传）</div>
+                    {(['back', 'side'] as const).map(kind => <div key={kind} className="rounded-xl border border-sky-100 bg-sky-50/50 p-2">
+                      <div className="text-xs font-bold text-slate-700">{kind === 'side' ? '侧面结构参考（选传）' : '本款背面（必传）'}</div>
                       {replacementReferences[kind] && <img src={replacementReferences[kind]!.previewUrl} alt="辅助结构参考" className="mt-2 h-24 w-full object-contain" />}
                       <label className="mt-2 inline-flex cursor-pointer rounded-full border border-sky-200 bg-white px-2 py-1 text-[10px] text-sky-700">{replacementReferences[kind] ? '更换图片' : '上传图片'}<input type="file" accept="image/*" disabled={!replaceImage || isLoading || replacementReferenceUploading} className="hidden" onChange={event => { void handleReplacementReferenceChange(kind, event.target.files?.[0] || null); event.target.value = ''; }} /></label>
                       <button type="button" disabled={!replaceImage || isLoading || replacementReferenceUploading} onClick={() => { setOrnamentHistoryTarget('replacement'); setHistoryModalKind(`ornament-${kind}`); setShowHistoryModal(true); }} className="ml-1 text-[10px] font-semibold text-sky-700">历史图片</button>
@@ -9175,7 +9226,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   {historyModalKind === 'video' || historyModalKind === 'video-edit-video'
                     ? '最近上传的视频'
                     : historyModalKind === 'ornament-side' ? '侧面结构参考 · 历史图片'
-                    : historyModalKind === 'ornament-frame' ? '边框细节参考 · 历史图片'
+                    : historyModalKind === 'ornament-back' ? '背面参考 · 历史图片'
                     : historyModalKind === 'image-creative'
                       ? '最近上传的图片'
                       : '最近上传的图片'}
@@ -9184,7 +9235,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   {historyModalKind === 'video' || historyModalKind === 'video-edit-video'
                     ? videoHistory.length
                     : historyModalKind === 'ornament-side' ? ornamentImageHistory.side.length
-                    : historyModalKind === 'ornament-frame' ? ornamentImageHistory.frame.length
+                    : historyModalKind === 'ornament-back' ? ornamentImageHistory.back.length
                     : imageHistory.length}
                 </span>
               </div>
@@ -9262,11 +9313,11 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   )}
                 </>
               )}
-              {!isUploadHistoryLoading && (historyModalKind === 'ornament-side' || historyModalKind === 'ornament-frame') && (() => {
-                const kind = historyModalKind === 'ornament-side' ? 'side' : 'frame';
+              {!isUploadHistoryLoading && (historyModalKind === 'ornament-side' || historyModalKind === 'ornament-back') && (() => {
+                const kind = historyModalKind === 'ornament-side' ? 'side' : 'back';
                 const items = ornamentImageHistory[kind];
                 return <>
-                  <p className="mb-3 text-xs text-slate-500">这里只显示此前上传到{kind === 'side' ? '侧面结构' : '边框细节'}位置的图片。点击图片即可选用。</p>
+                  <p className="mb-3 text-xs text-slate-500">这里只显示此前上传到{kind === 'side' ? '侧面结构' : '背面'}位置的图片。点击图片即可选用。</p>
                   {items.length === 0 ? <div className="py-12 text-center text-sm text-slate-400">暂无参考图记录，上传后会自动保存在这里。</div> : <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
                     {items.map(item => <div key={item.id} className="relative rounded-xl border border-slate-200 bg-white p-2">
                       <button type="button" disabled={ornamentHistoryTarget === 'replacement' ? isLoading || replacementReferenceUploading : paintingDraftBusy} onClick={() => void selectOrnamentReferenceHistory(kind, item.id)} className="w-full text-left disabled:opacity-50">

@@ -3,7 +3,16 @@ export interface CreativeHistoryItem {
   content: string;
 }
 
+export type OrnamentView = 'front' | 'back' | 'side';
+
+const ORNAMENT_VIEW_FIELDS: Record<OrnamentView, string> = {
+  front: 'ornamentFrontFile',
+  back: 'ornamentBackFile',
+  side: 'ornamentSideFile',
+};
+
 export interface SelectedCreativeMedia {
+  ornamentView?: OrnamentView;
   kind: 'image' | 'video';
   file: File;
   previewUrl: string;
@@ -12,6 +21,7 @@ export interface SelectedCreativeMedia {
 }
 
 export interface SeedanceReferenceFile {
+  ornamentView?: OrnamentView;
   id: string;
   kind: 'image' | 'video' | 'audio';
   file: File;
@@ -705,8 +715,12 @@ export async function sendCreativeMessage(options: {
         const kinds: string[] = [];
         for (const media of mediaArray) {
           if (media.serverMediaToken) continue;
-          formData.append('files', media.file, media.fileName);
-          kinds.push(media.kind);
+          if (media.ornamentView) {
+            formData.append(ORNAMENT_VIEW_FIELDS[media.ornamentView], media.file, media.fileName);
+          } else {
+            formData.append('files', media.file, media.fileName);
+            kinds.push(media.kind);
+          }
         }
         formData.append('files_kinds', JSON.stringify(kinds));
       }
@@ -841,7 +855,8 @@ export async function createSeedanceTask(options: {
     if (options.variationRound) formData.append('variationRound', String(options.variationRound));
     if (options.creativeSessionId) formData.append('creativeSessionId', options.creativeSessionId);
     for (const reference of options.references) {
-      formData.append('files', reference.file, reference.fileName);
+      const field = reference.ornamentView ? ORNAMENT_VIEW_FIELDS[reference.ornamentView] : 'files';
+      formData.append(field, reference.file, reference.fileName);
     }
     headers = undefined;
     body = formData;
@@ -918,6 +933,12 @@ export interface PaintingProfile {
   borderColor?: string;
   composition?: string;
   material?: string;
+  frameColor?: string;
+  frameMaterial?: string;
+  backboardColor?: string;
+  backboardMaterial?: string;
+  backboardTexture?: string;
+  supportDescription?: string;
   frameStructure?: string;
   texture?: string;
   ratio?: string;
@@ -1063,13 +1084,19 @@ export async function waitForPaintingTask<T>(taskId: string, fallbackError: stri
   throw new Error(`${fallbackError}：后台处理超过 ${timeoutMinutes} 分钟，已停止等待，请重新点击生成。`);
 }
 
-export async function analyzePainting(file: File, productType: PaintingProductType = 'hanging', widthCm?: number, heightCm?: number): Promise<PaintingProfile> {
+export async function analyzePainting(file: File, productType: PaintingProductType = 'hanging', widthCm?: number, heightCm?: number, ornamentViews?: { back?: File; side?: File }): Promise<PaintingProfile> {
   const formData = new FormData();
   formData.append('file', file, file.name);
   formData.append('productType', productType);
   if (productType === 'sticker' || productType === 'ornament') {
     formData.append('widthCm', String(widthCm ?? (productType === 'ornament' ? 20 : 180)));
     formData.append('heightCm', String(heightCm ?? (productType === 'ornament' ? 20 : 60)));
+  }
+
+  if (productType === 'ornament') {
+    if (!ornamentViews?.back) throw new Error('请上传本款摆件背面图片');
+    formData.append('ornamentBackFile', ornamentViews.back);
+    if (ornamentViews.side) formData.append('ornamentSideFile', ornamentViews.side);
   }
 
   const response = await fetch(productType === 'ornament' ? '/api/ornament/analyze' : productType === 'sticker' ? '/api/sticker/analyze' : '/api/painting/analyze', {
@@ -1383,7 +1410,7 @@ export function getSeedanceRatePerSecond(model: string, resolution = '720p'): nu
 export interface CreatePaintingBatchRunOptions {
   file: File;
   ornamentSideFile?: File | null;
-  ornamentFrameFile?: File | null;
+  ornamentBackFile?: File | null;
   upperWoodFile?: File | null;
   lowerWoodFile?: File | null;
   profile: PaintingProfile;
@@ -1473,8 +1500,9 @@ export async function createPaintingBatchRun(options: CreatePaintingBatchRunOpti
     if (options.lowerWoodFile) formData.append('lowerWoodFile', options.lowerWoodFile, options.lowerWoodFile.name);
   }
   if (getPaintingProductType(options.profile) === 'ornament') {
-    if (options.ornamentSideFile) formData.append('ornamentSideFile', options.ornamentSideFile, options.ornamentSideFile.name);
-    if (options.ornamentFrameFile) formData.append('ornamentFrameFile', options.ornamentFrameFile, options.ornamentFrameFile.name);
+    if (!options.ornamentBackFile) throw new Error('请上传本款摆件背面图片');
+    formData.append('ornamentBackFile', options.ornamentBackFile);
+    if (options.ornamentSideFile) formData.append('ornamentSideFile', options.ornamentSideFile);
   }
   formData.append('profile', JSON.stringify(options.profile));
   formData.append('plan', JSON.stringify(options.plan));

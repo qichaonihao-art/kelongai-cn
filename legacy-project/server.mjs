@@ -18,7 +18,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 import { config as loadDotenv } from 'dotenv';
 import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
-import { ORNAMENT_STRUCTURE_RULE, isOrnamentProduct, normalizeOrnamentProfile, ORNAMENT_FRAMEWORKS, ornamentDuration, buildOrnamentVideoRequest, buildOrnamentIdeasRequest, ensureOrnamentPrompt, ornamentProfileFromPrompt } from './ornament-creative.mjs';
+import { ORNAMENT_STRUCTURE_RULE, ornamentReferenceGuide, requireCurrentOrnamentProfile, isOrnamentProduct, normalizeOrnamentProfile, ORNAMENT_FRAMEWORKS, ornamentDuration, buildOrnamentVideoRequest, buildOrnamentIdeasRequest, ensureOrnamentPrompt, ornamentProfileFromPrompt } from './ornament-creative.mjs';
 import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, stickerProfileFromPrompt } from './sticker-creative.mjs';
 import { setVideoLibraryShotRole } from './video-library-shot-role.mjs';
 import { deleteEmptyVideoLibraryFolder } from './video-library-folder-delete.mjs';
@@ -28,7 +28,6 @@ import { normalizeWechatCookie, parseWechatChannelWithYuanbao } from './wechat-c
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 loadDotenv({ path: path.join(__dirname, '.env'), override: true });
-const ORNAMENT_BACK_REFERENCE_PATH = path.join(__dirname, 'assets', 'ornament', 'back-reference.jpg');
 const LEGACY_FRONTEND_DIR = path.join(__dirname, 'ai');
 const REACT_FRONTEND_DIR = path.join(__dirname, '..', 'frontend-google-ui', 'dist');
 const FRONTEND_MODE = String(process.env.FRONTEND_MODE || 'legacy').trim().toLowerCase();
@@ -11922,6 +11921,38 @@ function isMultipartFormRequest(req) {
   return String(req.headers['content-type'] || '').toLowerCase().includes('multipart/form-data');
 }
 
+function validateOrnamentReference(file, label, { required = true, maxBytes = 10 * 1024 * 1024 } = {}) {
+  if (file == null && !required) return;
+  if (!(file instanceof File) || !file.size || !file.type.startsWith('image/')) {
+    throw Object.assign(new Error(`请上传本款摆件${label}图片`), { statusCode: 400 });
+  }
+  if (file.size > maxBytes) {
+    throw Object.assign(new Error(`摆件${label}图片请控制在${maxBytes / (1024 * 1024)}MB以内`), { statusCode: 400 });
+  }
+}
+
+function getUploadedOrnamentViews(body) {
+  const { ornamentFrontFile: front, ornamentBackFile: back, ornamentSideFile: side } = body;
+  validateOrnamentReference(front, '正面', { maxBytes: MAX_MULTIMODAL_UPLOAD_BYTES });
+  validateOrnamentReference(back, '背面');
+  validateOrnamentReference(side, '侧面', { required: false });
+  return side ? [front, back, side] : [front, back];
+}
+
+function getOrnamentReplacementAnalysisMedia(body) {
+  if (!String(body.question || '').includes('【产品元素替换：ornament】')) return body;
+  const views = getUploadedOrnamentViews(body);
+  const videos = (Array.isArray(body.files) ? body.files : []).filter(file => file instanceof File && file.type.startsWith('video/'));
+  if (videos.length + Number(Boolean(body.clipMediaToken)) !== 1) {
+    throw Object.assign(new Error('请上传一段需要做摆件元素替换的原视频'), { statusCode: 400 });
+  }
+  return {
+    ...body,
+    files: [...videos, ...views],
+    filesKinds: [...videos.map(() => 'video'), ...views.map(() => 'image')],
+  };
+}
+
 async function readMultipartFormBody(req) {
   const contentLength = Number(req.headers['content-length'] || 0);
   if (contentLength && contentLength > MAX_MULTIMODAL_UPLOAD_BYTES) {
@@ -11939,8 +11970,6 @@ async function readMultipartFormBody(req) {
   const file = formData.get('file');
   const upperWoodFile = formData.get('upperWoodFile');
   const lowerWoodFile = formData.get('lowerWoodFile');
-  const ornamentSideFile = formData.get('ornamentSideFile');
-  const ornamentFrameFile = formData.get('ornamentFrameFile');
   const files = formData.getAll('files').filter((item) => item instanceof File && item.size > 0);
   const filesKinds = parseJsonString(formData.get('files_kinds'), []);
 
@@ -11959,8 +11988,9 @@ async function readMultipartFormBody(req) {
     file: file instanceof File ? file : null,
     upperWoodFile: upperWoodFile instanceof File && upperWoodFile.size > 0 ? upperWoodFile : null,
     lowerWoodFile: lowerWoodFile instanceof File && lowerWoodFile.size > 0 ? lowerWoodFile : null,
-    ornamentSideFile: ornamentSideFile instanceof File && ornamentSideFile.size > 0 ? ornamentSideFile : null,
-    ornamentFrameFile: ornamentFrameFile instanceof File && ornamentFrameFile.size > 0 ? ornamentFrameFile : null,
+    ornamentFrontFile: formData.get('ornamentFrontFile'),
+    ornamentBackFile: formData.get('ornamentBackFile'),
+    ornamentSideFile: formData.get('ornamentSideFile'),
     files,
     filesKinds,
     // 挂画全自动批量任务创建时通过 multipart 传入的字段（字符串原样透传，由 handler 自行解析）。
@@ -12020,6 +12050,9 @@ async function readSeedanceTaskFormBody(req) {
     duration: Number.parseInt(String(formData.get('duration') || 5), 10),
     generateAudio: readValue(formData.get('generateAudio')).toLowerCase() !== 'false',
     watermark: readValue(formData.get('watermark')).toLowerCase() === 'true',
+    ornamentFrontFile: formData.get('ornamentFrontFile'),
+    ornamentBackFile: formData.get('ornamentBackFile'),
+    ornamentSideFile: formData.get('ornamentSideFile'),
     files: formData.getAll('files').filter((item) => item instanceof File && item.size > 0),
     // 挂画方向使用标记（手动/换一轮提交时由前端透传，用于“仅生成未使用方向”持久化）。
     imageHash: readValue(formData.get('imageHash')),
@@ -14376,9 +14409,16 @@ async function handleDoubaoMultimodal(req, res) {
 
   try {
     stage = 'read_body';
-    const body = isMultipartFormRequest(req)
+    const rawBody = isMultipartFormRequest(req)
       ? await readMultipartFormBody(req)
       : await readRequestBody(req);
+    let body;
+    try {
+      body = getOrnamentReplacementAnalysisMedia(rawBody);
+    } catch (error) {
+      sendJson(res, Number(error?.statusCode) || 400, { error: error.message });
+      return;
+    }
     const { model, image, imageMimeType, video, videoMimeType, question, history, mediaKind, file, files, filesKinds, clipMediaToken } = body;
     shouldStream = wantsDoubaoStream(body, req);
     const resolvedApiKey = readValue(SERVER_CONFIG.arkApiKey);
@@ -15229,18 +15269,8 @@ async function handleCreatePaintingBatchRun(req, res) {
       return;
     }
 
-    const fileBuffer = Buffer.from(await imageFile.arrayBuffer());
-    imageHash = createHash('sha256').update(fileBuffer).digest('hex');
-    const stored = await ensurePaintingBatchRunImage(imageHash, imageFile);
-    imagePath = stored.filePath;
-
-    const storeOptionalWoodReference = async (file, label) => {
+    const storeBatchImageReference = async (file, label) => {
       if (!(file instanceof File) || file.size <= 0) return null;
-      if (['侧面结构参考图', '边框细节参考图'].includes(label) && file.size > 10 * 1024 * 1024) {
-        const error = new Error(`${label}请控制在10MB以内`);
-        error.statusCode = 400;
-        throw error;
-      }
       if (!readValue(file.type).startsWith('image/')) {
         const error = new Error(`${label}必须是图片格式`);
         error.statusCode = 400;
@@ -15253,6 +15283,7 @@ async function handleCreatePaintingBatchRun(req, res) {
         imagePath: result.filePath,
         imageHash: hash,
         fileName: sanitizeFileName(file.name || `${label}.jpg`),
+        mimeType: file.type,
         fileSize: result.size,
       };
     };
@@ -15273,6 +15304,10 @@ async function handleCreatePaintingBatchRun(req, res) {
     }
     assertMaterialProductType(profile.productType || 'hanging', body, plan, ...ideas);
     if (isOrnamentProduct(profile)) {
+      requireCurrentOrnamentProfile(profile);
+      validateOrnamentReference(imageFile, '正面', { maxBytes: MAX_MULTIMODAL_UPLOAD_BYTES });
+      validateOrnamentReference(body.ornamentBackFile, '背面');
+      validateOrnamentReference(body.ornamentSideFile, '侧面', { required: false });
       profile = normalizeOrnamentProfile(profile);
       if (ideas.some(idea => idea.productType !== 'ornament' || !Number.isInteger(Number(idea.directionNumber)) || Number(idea.directionNumber) < 1 || Number(idea.directionNumber) > 40)) {
         sendJson(res, 400, { error: '摆件方案类型或方向不匹配，请重新生成创意方案' });
@@ -15292,11 +15327,15 @@ async function handleCreatePaintingBatchRun(req, res) {
       sendJson(res, 400, { error: '挂画档案不能使用贴画方案，请重新生成创意方案' });
       return;
     }
+    const fileBuffer = Buffer.from(await imageFile.arrayBuffer());
+    imageHash = createHash('sha256').update(fileBuffer).digest('hex');
+    const stored = await ensurePaintingBatchRunImage(imageHash, imageFile);
+    imagePath = stored.filePath;
     const isHangingProduct = !isStickerProduct(profile) && !isOrnamentProduct(profile);
-    const upperWoodReference = isHangingProduct ? await storeOptionalWoodReference(body.upperWoodFile, '上方木条参考图') : null;
-    const lowerWoodReference = isHangingProduct ? await storeOptionalWoodReference(body.lowerWoodFile, '下方木条参考图') : null;
-    const ornamentSideReference = isOrnamentProduct(profile) ? await storeOptionalWoodReference(body.ornamentSideFile, '侧面结构参考图') : null;
-    const ornamentFrameReference = isOrnamentProduct(profile) ? await storeOptionalWoodReference(body.ornamentFrameFile, '边框细节参考图') : null;
+    const upperWoodReference = isHangingProduct ? await storeBatchImageReference(body.upperWoodFile, '上方木条参考图') : null;
+    const lowerWoodReference = isHangingProduct ? await storeBatchImageReference(body.lowerWoodFile, '下方木条参考图') : null;
+    const ornamentSideReference = isOrnamentProduct(profile) ? await storeBatchImageReference(body.ornamentSideFile, '侧面结构参考图') : null;
+    const ornamentBackReference = isOrnamentProduct(profile) ? await storeBatchImageReference(body.ornamentBackFile, '背面参考图') : null;
     if (!plan || typeof plan !== 'object') {
       sendJson(res, 400, { error: '缺少拍摄方案 plan' });
       return;
@@ -15408,7 +15447,8 @@ async function handleCreatePaintingBatchRun(req, res) {
       creativeSessionId,
       autoEnhance480p,
       costEstimate,
-      ornamentReferences: isOrnamentProduct(profile) ? { side: ornamentSideReference, frame: ornamentFrameReference } : {},
+      ornamentReferences: isOrnamentProduct(profile) ? { back: ornamentBackReference, side: ornamentSideReference } : {},
+      ornamentFrontMimeType: isOrnamentProduct(profile) ? imageFile.type : undefined,
       woodReferences: {
         upper: (isStickerProduct(profile) || isOrnamentProduct(profile)) ? null : upperWoodReference,
         lower: (isStickerProduct(profile) || isOrnamentProduct(profile)) ? null : lowerWoodReference,
@@ -15500,7 +15540,7 @@ async function handleCreatePaintingBatchRun(req, res) {
     });
   } catch (error) {
     console.error('[painting batch] create failed', { message: error?.message || '' });
-    sendJson(res, 500, { error: error?.message || '创建批量任务失败' });
+    sendJson(res, Number(error?.statusCode) || 500, { error: error?.message || '创建批量任务失败' });
   }
 }
 
@@ -15625,15 +15665,23 @@ async function handleListPaintingHistoryImages(req, res) {
 async function handleGetPaintingHistoryImageFile(req, res, imageHash, url) {
   try {
     const hash = decodeURIComponent(String(imageHash || ''));
-    const row = getCollectionDb().prepare(`
-      SELECT image_hash, image_path FROM painting_batch_runs
-      WHERE image_hash = ? AND image_path <> '' ORDER BY created_at DESC LIMIT 1
-    `).get(hash);
-    if (!row) {
-      sendJson(res, 404, { error: '历史挂画图片不存在' });
-      return;
+    const referenceKind = url.searchParams.get('ornamentView');
+    let filePath;
+    let mimeType;
+    if (referenceKind === 'back' || referenceKind === 'side') {
+      const run = dbGetPaintingBatchRun(url.searchParams.get('batchRunId'));
+      const reference = run?.options?.ornamentReferences?.[referenceKind];
+      if (isOrnamentProduct(run?.profile) && reference?.imageHash === hash) {
+        filePath = reference.imagePath;
+        mimeType = reference.mimeType;
+      }
+    } else {
+      const row = getCollectionDb().prepare(`
+        SELECT image_path FROM painting_batch_runs
+        WHERE image_hash = ? AND image_path <> '' ORDER BY created_at DESC LIMIT 1
+      `).get(hash);
+      filePath = row?.image_path;
     }
-    const filePath = String(row.image_path);
     if (!filePath || !existsSync(filePath)) {
       sendJson(res, 404, { error: '历史挂画图片文件不存在或已清理' });
       return;
@@ -15644,7 +15692,7 @@ async function handleGetPaintingHistoryImageFile(req, res, imageHash, url) {
     const fallbackName = `painting-${String(hash).slice(0, 12)}${ext}`;
     const encodedName = encodeURIComponent(fallbackName);
     const headers = {
-      'Content-Type': paintingImageMimeType(filePath),
+      'Content-Type': mimeType || paintingImageMimeType(filePath),
       'Content-Length': String(info.size),
       'Content-Disposition': `${asAttachment ? 'attachment' : 'inline'}; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`,
       'Cache-Control': 'private, max-age=31536000, immutable',
@@ -15820,6 +15868,7 @@ async function handleResubmitPaintingBatchTask(req, res) {
     }
     // 仅允许当前批量白名单中的模型重新提交，防止历史异常模型产生意外费用。
     const batchRun = dbGetPaintingBatchRun(task.batchRunId);
+    if (isOrnamentProduct(batchRun?.profile)) getPaintingBatchReferenceSpecs(task, batchRun);
     const batchModel = String(batchRun?.model || '');
     if (!PAINTING_BATCH_MODELS.has(batchModel)) {
       sendJson(res, 400, {
@@ -15853,7 +15902,7 @@ async function handleResubmitPaintingBatchTask(req, res) {
     sendJson(res, 200, { ok: true, taskId: task.id, status: nextStatus });
     restorePaintingBatchRunForRetry(task.batchRunId);
   } catch (error) {
-    sendJson(res, 500, { error: error?.message || '重新提交任务失败' });
+    sendJson(res, Number(error?.statusCode) || 500, { error: error?.message || '重新提交任务失败' });
   }
 }
 
@@ -15972,7 +16021,17 @@ async function analyzePaintingCore(body, apiKey, requestId) {
 
   const sticker = isStickerProduct(body);
   const ornament = isOrnamentProduct(body);
-  const prompt = ornament ? `分析图1本次上传的摆台正面，仅输出合法JSON对象：name、style、subject、colors数组、composition、texture、atmosphere、supportStructure。${ORNAMENT_STRUCTURE_RULE} 图2为用户确认的全系列公共背面结构参考，只用来核对木背板、铝合金框和后撑杆；不复制桌面、背景或正面图案。用户确认本系列只换正面图案，物理材质不得由视觉识别改写；金元宝、佛像和图案中的立体光影仍是平面图像。不要照搬样片的马或红底，不猜厘米尺寸。若图1明确可见主体独立放在可分离托架上，supportStructure写separate；否则按用户确认写fixed。不可辨文字不补写，不复制背景、手或字幕。` : sticker ? `请分析参考图片中印刷字画的实际可见内容，仅输出合法JSON对象，字段name、style、subject、colors数组、composition、texture、atmosphere、borderColor。borderColor填最外围印刷边框或色带的颜色（如“深红棕色”“黑色”），参考图没有外围色带则填空字符串。不清楚的小字标记不可辨认，不补写。用户已确认产品为PVC柔性背胶墙贴：白色背面、可揭离背膜、全幅背胶贴墙；参考图整个正面是一张已经完成且不可拆分的平面彩色印刷位图，图中所有深浅颜色都只是同一膜面的像素，不要把其中任何区域分析成独立框体、相框、匾或外围部件。正面为哑光柔性PVC印刷观感，只呈现柔和漫反射，不得分析或描述成亮面、光面、镜面、玻璃、亚克力、覆膜相纸、瓷面或烤漆材质，不得虚构倒影、反光斑或镜面高光。产品没有挂钩、木条、挂绳、背板、玻璃或任何立体外围构件；不要从图片猜尺寸。` : `你是专业的挂画/卷轴产品分析专家。请仔细分析下面这张挂画/装饰画图片，输出一个「产品固定档案」JSON 对象。
+  const additionalImages = [];
+  if (ornament) {
+    validateOrnamentReference(body.ornamentBackFile, '背面');
+    validateOrnamentReference(body.ornamentSideFile, '侧面', { required: false });
+    for (const file of [body.ornamentBackFile, body.ornamentSideFile].filter(Boolean)) {
+      const compressed = await compressMediaForArk(file, 'image');
+      const { imageUrl } = await normalizeUploadedMediaInput(compressed, 'image');
+      additionalImages.push({ type: 'input_image', image_url: imageUrl });
+    }
+  }
+  const prompt = ornament ? `分析本次上传的同款摆台照片，仅输出合法JSON对象：name、style、subject、colors数组、composition、texture、atmosphere、outline、frameColor、frameMaterial、frameStructure、backboardColor、backboardMaterial、backboardTexture、supportDescription、supportStructure。 ${ornamentReferenceGuide(additionalImages.length === 2)} ${ORNAMENT_STRUCTURE_RULE} 无法确认的细节留空，不猜厘米尺寸或补写不可辨文字。如明确可见主体与托架分离，supportStructure写separate，否则写fixed。` : sticker ? `请分析参考图片中印刷字画的实际可见内容，仅输出合法JSON对象，字段name、style、subject、colors数组、composition、texture、atmosphere、borderColor。borderColor填最外围印刷边框或色带的颜色（如“深红棕色”“黑色”），参考图没有外围色带则填空字符串。不清楚的小字标记不可辨认，不补写。用户已确认产品为PVC柔性背胶墙贴：白色背面、可揭离背膜、全幅背胶贴墙；参考图整个正面是一张已经完成且不可拆分的平面彩色印刷位图，图中所有深浅颜色都只是同一膜面的像素，不要把其中任何区域分析成独立框体、相框、匾或外围部件。正面为哑光柔性PVC印刷观感，只呈现柔和漫反射，不得分析或描述成亮面、光面、镜面、玻璃、亚克力、覆膜相纸、瓷面或烤漆材质，不得虚构倒影、反光斑或镜面高光。产品没有挂钩、木条、挂绳、背板、玻璃或任何立体外围构件；不要从图片猜尺寸。` : `你是专业的挂画/卷轴产品分析专家。请仔细分析下面这张挂画/装饰画图片，输出一个「产品固定档案」JSON 对象。
 
 要求输出以下字段（能用中文就用中文描述）：
 - name：产品名称
@@ -15995,7 +16054,7 @@ async function analyzePaintingCore(body, apiKey, requestId) {
     model: DEFAULT_DOUBAO_MULTIMODAL_MODEL,
     content: [
       { type: 'input_image', image_url: imageUrl },
-      ...(ornament ? [{ type: 'input_image', image_url: `data:image/jpeg;base64,${(await readFile(ORNAMENT_BACK_REFERENCE_PATH)).toString('base64')}` }] : []),
+      ...additionalImages,
       { type: 'input_text', text: prompt }
     ]
   });
@@ -16040,11 +16099,16 @@ async function handlePaintingAnalyze(req, res, expectedProductType = 'hanging') 
       sendJson(res, 400, { error: '请先上传挂画图片。' });
       return;
     }
+    if (expectedProductType === 'ornament') {
+      if (body.file) validateOrnamentReference(body.file, '正面', { maxBytes: MAX_MULTIMODAL_UPLOAD_BYTES });
+      validateOrnamentReference(body.ornamentBackFile, '背面');
+      validateOrnamentReference(body.ornamentSideFile, '侧面', { required: false });
+    }
     const task = createPaintingTask('analyze');
     runPaintingAnalyzeTask(task, body, apiKey);
     sendJson(res, 202, { ok: true, taskId: task.id, status: task.status });
   } catch (error) {
-    sendJson(res, 500, { error: error?.message || '挂画分析任务创建失败' });
+    sendJson(res, Number(error?.statusCode) || 500, { error: error?.message || '挂画分析任务创建失败' });
   }
 }
 
@@ -16624,6 +16688,7 @@ async function generateStickerIdeaPromptCore(apiKey, profile, idea, context) {
 }
 
 async function generateOrnamentIdeasCore(body, apiKey) {
+  requireCurrentOrnamentProfile(body.profile);
   const profile = normalizeOrnamentProfile(body.profile);
   const plan = body.plan || {};
   const batch = ((Math.trunc(Number(body.batch) || 0) % 4) + 4) % 4;
@@ -16650,6 +16715,7 @@ async function generateOrnamentIdeasCore(body, apiKey) {
 
 async function generateOrnamentIdeaPromptCore(apiKey, profile, idea, context) {
   if (idea.productType && idea.productType !== 'ornament') throw new Error('摆件档案不能使用其他产品方案');
+  requireCurrentOrnamentProfile(profile);
   const normalized = normalizeOrnamentProfile(profile);
   const range = ornamentDuration(idea.durationMin || context.durationMin, idea.durationMax || context.durationMax);
   const request = buildOrnamentVideoRequest(normalized, idea, context, resolvePaintingStyleProfile(context.stylePreset));
@@ -17272,28 +17338,32 @@ async function sleepMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
-async function buildPaintingImageFileForSeedance(imagePath, baseName = 'painting') {
+async function buildPaintingImageFileForSeedance(imagePath, baseName = 'painting', uploadedMimeType) {
   if (!imagePath || !existsSync(imagePath)) {
     throw new Error('挂画原图不存在，无法提交 Seedance 任务');
   }
   const buffer = await readFile(imagePath);
   const ext = path.extname(imagePath).toLowerCase() || '.jpg';
-  const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+  const mimeType = uploadedMimeType || paintingImageMimeType(imagePath);
   const fileName = `${sanitizeFileName(baseName) || 'painting'}${ext}`;
   return new File([buffer], fileName, { type: mimeType });
 }
 
 function getPaintingBatchReferenceSpecs(task, batchRun) {
   if (isOrnamentProduct(batchRun?.profile)) {
-    const optional = batchRun.options?.ornamentReferences || {};
-    const specs = [
-      { imagePath: batchRun.imagePath || '', baseName: 'ornament-main', label: '图1是本次摆台正面图，仅决定正面图案、题字与图案颜色；图内立体光影不是实物雕塑' },
-      { imagePath: ORNAMENT_BACK_REFERENCE_PATH, baseName: 'ornament-back', label: '图2是全系列公共背面结构：矩形铝合金框、木质背板、背部下边中央的单根细金属后撑杆。只参考产品结构，不复制桌面、背景或其他正面图案' },
-    ];
-    for (const [kind, label] of [['side', '侧面结构参考，仅补充框体厚度、后倾角度与后撑连接'], ['frame', '边框细节参考，仅补充铝合金表面、直边与斜接角']]) {
-      const imagePath = optional[kind]?.imagePath;
-      if (imagePath && existsSync(imagePath)) specs.push({ imagePath, baseName: `ornament-${kind}`, label: `图${specs.length + 1}是${label}。不复制其中正面图案、背景、手或工具，不改写公共材质和结构` });
+    requireCurrentOrnamentProfile(batchRun.profile);
+    const { back, side } = batchRun.options?.ornamentReferences || {};
+    if (!back?.imagePath || !existsSync(back.imagePath)) {
+      throw Object.assign(new Error('批次缺少本款摆件背面图，请补传并重新分析后创建新批次'), { statusCode: 400 });
     }
+    if (side?.imagePath && !existsSync(side.imagePath)) {
+      throw Object.assign(new Error('批次侧面图无法读取，请重新上传后创建新批次'), { statusCode: 400 });
+    }
+    const specs = [
+      { imagePath: batchRun.imagePath || '', baseName: 'ornament-main', mimeType: batchRun.options?.ornamentFrontMimeType },
+      { imagePath: back.imagePath, baseName: 'ornament-back', mimeType: back.mimeType },
+    ];
+    if (side?.imagePath) specs.push({ imagePath: side.imagePath, baseName: 'ornament-side', mimeType: side.mimeType });
     return specs;
   }
   if (isStickerProduct(batchRun?.profile)) return [{ imagePath: batchRun.imagePath || '', baseName: 'sticker-main', label: 'PVC贴画完整正面位图参考：整张图片必须作为一个不可拆分的平面印刷纹理使用，图内任何颜色区域都不是独立物体，四周裁切线之外直接是墙面' }];
@@ -17333,7 +17403,7 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   const isWoodDetailDirection = !isSticker && !isOrnament && Number(task.directionNumber) === PAINTING_WOOD_DETAIL_DIRECTION;
   const referenceSpecs = getPaintingBatchReferenceSpecs(task, batchRun);
 
-  const referenceGuide = isOrnament ? `【摆台正面与公共背面参考职责】\n${referenceSpecs.map(item => item.label).join('\n')}\n正面图案取图1，物理结构保持图2与公共结构锁定；禁止把木背板画在正面，也不能把题字和人物画到背板上。\n\n` : isWoodDetailDirection
+  const referenceGuide = isOrnament ? `${ornamentReferenceGuide(referenceSpecs.length === 3)}\n\n` : isWoodDetailDirection
     ? `【参考图职责强制区分】\n${referenceSpecs.map((item) => item.label).join('\n')}。木条特写图中的桌面、墙面、手、尺子、包装物或其他背景都不属于产品，严禁复制到生成视频。如细节图与正面主图的作用冲突，整体画面以主图为准，对应木条局部结构以高清细节图为准。\n\n`
     : '';
   let promptForSubmission = isOrnament ? ensureOrnamentPrompt(task.prompt, batchRun.profile, task.directionNumber) : isSticker ? ensureStickerPrompt(task.prompt, batchRun.profile, task.directionNumber) : ensurePaintingProductFocusedEnding(
@@ -17347,7 +17417,7 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
   }
   const content = [{ type: 'text', text: `${referenceGuide}${promptForSubmission}` }];
   for (const spec of referenceSpecs) {
-    const imageFile = await buildPaintingImageFileForSeedance(spec.imagePath, spec.baseName);
+    const imageFile = await buildPaintingImageFileForSeedance(spec.imagePath, spec.baseName, spec.mimeType);
     const compressedFile = await compressMediaForArk(imageFile, 'image');
     const normalized = await normalizeUploadedMediaInput(compressedFile, 'image');
     content.push({ type: 'image_url', image_url: { url: normalized.imageUrl }, role: 'reference_image' });
@@ -17588,6 +17658,13 @@ async function generatePromptForBatchTask(task, batchRun, previousPrompts) {
     }
   }
 
+  if (isOrnamentProduct(batchRun.profile)) {
+    context.extraRequirements = [
+      context.extraRequirements,
+      ornamentReferenceGuide(Boolean(batchRun.options?.ornamentReferences?.side)),
+    ].filter(Boolean).join('\n');
+  }
+
   let lastError = null;
   for (let attempt = 0; attempt <= PAINTING_BATCH_PROMPT_RETRY_MAX; attempt += 1) {
     try {
@@ -17647,6 +17724,15 @@ async function processBatchTask(taskId) {
   if (batchRun.controlStatus === 'stopping' || batchRun.controlStatus === 'stopped') {
     if (!task.seedanceTaskId) {
       dbUpdatePaintingBatchTask(task.id, { status: 'stopped' });
+      return;
+    }
+  }
+
+  if (!task.seedanceTaskId && isOrnamentProduct(batchRun.profile)) {
+    try {
+      getPaintingBatchReferenceSpecs(task, batchRun);
+    } catch (error) {
+      dbUpdatePaintingBatchTask(task.id, { status: 'failed', errorMessage: error.message });
       return;
     }
   }
@@ -18928,9 +19014,16 @@ async function handleQwenCreativeMultimodal(req, res) {
 
   try {
     stage = 'read_body';
-    const body = isMultipartFormRequest(req)
+    const rawBody = isMultipartFormRequest(req)
       ? await readMultipartFormBody(req)
       : await readRequestBody(req);
+    let body;
+    try {
+      body = getOrnamentReplacementAnalysisMedia(rawBody);
+    } catch (error) {
+      sendJson(res, Number(error?.statusCode) || 400, { error: error.message });
+      return;
+    }
     const { question, history, mediaKind, file, files, filesKinds, clipMediaToken } = body;
     shouldStream = wantsDoubaoStream(body, req);
     const apiKey = readValue(SERVER_CONFIG.dashscopeApiKey);
@@ -19357,7 +19450,7 @@ async function handleSeedanceCreateTask(req, res) {
       return;
     }
 
-    const ornamentProfile = ornamentProfileFromPrompt(body?.prompt) || (isOrnamentProduct(body) ? normalizeOrnamentProfile() : null);
+    const ornamentProfile = ornamentProfileFromPrompt(rawPrompt.trim()) || (isOrnamentProduct(body) ? normalizeOrnamentProfile() : null);
     if (ornamentProfile && readValue(body?.productType) && readValue(body.productType) !== 'ornament') {
       sendJson(res, 400, { error: '摆件提示词与提交产品类型不一致' });
       return;
@@ -19394,9 +19487,14 @@ async function handleSeedanceCreateTask(req, res) {
     const watermark = body?.watermark === true;
     const uploadedFiles = Array.isArray(body?.files) ? body.files.slice() : [];
     if ((ornamentProfile || replacementType === 'ornament') && !isVideoEditTask) {
-      for (let index = uploadedFiles.length - 1; index >= 0; index--) if (uploadedFiles[index].name === 'ornament-back.jpg') uploadedFiles.splice(index, 1);
-      uploadedFiles.push(await buildPaintingImageFileForSeedance(ORNAMENT_BACK_REFERENCE_PATH, 'ornament-back'));
-      prompt += '\n【公共背面参考职责】最后一张参考图是全系列公共背面，仅决定铝合金框、木质背板和连接在背部下边中央的单根细金属后撑杆。图1是本次正面主图，决定图案、题字和颜色；此前其余上传图若存在，仅作为侧面结构与铝合金边框细节辅助，不替换正面图案；不把木背板画到正面、不把题字画到背面、不复制背景与桌面。';
+      const views = getUploadedOrnamentViews(body);
+      if (uploadedFiles.some(file => file.type.startsWith('image/'))) {
+        throw Object.assign(new Error('摆件图片请通过本款正面、背面与侧面上传位提交'), { statusCode: 400 });
+      }
+      uploadedFiles.unshift(...views);
+      prompt += `\n${ornamentReferenceGuide(views.length === 3)}`;
+    } else if (body.ornamentFrontFile || body.ornamentBackFile || body.ornamentSideFile) {
+      throw Object.assign(new Error('摆件参考图需与摆件分析生成的提示词一起提交'), { statusCode: 400 });
     }
 
     console.log('[seedance create task] request start', {
@@ -21417,12 +21515,6 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/ornament/back-reference') {
-    const bytes = await readFile(ORNAMENT_BACK_REFERENCE_PATH);
-    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' });
-    res.end(bytes);
-    return;
-  }
   if (req.method === 'POST' && url.pathname === '/api/ornament/analyze') {
     await handlePaintingAnalyze(req, res, 'ornament');
     return;
@@ -21921,6 +22013,9 @@ export {
   transcribeAudioWithVolcWordTimestamps,
   analyzePaintingCore,
   handlePaintingAnalyze,
+  handleDoubaoMultimodal,
+  handleQwenCreativeMultimodal,
+  handleGetPaintingHistoryImageFile,
   generatePaintingIdeasCore,
   generatePaintingIdeaPromptCore,
   getCollectionDb,

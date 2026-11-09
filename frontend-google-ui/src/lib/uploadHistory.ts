@@ -10,7 +10,7 @@ const MAX_HISTORY_BY_KIND: Record<UploadHistoryItem['kind'], number> = {
   audio: 100,
 };
 
-export type UploadHistoryScope = 'general' | 'ornament-side' | 'ornament-frame';
+export type UploadHistoryScope = 'general' | 'ornament-side' | 'ornament-frame' | 'ornament-back';
 
 export interface UploadHistoryItem {
   id: number;

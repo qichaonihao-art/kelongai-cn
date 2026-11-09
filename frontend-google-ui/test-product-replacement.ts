@@ -18,7 +18,8 @@ for (const type of ['hanging', 'sticker', 'ornament'] as const) {
 }
 assert.throws(() => wrapReplacementPrompt('【产品元素替换：hanging】【替换动作兼容性：兼容】', 'ornament'), /产品类型/);
 assert.equal(wrapReplacementPrompt('书架替换', 'generic'), '书架替换');
-assert.match(replacementProductRules('ornament'), /铝合金.*木质背板.*后撑杆/s);
+assert.match(replacementProductRules('ornament'), /新款实物图/);
+assert.doesNotMatch(replacementProductRules('ornament'), /铝合金|木质背板|公共背面/);
 assert.match(replacementProductRules('sticker'), /PVC.*无实体边框/s);
 console.log('产品替换规则、通用模式、兼容性确认测试通过。');
 

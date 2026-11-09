@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { extractExplicitAudioPreference, resolveAutoAudioSetting, analyzePainting, generatePaintingIdeas, generatePaintingIdeaPrompt, createPaintingBatchRun, createSeedanceTask, getPaintingUsedDirections, getPaintingProductType, getPaintingProductLabel, getPaintingFolderBinding, setPaintingFolderBinding, type PaintingMaterialPlan } from './src/lib/creative';
+import { extractExplicitAudioPreference, resolveAutoAudioSetting, analyzePainting, generatePaintingIdeas, generatePaintingIdeaPrompt, createPaintingBatchRun, createSeedanceTask, sendCreativeMessage, getPaintingUsedDirections, getPaintingProductType, getPaintingProductLabel, getPaintingFolderBinding, setPaintingFolderBinding, type PaintingMaterialPlan } from './src/lib/creative';
 
 Object.assign(globalThis, { window: globalThis });
 const file = new File(['test'], 'product.png', { type: 'image/png' });
+const back = new File(['new-back'], 'back.png', { type: 'image/png' });
+const sideView = new File(['new-side'], 'side.png', { type: 'image/png' });
 const profile = { productType: 'ornament' as const, name: '固定一体摆台', supportStructure: 'fixed' };
 const idea = { productType: 'ornament' as const, id: 'ornament-1', directionNumber: 1, title: '讲解', summary: '画旁讲解' };
 const plan: PaintingMaterialPlan = { count: 10, durationMin: 5, durationMax: 8, ratio: '9:16', stylePreset: 'modern-minimal', character: '', scene: '', audio: '', extraRequirements: '' };
@@ -10,17 +12,21 @@ const calls: { url: string; body: BodyInit | null | undefined }[] = [];
 globalThis.fetch = async (url, init: RequestInit = {}) => {
   calls.push({ url: String(url), body: init.body });
   if (String(url).includes('/tasks/ui-task')) return Response.json({ status: 'done', result: { profile, ideas: [idea], batch: 0, totalBatches: 4, prompt: '摆件文案', duration: 6 } });
+  if (String(url).includes('/multimodal')) return Response.json({ answer: '替换分析结果' });
   return Response.json({ taskId: 'ui-task', batchRunId: 'ui-batch', usedDirections: [1] });
 };
 assert.equal(getPaintingProductType({ name: '旧记录' }), 'hanging');
 assert.equal(getPaintingProductLabel(profile), '摆件（固定一体）');
 assert.equal(getPaintingProductLabel(), '挂画／卷轴');
-await analyzePainting(file, 'ornament', 150, 50);
+await assert.rejects(analyzePainting(file, 'ornament'), /背面/);
+await analyzePainting(file, 'ornament', 150, 50, { back, side: sideView });
 assert.equal(calls[0].url, '/api/ornament/analyze');
 const analysisForm = calls[0].body as FormData;
 assert.equal(analysisForm.get('productType'), 'ornament');
 assert.equal(analysisForm.get('widthCm'), '150');
 assert.equal(analysisForm.get('heightCm'), '50');
+assert.equal((analysisForm.get('ornamentBackFile') as File).name, back.name);
+assert.equal((analysisForm.get('ornamentSideFile') as File).name, sideView.name);
 await generatePaintingIdeas(profile, plan);
 const ideasRequestCall = calls.find((call) => call.url === '/api/ornament/ideas')!;
 assert.ok(ideasRequestCall);
@@ -36,7 +42,7 @@ assert.equal(promptRequest.profile.supportStructure, 'fixed');
 assert.equal(promptRequest.productType, 'ornament');
 await generatePaintingIdeaPrompt(profile, { ...idea, id: 'ornament-2', directionNumber: 2, title: '第二个方向' }, plan);
 assert.equal(calls.filter((call) => call.url === '/api/ornament/idea-prompt').length, 2);
-await createPaintingBatchRun({ file, upperWoodFile: file, lowerWoodFile: file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: true, watermark: false, stylePreset: 'modern-minimal', creationRequestId: 'ui-batch-create' });
+await createPaintingBatchRun({ file, ornamentBackFile: back, upperWoodFile: file, lowerWoodFile: file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: true, watermark: false, stylePreset: 'modern-minimal', creationRequestId: 'ui-batch-create' });
 const batchForm = calls.at(-1)!.body as FormData;
 assert.equal(JSON.parse(String(batchForm.get('profile'))).productType, 'ornament');
 assert.equal(JSON.parse(String(batchForm.get('ideas')))[0].productType, 'ornament');
@@ -45,15 +51,15 @@ assert.equal(batchForm.get('requestedCount'), '1');
 assert.equal(batchForm.get('upperWoodFile'), null);
 assert.equal(batchForm.get('lowerWoodFile'), null);
 assert.equal(batchForm.get('generateAudio'), 'true');
-for (const [side, frame] of [[false, false], [true, false], [false, true], [true, true]]) {
-  await createPaintingBatchRun({ file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'optional-test', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: true, watermark: false, stylePreset: 'modern-minimal', ornamentSideFile: side ? file : null, ornamentFrameFile: frame ? file : null });
+for (const side of [false, true]) {
+  await createPaintingBatchRun({ file, ornamentBackFile: back, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'optional-test', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: true, watermark: false, stylePreset: 'modern-minimal', ornamentSideFile: side ? sideView : null });
   const form = calls.at(-1)!.body as FormData;
   assert.equal(Boolean(form.get('ornamentSideFile')), side);
-  assert.equal(Boolean(form.get('ornamentFrameFile')), frame);
+  assert.equal((form.get('ornamentBackFile') as File).name, back.name);
 }
-await createPaintingBatchRun({ file, profile: { productType: 'hanging', name: '挂画' }, plan, ideas: [], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'optional-test', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: true, watermark: false, stylePreset: 'modern-minimal', ornamentSideFile: file, ornamentFrameFile: file });
+await createPaintingBatchRun({ file, ornamentBackFile: back, profile: { productType: 'hanging', name: '挂画' }, plan, ideas: [], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'optional-test', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio: true, watermark: false, stylePreset: 'modern-minimal', ornamentSideFile: file });
 assert.equal((calls.at(-1)!.body as FormData).get('ornamentSideFile'), null);
-assert.equal((calls.at(-1)!.body as FormData).get('ornamentFrameFile'), null);
+assert.equal((calls.at(-1)!.body as FormData).get('ornamentBackFile'), null);
 for (const withImage of [true, false]) {
   await createSeedanceTask({ productType: 'ornament', model: 'wan3.0-video', prompt: '贴画', resolution: '480p', ratio: '9:16', duration: 6, generateAudio: true, watermark: false, references: withImage ? [{ id: '1', kind: 'image', file, fileName: file.name, previewUrl: '' }] : [] });
   const body = calls.at(-1)!.body;
@@ -83,12 +89,33 @@ for (const generateAudio of [false, true]) {
   const body = calls.at(-1)!.body;
   assert.equal(withImage ? (body as FormData).get('generateAudio') : JSON.parse(String(body)).generateAudio, withImage ? String(generateAudio) : generateAudio);
  }
- await createPaintingBatchRun({ file, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'audio-toggle', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio, watermark: false, stylePreset: 'modern-minimal' });
+ await createPaintingBatchRun({ file, ornamentBackFile: back, profile, plan, ideas: [idea], totalDirections: 1, requestedCount: 1, startOrder: 'random', creationRequestId: 'audio-toggle', model: 'wan3.0-video', resolution: '480p', ratio: '9:16', variationRound: 0, generateAudio, watermark: false, stylePreset: 'modern-minimal' });
  assert.equal((calls.at(-1)!.body as FormData).get('generateAudio'), String(generateAudio));
 }
 console.log('千问3提示词声音识别、单条JSON/图片提交与批量声音开关通过。');
 
 const beforeDefaultAnalysis = calls.length;
-await analyzePainting(file, 'ornament');
+await analyzePainting(file, 'ornament', undefined, undefined, { back });
 const defaultForm = calls[beforeDefaultAnalysis].body as FormData;
 assert.equal(defaultForm.get('widthCm'), '20'); assert.equal(defaultForm.get('heightCm'), '20');
+
+const replacementPhotos = [
+  { kind: 'image', ornamentView: 'front', file, fileName: file.name, previewUrl: '' },
+  { kind: 'image', ornamentView: 'back', file: back, fileName: back.name, previewUrl: '' },
+  { kind: 'image', ornamentView: 'side', file: sideView, fileName: sideView.name, previewUrl: '' },
+] as const;
+const video = new File(['video'], 'source.mp4', { type: 'video/mp4' });
+await sendCreativeMessage({
+  question: '【产品元素替换：ornament】',
+  history: [],
+  media: [{ kind: 'video', file: video, fileName: video.name, previewUrl: '' }, ...replacementPhotos],
+});
+const replacementForm = calls.at(-1)!.body as FormData;
+assert.deepEqual(replacementForm.getAll('files').map(value => (value as File).name), [video.name]);
+assert.equal((replacementForm.get('ornamentBackFile') as File).name, back.name);
+await createSeedanceTask({ model: 'wan3.0-video', prompt: '【产品元素替换：ornament】', resolution: '480p', ratio: '9:16', duration: 6, generateAudio: false, watermark: false, references: replacementPhotos.map((image, index) => ({ ...image, id: String(index) })) });
+const videoForm = calls.at(-1)!.body as FormData;
+assert.deepEqual(videoForm.getAll('files'), []);
+assert.equal((videoForm.get('ornamentFrontFile') as File).name, file.name);
+assert.equal((videoForm.get('ornamentBackFile') as File).name, back.name);
+assert.equal((videoForm.get('ornamentSideFile') as File).name, sideView.name);
