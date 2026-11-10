@@ -10031,6 +10031,11 @@ async function transcribeAudioWithQwen({ audioPath, requestId, segmentIndex = 0,
 
 // Local-editor subtitle recognition only. Does not touch shared voices or TTS.
 const DASHSCOPE_FILES_BASE_URL = 'https://dashscope.aliyuncs.com/api/v1';
+const ALIYUN_SUBTITLE_MODEL = 'paraformer-v2';
+const ALIYUN_SUBTITLE_VOCABULARY_DIR = path.join(RUNTIME_STATE_DIR, 'local-editor-subtitle-vocabularies');
+const aliyunSubtitleVocabularyRequests = new Map();
+const aliyunSubtitleRejectedVocabularies = new Map();
+const ALIYUN_VOCABULARY_RETRY_MS = 60_000;
 const SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS = 5 * 60 * 1000;
 const SUBTITLE_ALIGN_POLL_INTERVAL_MS = 2000;
 const VOLC_ASR_SUBMIT_URL = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit';
@@ -10144,7 +10149,70 @@ async function transcribeAudioWithVolcWordTimestamps({ audioUrl, text = '', cont
   throw new Error('火山字幕识别超时，请重试');
 }
 
-async function transcribeAudioWithAliyunWordTimestamps({ audioPath, parentDeadlineAt = 0 }) {
+function aliyunSubtitleHotwords(contextText) {
+  const terms = String(contextText || '').normalize('NFKC').slice(0, 240)
+    .split(/[\r\n，。！？；：、,!?;:]+/u).map((term) => term.trim().replace(/\s+/g, ' '));
+  return [...new Set(terms.filter((term) => {
+    if (!/^[\p{L}\p{M}\p{N} -]+$/u.test(term) || !/\p{L}/u.test(term)) return false;
+    return /^[\x20-\x7e]+$/.test(term) ? term.split(' ').length <= 7 : Array.from(term).length <= 15;
+  }))].sort().map((text) => ({ text, weight: 4 }));
+}
+
+async function getAliyunSubtitleVocabulary({ apiKey, contextText, deadline }) {
+  const vocabulary = aliyunSubtitleHotwords(contextText);
+  if (!vocabulary.length || deadline <= Date.now()) return '';
+  // Scope IDs to the API account and exact set of terms. Never update a table
+  // that another request could be using with a different glossary.
+  const key = createHash('sha256').update(JSON.stringify([apiKey, ALIYUN_SUBTITLE_MODEL, vocabulary])).digest('hex');
+  const cachedRequest = aliyunSubtitleVocabularyRequests.get(key);
+  if (cachedRequest) return cachedRequest;
+  const file = path.join(ALIYUN_SUBTITLE_VOCABULARY_DIR, `${key}.txt`);
+  const pending = (async () => {
+    try {
+      const existing = (await readFile(file, 'utf8').catch((error) => {
+        if (error.code !== 'ENOENT') throw error;
+        return '';
+      })).trim();
+      const rejectedAt = aliyunSubtitleRejectedVocabularies.get(existing);
+      if (existing && !rejectedAt) return existing;
+      if (rejectedAt && Date.now() - rejectedAt < ALIYUN_VOCABULARY_RETRY_MS) return '';
+      await mkdir(ALIYUN_SUBTITLE_VOCABULARY_DIR, { recursive: true });
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return '';
+      const response = await fetch(`${DASHSCOPE_FILES_BASE_URL}/services/audio/asr/customization`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(Math.min(3000, remaining)),
+        body: JSON.stringify({
+          model: 'speech-biasing',
+          input: { action: 'create_vocabulary', target_model: ALIYUN_SUBTITLE_MODEL, prefix: 'qingjian', vocabulary }
+        })
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const id = readValue((await response.json()).output?.vocabulary_id);
+      if (!id) throw new Error('未返回热词表编号');
+      const temporary = `${file}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(temporary, id);
+        await rename(temporary, file);
+      } finally {
+        await unlink(temporary).catch(() => {});
+      }
+      aliyunSubtitleRejectedVocabularies.delete(existing);
+      return id;
+    } catch (error) {
+      console.warn('[subtitle align] aliyun_vocabulary_unavailable', error.message);
+      return '';
+    }
+  })();
+  aliyunSubtitleVocabularyRequests.set(key, pending);
+  const id = await pending;
+  if (id) aliyunSubtitleVocabularyRequests.delete(key);
+  else setTimeout(() => aliyunSubtitleVocabularyRequests.delete(key), ALIYUN_VOCABULARY_RETRY_MS).unref();
+  return id;
+}
+
+async function transcribeAudioWithAliyunWordTimestamps({ audioPath, contextText = '', parentDeadlineAt = 0 }) {
   const apiKey = readValue(SERVER_CONFIG.dashscopeApiKey) || readValue(SERVER_CONFIG.aliyunApiKey);
   if (!apiKey) throw new Error('服务端未配置 DashScope API Key');
   const deadline = parentDeadlineAt || Date.now() + SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS;
@@ -10158,7 +10226,7 @@ async function transcribeAudioWithAliyunWordTimestamps({ audioPath, parentDeadli
     return response.json();
   };
   // The old /files + fileid:// flow is not the ASR upload protocol.
-  const policyJson = await jsonResponse(await request(`${DASHSCOPE_FILES_BASE_URL}/uploads?action=getPolicy&model=paraformer-v2`, {
+  const policyJson = await jsonResponse(await request(`${DASHSCOPE_FILES_BASE_URL}/uploads?action=getPolicy&model=${ALIYUN_SUBTITLE_MODEL}`, {
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
   }), '获取音频上传凭证');
   const policy = policyJson.data;
@@ -10179,13 +10247,22 @@ async function transcribeAudioWithAliyunWordTimestamps({ audioPath, parentDeadli
   const upload = await request(host.href, { method: 'POST', body: form });
   if (!upload.ok) throw new Error(`上传音频失败：HTTP ${upload.status}`);
   // Temporary private OSS objects expire automatically after 48 hours.
-  const submitted = await jsonResponse(await request(`${DASHSCOPE_FILES_BASE_URL}/services/audio/asr/transcription`, {
+  const submit = (vocabularyId) => request(`${DASHSCOPE_FILES_BASE_URL}/services/audio/asr/transcription`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json',
       'X-DashScope-Async': 'enable', 'X-DashScope-OssResourceResolve': 'enable' },
-    body: JSON.stringify({ model: 'paraformer-v2', input: { file_urls: [`oss://${key}`] },
-      parameters: { channel_id: [0], timestamp_alignment_enabled: true } })
-  }), '提交字幕识别');
+    body: JSON.stringify({ model: ALIYUN_SUBTITLE_MODEL, input: { file_urls: [`oss://${key}`] },
+      parameters: { channel_id: [0], timestamp_alignment_enabled: true,
+        ...(vocabularyId ? { vocabulary_id: vocabularyId } : {}) } })
+  });
+  const vocabularyId = await getAliyunSubtitleVocabulary({ apiKey, contextText, deadline });
+  let submission = await submit(vocabularyId);
+  if (vocabularyId && (submission.status === 400 || submission.status === 404)
+    && /vocab|热词/i.test(await submission.text().catch(() => ''))) {
+    aliyunSubtitleRejectedVocabularies.set(vocabularyId, Date.now());
+    submission = await submit('');
+  }
+  const submitted = await jsonResponse(submission, '提交字幕识别');
   const taskId = submitted.output?.task_id;
   if (!taskId) throw new Error('字幕识别没有返回任务编号');
   while (Date.now() < deadline) {
@@ -10248,6 +10325,7 @@ async function handleLocalEditorSubtitleAlign(req, res) {
       if (!sentences) {
         sentences = await transcribeAudioWithAliyunWordTimestamps({
           audioPath,
+          contextText,
           requestId,
           parentDeadlineAt: deadline
         });
