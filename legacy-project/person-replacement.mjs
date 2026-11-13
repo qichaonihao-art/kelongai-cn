@@ -181,6 +181,34 @@ export function createPersonReplacementService(deps) {
     } finally { creating.delete(job.id); }
     return view(job);
   }
+
+  async function prepareSeedanceEditImage(job) {
+    const name = job.productImageName;
+    const source = filePath(job, name);
+    try {
+      const { stdout } = await exec('ffprobe', [
+        '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height:stream_side_data=rotation',
+        '-of', 'json', source,
+      ], { timeout: 30000 });
+      const { width, height, side_data_list: sideData } = JSON.parse(stdout).streams[0] || {};
+      if (!(width > 0 && height > 0)) throw new Error('图片尺寸无效');
+      const rotated = sideData?.some(item => Math.abs(item.rotation % 180) === 90);
+      const ratio = rotated ? height / width : width / height;
+      if (ratio >= 0.39 && ratio <= 2.50) return name;
+
+      // Pad the decoded image without scaling or cropping the product.
+      const partial = filePath(job, 'product-padded.partial.png');
+      await exec('ffmpeg', [
+        '-y', '-i', source,
+        '-vf', 'format=rgba,pad=w=ceil(max(iw\\,ih*0.41)):h=ceil(max(ih\\,iw/2.45)):x=(ow-iw)/2:y=(oh-ih)/2:color=gray,setsar=1',
+        '-frames:v', '1', '-update', '1', partial,
+      ], { timeout: 30000 });
+      await rename(partial, filePath(job, 'product-padded.png'));
+      return 'product-padded.png';
+    } catch (error) {
+      throw new Error('装饰画参考图无法读取或调整比例，请重新上传清晰的 JPG、PNG 或 WebP 图片。', { cause: error });
+    }
+  }
   async function jsonRequest(url, options = {}) {
     const { timeoutMs = 60000, rejectCode = false, ...fetchOptions } = options;
     const response = await fetcher(url, { ...fetchOptions, signal: AbortSignal.timeout(timeoutMs) });
@@ -383,9 +411,13 @@ export function createPersonReplacementService(deps) {
         return submit(job, 'generation', `${job.wanBase}/api/v1/services/aigc/video-generation/video-synthesis`,
           buildWanEditPayload(job, buildPersonPrompt(job), assetUrl(job, 'masked.mp4'), job.hasProductReference ? assetUrl(job, job.productImageName) : job.hasPortrait ? assetUrl(job, job.portraitName) : ''), config.wanKey);
       }
-      const content = [{ type: 'text', text: buildPersonPrompt(job) }, { type: 'video_url', video_url: { url: assetUrl(job, 'masked.mp4') }, role: 'reference_video' }];
+      const productImage = job.hasProductReference && job.model === PERSON_MODELS[1]
+        ? await prepareSeedanceEditImage(job)
+        : job.productImageName;
+      const paddingNote = productImage === 'product-padded.png' ? '\n图片1外围的灰色留白仅用于适配上传比例，请忽略留白并保留画作本身的比例。' : '';
+      const content = [{ type: 'text', text: buildPersonPrompt(job) + paddingNote }, { type: 'video_url', video_url: { url: assetUrl(job, 'masked.mp4') }, role: 'reference_video' }];
       if (job.hasPortrait) content.push({ type: 'image_url', image_url: { url: assetUrl(job, job.portraitName) }, role: 'reference_image' });
-      if (job.hasProductReference) content.push({ type: 'image_url', image_url: { url: assetUrl(job, job.productImageName) }, role: 'reference_image' });
+      if (job.hasProductReference) content.push({ type: 'image_url', image_url: { url: assetUrl(job, productImage) }, role: 'reference_image' });
       return submit(job, 'generation', 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
         model: job.model, content, duration: job.model === PERSON_MODELS[1] ? -1 : Math.max(4, Math.min(15, Math.ceil(job.duration))),
         ...(job.model === PERSON_MODELS[1] ? { omni_reference_task_type: 'edit' } : {}),
@@ -500,7 +532,7 @@ export function createPersonReplacementService(deps) {
   }
   async function media(req, res, id, token, name) {
     const job = get(id);
-    if (!job || token !== job.mediaToken || !['source.mp4', 'input.mp4', 'masked.mp4', 'result.mp4', 'generated.mp4', 'portrait.jpg', 'portrait.png', 'portrait.webp', 'product.jpg', 'product.png', 'product.webp'].includes(name)) { res.writeHead(404); res.end(); return; }
+    if (!job || token !== job.mediaToken || !['source.mp4', 'input.mp4', 'masked.mp4', 'result.mp4', 'generated.mp4', 'portrait.jpg', 'portrait.png', 'portrait.webp', 'product.jpg', 'product.png', 'product.webp', 'product-padded.png'].includes(name)) { res.writeHead(404); res.end(); return; }
     try {
       const destination = filePath(job, name);
       const info = await stat(destination);

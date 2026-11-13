@@ -350,7 +350,9 @@ try {
   assert.throws(() => validatePersonOptions(editOptions({ faceMode: 'bad' })), /预处理/);
   assert.throws(() => validatePersonOptions(editOptions({ clothing: '衣'.repeat(501) })), /服装/);
   assert.throws(() => validatePersonOptions(editOptions({ scene: '景'.repeat(1001) })), /场景/);
-  const productBytes = new TextEncoder().encode('product-reference-only');
+  const productPath = path.join(root, 'product.png');
+  await exec('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=red:s=600x300', '-frames:v', '1', '-update', '1', productPath]);
+  const productBytes = await readFile(productPath);
   const editBody = editOptions({ resolution: '480p', files: [new File([sourceBytes], 'clip.mp4', { type: 'video/mp4' }), new File([productBytes], '牡丹挂画.png', { type: 'image/png' })] });
   const edit = await service.create(editBody, 'https://app.test');
   let edited = await drive(edit.id);
@@ -382,6 +384,25 @@ try {
   assert.match(editPrompt, /原场景、背景、家具、光照及其他陈设全部保持原样/);
   assert.ok(!editPrompt.includes('只替换人物形象'));
   assert.ok(!JSON.stringify(editRequest).includes('source.mp4'));
+  for (const [width, height] of [[596, 200], [200, 596]]) {
+    const imagePath = path.join(root, `product-${width}x${height}.png`);
+    await exec('ffmpeg', ['-y', '-f', 'lavfi', '-i', `color=red:s=${width}x${height}`, '-frames:v', '1', '-update', '1', imagePath]);
+    const original = await readFile(imagePath);
+    const wideOrTall = await service.create(editOptions({
+      faceMode: 'no-visible-face',
+      files: [new File([sourceBytes], 'clip.mp4', { type: 'video/mp4' }), new File([original], 'painting.png', { type: 'image/png' })],
+    }), 'https://app.test');
+    const adapted = await drive(wideOrTall.id);
+    assert.equal(adapted.stage, 'completed', adapted.error);
+    const folder = path.join(root, 'jobs', wideOrTall.id);
+    assert.deepEqual(await readFile(path.join(folder, 'product.png')), original);
+    const image = await probe(path.join(folder, 'product-padded.png'));
+    assert.ok(image.width / image.height >= 0.39 && image.width / image.height <= 2.50);
+    assert.equal(Math.max(image.width, image.height), 596, 'padding preserves the original long edge');
+    const payload = posts.at(-1).body;
+    assert.match(payload.content.find(item => item.type === 'image_url').image_url.url, /product-padded\.png$/);
+    assert.match(payload.content[0].text, /忽略留白/);
+  }
   const editPostCount = posts.length;
   service.stop(); service = createPersonReplacementService(deps);
   assert.equal(service.get(edit.id).hasProductReference, true, 'the product role survives restart');
