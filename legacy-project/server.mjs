@@ -3969,14 +3969,17 @@ async function handleRenameVideoLibraryFolder(req, res, encodedName) {
 }
 
 async function handleGetVideoLibraryFolders(req, res) {
-  const counts = new Map(getCollectionDb().prepare(`
-    SELECT folder_name, COUNT(*) AS file_count
+  const rows = getCollectionDb().prepare(`
+    SELECT folder_name, COUNT(*) AS file_count,
+      MAX(CASE WHEN created_at BETWEEN unixepoch() - 7 * 86400 AND unixepoch() THEN 1 ELSE 0 END) AS has_recent_additions
     FROM video_library_items
     GROUP BY folder_name
-  `).all().map((row) => [row.folder_name, Number(row.file_count)]));
+  `).all();
+  const counts = new Map(rows.map((row) => [row.folder_name, Number(row.file_count)]));
+  const recentFolders = rows.filter((row) => row.has_recent_additions === 1).map((row) => row.folder_name);
   const folders = dbGetVideoLibraryFolders().sort((left, right) =>
     (counts.get(right) || 0) - (counts.get(left) || 0));
-  sendJson(res, 200, { ok: true, folders, counts: Object.fromEntries(counts) });
+  sendJson(res, 200, { ok: true, folders, counts: Object.fromEntries(counts), recentFolders });
 }
 
 async function handleGetVideoLibrarySummary(req, res) {

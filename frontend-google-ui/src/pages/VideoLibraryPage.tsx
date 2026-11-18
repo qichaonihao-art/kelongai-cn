@@ -152,6 +152,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
   const [items, setItems] = useState<VideoLibraryItem[]>(initialView?.items || []);
   const [folders, setFolders] = useState<string[]>(initialView?.folders || [DEFAULT_FOLDER]);
   const [overviewCounts, setOverviewCounts] = useState<Record<string, number>>(initialView?.counts || {});
+  const [recentFolders, setRecentFolders] = useState(() => new Set(initialView?.recentFolders));
   const [loadedKey, setLoadedKey] = useState<string | null>(initialView ? videoLibraryViewKey() : null);
   const [activeQuery, setActiveQuery] = useState('');
   const displayedKeyRef = useRef<string | null>(initialView ? videoLibraryViewKey() : null);
@@ -236,6 +237,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
     setItems(result.items);
     setFolders(result.folders);
     setOverviewCounts(result.counts);
+    setRecentFolders(new Set(result.recentFolders));
     displayedKeyRef.current = key;
     setLoadedKey(key);
   }
@@ -381,7 +383,9 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             </span>
           )}
           <button type="button" onClick={() => setSelectedFolder(folder)} className="flex h-full w-full flex-col items-center justify-center rounded-xl" aria-label={`打开${folder}文件夹`}>
-            <FolderOpen className="size-11 text-sky-400 transition-colors group-hover:text-sky-500" />
+            <FolderOpen className={cn('size-11 transition-colors', recentFolders.has(folder)
+              ? 'text-emerald-600 group-hover:text-emerald-700'
+              : 'text-sky-400 group-hover:text-sky-500')} />
             <span className="mt-3 max-w-full truncate text-sm font-black text-slate-700">{folder}</span>
             <span className="mt-1 text-[11px] font-bold text-slate-400">{folderCounts.get(folder) || 0} 个视频</span>
           </button>

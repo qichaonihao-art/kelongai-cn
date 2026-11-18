@@ -4,6 +4,7 @@ export interface VideoLibraryView {
   items: VideoLibraryItem[];
   folders: string[];
   counts: Record<string, number>;
+  recentFolders?: string[];
 }
 
 // Small, session-only cache. Never persist account data to disk/localStorage.

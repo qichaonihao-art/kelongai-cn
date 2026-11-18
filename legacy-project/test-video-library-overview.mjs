@@ -13,12 +13,14 @@ try {
   db.exec('BEGIN');
   for (let i=0; i<1200; i++) insert.run('商品A', `视频${i}`, `file${i}.mp4`, `hash${i}`);
   insert.run('商品B', '视频', 'b.mp4', 'b');
+  db.prepare("UPDATE video_library_items SET created_at = unixepoch() - 8 * 86400, updated_at = unixepoch() WHERE folder_name = ?").run('商品B');
   db.exec('COMMIT');
   let response;
   await handleGetVideoLibraryFolders({}, { writeHead(status) { assert.equal(status, 200); }, end(body) { response = JSON.parse(body); } });
   assert.equal(response.counts['商品A'],1200);
   assert.equal(response.counts['商品B'],1);
   assert.ok(response.folders.includes('空文件夹'));
+  assert.deepEqual(response.recentFolders, ['商品A']);
   assert.ok(response.folders.indexOf('商品A') < response.folders.indexOf('商品B'));
   assert.equal(response.items,undefined);
   assert.ok(JSON.stringify(response).length < 500, 'Overview payload stays small despite 1201 videos');

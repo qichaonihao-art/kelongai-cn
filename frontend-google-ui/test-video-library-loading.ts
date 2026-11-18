@@ -6,12 +6,13 @@ const requests: string[] = [];
 globalThis.fetch = (async (url: string, init?: RequestInit) => {
   requests.push(url);
   if (init?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-  if (url === '/api/video-library/folders' && !init?.method) return Response.json({ folders: ['通用素材', 'A', '空文件夹'], counts: { A: 1200 } });
+  if (url === '/api/video-library/folders' && !init?.method) return Response.json({ folders: ['通用素材', 'A', '空文件夹'], counts: { A: 1200 }, recentFolders: ['A'] });
   return Response.json({ items: [], folders: ['A'], item: { id: 1 }, folder: 'A' });
 }) as typeof fetch;
 const home = await getVideoLibraryView({});
 assert.deepEqual(requests, ['/api/video-library/folders']);
 assert.equal(home.counts.A, 1200);
+assert.deepEqual(home.recentFolders, ['A']);
 assert.deepEqual(home.items, []);
 assert.ok(home.folders.includes('空文件夹'));
 await getVideoLibraryView({ folder: 'A & B', query: '产品' });

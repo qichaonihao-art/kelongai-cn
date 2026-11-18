@@ -193,7 +193,12 @@ export async function getVideoLibraryView(filters: { folder?: string; query?: st
     if (!json?.counts || typeof json.counts !== 'object') {
       throw new Error('请重启后台以启用素材库快速加载，再点击刷新');
     }
-    return { items: [], folders: json.folders || ['通用素材'], counts: json.counts };
+    return {
+      items: [],
+      folders: json.folders || ['通用素材'],
+      counts: json.counts,
+      recentFolders: Array.isArray(json.recentFolders) ? json.recentFolders : [],
+    };
   }
   const result = await getVideoLibrary(filters, signal);
   return { ...result, counts: {} };
