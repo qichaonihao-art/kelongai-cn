@@ -1,6 +1,6 @@
 import VideoLibraryThumbnail from '../components/VideoLibraryThumbnail';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, CheckCircle2, Download, FolderCog, FolderInput, FolderOpen, Loader2, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, Upload, Video, X } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Download, Folder, FolderCog, FolderInput, FolderOpen, Loader2, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, Upload, Video, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import HomeBackButton from '@/src/components/HomeBackButton';
@@ -383,9 +383,9 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
             </span>
           )}
           <button type="button" onClick={() => setSelectedFolder(folder)} className="flex h-full w-full flex-col items-center justify-center rounded-xl" aria-label={`打开${folder}文件夹`}>
-            <FolderOpen className={cn('size-11 transition-colors', recentFolders.has(folder)
-              ? 'text-emerald-600 group-hover:text-emerald-700'
-              : 'text-sky-400 group-hover:text-sky-500')} />
+            {recentFolders.has(folder)
+              ? <Folder className="size-11 fill-current text-emerald-600 transition-colors group-hover:text-emerald-700" />
+              : <FolderOpen className="size-11 text-sky-400 transition-colors group-hover:text-sky-500" />}
             <span className="mt-3 max-w-full truncate text-sm font-black text-slate-700">{folder}</span>
             <span className="mt-1 text-[11px] font-bold text-slate-400">{folderCounts.get(folder) || 0} 个视频</span>
             {recentFolders.has(folder) && <span className="mt-1 text-[11px] font-bold text-emerald-700">近 7 天有新增</span>}
