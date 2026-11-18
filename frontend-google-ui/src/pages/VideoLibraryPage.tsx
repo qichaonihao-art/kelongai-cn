@@ -388,6 +388,7 @@ export default function VideoLibraryPage({ onBack, onNavigate }: VideoLibraryPag
               : 'text-sky-400 group-hover:text-sky-500')} />
             <span className="mt-3 max-w-full truncate text-sm font-black text-slate-700">{folder}</span>
             <span className="mt-1 text-[11px] font-bold text-slate-400">{folderCounts.get(folder) || 0} 个视频</span>
+            {recentFolders.has(folder) && <span className="mt-1 text-[11px] font-bold text-emerald-700">近 7 天有新增</span>}
           </button>
           {folder !== DEFAULT_FOLDER && (
             <button type="button" onClick={() => startRenameFolder(folder)} disabled={deletingFolder !== null || isDeleting || isDownloadBusy || isRenamingFolder} className="pointer-events-none absolute bottom-2 left-2 inline-flex size-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-sky-50 hover:text-sky-600 disabled:cursor-not-allowed disabled:opacity-50" title={`重命名文件夹“${folder}”`} aria-label={`重命名${folder}文件夹`}>
