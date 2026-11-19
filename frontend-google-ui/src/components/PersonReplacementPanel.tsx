@@ -159,7 +159,7 @@ export default function PersonReplacementPanel({ onSaveToLibrary, incomingClip }
   const [promptHistoryNotice, setPromptHistoryNotice] = useState('');
   const [dialogue, setDialogue] = useState('');
   const [voiceDescription, setVoiceDescription] = useState('');
-  const [model, setModel] = useState<Model>('doubao-seedance-2-0-260128');
+  const [model, setModel] = useState<Model>('wan3.0-video');
   const [resolution, setResolution] = useState('480p');
   const [audioMode, setAudioMode] = useState<AudioMode>('preserve');
   const [duration, setDuration] = useState(0);
