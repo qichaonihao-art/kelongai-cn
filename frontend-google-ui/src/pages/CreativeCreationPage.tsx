@@ -287,6 +287,7 @@ const PAINTING_STYLE_OPTIONS = [
   { value: 'vintage-home', label: '复古雅居', description: '深木、皮质与故事感' },
   { value: 'gallery-display', label: '高端展陈', description: '展厅、酒店与艺术灯光' },
   { value: 'everyday-life', label: '烟火生活', description: '真实住宅与自然日常' },
+  { value: 'new-year', label: '新年主题', description: '节日着装、春节软装与年节氛围' },
 ] as const;
 
 function getPaintingStyleLabel(stylePreset?: string): string {
@@ -4319,6 +4320,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       batch,
       variationRound,
       creativeSessionId: paintingCreativeSessionId,
+      styleVersion: 2,
       profile: {
         structureVersion: isOrnament ? ORNAMENT_STRUCTURE_VERSION : undefined,
         productType: paintingProductType,
@@ -6290,16 +6292,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                             value={paintingPlan.stylePreset}
                             onChange={(event) => {
                               setPaintingPlan((previous) => ({ ...previous, stylePreset: event.target.value }));
-                              if (isOrnament) {
-                                setPaintingIdeas([]);
-                                setPaintingSelectedIdea(null);
-                                setPaintingFrameworkBatch(0);
-                                setPaintingBatchIdeas([]);
-                                setPaintingFullPrompt('');
-                                if (paintingSeedanceSourceRef.current?.prompt.trim() === seedancePrompt.trim()) {
-                                  setSeedancePrompt('');
-                                  paintingSeedanceSourceRef.current = null;
-                                }
+                              setPaintingIdeas([]);
+                              setPaintingSelectedIdea(null);
+                              setPaintingFrameworkBatch(0);
+                              setPaintingBatchIdeas([]);
+                              setPaintingFullPrompt('');
+                              if (paintingSeedanceSourceRef.current?.prompt.trim() === seedancePrompt.trim()) {
+                                setSeedancePrompt('');
+                                paintingSeedanceSourceRef.current = null;
                               }
                             }}
                             className="mt-1 block h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300"

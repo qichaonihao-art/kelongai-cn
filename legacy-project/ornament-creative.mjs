@@ -1,4 +1,3 @@
-import { springFestivalSceneRule } from './material-spring-festival.mjs';
 import { normalizeOrnamentSize, ornamentSizeRule } from './ornament-size.mjs';
 // 固定一体摆台：以32、33号马到成功镜头为主要动作参考。
 export const ORNAMENT_RED_CLOTH_DIRECTION = 29;
@@ -178,7 +177,7 @@ ${ornamentSceneStyleRules({ style: { ...style, wardrobe: [] }, scene: plan.scene
 ${frameworks.map(f => {
   const wardrobe = Array.isArray(style.wardrobe) ? style.wardrobe : [];
   const color = wardrobe.length ? wardrobe[(f.directionNumber - 1 + variationRound * 3) % wardrobe.length] : '';
-  return `${f.directionNumber}. ${f.title}：${f.action}${f.shotRule ? `；景别：${f.shotRule}` : ''}${color ? `；若出现人物，服装主色为${color}，款式、面料按本轮风格` : ''}${f.directionNumber === ORNAMENT_RED_CLOTH_DIRECTION ? `\n${ornamentRedClothRule()}` : ''}${springFestivalSceneRule('ornament', f.directionNumber)}`;
+  return `${f.directionNumber}. ${f.title}：${f.action}${f.shotRule ? `；景别：${f.shotRule}` : ''}${color ? `；若出现人物，服装主色为${color}，款式、面料按本轮风格` : ''}${f.directionNumber === ORNAMENT_RED_CLOTH_DIRECTION ? `\n${ornamentRedClothRule()}` : ''}`;
 }).join('\n')}
 【每条方案要求】
 1. 只输出标题与一句话核心创意，不输出完整视频提示词。标题能看出动作和景别，summary必须写具体空间布局、至少2—3件与所选风格协调的家居陈设、明确的光线和配色；有人物时写出具体服装款式、面料、主色及自然动作，无人方向不加人物。局部特写只描述原景别内实际可见的背景，不为了交代陈设增加全景或塞入道具。
@@ -189,5 +188,5 @@ ${frameworks.map(f => {
 }
 export function buildOrnamentVideoRequest(profile, idea, context, style) {
   const f = ornamentFramework(idea.directionNumber); const range = ornamentDuration(idea.durationMin || context.durationMin, idea.durationMax || context.durationMax);
-  return `输出可直接生成视频的中文完整提示词。${ornamentPhysicalRules(profile, f.directionNumber)}\n【已按风格展开的创意方案】标题：${idea.title || f.title}；核心创意：${idea.summary || f.action}\n继承方案中具体的空间布局、家具陈设、人物服装、配色、光线与动作衔接，细化为连续时间轴，不退回只复述固定动作模板；当前所选风格优先于旧方案的环境描述。当前固定动作、景别与运镜规则优先于旧方案中全程不推近、人物持续同框等冲突描述；产品结构、实际厘米尺寸与自然持握要求优先，方案仅决定这些约束内的具体执行，不采纳方案中相冲突的拆架、胸前持框或放大产品要求。\n用户计划：${JSON.stringify(context)}\n${Number(context.elementVariationIndex) > 0 ? '【换元素】相对上一版本更换人物服装、家具组合和空间配色，固定方向、所选风格及产品物理信息保持一致；同一条视频内不换人换装。' : ''}${context.previousPrompt || context.avoidElements?.length ? '历史提示词和avoidElements只供避重，不继承其中的旧风格、动作或尺寸。' : ''}\n${ornamentSceneStyleRules({ style, scene: context.scene, character: context.character, variationIndex: context.elementVariationIndex }, f.directionNumber)}${springFestivalSceneRule('ornament', f.directionNumber)}\n风格中的木材、石材、织物和配色仅用于场景与服装，不能改变本款产品结构与材质。必须遵守固定动作框架，一镜到底，只完成一个动作。分时间段写明初始状态、手的承托与撤离顺序、摄影机短路径和自然收束。${f.directionNumber === ORNAMENT_RED_CLOTH_DIRECTION ? '必须有一只手抓红布上角揭布，可以仅手入镜、不露脸；结尾留出完整展示产品的时间。' : '无人镜头不添加手。'}严禁采纳摘要或用户计划中的拆架、盘面分离动作。时长取${range.durationMin}至${range.durationMax}之间整数；以“总时长：X秒”结尾。`;
+  return `输出可直接生成视频的中文完整提示词。${ornamentPhysicalRules(profile, f.directionNumber)}\n【已按风格展开的创意方案】标题：${idea.title || f.title}；核心创意：${idea.summary || f.action}\n继承方案中具体的空间布局、家具陈设、人物服装、配色、光线与动作衔接，细化为连续时间轴，不退回只复述固定动作模板；当前所选风格优先于旧方案的环境描述。当前固定动作、景别与运镜规则优先于旧方案中全程不推近、人物持续同框等冲突描述；产品结构、实际厘米尺寸与自然持握要求优先，方案仅决定这些约束内的具体执行，不采纳方案中相冲突的拆架、胸前持框或放大产品要求。\n用户计划：${JSON.stringify(context)}\n${Number(context.elementVariationIndex) > 0 ? '【换元素】相对上一版本更换人物服装、家具组合和空间配色，固定方向、所选风格及产品物理信息保持一致；同一条视频内不换人换装。' : ''}${context.previousPrompt || context.avoidElements?.length ? '历史提示词和avoidElements只供避重，不继承其中的旧风格、动作或尺寸。' : ''}\n${ornamentSceneStyleRules({ style, scene: context.scene, character: context.character, variationIndex: context.elementVariationIndex }, f.directionNumber)}\n风格中的木材、石材、织物和配色仅用于场景与服装，不能改变本款产品结构与材质。必须遵守固定动作框架，一镜到底，只完成一个动作。分时间段写明初始状态、手的承托与撤离顺序、摄影机短路径和自然收束。${f.directionNumber === ORNAMENT_RED_CLOTH_DIRECTION ? '必须有一只手抓红布上角揭布，可以仅手入镜、不露脸；结尾留出完整展示产品的时间。' : '无人镜头不添加手。'}严禁采纳摘要或用户计划中的拆架、盘面分离动作。时长取${range.durationMin}至${range.durationMax}之间整数；以“总时长：X秒”结尾。`;
 }

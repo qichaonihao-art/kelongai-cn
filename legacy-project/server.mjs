@@ -17,7 +17,6 @@ import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 import { config as loadDotenv } from 'dotenv';
-import { springFestivalScene, springFestivalSceneRule } from './material-spring-festival.mjs';
 import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
 import { ORNAMENT_STRUCTURE_RULE, ornamentReferenceGuide, requireCurrentOrnamentProfile, isOrnamentProduct, normalizeOrnamentProfile, ORNAMENT_FRAMEWORKS, ornamentDuration, buildOrnamentVideoRequest, buildOrnamentIdeasRequest, ensureOrnamentPrompt, ornamentProfileFromPrompt } from './ornament-creative.mjs';
 import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, stickerProfileFromPrompt } from './sticker-creative.mjs';
@@ -16208,6 +16207,7 @@ async function handlePaintingAnalyze(req, res, expectedProductType = 'hanging') 
   }
 }
 
+const PAINTING_NEW_YEAR_STYLE = 'new-year';
 const PAINTING_STYLE_PROFILES = {
   'new-chinese': {
     label: '新中式雅致',
@@ -16248,6 +16248,11 @@ const PAINTING_STYLE_PROFILES = {
     label: '高端展陈',
     direction: '艺术展厅、精品酒店或高端样板间，使用克制射灯、留白和高级材质；人物穿纯色套装、衬衫或利落裙装，突出专业展陈感。',
     wardrobe: ['黑色', '宝蓝', '酒红', '墨绿', '银灰', '藏青', '莓果红', '焦糖', '孔雀蓝', '灰紫', '陶土红', '黛蓝', '暖棕', '水红', '橄榄绿', '月白', '浅紫', '竹绿', '雾蓝', '深咖'],
+  },
+  [PAINTING_NEW_YEAR_STYLE]: {
+    label: '新年主题',
+    direction: '每条方向都要在原空间和取景中呈现自然的春节氛围。空间镜头从红果枝、金桔、窗花、素面红包、中国结、酒红织物、红釉器皿中选一至两样放在画面边侧或已有陈设的位置，每条轮换组合。有人物时按原人物设定搭配节日针织、立领上衣或日常服装上的枣红、砖红点缀。无人镜头用原场景的陈设和光线体现年味。少数适合的空间镜头可以用小羊剪纸或小陶羊点出2027羊年，作为背景陪衬。严格局部特写只在原景别自然可见的背景使用暖调虚化或节庆织物；极近景仅用暖白侧光和获准的轻柔春节音乐烘托，不加人物、陈设、镜头或字幕。产品受光中性、保持原色，装饰不遮挡产品或动作路径。动作、人物数量、运镜、景别、尺寸和产品结构遵守原框架，声音服从本轮设置。',
+    wardrobe: ['枣红', '米白', '砖红', '深驼', '酒红', '燕麦色', '墨绿', '莓果红', '栗红', '暖棕', '陶土红', '浅驼', '红棕', '藏青', '深红', '茶棕', '暗红', '焦糖', '月白', '黛蓝'],
   },
   'everyday-life': {
     label: '烟火生活',
@@ -16743,13 +16748,12 @@ async function generateStickerIdeasCore(body, apiKey) {
     batch, totalBatches: 4,
     ideas: parsed.ideas.map((idea, index) => {
       const framework = STICKER_FRAMEWORKS[batch * 10 + index];
-      const festiveScene = framework.cleaning ? springFestivalScene('sticker', framework.directionNumber) : '';
       return {
         ...idea, id: `sticker-${framework.directionNumber}`, productType: 'sticker',
         directionNumber: framework.directionNumber,
         ...stickerDuration(framework.directionNumber, plan.durationMin, plan.durationMax),
         ...(framework.cleaning ? { title: framework.title } : {}),
-        summary: `【一镜到底·${framework.title}】${festiveScene ? `春节布置：${festiveScene}。` : ''}${framework.cleaning ? framework.action : idea.summary}`,
+        summary: `【一镜到底·${framework.title}】${framework.cleaning ? framework.action : idea.summary}`,
       };
     }),
   };
@@ -16770,7 +16774,9 @@ async function generateStickerIdeaPromptCore(apiKey, profile, idea, context) {
   if (idea.productType && idea.productType !== 'sticker') throw new Error('请重新生成当前贴画的创意方案');
   const normalized = normalizeStickerProfile(profile);
   const range = stickerDuration(idea.directionNumber, idea.durationMin || context.durationMin, idea.durationMax || context.durationMax);
-  const request = buildStickerVideoRequest(normalized, idea, context, resolvePaintingStyleProfile(idea.stylePreset || context.stylePreset));
+  const stylePreset = idea.stylePreset || context.stylePreset;
+  const style = resolvePaintingStyleProfile(stylePreset);
+  const request = buildStickerVideoRequest(normalized, idea, context, style);
   // 单次生成使用75秒超时，避免偶发上游悬挂导致界面长期等待。
   const call = (text) => callDoubaoArkText({
     apiKey,
@@ -16781,7 +16787,10 @@ async function generateStickerIdeaPromptCore(apiKey, profile, idea, context) {
   const prompt = String(await call(request) || '').trim();
   if (!prompt) throw new Error('模型返回的提示词为空');
   const duration = resolveMaterialPromptDuration(prompt, range);
-  return { prompt: ensureStickerPrompt(normalizeMaterialPromptDuration(prompt, duration), normalized, idea.directionNumber), duration };
+  return {
+    prompt: ensureStickerPrompt(normalizeMaterialPromptDuration(prompt, duration), normalized, idea.directionNumber, stylePreset === PAINTING_NEW_YEAR_STYLE ? style.direction : undefined),
+    duration,
+  };
 }
 
 async function generateOrnamentIdeasCore(body, apiKey) {
@@ -16903,7 +16912,7 @@ ${frameworks.map((framework, index) => {
   const detailVariant = directionNumber === PAINTING_CONTENT_DETAIL_DIRECTION
     ? `\n   本轮指定的摆放×机位×路径组合：${getPaintingContentDetailVariant(variationRound)}`
     : '';
-  return `${index + 1}. ${framework}${detailVariant}\n   镜头结构：${getPaintingShotStructure(directionNumber)}\n   若出现人物，本条服装主色必须为「${wardrobeAssignments[index]}」，可用其他协调色做小面积辅助。${springFestivalSceneRule('hanging', directionNumber)}`;
+  return `${index + 1}. ${framework}${detailVariant}\n   镜头结构：${getPaintingShotStructure(directionNumber)}\n   若出现人物，本条服装主色必须为「${wardrobeAssignments[index]}」，可用其他协调色做小面积辅助。`;
 }).join('\n')}
 
 【本轮变化与历史避重】
@@ -17172,7 +17181,7 @@ ${profileForPrompt}
 ${scene ? `- 用户指定场景偏好：${scene}` : ''}
 ${extraRequirements ? `\n【其他特殊要求】\n${extraRequirements}` : ''}
 ${isContentDetailScan ? `\n【本次原画内容特写指定组合（必须严格执行）】\n${contentDetailVariant}\n单条只使用这一个摆放场景、一个主机位和一条连续路径，禁止改成默认右侧斜拍，禁止为了显得丰富而在4-6秒内切换多个场景。` : ''}
-${elementVariationRequirements}${springFestivalSceneRule('hanging', idea?.directionNumber)}
+${elementVariationRequirements}
 
 【系统尺寸规则（理解并落实到时间轴；最终产品约束中无需逐字重复，服务端会确定性前置）】
 ${systemSizeRules}
@@ -17228,6 +17237,10 @@ ${hasDurationRange ? `8. 总时长必须在 ${durationMin}~${durationMax} 秒之
   // 特写方向的摆放场景、机位和移动路径也由服务端确定性锁定，避免模型反复默认右侧斜拍。
   if (isContentDetailScan) {
     promptText = ensurePaintingContentDetailVariant(promptText, elementVariationIndex);
+  }
+  if (styleProfile === PAINTING_STYLE_PROFILES[PAINTING_NEW_YEAR_STYLE]) {
+    const sceneStyle = `\n\n【新年主题】${styleProfile.direction}`;
+    promptText = promptText.replace(/(\n[ \t]*总时长[：:][^\n]*)?$/, (durationLine) => sceneStyle + durationLine);
   }
   console.log('[doubao painting] idea-prompt done', { requestId, promptLength: promptText.length, duration: resolvedDuration });
   return { prompt: promptText, duration: resolvedDuration };
