@@ -1505,6 +1505,52 @@ console.log('\n[39b] Wan3.0 Video 全自动批量速度锁');
   }
 }
 
+// ===== T39c 千问批量提交超时 =====
+console.log('\n[39c] 千问批量提交超时与历史提示');
+{
+  const previousFetch = globalThis.fetch;
+  const originalTimeout = AbortSignal.timeout;
+  const imagePath = join(stateDir, 'batch-wan-reference.png');
+  const batchRunId = 'run-wan-submit-timeout';
+  dbInsertPaintingBatchRun({ batchRunId, paintingName: '超时测试', status: 'running', controlStatus: 'running', model: WAN3_VIDEO_MODEL, imagePath });
+  const task = dbInsertPaintingBatchTask({ batchRunId, directionNumber: 25, status: 'prompt_ready', prompt: '展示产品', duration: 6 });
+  const historical = dbInsertPaintingBatchTask({
+    batchRunId, directionNumber: 26, status: 'needs_review',
+    errorMessage: '提交 Seedance 时超时，无法确认是否已扣费：The operation was aborted',
+  });
+  let posts = 0;
+  let timeoutMs = 0;
+  let submittedStatus;
+  try {
+    AbortSignal.timeout = (ms) => {
+      timeoutMs = ms;
+      return originalTimeout(ms);
+    };
+    globalThis.fetch = async (url, init) => {
+      if (init?.method !== 'POST' || !String(url).includes('/video-synthesis')) {
+        return previousFetch(url, init);
+      }
+      posts++;
+      submittedStatus = dbGetPaintingBatchTask(task.id).status;
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    };
+    await server.processBatchTask(task.id);
+    const after = dbGetPaintingBatchTask(task.id);
+    assert(posts === 1 && timeoutMs === 120000, '千问提交使用独立的 120 秒等待，只发送一次 POST');
+    assert(submittedStatus === 'submitting_seedance', '发出上游请求时持久化提交状态');
+    assert(after.status === 'needs_review' && after.errorMessage.includes('千问 3') && !after.errorMessage.includes('Seedance'), '千问超时进入待复核并标注正确模型');
+    await server.processBatchTask(task.id);
+    assert(posts === 1, '待复核任务再次调度也不重复提交');
+    const res = mockRes();
+    await handleGetPaintingBatchRun(mockReq(`/api/painting/batch-runs/${batchRunId}`), res);
+    const displayed = jsonBody(res).tasks.find((item) => item.id === historical.id);
+    assert(displayed.errorMessage.includes('千问 3') && !displayed.errorMessage.includes('Seedance'), '旧千问批次的错误提示也显示正确模型');
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+    globalThis.fetch = previousFetch;
+  }
+}
+
 // ===== T40 批量起始组、随机顺序与自定义数量 =====
 console.log('\n[40] 批量起始组、随机顺序与自定义数量');
 {

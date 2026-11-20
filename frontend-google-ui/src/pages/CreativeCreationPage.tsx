@@ -5068,7 +5068,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
-  // 查询原任务：仅回查已有 Seedance 任务编号的结果或重新入库，绝不重新提交。
+  // 查询原任务：仅回查已有的上游任务或重新入库。
   async function handlePaintingBatchQueryTask(taskId: number) {
     const runId = paintingBatchActiveRunId;
     setPaintingBatchListError('');
@@ -5080,12 +5080,14 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
   }
 
-  // 重新提交：上游确认未生成后，允许新建 Seedance 任务（可能再次扣费），需二次确认。
+  // 重新提交：确认原请求未被受理后，再创建新任务。
   async function handlePaintingBatchResubmitTask(taskId: number) {
     const runId = paintingBatchActiveRunId;
     setPaintingBatchListError('');
+    const model = paintingBatchDetail?.run.model;
+    const modelLabel = model ? getSeedanceModelLabel(model as SeedanceModelId) : '原批次模型';
     const ok = window.confirm(
-      '重新提交会再次调用 Seedance 并可能再次扣费。请先在 Seedance 后台确认该方向上游确实没有生成视频，再确认重新提交。'
+      `重新提交会再次调用${modelLabel}，可能重复扣费。请先在对应平台确认原请求未被受理，再重新提交。`
     );
     if (!ok) return;
     try {
@@ -6760,7 +6762,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                                 <span className="truncate">{task.ideaTitle || '未命名方向'}</span>
                               </div>
                               {task.errorMessage && (
-                                <div className="mt-0.5 truncate text-[10px] text-red-400">{task.errorMessage}</div>
+                                <div className="mt-0.5 text-[10px] text-red-400">{task.errorMessage}</div>
                               )}
                             </div>
                             <div className="flex shrink-0 items-center gap-1.5">

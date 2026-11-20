@@ -17,6 +17,7 @@ import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 import { config as loadDotenv } from 'dotenv';
+import { springFestivalScene, springFestivalSceneRule } from './material-spring-festival.mjs';
 import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
 import { ORNAMENT_STRUCTURE_RULE, ornamentReferenceGuide, requireCurrentOrnamentProfile, isOrnamentProduct, normalizeOrnamentProfile, ORNAMENT_FRAMEWORKS, ornamentDuration, buildOrnamentVideoRequest, buildOrnamentIdeasRequest, ensureOrnamentPrompt, ornamentProfileFromPrompt } from './ornament-creative.mjs';
 import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, stickerProfileFromPrompt } from './sticker-creative.mjs';
@@ -127,6 +128,7 @@ const PAINTING_BATCH_RUN_CONCURRENCY = Math.min(4, Math.max(1, Number(process.en
 const PAINTING_BATCH_PROMPT_CONCURRENCY = 2;
 const PAINTING_BATCH_DISPATCH_CONCURRENCY = 8;
 const PAINTING_BATCH_SEEDANCE_SUBMIT_INTERVAL_MS = 800;
+const PAINTING_BATCH_WAN3_SUBMIT_TIMEOUT_MS = 120 * 1000;
 const PAINTING_BATCH_MAX_RENDERING_TASKS = Number(process.env.PAINTING_BATCH_MAX_RENDERING_TASKS || 3);
 const PAINTING_BATCH_PROMPT_RETRY_MAX = 2;
 const PAINTING_BATCH_SEEDANCE_RETRY_MAX = 2;
@@ -15235,6 +15237,19 @@ const PAINTING_BATCH_MODELS = new Set([
 const PAINTING_BATCH_RESOLUTIONS = new Set(['480p', '720p']);
 const PAINTING_BATCH_MODEL_REJECT_MESSAGE = '全自动批量生成仅支持 Seedance 2.0 Mini 或千问 Wan3.0 Video。';
 
+function getPaintingBatchProviderLabel(model) {
+  if (model === WAN3_VIDEO_MODEL) return '千问 3（Wan3.0 Video）';
+  if (model === MINIMAX_H3_MODEL) return 'MiniMax H3';
+  return 'Seedance';
+}
+
+function getPaintingBatchTaskErrorMessage(message, model) {
+  if (!model || getPaintingBatchProviderLabel(model) === 'Seedance') return message;
+  // 兼容已入库的旧批次提示，不改写运行记录。
+  return message.replace(/^(提交 Seedance|Seedance (?:渲染|创建任务)|缺少 Seedance 任务编号)/, (prefix) =>
+    prefix.replace('Seedance', getPaintingBatchProviderLabel(model)));
+}
+
 function getPaintingBatchSupportedResolutions(model) {
   return ['480p', '720p'];
 }
@@ -15638,7 +15653,7 @@ async function handleGetPaintingBatchRun(req, res) {
     sendJson(res, 200, {
       ok: true,
       run: { ...run, imagePath: undefined },
-      tasks: tasks.map((t) => ({ ...t, prompt: undefined })),
+      tasks: tasks.map((t) => ({ ...t, prompt: undefined, errorMessage: getPaintingBatchTaskErrorMessage(t.errorMessage || '', run.model) })),
       counts: {
         total: tasks.length,
         completed: tasks.filter((t) => t.status === 'completed').length,
@@ -15673,7 +15688,7 @@ async function handleGetPaintingBatchRunByRequest(req, res) {
       ok: true,
       found: true,
       run: { ...run, imagePath: undefined },
-      tasks: tasks.map((t) => ({ ...t, prompt: undefined })),
+      tasks: tasks.map((t) => ({ ...t, prompt: undefined, errorMessage: getPaintingBatchTaskErrorMessage(t.errorMessage || '', run.model) })),
       counts: {
         total: tasks.length,
         completed: tasks.filter((t) => t.status === 'completed').length,
@@ -15905,7 +15920,7 @@ async function handleRetryPaintingBatchTask(req, res) {
     }
     if (!task.seedanceTaskId) {
       sendJson(res, 400, {
-        error: '该任务没有 Seedance 任务编号，无法查询原任务。请先到 Seedance 后台核实上游是否已生成；如确认未生成，请使用“重新提交”。',
+        error: `该任务没有${getPaintingBatchProviderLabel(dbGetPaintingBatchRun(task.batchRunId)?.model)}任务编号，无法查询原任务。请先核实上游是否已受理；如确认未受理，请使用“重新提交”。`,
         requiresResubmit: true,
       });
       return;
@@ -15943,7 +15958,7 @@ async function handleResubmitPaintingBatchTask(req, res) {
     }
     if (task.seedanceTaskId) {
       sendJson(res, 400, {
-        error: '该任务已存在 Seedance 任务编号，请使用“查询原任务”而不是重新提交，避免重复扣费。',
+        error: '该任务已存在上游任务编号，请使用“查询原任务”，避免重复扣费。',
       });
       return;
     }
@@ -15967,7 +15982,7 @@ async function handleResubmitPaintingBatchTask(req, res) {
     }
     if (!confirmed) {
       sendJson(res, 400, {
-        error: '重新提交会再次调用 Seedance 并可能再次扣费。请先在 Seedance 后台确认该方向上游确实没有生成视频，再确认重新提交。',
+        error: `重新提交会再次调用${getPaintingBatchProviderLabel(batchModel)}并可能重复扣费。请先在对应平台确认原请求未被受理，再重新提交。`,
         needsConfirm: true,
       });
       return;
@@ -16728,12 +16743,13 @@ async function generateStickerIdeasCore(body, apiKey) {
     batch, totalBatches: 4,
     ideas: parsed.ideas.map((idea, index) => {
       const framework = STICKER_FRAMEWORKS[batch * 10 + index];
+      const festiveScene = framework.cleaning ? springFestivalScene('sticker', framework.directionNumber) : '';
       return {
         ...idea, id: `sticker-${framework.directionNumber}`, productType: 'sticker',
         directionNumber: framework.directionNumber,
         ...stickerDuration(framework.directionNumber, plan.durationMin, plan.durationMax),
         ...(framework.cleaning ? { title: framework.title } : {}),
-        summary: `【一镜到底·${framework.title}】${framework.cleaning ? framework.action : idea.summary}`,
+        summary: `【一镜到底·${framework.title}】${festiveScene ? `春节布置：${festiveScene}。` : ''}${framework.cleaning ? framework.action : idea.summary}`,
       };
     }),
   };
@@ -16887,7 +16903,7 @@ ${frameworks.map((framework, index) => {
   const detailVariant = directionNumber === PAINTING_CONTENT_DETAIL_DIRECTION
     ? `\n   本轮指定的摆放×机位×路径组合：${getPaintingContentDetailVariant(variationRound)}`
     : '';
-  return `${index + 1}. ${framework}${detailVariant}\n   镜头结构：${getPaintingShotStructure(directionNumber)}\n   若出现人物，本条服装主色必须为「${wardrobeAssignments[index]}」，可用其他协调色做小面积辅助。`;
+  return `${index + 1}. ${framework}${detailVariant}\n   镜头结构：${getPaintingShotStructure(directionNumber)}\n   若出现人物，本条服装主色必须为「${wardrobeAssignments[index]}」，可用其他协调色做小面积辅助。${springFestivalSceneRule('hanging', directionNumber)}`;
 }).join('\n')}
 
 【本轮变化与历史避重】
@@ -17156,7 +17172,7 @@ ${profileForPrompt}
 ${scene ? `- 用户指定场景偏好：${scene}` : ''}
 ${extraRequirements ? `\n【其他特殊要求】\n${extraRequirements}` : ''}
 ${isContentDetailScan ? `\n【本次原画内容特写指定组合（必须严格执行）】\n${contentDetailVariant}\n单条只使用这一个摆放场景、一个主机位和一条连续路径，禁止改成默认右侧斜拍，禁止为了显得丰富而在4-6秒内切换多个场景。` : ''}
-${elementVariationRequirements}
+${elementVariationRequirements}${springFestivalSceneRule('hanging', idea?.directionNumber)}
 
 【系统尺寸规则（理解并落实到时间轴；最终产品约束中无需逐字重复，服务端会确定性前置）】
 ${systemSizeRules}
@@ -17411,7 +17427,7 @@ function isRetriableSeedanceError(error) {
   return /timeout|timed out|econn|socket|network|fetch|abort|terminated|connection|503|504|502|500|rate limit|too many/i.test(message);
 }
 
-function isFuzzySeedanceTimeout(error) {
+function isVideoSubmissionTimeout(error) {
   return error?.name === 'TimeoutError' || error?.name === 'AbortError' || /timeout|timed out/i.test(error?.message || '');
 }
 
@@ -17421,7 +17437,7 @@ async function sleepMs(ms) {
 
 async function buildPaintingImageFileForSeedance(imagePath, baseName = 'painting', uploadedMimeType) {
   if (!imagePath || !existsSync(imagePath)) {
-    throw new Error('挂画原图不存在，无法提交 Seedance 任务');
+    throw new Error('产品参考图不存在，无法提交视频任务');
   }
   const buffer = await readFile(imagePath);
   const ext = path.extname(imagePath).toLowerCase() || '.jpg';
@@ -17462,11 +17478,12 @@ function getPaintingBatchReferenceSpecs(task, batchRun) {
   return specs;
 }
 
-async function submitSeedanceTaskForBatchTask(task, batchRun) {
+async function submitSeedanceTaskForBatchTask(task, batchRun, onSubmitting = () => true) {
   const requestId = randomBytes(6).toString('hex');
   const model = batchRun.model || PAINTING_BATCH_MODEL;
   const isMiniMaxH3 = model === MINIMAX_H3_MODEL;
   const isWan3 = model === WAN3_VIDEO_MODEL;
+  const providerLabel = getPaintingBatchProviderLabel(model);
   const apiKey = isMiniMaxH3
     ? readValue(SERVER_CONFIG.minimaxApiKey)
     : isWan3
@@ -17547,7 +17564,12 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
     watermark,
   };
 
-  console.log('[painting batch] seedance submit start', {
+  const body = JSON.stringify(requestPayload);
+  if (!onSubmitting()) return null;
+
+  const startedAt = Date.now();
+  console.log('[painting batch] video submit start', {
+    model,
     requestId,
     batchRunId: batchRun.batchRunId,
     taskId: task.id,
@@ -17561,11 +17583,13 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
       'Content-Type': 'application/json',
       ...(isWan3 ? { 'X-DashScope-Async': 'enable' } : {}),
     },
-    body: JSON.stringify(requestPayload),
-    signal: AbortSignal.timeout(60 * 1000),
+    body,
+    signal: AbortSignal.timeout(isWan3 ? PAINTING_BATCH_WAN3_SUBMIT_TIMEOUT_MS : 60 * 1000),
   });
 
-  const responseText = await upstreamRes.text();
+  const responseText = await upstreamRes.text().catch((error) => {
+    throw Object.assign(error, { statusCode: upstreamRes.status });
+  });
   let json = null;
   try {
     json = responseText ? JSON.parse(responseText) : null;
@@ -17573,7 +17597,7 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
 
   if (!upstreamRes.ok) {
     const rawError = json?.error?.message || json?.message || json?.code || '';
-    const error = new Error(translateUpstreamError(rawError, `${isMiniMaxH3 ? 'MiniMax H3' : isWan3 ? 'Wan3.0 Video' : 'Seedance'} 创建任务失败（状态码 ${upstreamRes.status}）`));
+    const error = new Error(translateUpstreamError(rawError, `${providerLabel} 创建任务失败（状态码 ${upstreamRes.status}）`));
     error.statusCode = upstreamRes.status;
     throw error;
   }
@@ -17585,10 +17609,12 @@ async function submitSeedanceTaskForBatchTask(task, batchRun) {
       ? encodeWan3TaskId(rawTaskId)
       : rawTaskId;
   if (!seedanceTaskId) {
-    throw new Error('Seedance 创建任务失败：服务端未返回任务编号');
+    throw new Error('上游响应未返回任务编号');
   }
 
-  console.log('[painting batch] seedance submit done', {
+  console.log('[painting batch] video submit done', {
+    model,
+    elapsedMs: Date.now() - startedAt,
     requestId,
     batchRunId: batchRun.batchRunId,
     taskId: task.id,
@@ -17787,6 +17813,7 @@ async function processBatchTask(taskId) {
   if (!task) return;
   const batchRun = dbGetPaintingBatchRun(task.batchRunId);
   if (!batchRun) return;
+  const providerLabel = getPaintingBatchProviderLabel(batchRun.model);
 
   const terminalStatuses = new Set(['completed', 'failed', 'stopped', 'needs_review']);
   if (terminalStatuses.has(task.status)) {
@@ -17864,9 +17891,9 @@ async function processBatchTask(taskId) {
     if (task.seedanceTaskId) {
       dbUpdatePaintingBatchTask(task.id, { status: 'seedance_submitted' });
     } else {
-      dbUpdatePaintingBatchTask(task.id, { status: 'submitting_seedance', errorMessage: '' });
       const submitSemaphore = getPaintingBatchSubmitSemaphore(batchRun.model || PAINTING_BATCH_MODEL);
       await submitSemaphore.acquire();
+      let submissionStartedAt = null;
       try {
         task = dbGetPaintingBatchTask(task.id);
         if (!task || terminalStatuses.has(task.status)) return;
@@ -17876,36 +17903,59 @@ async function processBatchTask(taskId) {
           return;
         }
 
-        const { seedanceTaskId } = await submitSeedanceTaskForBatchTask(task, currentRun);
+        const submission = await submitSeedanceTaskForBatchTask(task, currentRun, () => {
+          const latestRun = dbGetPaintingBatchRun(task.batchRunId);
+          if (latestRun?.controlStatus === 'paused' || latestRun?.controlStatus === 'stopping' || latestRun?.controlStatus === 'stopped' || !latestRun) {
+            dbUpdatePaintingBatchTask(task.id, { status: latestRun?.controlStatus === 'paused' ? 'paused' : 'stopped' });
+            return false;
+          }
+          dbUpdatePaintingBatchTask(task.id, { status: 'submitting_seedance', errorMessage: '' });
+          submissionStartedAt = Date.now();
+          return true;
+        });
+        if (!submission) return;
+        const { seedanceTaskId } = submission;
         dbUpdatePaintingBatchTask(task.id, {
           seedanceTaskId,
           status: 'seedance_submitted',
           retryCount: 0,
           errorMessage: '',
         });
-        // 提交到 Seedance 即视为该方向已被使用（“仅生成未使用方向”的服务端持久化依据）。
+        // 上游受理后即视为该方向已被使用。
         dbMarkPaintingDirectionUsed(currentRun.imageHash, currentRun.variationRound, task.directionNumber, currentRun.profile?.productType, currentRun.options?.creativeSessionId);
         await sleepMs(PAINTING_BATCH_SEEDANCE_SUBMIT_INTERVAL_MS);
       } catch (error) {
         const nextRetryCount = (task.retryCount || 0) + 1;
-        const isFuzzy = isFuzzySeedanceTimeout(error);
-        if (isFuzzy) {
+        const timedOut = isVideoSubmissionTimeout(error) || [408, 504].includes(error?.statusCode);
+        const outcomeUnknown = submissionStartedAt !== null && (
+          !error?.statusCode || error.statusCode < 400 || error.statusCode >= 500 || timedOut
+        );
+        console.warn('[painting batch] video submit error', {
+          batchRunId: task.batchRunId, taskId: task.id, model: batchRun.model,
+          stage: submissionStartedAt === null ? 'prepare' : 'submit',
+          elapsedMs: submissionStartedAt === null ? undefined : Date.now() - submissionStartedAt,
+          statusCode: error?.statusCode,
+          errorName: error?.name,
+          networkCode: error?.cause?.code,
+          outcomeUnknown,
+        });
+        if (outcomeUnknown) {
           dbUpdatePaintingBatchTask(task.id, {
             status: 'needs_review',
             retryCount: nextRetryCount,
-            errorMessage: `提交 Seedance 时超时，无法确认是否已扣费：${error?.message || '未知错误'}`,
+            errorMessage: `提交 ${providerLabel}${timedOut ? '时超时' : '后未能确认结果'}。请先核实原请求是否已受理，再决定是否重新提交。`,
           });
         } else if (nextRetryCount > PAINTING_BATCH_SEEDANCE_RETRY_MAX) {
           dbUpdatePaintingBatchTask(task.id, {
             status: 'failed',
             retryCount: nextRetryCount,
-            errorMessage: `提交 Seedance 失败：${error?.message || '未知错误'}`,
+            errorMessage: `提交 ${providerLabel} 失败：${error?.message || '未知错误'}`,
           });
         } else {
           dbUpdatePaintingBatchTask(task.id, {
-            status: 'retry_waiting',
+            status: 'prompt_ready',
             retryCount: nextRetryCount,
-            errorMessage: `提交 Seedance 失败（第 ${nextRetryCount} 次重试）：${error?.message || '未知错误'}`,
+            errorMessage: `提交 ${providerLabel} 失败（第 ${nextRetryCount} 次重试）：${error?.message || '未知错误'}`,
           });
           await sleepMs(Math.min(16000, 2000 * Math.pow(2, nextRetryCount - 1)));
         }
@@ -17933,7 +17983,7 @@ async function processBatchTask(taskId) {
         }
         // 终止/暂停后：已提交任务仍继续轮询与入库，不因 controlStatus 变化而中断（收尾语义）。
         if (!task.seedanceTaskId) {
-          dbUpdatePaintingBatchTask(task.id, { status: 'failed', errorMessage: '缺少 Seedance 任务编号' });
+          dbUpdatePaintingBatchTask(task.id, { status: 'failed', errorMessage: `缺少 ${providerLabel} 任务编号` });
           return;
         }
 
@@ -17966,14 +18016,14 @@ async function processBatchTask(taskId) {
               dbUpdatePaintingBatchTask(task.id, {
                 status: 'failed',
                 retryCount: nextRetryCount,
-                errorMessage: `Seedance 渲染失败：${statusLower}`,
+                errorMessage: `${providerLabel} 渲染失败：${statusLower}`,
               });
             } else {
               dbUpdatePaintingBatchTask(task.id, {
                 status: 'retry_waiting',
                 retryCount: nextRetryCount,
                 seedanceTaskId: '',
-                errorMessage: `Seedance 渲染失败（第 ${nextRetryCount} 次重试）：${statusLower}`,
+                errorMessage: `${providerLabel} 渲染失败（第 ${nextRetryCount} 次重试）：${statusLower}`,
               });
             }
             return;
@@ -17990,7 +18040,7 @@ async function processBatchTask(taskId) {
         if (Date.now() - startedAt > PAINTING_BATCH_TASK_TIMEOUT_MS) {
           dbUpdatePaintingBatchTask(task.id, {
             status: 'failed',
-            errorMessage: 'Seedance 渲染等待超过 15 分钟',
+            errorMessage: `${providerLabel} 渲染等待超过 15 分钟`,
           });
           return;
         }
@@ -22136,6 +22186,7 @@ export {
   handleSeedanceCreateTask,
   handleSeedanceGetTask,
   submitSeedanceTaskForBatchTask,
+  processBatchTask,
   fetchManualVideoGenerationTask,
   encodeMiniMaxH3TaskId,
   decodeMiniMaxH3TaskId,

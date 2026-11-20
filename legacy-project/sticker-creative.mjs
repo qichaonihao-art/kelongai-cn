@@ -1,3 +1,4 @@
+import { springFestivalSceneRule } from './material-spring-festival.mjs';
 // PVC 贴画与卷轴的规则独立维护；方向编号只在各自产品类型内有意义。
 export const STICKER_MARKER = '【PVC背胶贴画物理锁定】';
 export const STICKER_FINAL_MARKER = '【PVC墙贴最终几何裁决】';
@@ -343,7 +344,7 @@ export function buildStickerIdeasRequest(profile, plan, batch, variationRound, a
 档案：${JSON.stringify(normalizeStickerProfile(profile))}
 偏好：${JSON.stringify(plan)}；风格：${style.label}，${style.direction}。第${variationRound + 1}轮；避免复述这些旧创意：${JSON.stringify(avoidIdeas || [])}。
 方向1—30和33—36都是已贴好成品，必须在第0秒以前已经贴平，不得增加手持贴画、搬运、展开、旋转或贴墙动作。方向33—36只用指定的清洁工具轻扫画芯中部一次，避开边角。方向31、32及37—40才涉及柔性形态或局部安装。每个方向必须服从该方向指定的唯一功能空间及家具，不跨场景混搭；茶室、书房、餐厅、办公室、走廊和工作区不得自动补入住宅沙发或成排靠垫，只有明确标为客厅的方向才允许使用该方向指定的沙发。每条明确地点和2件符合该空间用途的陈设，局部特写例外。产品无挂钩木条挂绳，不使用定位胶带，不套用卷轴尺寸补偿。参考图整个正面只能描述为一张不可拆分的平面印刷位图，不得把任何颜色区域命名或描述成独立框体、相框、匾或外围部件，也不得设计专门拍摄产品四周外沿的镜头。上传参考图是产品内容、颜色、外观、纹理和表面效果的唯一依据；产品只描述为哑光柔性PVC印刷薄片，不根据场景风格给产品换颜色或材质；所选风格只改变环境、人物、家具、服装和光线，不改变产品本身。成品与本方向主家具组合对应的功能墙几何中心对齐。白色画背属于主体，背膜另行揭离。已贴好不能二次展开。人物正常速度，镜头全程平稳均匀推进，结束焦点在画，允许文字、印章和画芯内部纹理特写结尾。只拍时长内真实可完成的动作。
-${frameworks.map((f, index) => `${index + 1}. 方向${f.directionNumber}：${f.title}。${f.action}。${stickerSceneLayoutRule(f.directionNumber)}${stickerSceneScaleRule(profile, f.directionNumber)}一镜到底。人物如出现，主色${style.wardrobe[(batch * 10 + index + variationRound * 3) % style.wardrobe.length]}。`).join('\n')}
+${frameworks.map((f, index) => `${index + 1}. 方向${f.directionNumber}：${f.title}。${f.action}。${stickerSceneLayoutRule(f.directionNumber)}${stickerSceneScaleRule(profile, f.directionNumber)}一镜到底。人物如出现，主色${style.wardrobe[(batch * 10 + index + variationRound * 3) % style.wardrobe.length]}。${springFestivalSceneRule('sticker', f.directionNumber)}`).join('\n')}
 每条一句具体创意，写明连续动作和镜头路径；同一条只一个场景，人物、布置不得中途变化。不要写完整提示词。`;
 }
 
@@ -359,7 +360,7 @@ ${stickerPhysicalRules(profile, f.directionNumber)}
 固定档案：${JSON.stringify(promptProfile)}
 方向${f.directionNumber}：${f.title}。${f.action}
 ${f.cleaning ? '本轮具体创意服从上述固定除尘动作和机位。' : `本轮具体创意：${idea.title}；${idea.summary}`}
-风格：${style.label}，${style.direction}。用户偏好：${JSON.stringify(context)}
+风格：${style.label}，${style.direction}。用户偏好：${JSON.stringify(context)}${springFestivalSceneRule('sticker', f.directionNumber)}
 上次提示词和avoidElements只是避重资料，不能覆盖当前物理状态。换元素保留本方向动作结构，可更换同类房间布置、人物服装、光线和陈设，不改变产品。视频画幅为${context.ratio || '9:16'}，不是产品实体比例。
 按场景陈设、人物动作、镜头路径的顺序写，一个连续镜头，不切镜。时间轴从0秒无重叠连续到结束；按时长每1—2秒交代实际动作或取景变化，但不为了凑节点给贴好的画增加施工动作。镜头路径长度按整段时间均匀分配；保留近景特写方向。全景看不清小字时不重写小字，不放大实物，不强制远景识别笔画。
 真实住宅自然光、柔和阴影、生活纹理和自然人物，不做卡通、三维渲染或塑料皮肤。声音服从偏好，静音时讲解可只有口型。不添加包装、定位胶带、挂钩、木杆或硬框；不要在产品颜色、外围色带、材质观感上做任何发挥——产品始终是参考图那张平面印刷品本身，颜色与对比以参考图为准。场景风格只改变环境和人物。禁止二次展开、横竖旋转、变形、画面漂移、人物克隆和无操作的物体移动。${f.state === 'installed' ? '这是纯成品展示，输出文本中完全不要描述产品背侧、施工材料或任何剥离过程，只描述已经贴实的正面成品。' : ''}已安装方向的最终提示词若出现“手持画、搬画、展开画、旋转画、把画贴上墙”等动作，必须在输出前删除这些动作。`;
