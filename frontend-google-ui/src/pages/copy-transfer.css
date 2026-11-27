@@ -1,50 +1,12 @@
 @keyframes copy-transfer-scan {
-  from {
-    transform: translateX(-120%);
-  }
-  to {
-    transform: translateX(230%);
-  }
+  from { transform: translateX(-120%); }
+  to { transform: translateX(230%); }
 }
 
 .copy-transfer-scan {
-  animation: copy-transfer-scan 2.8s linear infinite;
-}
-
-.studio-range {
-  -webkit-appearance: none;
-  appearance: none;
-  height: 6px;
-  border-radius: 9999px;
-  background: rgba(148, 163, 184, 0.25);
-  outline: none;
-}
-
-.studio-range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 9999px;
-  background: linear-gradient(135deg, #f43f5e, #f59e0b);
-  border: 2.5px solid #ffffff;
-  box-shadow: 0 2px 8px rgba(244, 63, 94, 0.35);
-  cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-.studio-range::-webkit-slider-thumb:hover {
-  transform: scale(1.12);
-  box-shadow: 0 3px 12px rgba(244, 63, 94, 0.48);
-}
-
-.studio-range:disabled::-webkit-slider-thumb {
-  opacity: 0.45;
-  cursor: not-allowed;
+  animation: copy-transfer-scan 3s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .copy-transfer-scan {
-    animation: none;
-  }
+  .copy-transfer-scan { animation: none; }
 }
