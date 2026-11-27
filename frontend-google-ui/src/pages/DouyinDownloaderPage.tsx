@@ -784,14 +784,15 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   function handleLocalVideoSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    const isMp3 = /\.mp3$/i.test(file.name) && (!file.type || file.type === 'audio/mpeg' || file.type === 'audio/mp3');
-    if (!file.type.startsWith('video/') && !isMp3) {
-      setError('请选择视频或 MP3 音频文件');
+    const isSupportedAudio = /\.(mp3|wav)$/i.test(file.name)
+      && (!file.type || file.type.startsWith('audio/') || file.type === 'application/octet-stream');
+    if (!file.type.startsWith('video/') && !isSupportedAudio) {
+      setError('请选择视频、MP3 或 WAV 音频文件');
       return;
     }
     const url = URL.createObjectURL(file);
     setLocalVideoUrl(url);
-    setLocalIsAudio(isMp3);
+    setLocalIsAudio(isSupportedAudio);
     void handleExtractLocalTranscript(file);
     if (localVideoInputRef.current) {
       localVideoInputRef.current.value = '';
@@ -1166,7 +1167,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                 exit={{ opacity: 0 }}
                 className="rounded-3xl border border-slate-100 bg-white/50 px-4 py-8 text-center text-sm text-slate-400"
               >
-                粘贴视频链接或上传本地视频、MP3，一键提取逐字稿文案。
+                粘贴视频链接或上传本地视频、MP3、WAV，一键提取逐字稿文案。
               </motion.div>
             )}
           </AnimatePresence>
@@ -1251,7 +1252,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                 </div>
                 <div>
                   <p className="text-base font-black text-slate-800">本地文案提取</p>
-                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">上传本地视频或 MP3，提取逐字稿文案</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">上传本地视频、MP3 或 WAV，提取逐字稿文案</p>
                 </div>
                 <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-emerald-500">
                   开始使用 <ArrowLeft className="size-3 rotate-180" />
@@ -1319,12 +1320,12 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                     </div>
                     <div>
                       <p className="text-sm font-black text-slate-800">上传本地音视频提取逐字稿</p>
-                      <p className="mt-1 text-xs text-slate-400">支持 MP4、MOV 等常见视频及 MP3 音频</p>
+                      <p className="mt-1 text-xs text-slate-400">支持 MP4、MOV 等常见视频及 MP3、WAV 音频</p>
                     </div>
                     <input
                       ref={localVideoInputRef}
                       type="file"
-                      accept="video/*,.mp3,audio/mpeg"
+                      accept="video/*,.mp3,.wav,audio/mpeg,audio/wav,audio/x-wav"
                       onChange={handleLocalVideoSelect}
                       className="hidden"
                     />
@@ -1342,7 +1343,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       ) : (
                         <>
                           <Upload className="size-4" />
-                          选择视频或 MP3
+                          选择视频或音频
                         </>
                       )}
                     </button>
