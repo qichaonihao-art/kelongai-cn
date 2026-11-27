@@ -279,6 +279,7 @@ const PAINTING_HISTORY_MAX_AGE_MS = PAINTING_HISTORY_MAX_AGE_DAYS * 24 * 60 * 60
 const MAX_PAINTING_HISTORY_ITEMS = 100;
 const PAINTING_STYLE_OPTIONS = [
   { value: 'new-chinese', label: '新中式雅致', description: '实木、茶席与东方文化感' },
+  { value: 'oriental-luxury', label: '东方轻奢雅居', description: '胡桃木格栅、暖灰石材与柔和射灯' },
   { value: 'modern-minimal', label: '现代简约', description: '简洁家具、自然生活感' },
   { value: 'modern-luxury', label: '现代轻奢', description: '石材、金属与高级样板间' },
   { value: 'cream-warm', label: '奶油温馨', description: '柔和布艺与家庭氛围' },
@@ -726,18 +727,19 @@ interface SeedanceManualPreference {
   watermark: boolean;
 }
 type ReverseMode = 'direct' | 'replace' | 'image' | 'painting';
-type PaintingBatchStartOrder = 'group1' | 'group2' | 'group3' | 'group4' | 'random';
+type PaintingBatchStartOrder = 'group1' | 'group2' | 'group3' | 'group4' | 'group5' | 'random';
 
 const PAINTING_BATCH_START_OPTIONS: Array<{ value: PaintingBatchStartOrder; label: string }> = [
   { value: 'group1', label: '从第1组开始' },
   { value: 'group2', label: '从第2组开始' },
   { value: 'group3', label: '从第3组开始' },
   { value: 'group4', label: '从第4组开始' },
+  { value: 'group5', label: '从第5组开始（新增摆件方向）' },
   { value: 'random', label: '随机顺序' },
 ];
 
-function createRandomPaintingDirectionOrder(): number[] {
-  const directions = Array.from({ length: 40 }, (_, index) => index + 1);
+function createRandomPaintingDirectionOrder(count = 40): number[] {
+  const directions = Array.from({ length: count }, (_, index) => index + 1);
   for (let index = directions.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(Math.random() * (index + 1));
     [directions[index], directions[swapIndex]] = [directions[swapIndex], directions[index]];
@@ -745,10 +747,10 @@ function createRandomPaintingDirectionOrder(): number[] {
   return directions;
 }
 
-function parsePaintingBatchRequestedCount(value: string): number | null {
-  if (!value.trim()) return 40;
+function parsePaintingBatchRequestedCount(value: string, max = 40): number | null {
+  if (!value.trim()) return max;
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 40 ? parsed : null;
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= max ? parsed : null;
 }
 
 interface ReverseSeedanceSyncSnapshot {
@@ -4054,6 +4056,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     clearPaintingWoodReference('upper');
     clearPaintingWoodReference('lower');
     setPaintingProductType(type);
+    setPaintingTotalBatches(type === 'ornament' ? 5 : 4);
+    setPaintingBatchStartOrder('group1');
+    setPaintingBatchRandomOrder(createRandomPaintingDirectionOrder(type === 'ornament' ? 44 : 40));
     const batchPreference = paintingBatchPreferenceRef.current[type];
     setPaintingBatchModel(batchPreference.model);
     setPaintingBatchResolution(batchPreference.resolution);
@@ -4321,6 +4326,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       variationRound,
       creativeSessionId: paintingCreativeSessionId,
       styleVersion: 2,
+      ornamentFrameworkVersion: isOrnament ? 2 : undefined,
       profile: {
         structureVersion: isOrnament ? ORNAMENT_STRUCTURE_VERSION : undefined,
         productType: paintingProductType,
@@ -4613,11 +4619,12 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   }
 
   function orderPaintingBatchIdeas(ideas: PaintingIdeaSummary[]): PaintingIdeaSummary[] {
+    const count = ideas.length;
     const directionOrder = paintingBatchStartOrder === 'random'
       ? paintingBatchRandomOrder
       : (() => {
           const startDirection = (Number(paintingBatchStartOrder.replace('group', '')) - 1) * 10 + 1;
-          return Array.from({ length: 40 }, (_, index) => ((startDirection - 1 + index) % 40) + 1);
+          return Array.from({ length: count }, (_, index) => ((startDirection - 1 + index) % count) + 1);
         })();
     const orderIndex = new Map(directionOrder.map((direction, index) => [direction, index]));
     return [...ideas].sort((left, right) => {
@@ -4628,7 +4635,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   }
 
   function selectPaintingBatchIdeas(ideas: PaintingIdeaSummary[]): PaintingIdeaSummary[] {
-    const requestedCount = parsePaintingBatchRequestedCount(paintingBatchRequestedCount);
+    const requestedCount = parsePaintingBatchRequestedCount(paintingBatchRequestedCount, isOrnament ? 44 : 40);
     if (requestedCount === null) return [];
     const ordered = orderPaintingBatchIdeas(ideas);
     const available = paintingBatchOnlyUnused
@@ -4838,8 +4845,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     try {
       const variationRound = variationRoundOverride ?? paintingVariationRound;
       const ideas = await collectPaintingBatchIdeas(variationRound);
-      if (ideas.length < 40) {
-        throw new Error(`创意方向数量不足，已获取 ${ideas.length} 条，需要 40 条。请先分批生成创意方案。`);
+      const requiredIdeas = isOrnament ? 44 : 40;
+      if (ideas.length < requiredIdeas) {
+        throw new Error(`创意方向数量不足，已获取 ${ideas.length} 条，需要 ${requiredIdeas} 条。请先分批生成创意方案。`);
       }
       setPaintingBatchIdeas(ideas);
       setPaintingVariationRound(variationRound);
@@ -4879,7 +4887,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       setPaintingBatchFolderChoiceSource(choice.source);
       setShowPaintingBatchFolderChoices(false);
       if (paintingBatchStartOrder === 'random') {
-        setPaintingBatchRandomOrder(createRandomPaintingDirectionOrder());
+        setPaintingBatchRandomOrder(createRandomPaintingDirectionOrder(isOrnament ? 44 : 40));
       }
       setPaintingBatchPrepareStage('');
       setPaintingBatchConfirmOpen(true);
@@ -4906,7 +4914,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
   }
 
   function buildPaintingBatchCreateOptions(ideas: PaintingIdeaSummary[], creationRequestId: string) {
-    const requestedCount = parsePaintingBatchRequestedCount(paintingBatchRequestedCount) ?? 40;
+    const requestedCount = parsePaintingBatchRequestedCount(paintingBatchRequestedCount, isOrnament ? 44 : 40) ?? (isOrnament ? 44 : 40);
     return {
       file: paintingImage!.file,
       upperWoodFile: !isHanging ? null : paintingUpperWoodImage?.file || null,
@@ -5009,9 +5017,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     }
     if (paintingBatchCreating || paintingBatchConfirming) return;
     setPaintingBatchSubmitError('');
-    const requestedCount = parsePaintingBatchRequestedCount(paintingBatchRequestedCount);
+    const requestedCount = parsePaintingBatchRequestedCount(paintingBatchRequestedCount, isOrnament ? 44 : 40);
     if (requestedCount === null) {
-      const message = '生成数量请输入1到40之间的整数，留空则默认生成40条。';
+      const message = `生成数量请输入1到${isOrnament ? 44 : 40}之间的整数，留空则默认生成${isOrnament ? 44 : 40}条。`;
       setPaintingError(message);
       setPaintingBatchSubmitError(message);
       return;
@@ -5325,7 +5333,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
     setPaintingIdeaUsageCounts(restoredUsageCounts);
     setPaintingIdeaLastPrompts(restoredLastPrompts);
     setPaintingFrameworkBatch(restoredBatch);
-    setPaintingTotalBatches(item.totalBatches || 4);
+    setPaintingTotalBatches(getPaintingProductType(item.profile) === 'ornament' ? 5 : (item.totalBatches || 4));
     setPaintingVariationRound(restoredRound);
     setPaintingCreativeSessionId(item.creativeSessionId || '');
     if (item.plan) {
@@ -6045,7 +6053,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <label className="flex items-center gap-1">高<input aria-label="贴画高度（厘米）" type="number" min={10} max={500} value={stickerHeightCm} disabled={paintingDraftBusy} onChange={(event) => changeStickerDimension('height', Number(event.target.value))} className="w-20 rounded-lg border border-slate-200 px-2 py-1" />厘米</label>
                       </div>
                       <p className="mt-2 text-[11px] leading-5 text-slate-500">PVC柔性背胶 · 白色画背 · 可揭背膜 · 二维印刷装饰边线。以茶室、客厅、书房为主，30个成品展示＋10个形态与安装方向。</p>
-                    </> : isOrnament ? <p className="mt-2 text-[11px] leading-5 text-slate-500">使用本款正面与背面确定外观和固定支撑结构。40个方向沿用原镜头与动作框架。</p> : <p className="mt-2 text-[11px] leading-5 text-slate-500">沿用原有40个挂画框架及尺寸补偿规则。</p>}
+                    </> : isOrnament ? <p className="mt-2 text-[11px] leading-5 text-slate-500">使用本款正面与背面确定外观和固定支撑结构。共44个方向：前40个已优化为场景扫拍、环视与背景生活陈列，并新增4个同行视频提炼框架。</p> : <p className="mt-2 text-[11px] leading-5 text-slate-500">沿用原有40个挂画框架及尺寸补偿规则。</p>}
                         {isOrnament && (
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <div className="mb-2 text-xs font-bold text-slate-600">摆台外框尺寸</div>
@@ -6317,7 +6325,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         <div className="text-[11px] font-semibold text-slate-500">
                           方案数量
                           <div className="mt-1 flex h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600">
-                            一轮 40 个不同方向 · 当前每批展示 10 条
+                            一轮 {isOrnament ? 44 : 40} 个不同方向 · 当前每批展示{isOrnament ? '最多 ' : ' ' }10 条
                           </div>
                         </div>
                         <label className="text-[11px] font-semibold text-slate-500">
@@ -6429,9 +6437,9 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                         className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 to-orange-500 px-4 text-sm font-black text-white shadow-[0_8px_20px_rgba(244,63,94,0.28)] transition-transform hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {paintingBatchPreparing ? <Loader2 className="size-4 animate-spin" /> : <Film className="size-4" />}
-                        {paintingBatchPreparing ? (paintingBatchPrepareStage || '正在准备 40 个方向…') : '批量生成视频'}
+                        {paintingBatchPreparing ? (paintingBatchPrepareStage || `正在准备 ${isOrnament ? 44 : 40} 个方向…`) : '批量生成视频'}
                       </button>
-                      <p className="text-center text-[11px] leading-5 text-slate-500">默认准备 40 个创意方向，确认后才开始生成视频；数量、模型与保存位置可在下一步调整。</p>
+                      <p className="text-center text-[11px] leading-5 text-slate-500">默认准备 {isOrnament ? 44 : 40} 个创意方向，确认后才开始生成视频；数量、模型与保存位置可在下一步调整。</p>
                       {paintingBatchPrepareFailed && (
                         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">
                           <div className="font-bold">{paintingBatchPrepareError || '准备批量生成失败。'}</div>
@@ -8967,13 +8975,13 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   onChange={(event) => {
                     const nextOrder = event.target.value as PaintingBatchStartOrder;
                     setPaintingBatchStartOrder(nextOrder);
-                    if (nextOrder === 'random') setPaintingBatchRandomOrder(createRandomPaintingDirectionOrder());
+                    if (nextOrder === 'random') setPaintingBatchRandomOrder(createRandomPaintingDirectionOrder(isOrnament ? 44 : 40));
                     batchCreationRequestIdRef.current = null;
                   }}
                   disabled={paintingBatchCreating || paintingBatchConfirming}
                   className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 outline-none focus:border-rose-300 disabled:cursor-not-allowed disabled:bg-slate-50"
                 >
-                  {PAINTING_BATCH_START_OPTIONS.map((option) => (
+                  {PAINTING_BATCH_START_OPTIONS.filter(option => isOrnament || option.value !== 'group5').map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
@@ -8983,22 +8991,22 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 <input
                   type="number"
                   min={1}
-                  max={40}
+                  max={isOrnament ? 44 : 40}
                   step={1}
                   value={paintingBatchRequestedCount}
                   onChange={(event) => {
                     setPaintingBatchRequestedCount(event.target.value);
                     batchCreationRequestIdRef.current = null;
                   }}
-                  placeholder="留空默认40"
+                  placeholder={`留空默认${isOrnament ? 44 : 40}`}
                   disabled={paintingBatchCreating || paintingBatchConfirming}
                   className={cn(
                     'h-11 w-full rounded-xl border bg-white px-3 text-xs font-bold text-slate-700 outline-none disabled:cursor-not-allowed disabled:bg-slate-50',
-                    parsePaintingBatchRequestedCount(paintingBatchRequestedCount) === null ? 'border-red-300 focus:border-red-400' : 'border-slate-200 focus:border-rose-300'
+                    parsePaintingBatchRequestedCount(paintingBatchRequestedCount, isOrnament ? 44 : 40) === null ? 'border-red-300 focus:border-red-400' : 'border-slate-200 focus:border-rose-300'
                   )}
                 />
-                {parsePaintingBatchRequestedCount(paintingBatchRequestedCount) === null && (
-                  <span className="mt-1 block text-[10px] font-bold text-red-500">请输入1–40的整数</span>
+                {parsePaintingBatchRequestedCount(paintingBatchRequestedCount, isOrnament ? 44 : 40) === null && (
+                  <span className="mt-1 block text-[10px] font-bold text-red-500">请输入1–{isOrnament ? 44 : 40}的整数</span>
                 )}
               </label>
             </div>
@@ -9008,7 +9016,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                 ['批量模型', getSeedanceModelLabel(paintingBatchModel as SeedanceModelId)],
                 ['清晰度', paintingBatchResolution.toUpperCase()],
                 ['生成顺序', PAINTING_BATCH_START_OPTIONS.find((option) => option.value === paintingBatchStartOrder)?.label || '从第1组开始'],
-                ['计划数量', `${parsePaintingBatchRequestedCount(paintingBatchRequestedCount) ?? '输入有误'} 条`],
+                ['计划数量', `${parsePaintingBatchRequestedCount(paintingBatchRequestedCount, isOrnament ? 44 : 40) ?? '输入有误'} 条`],
                 ['创意轮次', `第 ${paintingVariationRound + 1} 轮`],
                 ['计费单价', `${getSeedanceRatePerSecond(paintingBatchModel, paintingBatchResolution) ?? '暂无法估算'}元/秒`],
                 ['画面比例', paintingPlan.ratio || seedanceRatio],
@@ -9033,7 +9041,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
               <span className="text-xs font-bold text-slate-700">仅生成未使用方向</span>
               <span className="text-[10px] text-slate-400">（默认，跳过当前轮次已生成过的方向）</span>
             </label>
-            <p className="mt-1.5 text-[10px] leading-4 text-slate-500">重新上传并分析同一张图，会开启新的40方向创作；点批量历史中的“续做”，才沿用原任务的剩余方向。</p>
+            <p className="mt-1.5 text-[10px] leading-4 text-slate-500">重新上传并分析同一张图，会开启新的{isOrnament ? 44 : 40}方向创作；点批量历史中的“续做”，才沿用原任务的剩余方向。</p>
 
             <div className="mt-4">
               <div className="mb-2 text-xs font-black text-slate-700">保存到文件夹</div>
@@ -9121,10 +9129,10 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                       </>
                     )}
                     {' '}· 方向 29 固定为 4～6 秒一镜到底。
-                    {paintingBatchRequestedCount.trim() && effectiveCount < (parsePaintingBatchRequestedCount(paintingBatchRequestedCount) || 0) && (
+                    {paintingBatchRequestedCount.trim() && effectiveCount < (parsePaintingBatchRequestedCount(paintingBatchRequestedCount, isOrnament ? 44 : 40) || 0) && (
                       <span className="mt-1 block font-bold text-amber-600">可用方向不足，将按当前顺序生成剩余的 {effectiveCount} 条。</span>
                     )}
-                    {effectiveCount === 0 && parsePaintingBatchRequestedCount(paintingBatchRequestedCount) !== null && <span className="mt-1 block font-bold text-red-600">当前轮次方向已全部使用，无法生成。</span>}
+                    {effectiveCount === 0 && parsePaintingBatchRequestedCount(paintingBatchRequestedCount, isOrnament ? 44 : 40) !== null && <span className="mt-1 block font-bold text-red-600">当前轮次方向已全部使用，无法生成。</span>}
                     <span className="mt-1 block text-rose-500">{SEEDANCE_PRICING_NOTE}</span>
                   </>
                 );
@@ -9166,7 +9174,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   </button>
                   <button
                     type="button"
-                    disabled={paintingBatchCreating || paintingBatchConfirming || parsePaintingBatchRequestedCount(paintingBatchRequestedCount) === null}
+                    disabled={paintingBatchCreating || paintingBatchConfirming || parsePaintingBatchRequestedCount(paintingBatchRequestedCount, isOrnament ? 44 : 40) === null}
                     onClick={() => void handlePaintingConfirmBatch()}
                     className="inline-flex h-10 items-center gap-2 rounded-full bg-amber-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
@@ -9196,7 +9204,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
                   ) : (
                     <button
                       type="button"
-                      disabled={paintingBatchCreating || paintingBatchConfirming || parsePaintingBatchRequestedCount(paintingBatchRequestedCount) === null || selectPaintingBatchIdeas(paintingBatchIdeas).length === 0}
+                      disabled={paintingBatchCreating || paintingBatchConfirming || parsePaintingBatchRequestedCount(paintingBatchRequestedCount, isOrnament ? 44 : 40) === null || selectPaintingBatchIdeas(paintingBatchIdeas).length === 0}
                       onClick={() => void handlePaintingConfirmBatch()}
                       className="inline-flex h-10 items-center gap-2 rounded-full bg-rose-600 px-5 text-xs font-bold text-white shadow-sm shadow-rose-200 hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
                     >

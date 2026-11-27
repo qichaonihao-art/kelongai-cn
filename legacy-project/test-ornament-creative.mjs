@@ -82,9 +82,11 @@ const req = body => {
  queueMicrotask(() => { listeners.data?.(JSON.stringify(body)); listeners.end?.(); }); return request;
 };
 const res = () => ({ status: 0, body: '', writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body) { this.body = String(body); } });
-assert.equal(ORNAMENT_FRAMEWORKS.length, 40);
-assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group.startsWith('人物')).length, 10);
-assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group === '人物同框推进特写').length, 5);
+assert.equal(ORNAMENT_FRAMEWORKS.length, 44);
+assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group === '场景纵深扫拍').length, 10);
+assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group === '场景小弧环视').length, 8);
+assert.match(ORNAMENT_FRAMEWORKS[1].action, /落稳|站稳/);
+for (const f of ORNAMENT_FRAMEWORKS.slice(0, 28).filter(f => f.directionNumber !== 2)) assert.doesNotMatch(f.action, /托扶整件|搬放摆台|人物.*转正/);
 const square25 = normalizeOrnamentProfile({ widthCm: 25, heightCm: 25 });
 for (const f of ORNAMENT_FRAMEWORKS.slice(5, 10)) {
  const prompt = ensureOrnamentPrompt('连续推近展示。', square25, f.directionNumber);
@@ -92,7 +94,7 @@ for (const f of ORNAMENT_FRAMEWORKS.slice(5, 10)) {
  assert.ok(prompt.includes(f.shotRule));
  assert.equal(ensureOrnamentPrompt(prompt, square25, f.directionNumber), prompt);
 }
-assert.equal(new Set(ORNAMENT_FRAMEWORKS.map(f => f.title)).size, 40);
+assert.equal(new Set(ORNAMENT_FRAMEWORKS.map(f => f.title)).size, 44);
 assert.doesNotMatch(ORNAMENT_FRAMEWORKS.map(f => f.title + f.action).join('\n'), /胸前偏下|胸前双手|坐姿托扶展示/);
 for (const n of [13, 14, 15]) assert.match(ORNAMENT_FRAMEWORKS[n - 1].action, /书桌|茶台|餐边柜/);
 const reveal = ORNAMENT_FRAMEWORKS[ORNAMENT_RED_CLOTH_DIRECTION - 1];
@@ -101,20 +103,21 @@ assert.equal(reveal.title, '红布揭幕展示');
 assert.equal(reveal.action, '开场摆台已经站稳在台面，正面主图由一块不透明红布遮盖；一只手抓住红布上角，向上并向侧方连续揭开，真实布料逐渐露出完整摆台；红布最后被手持带到主体侧外，摆台与固定支架全程原位不动，完整正面清楚展示，镜头仅轻推。可换玄关柜、书桌、茶台或陈列柜等场景，红布与揭幕动作保持不变。');
 assert.equal(reveal.shotRule, '', '红布框架不追加新的占比或景别约束');
 assert.deepEqual(Object.fromEntries([...new Set(ORNAMENT_FRAMEWORKS.map(f => f.group))].map(group => [group, ORNAMENT_FRAMEWORKS.filter(f => f.group === group).length])), {
- '人物同框展示': 5, '人物同框推进特写': 5, '产品场景扫拍': 10, '产品角度运镜': 8, '产品揭幕与景别变化': 6, '局部特写': 6,
+ '人物与生活场景': 5, '生活场景缓推展示': 5, '场景纵深扫拍': 10, '场景小弧环视': 8, '产品与空间景别变化': 6, '局部特写': 6,
+ '人物礼赠交接': 1, '家人互动陈列': 1, '人物讲解展示': 1, '静物景深交接': 1,
 });
 for (const f of ORNAMENT_FRAMEWORKS.filter(f => f.directionNumber !== 29)) {
  const request = buildOrnamentVideoRequest(profile, { ...f, summary: '旧框架：镜头推近摆台特写' }, plan, {});
  assert.ok(request.includes(f.shotRule), '新景别规则必须进入实际请求');
- if (f.directionNumber <= 5) assert.match(f.shotRule, /全程不推近/);
+ if (f.directionNumber <= 5) assert.match(f.shotRule, /固定机位，不推近/);
  if (f.directionNumber >= 6 && f.directionNumber <= 10) {
-  assert.match(f.shotRule, /撤手后才推进/);
-  assert.match(f.shotRule, /人物停在旁侧并可自然退出构图/);
-  assert.match(f.shotRule, /文字可读性服从真实尺寸/);
+  assert.match(f.shotRule, /完整结束，再让摄影机|后方生活空间/);
+  assert.match(f.shotRule, /完整产品|完整摆台/);
   assert.match(f.shotRule, /全程一镜到底/);
-  assert.doesNotMatch(f.shotRule, /全程不推近|人物与产品始终同框/);
+  assert.doesNotMatch(f.shotRule, /全程不推近|人物持续同框/);
  }
- if (f.directionNumber >= 11) assert.match(f.shotRule, /无人场景/);
+ if (f.directionNumber >= 11 && f.directionNumber <= 34) assert.match(f.shotRule, /人物|产品/);
+ assert.match(request, /【单镜头动作与收尾】/);
  assert.ok(ensureOrnamentPrompt('模型正文', profile, f.directionNumber).includes(f.shotRule), '提交模型前也确定性保留构图要求');
 }
 
@@ -131,7 +134,7 @@ assert.ok(inspectOrnamentPromptIssues('开场完整展示摆台，镜头推近�
 assert.ok(inspectOrnamentPromptIssues('开场红布遮盖摆台，红布消失后展示摆台。', 29).length);
 assert.equal(inspectOrnamentPromptIssues(reveal.action, 29).length, 0);
 assert.equal(inspectOrnamentPromptIssues('0–1秒：红布盖住摆台；1–3秒：手抓上角揭开红布；3–6秒：完整展示摆台。', 29).length, 0);
-assert.deepEqual(ORNAMENT_FRAMEWORKS.map(f => f.directionNumber), Array.from({ length: 40 }, (_, i) => i + 1));
+assert.deepEqual(ORNAMENT_FRAMEWORKS.map(f => f.directionNumber), Array.from({ length: 44 }, (_, i) => i + 1));
 assert.throws(() => normalizeOrnamentProfile({ supportStructure: 'separate' }), /分离式/);
 assert.equal(productUsageHash('same', 'ornament'), 'ornament:same');
 assert.equal(productUsageHash('same', 'hanging'), 'same');
@@ -193,14 +196,14 @@ for (const [provider, handler] of [['doubao', server.handleDoubaoMultimodal], ['
   assert.deepEqual(mediaUrls, [await dataUrl(sourceVideo), frontUrl, backUrl, sideUrl]);
  }
 }
-for (let batch = 0; batch < 4; batch++) {
+for (let batch = 0; batch < 5; batch++) {
  reply = JSON.stringify(ORNAMENT_FRAMEWORKS.slice(batch * 10, batch * 10 + 10).map(f => ({ title: f.title, summary: f.action })));
  const ideasRequest = buildOrnamentIdeasRequest(profile, plan, batch, 0, {});
  assert.doesNotMatch(ideasRequest, /框架方向：|固定动作框架：/);
  assert.doesNotMatch(ideasRequest, /铝合金|木背板|木质背板|金色边框|公共背面/);
  const result = await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch }, 'test', 'ideas');
- assert.equal(result.totalBatches, 4); assert.equal(result.ideas.length, 10);
- assert.deepEqual(result.ideas.map(i => i.directionNumber), Array.from({ length: 10 }, (_, i) => batch * 10 + i + 1));
+ assert.equal(result.totalBatches, 5); assert.equal(result.ideas.length, batch === 4 ? 4 : 10);
+ assert.deepEqual(result.ideas.map(i => i.directionNumber), Array.from({ length: batch === 4 ? 4 : 10 }, (_, i) => batch * 10 + i + 1));
  assert.ok(result.ideas.every(i => i.productType === 'ornament'));
 }
 assert.equal(inspectOrnamentPromptIssues('视频画布比例9:16，摄影机固定在三脚架，摆台稳定站立。').length, 0);
@@ -214,19 +217,19 @@ for (const material of ['正面采用宣纸', '摆台由画布制成', '绢布�
 const beforePreparation = payloads.length;
 for (const variationRound of [0, 1, 2]) {
  const all = [];
- for (let batch = 0; batch < 4; batch++) {
+ for (let batch = 0; batch < 5; batch++) {
   reply = JSON.stringify(ORNAMENT_FRAMEWORKS.slice(batch * 10, batch * 10 + 10).map(f => ({ title: f.title, summary: f.action + ' 环境为雾蓝墙面、布艺椅和几何灯，人物穿现代针织上衣。' })));
   const result = await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan: { ...plan, scene: '书桌另一侧铺素白宣纸', character: '穿绢布衣服的人物' }, batch, variationRound }, 'test', 'two-stage-preparation');
   assert.ok(result.ideas.every(idea => idea.summary.includes('雾蓝墙面') && idea.stylePreset === plan.stylePreset));
   assert.match(JSON.stringify(payloads.at(-1).payload), /红布揭幕仅用于第29号/);
   assert.doesNotMatch(JSON.stringify(payloads.at(-1).payload), /本条红布揭幕仍使用/);
-  assert.equal(result.ideas.length, 10);
+  assert.equal(result.ideas.length, batch === 4 ? 4 : 10);
   all.push(...result.ideas);
   for (const idea of result.ideas) assert.equal(inspectOrnamentPromptIssues(idea.summary, idea.directionNumber).length, 0);
  }
- assert.deepEqual(all.map(idea => idea.directionNumber), Array.from({ length: 40 }, (_, index) => index + 1));
+ assert.deepEqual(all.map(idea => idea.directionNumber), Array.from({ length: 44 }, (_, index) => index + 1));
 }
-assert.equal(payloads.length, beforePreparation + 12, '四批方案每轮调用豆包展开，三轮共12次，缓存及断点续做仍由原有前端负责');
+assert.equal(payloads.length, beforePreparation + 15, '五批方案每轮调用豆包展开，三轮共15次，缓存及断点续做仍由原有前端负责');
 const safeVideoRequest = buildOrnamentVideoRequest(profile, { directionNumber: 22, summary: '摆台使用树脂，取下主体。' }, { ...plan, scene: '书桌另一侧铺素白宣纸' }, {});
 assert.match(safeVideoRequest, /已按风格展开的创意方案/);
 assert.match(safeVideoRequest, /方案仅决定这些约束内的具体执行/);
@@ -322,6 +325,30 @@ for (const [hasBack, hasSide] of [[false, false], [true, false], [true, true]]) 
  assert.equal(restoredBack.headers['Content-Length'], String(back.size));
  await server.submitSeedanceTaskForBatchTask({ directionNumber: 36, prompt, duration: 6 }, run);
  assert.deepEqual(sentVideoImages(), hasSide ? [frontUrl, backUrl, sideUrl] : [frontUrl, backUrl]);
+}
+{
+ const form = new FormData();
+ form.append('file', front);
+ form.append('ornamentBackFile', back);
+ for (const [key, value] of Object.entries({ profile, plan: { ...plan, stylePreset: 'oriental-luxury' }, model: 'wan3.0-video', resolution: '480p', ratio: '9:16', requestedCount: 4, startOrder: 'group5', onlyUnused: false, ideas: ORNAMENT_FRAMEWORKS.slice(40).map(f => ({ ...f, productType: 'ornament' })), creationRequestId: 'ornament-new-frameworks' })) form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+ const response = res();
+ await server.handleCreatePaintingBatchRun(await formRequest(form, '/api/painting/batch-runs'), response);
+ assert.ok([200, 201, 202].includes(response.status), response.body);
+ const batchRunId = JSON.parse(response.body).batchRunId;
+ server.dbUpdatePaintingBatchRun(batchRunId, { status: 'paused', controlStatus: 'paused' });
+ assert.equal(server.dbGetPaintingBatchRun(batchRunId).totalDirections, 4);
+}
+{
+ const form = new FormData();
+ form.append('file', front);
+ form.append('ornamentBackFile', back);
+ for (const [key, value] of Object.entries({ profile, plan: { ...plan, stylePreset: 'oriental-luxury' }, model: 'wan3.0-video', resolution: '480p', ratio: '9:16', requestedCount: '', startOrder: 'group1', onlyUnused: false, ideas: ORNAMENT_FRAMEWORKS.map(f => ({ ...f, productType: 'ornament' })), creationRequestId: 'ornament-default-44' })) form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+ const response = res();
+ await server.handleCreatePaintingBatchRun(await formRequest(form, '/api/painting/batch-runs'), response);
+ assert.ok([200, 201, 202].includes(response.status), response.body);
+ const batchRunId = JSON.parse(response.body).batchRunId;
+ server.dbUpdatePaintingBatchRun(batchRunId, { status: 'paused', controlStatus: 'paused' });
+ assert.equal(server.dbGetPaintingBatchRun(batchRunId).totalDirections, 44);
 }
 for (const model of ['doubao-seedance-2-0-260128', 'wan3.0-video']) {
  for (const submittedPrompt of [ensureOrnamentPrompt('背面展示。', profile, 36), '【产品元素替换：ornament】保留原片转向动作，展示新款白色背板。']) {
@@ -432,7 +459,7 @@ for (const prompt of ['【产品元素替换：ornament】【替换动作兼容�
  await server.handleSeedanceCreateTask(req({ model: 'wan3.0-video', resolution: '480p', prompt }), response);
  assert.equal(response.status, 400, response.body); assert.equal(payloads.length, before);
 }
-console.log('PASS: 40 fixed frameworks, analysis, separate-stand rejection, four batches, all prompts, type isolation, manual/batch submission across six models, three-product routing/usage/folder isolation, paid-request blocking.');
+console.log('PASS: 44 fixed frameworks, analysis, separate-stand rejection, five batches, all prompts, type isolation, manual/batch submission across six models, three-product routing/usage/folder isolation, paid-request blocking.');
 
 for (const size of [{ widthCm: 20, heightCm: 20 }, { widthCm: 25, heightCm: 30 }]) {
  const response = res();
@@ -441,11 +468,12 @@ for (const size of [{ widthCm: 20, heightCm: 20 }, { widthCm: 25, heightCm: 30 }
  assert.match(JSON.stringify(payloads.at(-1).payload), new RegExp(`外框宽${size.widthCm}厘米、高${size.heightCm}厘米`));
  if (size.widthCm !== 20) assert.doesNotMatch(JSON.stringify(payloads.at(-1).payload), /外框宽20厘米/);
 }
-console.log('摆台默认及自定义尺寸：分析、40框架、手动、批量、替换实际提交通过。');
+console.log('摆台默认及自定义尺寸：分析、44框架、手动、批量、替换实际提交通过。');
 
 // 风格必须经过实际生成入口进入请求及付费模型载荷，即使AI正文漏写风格。
 const styleCases = [
  ['new-chinese', '新中式雅致', '改良中式'],
+ ['oriental-luxury', '东方轻奢雅居', '深胡桃木柜体与细木格栅'],
  ['modern-minimal', '现代简约', '现代针织'],
  ['modern-luxury', '现代轻奢', '石材、金属、皮质'],
  ['cream-warm', '奶油温馨', '奶油色墙面'],
@@ -489,7 +517,7 @@ for (const [stylePreset, label, feature] of styleCases) {
  await server.submitSeedanceTaskForBatchTask({ directionNumber: 13, prompt: generated.prompt, duration: 6 }, { model: 'wan3.0-video', profile, imagePath, options: batchOptions, resolution: '480p', ratio: '9:16', generateAudio: false });
  assert.ok(JSON.stringify(payloads.at(-1).payload).includes(feature));
 }
-console.log('PASS: 9 styles carry concrete scenery and wardrobe through prompt generation, manual and batch video payloads; natural side/table display replaces chest-held poses.');
+console.log('PASS: 10 styles carry concrete scenery and wardrobe through prompt generation, manual and batch video payloads; natural side/table display replaces chest-held poses.');
 
 console.log('PASS: real-world scale anchors replace oversized human-shot occupancy; default and custom dimensions survive manual/batch payloads.');
 const expandedIdeas = JSON.stringify(ORNAMENT_FRAMEWORKS.slice(0, 10).map(f => ({ title: f.title, summary: '奶油墙面、圆润布艺椅、暖光灯；' + f.action })));
@@ -501,5 +529,5 @@ replies.push('[{"title":"一条","summary":"柜旁自然展示"}]', expandedIdea
 assert.equal((await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch: 0 }, 'test', 'count-recovery')).ideas.length, 10);
 reply = '[]';
 await assert.rejects(server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch: 0 }, 'test', 'missing-ideas'), /完整生成10条/);
-console.log('PASS: two-stage ornament ideation matches hanging workflow; all four batches, nine styles, summary inheritance, JSON/count recovery.');
+console.log('PASS: two-stage ornament ideation matches hanging workflow; five batches, ten styles, summary inheritance, JSON/count recovery.');
 process.exit(0);

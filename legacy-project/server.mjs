@@ -2645,7 +2645,7 @@ function formatSeedanceVideoLibraryName(createdAt) {
 
 function getPaintingFrameworkPosition(directionNumber) {
   const direction = Number(directionNumber) || 0;
-  if (direction < 1 || direction > 40) return null;
+  if (direction < 1 || direction > ORNAMENT_FRAMEWORKS.length) return null;
   return {
     groupNumber: Math.floor((direction - 1) / 10) + 1,
     itemNumber: ((direction - 1) % 10) + 1,
@@ -15404,7 +15404,7 @@ async function handleCreatePaintingBatchRun(req, res) {
       validateOrnamentReference(body.ornamentBackFile, '背面');
       validateOrnamentReference(body.ornamentSideFile, '侧面', { required: false });
       profile = normalizeOrnamentProfile(profile);
-      if (ideas.some(idea => idea.productType !== 'ornament' || !Number.isInteger(Number(idea.directionNumber)) || Number(idea.directionNumber) < 1 || Number(idea.directionNumber) > 40)) {
+      if (ideas.some(idea => idea.productType !== 'ornament' || !Number.isInteger(Number(idea.directionNumber)) || Number(idea.directionNumber) < 1 || Number(idea.directionNumber) > ORNAMENT_FRAMEWORKS.length)) {
         sendJson(res, 400, { error: '摆件方案类型或方向不匹配，请重新生成创意方案' });
         return;
       }
@@ -15436,11 +15436,12 @@ async function handleCreatePaintingBatchRun(req, res) {
       return;
     }
 
+    const maxDirections = isOrnamentProduct(profile) ? ORNAMENT_FRAMEWORKS.length : 40;
     const requestedCount = body.requestedCount === undefined || body.requestedCount === ''
-      ? (body.totalDirections === undefined || body.totalDirections === '' ? 40 : Number(body.totalDirections))
+      ? (body.totalDirections === undefined || body.totalDirections === '' ? maxDirections : Number(body.totalDirections))
       : Number(body.requestedCount);
-    if (!Number.isInteger(requestedCount) || requestedCount < 1 || requestedCount > 40) {
-      sendJson(res, 400, { error: '生成数量必须是1到40之间的整数；留空时默认生成40条。' });
+    if (!Number.isInteger(requestedCount) || requestedCount < 1 || requestedCount > maxDirections) {
+      sendJson(res, 400, { error: `生成数量必须是1到${maxDirections}之间的整数；留空时默认生成${maxDirections}条。` });
       return;
     }
     const totalDirections = requestedCount;
@@ -15449,8 +15450,8 @@ async function handleCreatePaintingBatchRun(req, res) {
       return;
     }
     const startOrder = readValue(body.startOrder) || 'group1';
-    if (!['group1', 'group2', 'group3', 'group4', 'random'].includes(startOrder)) {
-      sendJson(res, 400, { error: '生成顺序不合法，请选择第1至第4组或随机顺序。' });
+    if (![...Array.from({ length: Math.ceil(maxDirections / 10) }, (_, i) => `group${i + 1}`), 'random'].includes(startOrder)) {
+      sendJson(res, 400, { error: `生成顺序不合法，请选择第1至第${Math.ceil(maxDirections / 10)}组或随机顺序。` });
       return;
     }
 
@@ -16214,6 +16215,11 @@ const PAINTING_STYLE_PROFILES = {
     direction: '实木家具、简洁东方线条、书房或茶席元素；人物可穿改良中式、盘扣或克制棉麻服饰，文化感雅致但不过度堆砌古典符号。',
     wardrobe: ['黛蓝', '酒红', '竹绿', '藕荷', '水红', '鹅黄', '墨绿', '灰紫', '宝蓝', '陶土红', '藏青', '橄榄绿', '浅紫', '黑色', '月白', '雾蓝', '焦糖', '莓果红', '松石绿', '暖棕'],
   },
+  'oriental-luxury': {
+    label: '东方轻奢雅居',
+    direction: '深胡桃木柜体与细木格栅、克制的东方圆弧或对称线条，搭配暖灰石材台面、少量香槟金金属细节、陶瓷或枝景；暖白局部射灯与侧窗光形成清透层次，背景有空间纵深和柔和虚化。整体精致、安静、有居家温度，避免金色堆砌、宫殿式雕花和厚重暗黄滤镜。人物可穿素色改良中式立领、简洁真丝衬衫或剪裁利落的现代服装。材质和光线只用于环境，产品保持参考图原貌。',
+    wardrobe: ['月白', '暖灰', '深咖', '香槟米', '墨绿', '黛蓝', '黑色', '雾蓝'],
+  },
   'modern-minimal': {
     label: '现代简约',
     direction: '简洁布艺家具、几何灯具、克制装饰和通透自然光；人物穿现代针织、衬衫、休闲西装或简洁连衣裙，禁止自动换成旗袍。',
@@ -16797,19 +16803,22 @@ async function generateOrnamentIdeasCore(body, apiKey) {
   requireCurrentOrnamentProfile(body.profile);
   const profile = normalizeOrnamentProfile(body.profile);
   const plan = body.plan || {};
-  const batch = ((Math.trunc(Number(body.batch) || 0) % 4) + 4) % 4;
+  const totalBatches = Math.ceil(ORNAMENT_FRAMEWORKS.length / 10);
+  const batch = ((Math.trunc(Number(body.batch) || 0) % totalBatches) + totalBatches) % totalBatches;
+  const frameworks = ORNAMENT_FRAMEWORKS.slice(batch * 10, batch * 10 + 10);
+  const count = frameworks.length;
   const variationRound = Math.max(0, Math.trunc(Number(body.variationRound) || 0));
   const request = buildOrnamentIdeasRequest(profile, plan, batch, variationRound, resolvePaintingStyleProfile(plan.stylePreset), body.avoidIdeas);
   const call = (text) => callDoubaoArkText({ apiKey, model: DEFAULT_DOUBAO_MULTIMODAL_MODEL, content: [{ type: 'input_text', text }] });
   const answer = await call(request);
   const parsed = await parsePaintingIdeasWithJsonRetry(answer, () => call(`${request}\n上一次结果无法解析，请只输出完整合法JSON数组，不得截断。`));
   let ideas = parsed.ideas;
-  if (ideas.length !== 10) {
-    ideas = normalizePaintingIdeas(parseStructuredJson(await call(`${request}\n请输出完整的10条方案JSON数组，每项必须包含title和summary。`)));
+  if (ideas.length !== count) {
+    ideas = normalizePaintingIdeas(parseStructuredJson(await call(`${request}\n请输出完整的${count}条方案JSON数组，每项必须包含title和summary。`)));
   }
-  if (ideas.length !== 10) throw new Error('摆件方案必须完整生成10条，请重试');
-  return { batch, totalBatches: 4, ideas: ideas.map((idea, index) => {
-    const f = ORNAMENT_FRAMEWORKS[batch * 10 + index];
+  if (ideas.length !== count) throw new Error(`摆件方案必须完整生成${count}条，请重试`);
+  return { batch, totalBatches, ideas: ideas.map((idea, index) => {
+    const f = frameworks[index];
     return {
       ...idea, id: `ornament-${f.directionNumber}`, productType: 'ornament', directionNumber: f.directionNumber,
       stylePreset: plan.stylePreset || 'modern-minimal',
