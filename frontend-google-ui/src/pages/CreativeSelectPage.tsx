@@ -1,4 +1,4 @@
-import { ArrowUpRight, FileText, Scissors, Video } from 'lucide-react';
+import { ArrowUpRight, AudioLines, FileText, Scissors, Video } from 'lucide-react';
 import { motion } from 'motion/react';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import HomeBackButton from '@/src/components/HomeBackButton';
@@ -9,6 +9,7 @@ interface CreativeSelectPageProps {
   onSelectVideo: () => void;
   onSelectClip: () => void;
   onSelectCopy: () => void;
+  onSelectVoiceTransfer?: () => void;
 }
 
 const entries = [
@@ -42,9 +43,19 @@ const entries = [
     buttonClass: 'border-violet-100 bg-violet-50 text-violet-600 group-hover:border-violet-500 group-hover:bg-violet-600 group-hover:text-white',
     lineClass: 'from-transparent via-violet-400/70 to-transparent',
   },
+  {
+    id: 'voice-transfer' as const,
+    title: '音色转移',
+    icon: AudioLines,
+    shellClass: 'border-rose-200/80 bg-gradient-to-br from-white via-white to-rose-50/80 hover:border-rose-300',
+    glowClass: 'bg-rose-300/40',
+    iconClass: 'from-rose-500 to-amber-500 shadow-rose-200/80',
+    buttonClass: 'border-rose-100 bg-rose-50 text-rose-600 group-hover:border-rose-500 group-hover:bg-rose-600 group-hover:text-white',
+    lineClass: 'from-transparent via-rose-400/70 to-transparent',
+  },
 ];
 
-export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, onSelectClip, onSelectCopy }: CreativeSelectPageProps) {
+export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, onSelectClip, onSelectCopy, onSelectVoiceTransfer }: CreativeSelectPageProps) {
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#f5f7fb] px-4 py-5 sm:px-6 sm:py-6">
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
@@ -54,16 +65,16 @@ export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, 
         <div className="absolute inset-0 opacity-[0.32] [background-image:linear-gradient(rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.12)_1px,transparent_1px)] [background-size:32px_32px] [mask-image:linear-gradient(to_bottom,transparent,black_20%,black_80%,transparent)]" />
       </div>
 
-      <div className="relative z-20 mx-auto flex w-full max-w-[70rem] shrink-0 items-center gap-2">
+      <div className="relative z-20 mx-auto flex w-full max-w-[78rem] shrink-0 items-center gap-2">
         <HomeBackButton onClick={onBack} />
         <ModuleQuickNav current="creative" onNavigate={onNavigate} />
       </div>
 
       <main className="relative z-10 flex w-full flex-1 items-center justify-center py-12 sm:py-16">
-        <div className="grid w-full max-w-[70rem] grid-cols-1 gap-5 sm:grid-cols-3 sm:gap-6">
+        <div className="grid w-full max-w-[78rem] grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 sm:gap-6">
           {entries.map((entry, index) => {
             const Icon = entry.icon;
-            const onClick = entry.id === 'video' ? onSelectVideo : entry.id === 'clip' ? onSelectClip : onSelectCopy;
+            const onClick = entry.id === 'video' ? onSelectVideo : entry.id === 'clip' ? onSelectClip : entry.id === 'copy' ? onSelectCopy : (onSelectVoiceTransfer ?? (() => {}));
             return (
               <motion.button
                 key={entry.id}

@@ -1,20 +1,22 @@
-import { Video, FileText, Scissors } from 'lucide-react';
+import { Video, FileText, Scissors, AudioLines } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 
-export type CreativeSubMode = 'video' | 'clip' | 'copy';
+export type CreativeSubMode = 'video' | 'clip' | 'copy' | 'voice-transfer';
 
 interface CreativeSubNavProps {
   current: CreativeSubMode;
   onSwitchVideo: () => void;
   onSwitchClip: () => void;
   onSwitchCopy: () => void;
+  onSwitchVoiceTransfer?: () => void;
 }
 
-export default function CreativeSubNav({ current, onSwitchVideo, onSwitchClip, onSwitchCopy }: CreativeSubNavProps) {
+export default function CreativeSubNav({ current, onSwitchVideo, onSwitchClip, onSwitchCopy, onSwitchVoiceTransfer }: CreativeSubNavProps) {
   const items = [
     { id: 'video' as const, label: '视频创作', icon: Video, onClick: onSwitchVideo },
     { id: 'clip' as const, label: '镜头截取', icon: Scissors, onClick: onSwitchClip },
     { id: 'copy' as const, label: '文案创作', icon: FileText, onClick: onSwitchCopy },
+    { id: 'voice-transfer' as const, label: '音色转移', icon: AudioLines, onClick: onSwitchVoiceTransfer ?? (() => {}) },
   ];
 
   return (

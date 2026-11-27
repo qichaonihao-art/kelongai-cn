@@ -145,6 +145,7 @@ interface CreativeCreationPageProps {
   onNavigate: (page: ModuleId) => void;
   onSwitchToCopy?: () => void;
   onSwitchToClip?: () => void;
+  onSwitchToVoiceTransfer?: () => void;
   incomingClip?: IncomingCreativeClip | null;
   onIncomingClipConsumed?: () => void;
 }
@@ -1694,7 +1695,7 @@ function renderAssistantMessageContent(content: string) {
   );
 }
 
-export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCopy, onSwitchToClip, incomingClip, onIncomingClipConsumed }: CreativeCreationPageProps) {
+export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCopy, onSwitchToClip, onSwitchToVoiceTransfer, incomingClip, onIncomingClipConsumed }: CreativeCreationPageProps) {
   const initialSessionState = useMemo(() => {
     const sessions = loadSavedCreativeSessions();
     return {
@@ -5899,6 +5900,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
             onSwitchVideo={() => {}}
             onSwitchClip={onSwitchToClip ?? (() => {})}
             onSwitchCopy={onSwitchToCopy ?? (() => {})}
+            onSwitchVoiceTransfer={onSwitchToVoiceTransfer ?? (() => {})}
           />
         </div>
         <div className="flex items-center gap-4">

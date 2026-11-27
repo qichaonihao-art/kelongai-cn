@@ -2,6 +2,7 @@ import { createMediaProcessExecutor } from './media-process-queue.mjs';
 import { createClipSceneDetectionService, getClipEndBeforeDetectedCut } from './clip-scene-detection.mjs';
 import { ALIYUN_VOICE_MODEL, LEGACY_ALIYUN_VOICE_MODEL, canReuseAliyunShotVoice, createAliyunVoiceService } from './aliyun-voice.mjs';
 import { createPersonReplacementService } from './person-replacement.mjs';
+import { createVoiceTransferService } from './voice-transfer.mjs';
 import { replacementProductFromPrompt, validateReplacementPrompt, replacementStructureRule } from './product-replacement.mjs';
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
@@ -21300,6 +21301,61 @@ const personReplacement = createPersonReplacementService({
   fetchTask: fetchManualVideoGenerationTask,
 });
 
+const voiceTransferService = createVoiceTransferService({
+  uploadTempDir: UPLOAD_TEMP_DIR,
+  exec: execFileAsync,
+  getConfig: () => ({
+    mediaKey: readValue(SERVER_CONFIG.mediakitApiKey),
+    mediaBase: MEDIAKIT_API_BASE_URL,
+    aliyunApiKey: readValue(SERVER_CONFIG.aliyunApiKey),
+  }),
+  aliyunVoiceService,
+  ensureTools: ensureVideoCompressionTools,
+  scheduleCleanup: scheduleClipMediaCleanup,
+  registerMimeType: (storedFileName, mimeType) => {
+    clipSourceMimeTypes.set(storedFileName, mimeType);
+    setTimeout(() => clipSourceMimeTypes.delete(storedFileName), CLIP_MEDIA_TTL_MS + 2000).unref?.();
+  },
+  unregisterMimeType: (storedFileName) => {
+    clipSourceMimeTypes.delete(storedFileName);
+  },
+  sanitizeFileName,
+});
+
+async function handleVoiceTransferRoute(req, res, url) {
+  try {
+    await ensureUploadTempDir();
+    if (req.method === 'PUT' && url.pathname === '/api/voice-transfer/source') {
+      const result = await voiceTransferService.uploadSource(req);
+      sendJson(res, 200, result);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/voice-transfer/separate') {
+      const body = await readRequestBody(req);
+      const result = await voiceTransferService.separateVocal(body);
+      sendJson(res, 200, result);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/voice-transfer/synthesize') {
+      const body = await readRequestBody(req);
+      const result = await voiceTransferService.synthesizeMp3(body, req);
+      sendJson(res, 200, result);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/voice-transfer/cleanup') {
+      const body = await readRequestBody(req);
+      const result = await voiceTransferService.cleanup(body);
+      sendJson(res, 200, result);
+      return;
+    }
+    sendJson(res, 404, { error: '音色转移接口不存在' });
+  } catch (error) {
+    sendJson(res, Number(error?.statusCode) || 500, {
+      error: error?.message || '音色转移处理失败，请稍后重试',
+    });
+  }
+}
+
 async function handlePersonReplacement(req, res, url) {
   try {
     const deviceId = readPaintingDeviceId(req);
@@ -21475,6 +21531,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/clips/cleanup') {
     await handleClipCleanup(req, res);
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/voice-transfer/')) {
+    await handleVoiceTransferRoute(req, res, url);
     return;
   }
 

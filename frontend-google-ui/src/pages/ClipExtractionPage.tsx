@@ -17,6 +17,7 @@ interface ClipExtractionPageProps {
   onNavigate: (page: ModuleId) => void;
   onSwitchToVideo: () => void;
   onSwitchToCopy: () => void;
+  onSwitchToVoiceTransfer?: () => void;
   onUseInCreative: (clip: ClipCreativePayload, mode: ClipCreativeMode) => void;
 }
 
@@ -135,6 +136,7 @@ export default function ClipExtractionPage({
   onNavigate,
   onSwitchToVideo,
   onSwitchToCopy,
+  onSwitchToVoiceTransfer,
   onUseInCreative,
 }: ClipExtractionPageProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1135,7 +1137,7 @@ export default function ClipExtractionPage({
         <div className="flex items-center gap-3">
           <HomeBackButton onClick={onBack} />
           <ModuleQuickNav current="creative" onNavigate={onNavigate} />
-          <CreativeSubNav current="clip" onSwitchVideo={onSwitchToVideo} onSwitchClip={() => {}} onSwitchCopy={onSwitchToCopy} />
+          <CreativeSubNav current="clip" onSwitchVideo={onSwitchToVideo} onSwitchClip={() => {}} onSwitchCopy={onSwitchToCopy} onSwitchVoiceTransfer={onSwitchToVoiceTransfer ?? (() => {})} />
         </div>
         <div className="hidden text-xs font-bold text-slate-500 sm:block">最大 1GB · 临时使用</div>
       </header>
