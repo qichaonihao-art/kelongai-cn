@@ -225,9 +225,9 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
         <CreativeSubNav current="copy-transfer" onSwitchVideo={onSwitchToVideo} onSwitchClip={onSwitchToClip} onSwitchCopy={onSwitchToCopy} onSwitchVoiceTransfer={onSwitchToVoiceTransfer} onSwitchCopyTransfer={() => {}} />
       </header>
       <main className="mx-auto mt-5 max-w-7xl space-y-4 pb-20">
-        <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:px-6">
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-200/70 border-l-4 border-l-cyan-500 bg-gradient-to-r from-cyan-50 via-white to-white px-5 py-4 shadow-sm sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700"><FileAudio className="size-5" /></span>
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-cyan-100 text-cyan-700"><FileAudio className="size-5" /></span>
             <div className="min-w-0"><h1 className="text-xl font-bold tracking-tight">文案转移</h1><p className="mt-0.5 text-sm text-slate-500">对照产品信息，局部改文案并生成 MP3</p></div>
           </div>
           <div className="flex items-center gap-3 text-sm text-slate-500">
@@ -236,8 +236,8 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
             {reviewCount > 0 && <span className="text-amber-700">待确认 {reviewCount}</span>}
           </div>
         </section>
-        <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
-          <div><h2 className="text-lg font-bold">产品信息对照</h2><p className="mt-1 text-sm text-slate-500">原产品与目标产品逐项对应；原产品填写了某项，目标产品也要填写。</p></div>
+        <section className="rounded-2xl border border-slate-200/80 border-t-2 border-t-cyan-200 bg-white p-5 shadow-sm sm:p-6">
+          <div className="border-l-2 border-cyan-400 pl-3"><h2 className="text-lg font-bold">产品信息对照</h2><p className="mt-1 text-sm text-slate-500">原产品与目标产品逐项对应；原产品填写了某项，目标产品也要填写。</p></div>
           <div className="mt-5 grid gap-3 md:grid-cols-[9rem_minmax(0,1fr)_minmax(0,1fr)]">
             <div className="hidden md:block" />
             <h3 className="hidden rounded-xl bg-slate-100 px-4 py-3 font-bold text-slate-700 md:block">原产品 <span className="ml-1 text-xs font-normal text-slate-400">SOURCE</span></h3>
@@ -261,8 +261,8 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
             </select>}
           </div>
         </section>
-        <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
-          <div className="mb-5"><h2 className="text-lg font-bold">上传与处理</h2><p className="mt-1 text-sm text-slate-500">选择本地音视频；复杂素材会停下供你核对。</p></div>
+        <section className="rounded-2xl border border-slate-200/80 border-t-2 border-t-sky-200 bg-white p-5 shadow-sm sm:p-6">
+          <div className="mb-5 border-l-2 border-sky-400 pl-3"><h2 className="text-lg font-bold">上传与处理</h2><p className="mt-1 text-sm text-slate-500">选择本地音视频；复杂素材会停下供你核对。</p></div>
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-cyan-300 bg-cyan-50 px-4 py-3 text-sm font-semibold text-cyan-800 transition hover:bg-cyan-100"><Upload className="size-4" />添加本地音视频
               <input hidden type="file" multiple accept="audio/*,video/*,.mp3,.wav,.m4a,.mp4,.mov" disabled={busy} onChange={(e) => {
