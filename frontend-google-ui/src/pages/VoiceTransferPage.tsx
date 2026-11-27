@@ -777,8 +777,8 @@ export default function VoiceTransferPage({
                 </div>
 
                 {sourceMode === 'link' ? (
-                  <div className="flex flex-1 flex-col justify-between bg-[radial-gradient(circle_at_90%_10%,rgba(139,92,246,0.06),transparent_35%)] p-5">
-                    <div>
+                  <div className="flex flex-1 flex-col bg-[radial-gradient(circle_at_90%_10%,rgba(139,92,246,0.06),transparent_35%)] p-5">
+                    <div className="flex flex-1 flex-col">
                       <div className="text-sm font-black text-slate-800">粘贴视频链接或分享文字</div>
                       <div className="mt-1 text-xs text-slate-400">支持抖音、快手和微信视频号，直接复用镜头截取解析引擎</div>
                       <textarea
@@ -792,13 +792,13 @@ export default function VoiceTransferPage({
                         }}
                         rows={4}
                         placeholder="粘贴视频链接或完整分享文案，例如：https://v.douyin.com/…"
-                        className="mt-3 min-h-28 w-full resize-y rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-100 disabled:opacity-60"
+                        className="mt-3 min-h-[112px] w-full flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm font-semibold leading-6 outline-none transition-colors focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-100 disabled:opacity-60"
                       />
                       <button
                         type="button"
                         disabled={onlineLoading || !linkInput.trim()}
                         onClick={() => void parseAndLoadOnlineVideo()}
-                        className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#252041] text-sm font-black text-white shadow-lg shadow-violet-950/15 transition hover:bg-violet-900 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="mt-3 flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[#252041] text-sm font-black text-white shadow-lg shadow-violet-950/15 transition-colors hover:bg-violet-900 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {onlineLoading ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}
                         {onlineLoading ? '正在解析并载入视频…' : '解析链接并载入'}
@@ -884,7 +884,7 @@ export default function VoiceTransferPage({
                         if (file && !isBusy) handleUploadFile(file);
                       }}
                       className={cn(
-                        'flex flex-1 min-h-[240px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-6 text-center transition-all',
+                        'flex min-h-[212px] flex-1 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-5 text-center transition-colors',
                         draggingFile
                           ? 'border-violet-500 bg-violet-50/70'
                           : 'border-violet-200 bg-violet-50/30 hover:border-violet-400 hover:bg-violet-50/70'
