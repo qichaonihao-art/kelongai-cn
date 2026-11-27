@@ -7,6 +7,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import {
   createVoiceTransferService,
+  groupSpeakerSegments,
   normalizeVoiceTransferScene,
   parseVoiceTransferRange,
 } from './voice-transfer.mjs';
@@ -220,6 +221,122 @@ test('voiceTransferService upload -> separate -> synthesize MP3 with DEPLOYING r
     await service.cleanup({ sourceId: uploaded.sourceId, vocalId: sep1.vocalId });
     assert.equal(existsSync(path.join(tempDir, `${uploaded.sourceId}_vt_source`)), false);
     assert.equal(existsSync(path.join(tempDir, `${sep1.vocalId}_vt_vocal.wav`)), false);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('groupSpeakerSegments merges close turns and filters tiny blips', () => {
+  const speakers = groupSpeakerSegments([
+    { speaker_id: 0, begin_time: 0, end_time: 2100, text: '你好，' },
+    { speaker_id: 0, begin_time: 2300, end_time: 4500, text: '欢迎光临。' },
+    { speaker_id: 1, begin_time: 4800, end_time: 8200, text: '谢谢大家的支持！' },
+    { speaker_id: 2, begin_time: 8500, end_time: 8900, text: '嗯' }, // 0.4s blip -> ignored
+  ], 15);
+  assert.equal(speakers.length, 2);
+  assert.equal(speakers[0].speakerId, 0);
+  assert.equal(speakers[0].segments.length, 1);
+  assert.equal(speakers[0].sampleText, '你好，欢迎光临。');
+  assert.equal(speakers[1].speakerId, 1);
+  assert.equal(speakers[1].sampleText, '谢谢大家的支持！');
+});
+
+test('voiceTransferService reuses _clip_source from online import and splits multi-speaker vocals', async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'vt-multi-'));
+  try {
+    const clipSourceId = 'abcdef1234567890abcdef12';
+    await writeFile(path.join(tempDir, `${clipSourceId}_clip_source`), Buffer.from('online-video-bytes'));
+    const fakeVocalWav = makeFakeWavBuffer(128);
+
+    const exec = async (cmd, args) => {
+      if (cmd === 'ffprobe') {
+        if (args.includes('stream=codec_type,sample_rate,channels,width,height:format=duration')) {
+          return {
+            stdout: JSON.stringify({
+              streams: [
+                { codec_type: 'video', width: 1080, height: 1920 },
+                { codec_type: 'audio', sample_rate: '48000', channels: 2 },
+              ],
+              format: { duration: '20.0' },
+            }),
+          };
+        }
+        return { stdout: JSON.stringify({ format: { duration: '12.0' } }) };
+      }
+      if (cmd === 'ffmpeg') {
+        const outPath = args[args.length - 1];
+        await writeFile(outPath, fakeVocalWav);
+        return { stdout: '', stderr: '' };
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    };
+
+    const fetchImpl = async (url, options = {}) => {
+      if (String(url).endsWith('/api/v1/tools-sync/request-media-upload-url')) {
+        return new Response(JSON.stringify({
+          success: true,
+          result: { file_id: 'mediakit://audio-multi', upload_url: 'https://upload.volces.test/m', method: 'PUT' },
+        }), { status: 200 });
+      }
+      if (String(url) === 'https://upload.volces.test/m') {
+        if (options.body && typeof options.body[Symbol.asyncIterator] === 'function') {
+          for await (const _chunk of options.body) {}
+        }
+        return new Response('', { status: 200 });
+      }
+      if (String(url).endsWith('/api/v1/tools/separate-voice')) {
+        return new Response(JSON.stringify({ success: true, task_id: 'task-multi-1' }), { status: 200 });
+      }
+      if (String(url).includes('/api/v1/tasks/task-multi-1')) {
+        return new Response(JSON.stringify({
+          success: true,
+          status: 'completed',
+          result: { voice_audio_url: 'https://cdn.volces.test/multi.wav' },
+        }), { status: 200 });
+      }
+      if (String(url) === 'https://cdn.volces.test/multi.wav') {
+        return new Response(fakeVocalWav, { status: 200 });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const service = createVoiceTransferService({
+      uploadTempDir: tempDir,
+      exec,
+      fetchImpl,
+      getConfig: () => ({
+        mediaKey: 'test-key',
+        mediaBase: 'https://mediakit.cn-beijing.volces.com',
+        aliyunApiKey: 'test-aliyun',
+      }),
+      aliyunVoiceService: {},
+      diarizeVocal: async () => ([
+        { speaker_id: 0, begin_time: 0, end_time: 3500, text: '我是第一位说话人' },
+        { speaker_id: 1, begin_time: 4000, end_time: 8500, text: '我是第二位说话人' },
+      ]),
+      ensureTools: async () => {},
+      scheduleCleanup: () => {},
+      separatePollIntervalMs: 1,
+      sleepImpl: async () => {},
+    });
+
+    const sep = await service.separateVocal({
+      sourceId: clipSourceId,
+      startSeconds: 0,
+      endSeconds: 15,
+      scene: 'Narrate',
+    });
+
+    assert.equal(sep.ok, true);
+    assert.equal(sep.requiresSpeakerSelection, true);
+    assert.equal(sep.speakers.length, 2);
+    assert.equal(sep.speakers[0].label, '音色 1');
+    assert.equal(sep.speakers[0].sampleText, '我是第一位说话人');
+    assert.equal(sep.speakers[1].label, '音色 2');
+    assert.equal(sep.speakers[1].sampleText, '我是第二位说话人');
+    assert.notEqual(sep.speakers[0].vocalId, sep.speakers[1].vocalId);
+    assert.equal(existsSync(path.join(tempDir, `${sep.speakers[0].vocalId}_vt_vocal.wav`)), true);
+    assert.equal(existsSync(path.join(tempDir, `${sep.speakers[1].vocalId}_vt_vocal.wav`)), true);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

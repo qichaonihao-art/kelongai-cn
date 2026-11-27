@@ -10217,7 +10217,7 @@ async function getAliyunSubtitleVocabulary({ apiKey, contextText, deadline }) {
   return id;
 }
 
-async function transcribeAudioWithAliyunWordTimestamps({ audioPath, contextText = '', parentDeadlineAt = 0 }) {
+async function transcribeAudioWithAliyunWordTimestamps({ audioPath, contextText = '', parentDeadlineAt = 0, diarizationEnabled = false }) {
   const apiKey = readValue(SERVER_CONFIG.dashscopeApiKey) || readValue(SERVER_CONFIG.aliyunApiKey);
   if (!apiKey) throw new Error('服务端未配置 DashScope API Key');
   const deadline = parentDeadlineAt || Date.now() + SUBTITLE_ALIGN_TOTAL_TIMEOUT_MS;
@@ -10258,6 +10258,7 @@ async function transcribeAudioWithAliyunWordTimestamps({ audioPath, contextText 
       'X-DashScope-Async': 'enable', 'X-DashScope-OssResourceResolve': 'enable' },
     body: JSON.stringify({ model: ALIYUN_SUBTITLE_MODEL, input: { file_urls: [`oss://${key}`] },
       parameters: { channel_id: [0], timestamp_alignment_enabled: true,
+        ...(diarizationEnabled ? { diarization_enabled: true } : {}),
         ...(vocabularyId ? { vocabulary_id: vocabularyId } : {}) } })
   });
   const vocabularyId = await getAliyunSubtitleVocabulary({ apiKey, contextText, deadline });
@@ -10283,7 +10284,7 @@ async function transcribeAudioWithAliyunWordTimestamps({ audioPath, contextText 
       const data = await jsonResponse(await request(resultUrl.href), '下载字幕时间轴');
       const sentences = data.transcripts?.[0]?.sentences;
       if (!Array.isArray(sentences) || !sentences.length) throw new Error('字幕识别结果为空');
-      if (sentences.some((sentence) => !sentence.words?.length)) throw new Error('服务未返回词级时间戳');
+      if (!diarizationEnabled && sentences.some((sentence) => !sentence.words?.length)) throw new Error('服务未返回词级时间戳');
       return sentences;
     }
     if (!['PENDING', 'RUNNING'].includes(status.output?.task_status)) throw new Error(`字幕识别未完成：${status.output?.task_status || '无效状态'}`);
@@ -21310,6 +21311,11 @@ const voiceTransferService = createVoiceTransferService({
     aliyunApiKey: readValue(SERVER_CONFIG.aliyunApiKey),
   }),
   aliyunVoiceService,
+  diarizeVocal: ({ audioPath }) => transcribeAudioWithAliyunWordTimestamps({
+    audioPath,
+    diarizationEnabled: true,
+    parentDeadlineAt: Date.now() + 90 * 1000,
+  }),
   ensureTools: ensureVideoCompressionTools,
   scheduleCleanup: scheduleClipMediaCleanup,
   registerMimeType: (storedFileName, mimeType) => {

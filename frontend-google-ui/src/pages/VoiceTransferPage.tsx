@@ -5,6 +5,7 @@ import {
   Download,
   FileAudio,
   Film,
+  Link2,
   LoaderCircle,
   Play,
   RefreshCw,
@@ -13,11 +14,14 @@ import {
   Square,
   Trash2,
   Upload,
+  Users,
   Volume2,
+  WandSparkles,
 } from 'lucide-react';
 import HomeBackButton from '@/src/components/HomeBackButton';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import CreativeSubNav from '@/src/components/CreativeSubNav';
+import { resolveCpExtract, type DouyinDownloadCandidate, type DouyinResolveResult } from '@/src/lib/douyin';
 import { cn } from '@/src/lib/utils';
 
 interface VoiceTransferPageProps {
@@ -37,6 +41,16 @@ interface UploadedSource {
   hasVideo: boolean;
   defaultStartSeconds: number;
   defaultEndSeconds: number;
+  sourceType?: 'local' | 'online';
+}
+
+interface DetectedSpeaker {
+  speakerId: string | number;
+  label: string;
+  vocalId: string;
+  vocalUrl: string;
+  durationSeconds: number;
+  sampleText: string;
 }
 
 interface SeparatedVocal {
@@ -47,6 +61,8 @@ interface SeparatedVocal {
   startSeconds: number;
   endSeconds: number;
   scene: SeparationScene;
+  speakers: DetectedSpeaker[];
+  requiresSpeakerSelection: boolean;
   cached: boolean;
 }
 
@@ -56,7 +72,16 @@ interface GeneratedResult {
   size: number;
   durationSeconds: number;
   reusedVoice: boolean;
+  speakerLabel: string;
   textSnapshot: string;
+}
+
+type SourceInputMode = 'link' | 'upload';
+type OnlineLoadStage = 'parsing' | 'downloading' | 'checking' | 'loading';
+interface OnlineLoadProgress {
+  stage: OnlineLoadStage;
+  percent: number;
+  message: string;
 }
 
 type SeparationScene = 'Narrate' | 'Audio';
@@ -80,6 +105,23 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function collectOnlineVideoCandidates(result: DouyinResolveResult) {
+  const seen = new Set<string>();
+  const candidates: DouyinDownloadCandidate[] = [];
+  const add = (value: string | DouyinDownloadCandidate | undefined, source = 'voice-transfer') => {
+    const url = typeof value === 'string' ? value : value?.url;
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    candidates.push(typeof value === 'string' ? { url, source } : value);
+  };
+  add(result.downloadUrl, 'downloadUrl');
+  for (const candidate of result.downloadUrlCandidates || []) add(candidate);
+  for (const candidate of result.videoUrlCandidates || []) add(candidate);
+  add(result.previewUrl, 'previewUrl');
+  for (const url of result.videoUrls || []) add(url, 'videoUrls');
+  return candidates;
+}
+
 async function readApiError(response: Response, fallback: string): Promise<string> {
   try {
     const data = await response.json();
@@ -101,6 +143,12 @@ export default function VoiceTransferPage({
   const sourceRef = useRef<UploadedSource | null>(null);
   const vocalRef = useRef<SeparatedVocal | null>(null);
 
+  const [sourceMode, setSourceMode] = useState<SourceInputMode>('link');
+  const [linkInput, setLinkInput] = useState('');
+  const [onlineLoading, setOnlineLoading] = useState(false);
+  const [onlineProgress, setOnlineProgress] = useState<OnlineLoadProgress | null>(null);
+  const [onlineElapsedSeconds, setOnlineElapsedSeconds] = useState(0);
+
   const [source, setSource] = useState<UploadedSource | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [draggingFile, setDraggingFile] = useState(false);
@@ -111,10 +159,15 @@ export default function VoiceTransferPage({
   const [previewingRange, setPreviewingRange] = useState(false);
 
   const [vocal, setVocal] = useState<SeparatedVocal | null>(null);
+  const [selectedSpeakerVocalId, setSelectedSpeakerVocalId] = useState('');
+  const [confirmedSpeakerVocalId, setConfirmedSpeakerVocalId] = useState('');
+  const [pendingGenerateAfterConfirm, setPendingGenerateAfterConfirm] = useState(false);
+
   const [text, setText] = useState('');
   const [stage, setStage] = useState<PipelineStage>('idle');
   const [result, setResult] = useState<GeneratedResult | null>(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     sourceRef.current = source;
@@ -125,17 +178,29 @@ export default function VoiceTransferPage({
   }, [vocal]);
 
   useEffect(() => {
+    if (!onlineLoading) return;
+    const timer = window.setInterval(() => {
+      setOnlineElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [onlineLoading]);
+
+  useEffect(() => {
     return () => {
       const currentSource = sourceRef.current;
       const currentVocal = vocalRef.current;
       if (currentSource || currentVocal) {
+        const vocalIds = [
+          currentVocal?.vocalId,
+          ...(currentVocal?.speakers.map((sp) => sp.vocalId) || []),
+        ].filter(Boolean);
         void fetch('/api/voice-transfer/cleanup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({
             sourceId: currentSource?.sourceId,
-            vocalId: currentVocal?.vocalId,
+            vocalIds,
           }),
           keepalive: true,
         }).catch(() => {});
@@ -143,7 +208,7 @@ export default function VoiceTransferPage({
     };
   }, []);
 
-  const isBusy = uploadProgress !== null || stage !== 'idle';
+  const isBusy = onlineLoading || uploadProgress !== null || stage !== 'idle';
   const roundedStart = Math.round(startSeconds * 10) / 10;
   const roundedEnd = Math.round(endSeconds * 10) / 10;
   const selectedDuration = Math.max(0, Math.round((roundedEnd - roundedStart) * 10) / 10);
@@ -156,15 +221,25 @@ export default function VoiceTransferPage({
       vocal.scene === scene
   );
 
+  const activeSpeakers = vocalMatchesCurrentSelection && vocal ? vocal.speakers : [];
+  const hasMultipleSpeakers = activeSpeakers.length > 1;
+  const selectedSpeaker = activeSpeakers.find((sp) => sp.vocalId === selectedSpeakerVocalId) || activeSpeakers[0] || null;
+  const confirmedSpeaker = activeSpeakers.find((sp) => sp.vocalId === confirmedSpeakerVocalId) || null;
+  const needsSpeakerConfirmation = Boolean(vocalMatchesCurrentSelection && hasMultipleSpeakers && !confirmedSpeaker);
+
   function cleanupRemote(oldSource?: UploadedSource | null, oldVocal?: SeparatedVocal | null) {
     if (!oldSource && !oldVocal) return;
+    const vocalIds = [
+      oldVocal?.vocalId,
+      ...(oldVocal?.speakers.map((sp) => sp.vocalId) || []),
+    ].filter(Boolean);
     void fetch('/api/voice-transfer/cleanup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({
         sourceId: oldSource?.sourceId,
-        vocalId: oldVocal?.vocalId,
+        vocalIds,
       }),
     }).catch(() => {});
   }
@@ -175,9 +250,24 @@ export default function VoiceTransferPage({
     setPreviewingRange(false);
   }
 
+  function activateSource(nextSource: UploadedSource, prevSource?: UploadedSource | null, prevVocal?: SeparatedVocal | null) {
+    cleanupRemote(prevSource, prevVocal);
+    setSource(nextSource);
+    setStartSeconds(nextSource.defaultStartSeconds);
+    setEndSeconds(nextSource.defaultEndSeconds);
+    setVocal(null);
+    setSelectedSpeakerVocalId('');
+    setConfirmedSpeakerVocalId('');
+    setPendingGenerateAfterConfirm(false);
+    setResult(null);
+    setError('');
+    setNotice('');
+  }
+
   function handleUploadFile(file: File) {
     if (!file) return;
     setError('');
+    setNotice('');
     stopRangePreview();
     const prevSource = source;
     const prevVocal = vocal;
@@ -205,22 +295,22 @@ export default function VoiceTransferPage({
         setError(payload?.error || '素材上传失败，请检查文件格式后重试');
         return;
       }
-      cleanupRemote(prevSource, prevVocal);
-      const uploaded: UploadedSource = {
-        sourceId: String(payload.sourceId),
-        fileName: String(payload.fileName || file.name),
-        url: String(payload.url),
-        size: Number(payload.size || file.size),
-        durationSeconds: Number(payload.durationSeconds || 0),
-        hasVideo: Boolean(payload.hasVideo),
-        defaultStartSeconds: Number(payload.defaultStartSeconds || 0),
-        defaultEndSeconds: Number(payload.defaultEndSeconds || Math.min(15, Number(payload.durationSeconds || 0))),
-      };
-      setSource(uploaded);
-      setStartSeconds(uploaded.defaultStartSeconds);
-      setEndSeconds(uploaded.defaultEndSeconds);
-      setVocal(null);
-      setResult(null);
+      const duration = Number(payload.durationSeconds || 0);
+      activateSource(
+        {
+          sourceId: String(payload.sourceId),
+          fileName: String(payload.fileName || file.name),
+          url: String(payload.url),
+          size: Number(payload.size || file.size),
+          durationSeconds: duration,
+          hasVideo: Boolean(payload.hasVideo),
+          defaultStartSeconds: Number(payload.defaultStartSeconds || 0),
+          defaultEndSeconds: Number(payload.defaultEndSeconds || Math.min(15, duration)),
+          sourceType: 'local',
+        },
+        prevSource,
+        prevVocal
+      );
     };
 
     xhr.onerror = () => {
@@ -229,6 +319,102 @@ export default function VoiceTransferPage({
     };
 
     xhr.send(file);
+  }
+
+  async function parseAndLoadOnlineVideo() {
+    const input = linkInput.trim();
+    if (!input) {
+      setError('请先粘贴视频链接或完整分享文字。');
+      return;
+    }
+    setOnlineLoading(true);
+    setOnlineElapsedSeconds(0);
+    setOnlineProgress({ stage: 'parsing', percent: 4, message: '正在识别平台并解析视频地址…' });
+    setError('');
+    setNotice('');
+    stopRangePreview();
+    const prevSource = source;
+    const prevVocal = vocal;
+
+    try {
+      const parsed = await resolveCpExtract(input);
+      const candidates = collectOnlineVideoCandidates(parsed);
+      if (candidates.length === 0) throw new Error('没有解析到可用视频，请改用本地上传。');
+      setOnlineProgress({ stage: 'downloading', percent: 25, message: '链接解析成功，正在下载视频…' });
+
+      const response = await fetch('/api/clips/import-url-stream', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          downloadUrl: candidates[0]?.url,
+          downloadUrlCandidates: candidates,
+          videoUrls: parsed.videoUrls || [],
+          title: parsed.title || `${parsed.authorName || '在线'}视频`,
+          sourceUrl: parsed.sourceUrl || input,
+          platform: parsed.platform || '',
+        }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, '在线视频载入失败'));
+      if (!response.body) throw new Error('浏览器无法读取载入进度，请刷新后重试。');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let imported: any = null;
+
+      const handleEvent = (event: any) => {
+        if (event?.type === 'error') throw new Error(String(event.message || '在线视频载入失败'));
+        if (event?.type === 'done' && event.source) {
+          imported = event.source;
+          setOnlineProgress({ stage: 'loading', percent: 100, message: '视频已载入，准备提取音色…' });
+          return;
+        }
+        if (event?.type !== 'progress') return;
+        const progressStage: OnlineLoadStage =
+          event.stage === 'checking' ? 'checking' : event.stage === 'loading' ? 'loading' : 'downloading';
+        setOnlineProgress((current) => ({
+          stage: progressStage,
+          percent: Math.max(
+            current?.percent || 0,
+            Math.max(0, Math.min(99, Number(event.percent) || (progressStage === 'checking' ? 84 : 25)))
+          ),
+          message: String(event.message || '正在载入视频…'),
+        }));
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) if (line.trim()) handleEvent(JSON.parse(line));
+        if (done) break;
+      }
+      if (buffer.trim()) handleEvent(JSON.parse(buffer));
+      if (!imported?.sourceId) throw new Error('视频载入未完成，请重试或改用本地上传。');
+
+      const duration = Number(imported.durationSeconds || 0);
+      activateSource(
+        {
+          sourceId: String(imported.sourceId),
+          fileName: String(imported.fileName || parsed.title || '在线视频.mp4'),
+          url: String(imported.url),
+          size: Number(imported.size || 0),
+          durationSeconds: duration,
+          hasVideo: true,
+          defaultStartSeconds: 0,
+          defaultEndSeconds: Math.round(Math.min(15, duration) * 10) / 10,
+          sourceType: 'online',
+        },
+        prevSource,
+        prevVocal
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '视频解析失败，请重试或改用本地上传。');
+    } finally {
+      setOnlineLoading(false);
+    }
   }
 
   function handleStartChange(nextValue: number) {
@@ -283,10 +469,11 @@ export default function VoiceTransferPage({
 
   async function runSeparateVocal(): Promise<SeparatedVocal | null> {
     if (!source) {
-      setError('请先上传包含人声的视频或音频文件');
+      setError('请先解析在线视频链接或上传本地视频/音频');
       return null;
     }
     setError('');
+    setNotice('');
     setStage('separating');
     try {
       const response = await fetch('/api/voice-transfer/separate', {
@@ -304,6 +491,27 @@ export default function VoiceTransferPage({
         throw new Error(await readApiError(response, '人声与 BGM 分离失败，请重试'));
       }
       const data = await response.json();
+      const speakers: DetectedSpeaker[] = Array.isArray(data.speakers) && data.speakers.length > 0
+        ? data.speakers.map((sp: any, idx: number) => ({
+            speakerId: sp.speakerId ?? idx,
+            label: String(sp.label || `音色 ${idx + 1}`),
+            vocalId: String(sp.vocalId || data.vocalId),
+            vocalUrl: String(sp.vocalUrl || data.vocalUrl),
+            durationSeconds: Number(sp.durationSeconds || 0),
+            sampleText: String(sp.sampleText || ''),
+          }))
+        : [
+            {
+              speakerId: 0,
+              label: '音色 1',
+              vocalId: String(data.vocalId),
+              vocalUrl: String(data.vocalUrl),
+              durationSeconds: Number(data.durationSeconds || 0),
+              sampleText: '',
+            },
+          ];
+
+      const requiresSpeakerSelection = Boolean(data.requiresSpeakerSelection && speakers.length > 1);
       const extracted: SeparatedVocal = {
         vocalId: String(data.vocalId),
         vocalUrl: String(data.vocalUrl),
@@ -312,9 +520,13 @@ export default function VoiceTransferPage({
         startSeconds: Number(data.startSeconds ?? roundedStart),
         endSeconds: Number(data.endSeconds ?? roundedEnd),
         scene: (data.scene === 'Audio' ? 'Audio' : 'Narrate') as SeparationScene,
+        speakers,
+        requiresSpeakerSelection,
         cached: Boolean(data.cached),
       };
       setVocal(extracted);
+      setSelectedSpeakerVocalId(speakers[0].vocalId);
+      setConfirmedSpeakerVocalId(requiresSpeakerSelection ? '' : speakers[0].vocalId);
       return extracted;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '人声与 BGM 分离失败');
@@ -324,32 +536,9 @@ export default function VoiceTransferPage({
     }
   }
 
-  async function handleSeparateOnly() {
-    if (isBusy) return;
-    await runSeparateVocal();
-  }
-
-  async function handleGenerateMp3() {
-    if (isBusy) return;
-    if (!source) {
-      setError('请先在左侧上传视频或音频文件');
-      return;
-    }
-    const trimmedText = text.trim();
-    if (!trimmedText) {
-      setError('请在右侧输入需要配音的目标文案');
-      return;
-    }
-
+  async function runSynthesizeWithVocal(targetVocalId: string, speakerLabel: string, trimmedText: string) {
     setError('');
-    stopRangePreview();
-
-    let activeVocal = vocalMatchesCurrentSelection ? vocal : null;
-    if (!activeVocal) {
-      activeVocal = await runSeparateVocal();
-      if (!activeVocal) return;
-    }
-
+    setNotice('');
     setStage('synthesizing');
     try {
       const response = await fetch('/api/voice-transfer/synthesize', {
@@ -357,7 +546,7 @@ export default function VoiceTransferPage({
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          vocalId: activeVocal.vocalId,
+          vocalId: targetVocalId,
           text: trimmedText,
         }),
       });
@@ -371,6 +560,7 @@ export default function VoiceTransferPage({
         size: Number(data.size || 0),
         durationSeconds: Number(data.durationSeconds || 0),
         reusedVoice: Boolean(data.reusedVoice),
+        speakerLabel,
         textSnapshot: trimmedText,
       });
     } catch (caught) {
@@ -380,14 +570,86 @@ export default function VoiceTransferPage({
     }
   }
 
+  async function handleSeparateOnly() {
+    if (isBusy) return;
+    setPendingGenerateAfterConfirm(false);
+    const extracted = await runSeparateVocal();
+    if (extracted?.requiresSpeakerSelection) {
+      setNotice(`检测到 ${extracted.speakers.length} 种音色，请先在左侧试听并确认要使用的音色。`);
+    }
+  }
+
+  async function handleConfirmSpeaker(andGenerate = false) {
+    if (isBusy || !selectedSpeaker) return;
+    setConfirmedSpeakerVocalId(selectedSpeaker.vocalId);
+    setPendingGenerateAfterConfirm(false);
+    setError('');
+    setNotice(`已确认使用「${selectedSpeaker.label}」。`);
+
+    const trimmedText = text.trim();
+    if (andGenerate && trimmedText) {
+      await runSynthesizeWithVocal(selectedSpeaker.vocalId, selectedSpeaker.label, trimmedText);
+    }
+  }
+
+  async function handleGenerateMp3() {
+    if (isBusy) return;
+    if (!source) {
+      setError('请先在左侧解析视频链接或上传本地视频/音频');
+      return;
+    }
+    const trimmedText = text.trim();
+    if (!trimmedText) {
+      setError('请在右侧输入需要配音的目标文案');
+      return;
+    }
+
+    setError('');
+    setNotice('');
+    stopRangePreview();
+
+    let activeVocal = vocalMatchesCurrentSelection ? vocal : null;
+    if (!activeVocal) {
+      activeVocal = await runSeparateVocal();
+      if (!activeVocal) return;
+      if (activeVocal.requiresSpeakerSelection) {
+        setPendingGenerateAfterConfirm(true);
+        setNotice(`检测到 ${activeVocal.speakers.length} 种音色！请先在左侧试听「音色 1 / 音色 2」，点击确认后再生成 MP3。`);
+        return;
+      }
+    }
+
+    if (activeVocal.requiresSpeakerSelection) {
+      const targetSpeaker = activeVocal.speakers.find((sp) => sp.vocalId === confirmedSpeakerVocalId);
+      if (!targetSpeaker) {
+        setPendingGenerateAfterConfirm(true);
+        setNotice(`检测到 ${activeVocal.speakers.length} 种音色，请先在左侧试听并点击「确认使用」后再生成 MP3。`);
+        return;
+      }
+      await runSynthesizeWithVocal(targetSpeaker.vocalId, targetSpeaker.label, trimmedText);
+      return;
+    }
+
+    const singleSpeaker = activeVocal.speakers[0];
+    await runSynthesizeWithVocal(
+      singleSpeaker?.vocalId || activeVocal.vocalId,
+      singleSpeaker?.label || '音色 1',
+      trimmedText
+    );
+  }
+
   function handleResetSource() {
     if (isBusy) return;
     stopRangePreview();
     cleanupRemote(source, vocal);
     setSource(null);
     setVocal(null);
+    setSelectedSpeakerVocalId('');
+    setConfirmedSpeakerVocalId('');
+    setPendingGenerateAfterConfirm(false);
     setResult(null);
     setError('');
+    setNotice('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
@@ -419,7 +681,7 @@ export default function VoiceTransferPage({
           />
         </div>
         <div className="hidden text-xs font-bold text-slate-500 sm:block">
-          AI MediaKit 分离 BGM · 阿里云克隆音色 · 临时使用不入库
+          AI MediaKit 分离 BGM · 多音色识别试听 · 阿里云克隆 MP3
         </div>
       </header>
 
@@ -431,22 +693,29 @@ export default function VoiceTransferPage({
               音色转移
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              上传视频或音频自动剥离 BGM 提取纯人声，再用该音色朗读新文案，直接输出 MP3。
+              支持解析在线视频链接或上传本地音视频，自动剥离 BGM、区分多说话人音色并生成新文案 MP3。
             </p>
           </div>
           <div className="text-xs font-semibold text-slate-400">
-            建议截取 15 秒清晰人声 · 支持 MP4 / MOV / MP3 / WAV / M4A
+            建议截取 15 秒清晰人声 · 多人对话自动拆分试听选择
           </div>
         </div>
 
-        {error && (
-          <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 shadow-sm">
-            {error}
+        {(error || notice) && (
+          <div
+            className={cn(
+              'mb-5 rounded-2xl border px-4 py-3 text-sm font-bold shadow-sm',
+              error
+                ? 'border-red-200 bg-red-50 text-red-700'
+                : 'border-amber-200 bg-amber-50 text-amber-900'
+            )}
+          >
+            {error || notice}
           </div>
         )}
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* 窗口一：上传原视频/音频 & 提取纯净人声 */}
+          {/* 窗口一：链接解析 / 本地上传 + 截取与多音色试听确认 */}
           <section className="flex flex-col rounded-3xl border border-slate-200/90 bg-white/95 p-5 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.28)] backdrop-blur-sm">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -455,7 +724,7 @@ export default function VoiceTransferPage({
                 </span>
                 <div>
                   <h2 className="text-base font-black text-slate-900">原音色素材</h2>
-                  <p className="text-xs text-slate-500">上传视频或音频，自动分离背景音乐</p>
+                  <p className="text-xs text-slate-500">支持在线视频链接解析或本地音视频上传</p>
                 </div>
               </div>
               {source && (
@@ -472,57 +741,177 @@ export default function VoiceTransferPage({
             </div>
 
             {!source ? (
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => {
-                  if (!isBusy) fileInputRef.current?.click();
-                }}
-                onKeyDown={(event) => {
-                  if ((event.key === 'Enter' || event.key === ' ') && !isBusy) {
-                    event.preventDefault();
-                    fileInputRef.current?.click();
-                  }
-                }}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setDraggingFile(true);
-                }}
-                onDragLeave={() => setDraggingFile(false)}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  setDraggingFile(false);
-                  const file = event.dataTransfer.files?.[0];
-                  if (file && !isBusy) handleUploadFile(file);
-                }}
-                className={cn(
-                  'flex flex-1 min-h-[300px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-8 text-center transition-all',
-                  draggingFile
-                    ? 'border-rose-500 bg-rose-50/70'
-                    : 'border-slate-200 bg-slate-50/70 hover:border-rose-300 hover:bg-rose-50/30'
-                )}
-              >
-                {uploadProgress !== null ? (
-                  <div className="w-full max-w-xs space-y-3">
-                    <LoaderCircle className="mx-auto size-9 animate-spin text-rose-600" />
-                    <div className="text-sm font-black text-slate-800">正在上传并解析素材… {uploadProgress}%</div>
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-rose-500 to-amber-500 transition-all"
-                        style={{ width: `${uploadProgress}%` }}
+              <div className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                {/* 复用镜头截取的双模式切换：链接解析 / 本地上传 */}
+                <div className="grid grid-cols-2 border-b border-slate-200 bg-gradient-to-r from-slate-100 via-white to-slate-100 p-1.5">
+                  <button
+                    type="button"
+                    disabled={onlineLoading || uploadProgress !== null}
+                    onClick={() => setSourceMode('link')}
+                    className={cn(
+                      'flex h-10 items-center justify-center gap-2 rounded-xl border text-sm font-black transition',
+                      sourceMode === 'link'
+                        ? 'border-cyan-200 bg-white text-cyan-700 shadow-[0_4px_14px_-8px_rgba(8,145,178,0.8)]'
+                        : 'border-transparent text-slate-500 hover:border-slate-200 hover:bg-white/70 hover:text-slate-800'
+                    )}
+                  >
+                    <Link2 className="size-4" />
+                    链接解析
+                  </button>
+                  <button
+                    type="button"
+                    disabled={onlineLoading || uploadProgress !== null}
+                    onClick={() => setSourceMode('upload')}
+                    className={cn(
+                      'flex h-10 items-center justify-center gap-2 rounded-xl border text-sm font-black transition',
+                      sourceMode === 'upload'
+                        ? 'border-rose-200 bg-white text-rose-700 shadow-[0_4px_14px_-8px_rgba(225,29,72,0.75)]'
+                        : 'border-transparent text-slate-500 hover:border-slate-200 hover:bg-white/70 hover:text-slate-800'
+                    )}
+                  >
+                    <Upload className="size-4" />
+                    本地上传
+                  </button>
+                </div>
+
+                {sourceMode === 'link' ? (
+                  <div className="flex flex-1 flex-col justify-between bg-[radial-gradient(circle_at_90%_10%,rgba(6,182,212,0.07),transparent_35%)] p-5">
+                    <div>
+                      <div className="text-sm font-black text-slate-800">粘贴视频链接或分享文字</div>
+                      <div className="mt-1 text-xs text-slate-400">支持抖音、快手和微信视频号，直接复用镜头截取解析引擎</div>
+                      <textarea
+                        value={linkInput}
+                        disabled={onlineLoading}
+                        onChange={(event) => setLinkInput(event.target.value)}
+                        onKeyDown={(event) => {
+                          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                            void parseAndLoadOnlineVideo();
+                          }
+                        }}
+                        rows={4}
+                        placeholder="粘贴视频链接或完整分享文案，例如：https://v.douyin.com/…"
+                        className="mt-3 min-h-28 w-full resize-y rounded-xl border border-slate-300 bg-slate-50/80 px-4 py-3 text-sm font-semibold leading-6 shadow-inner shadow-slate-200/40 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100 disabled:opacity-60"
                       />
+                      <button
+                        type="button"
+                        disabled={onlineLoading || !linkInput.trim()}
+                        onClick={() => void parseAndLoadOnlineVideo()}
+                        className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-sky-600 text-sm font-black text-white shadow-[0_8px_20px_-12px_rgba(8,145,178,0.9)] transition hover:from-cyan-700 hover:to-sky-700 disabled:cursor-not-allowed disabled:from-cyan-300 disabled:to-sky-300 disabled:shadow-none"
+                      >
+                        {onlineLoading ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}
+                        {onlineLoading ? '正在解析并载入视频…' : '解析链接并载入'}
+                      </button>
+
+                      {onlineLoading && onlineProgress && (
+                        <div
+                          className="relative mt-4 overflow-hidden rounded-2xl border border-cyan-200/80 bg-gradient-to-br from-cyan-50 via-white to-sky-50 p-4 text-slate-700"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              <LoaderCircle className="size-4 shrink-0 animate-spin text-cyan-600" />
+                              <div className="truncate text-xs font-black text-slate-800">{onlineProgress.message}</div>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <div className="font-mono text-sm font-black text-cyan-700">{Math.round(onlineProgress.percent)}%</div>
+                              <div className="text-[10px] font-bold text-slate-500">耗时 {onlineElapsedSeconds} 秒</div>
+                            </div>
+                          </div>
+                          <div className="mt-3 grid grid-cols-4 gap-1.5">
+                            {([
+                              ['parsing', '解析链接'],
+                              ['downloading', '下载视频'],
+                              ['checking', '校验素材'],
+                              ['loading', '载入页面'],
+                            ] as const).map(([stageKey, label], index, stages) => {
+                              const activeIndex = stages.findIndex(([value]) => value === onlineProgress.stage);
+                              const done = index < activeIndex;
+                              const active = stageKey === onlineProgress.stage;
+                              return (
+                                <div
+                                  key={stageKey}
+                                  className={cn(
+                                    'rounded-lg border px-1.5 py-1 text-center text-[10px] font-black',
+                                    done
+                                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                      : active
+                                        ? 'border-cyan-300 bg-cyan-100/80 text-cyan-800'
+                                        : 'border-slate-200 bg-white/75 text-slate-400'
+                                  )}
+                                >
+                                  {done ? '✓ ' : active ? '● ' : ''}
+                                  {label}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-cyan-100/80">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-sky-500 transition-[width] duration-500"
+                              style={{ width: `${onlineProgress.percent}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (
-                  <>
-                    <div className="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-rose-500 to-amber-500 text-white shadow-lg shadow-rose-200/70">
-                      <Upload className="size-6" />
+                  <div className="flex flex-1 p-5">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        if (!isBusy) fileInputRef.current?.click();
+                      }}
+                      onKeyDown={(event) => {
+                        if ((event.key === 'Enter' || event.key === ' ') && !isBusy) {
+                          event.preventDefault();
+                          fileInputRef.current?.click();
+                        }
+                      }}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setDraggingFile(true);
+                      }}
+                      onDragLeave={() => setDraggingFile(false)}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        setDraggingFile(false);
+                        const file = event.dataTransfer.files?.[0];
+                        if (file && !isBusy) handleUploadFile(file);
+                      }}
+                      className={cn(
+                        'flex flex-1 min-h-[240px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-6 text-center transition-all',
+                        draggingFile
+                          ? 'border-rose-500 bg-rose-50/70'
+                          : 'border-slate-200 bg-slate-50/70 hover:border-rose-300 hover:bg-rose-50/30'
+                      )}
+                    >
+                      {uploadProgress !== null ? (
+                        <div className="w-full max-w-xs space-y-3">
+                          <LoaderCircle className="mx-auto size-9 animate-spin text-rose-600" />
+                          <div className="text-sm font-black text-slate-800">正在上传并解析素材… {uploadProgress}%</div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-rose-500 to-amber-500 transition-all"
+                              style={{ width: `${uploadProgress}%` }}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-rose-500 to-amber-500 text-white shadow-lg shadow-rose-200/70">
+                            <Upload className="size-6" />
+                          </div>
+                          <div className="mt-4 text-base font-black text-slate-900">点击或拖拽上传本地视频 / 音频</div>
+                          <p className="mt-1.5 max-w-xs text-xs leading-5 text-slate-500">
+                            支持 MP4、MOV、MKV、MP3、WAV、M4A 等常见格式，最大 500MB。长素材默认截取前 15 秒。
+                          </p>
+                        </>
+                      )}
                     </div>
-                    <div className="mt-4 text-base font-black text-slate-900">点击或拖拽上传视频 / 音频</div>
-                    <p className="mt-1.5 max-w-xs text-xs leading-5 text-slate-500">
-                      支持 MP4、MOV、MKV、MP3、WAV、M4A 等常见格式，最大 500MB。长素材默认截取前 15 秒提取音色。
-                    </p>
-                  </>
+                  </div>
                 )}
               </div>
             ) : (
@@ -533,7 +922,14 @@ export default function VoiceTransferPage({
                     {source.hasVideo ? <Film className="size-4" /> : <FileAudio className="size-4" />}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-black text-slate-900">{source.fileName}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-black text-slate-900">{source.fileName}</span>
+                      {source.sourceType === 'online' && (
+                        <span className="shrink-0 rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-black text-cyan-700">
+                          在线解析
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-slate-500">
                       总时长 {formatSeconds(source.durationSeconds)} · {formatFileSize(source.size)}
                     </div>
@@ -661,12 +1057,25 @@ export default function VoiceTransferPage({
                   </div>
                 </div>
 
-                {/* 分离后的纯净人声试听 */}
-                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                {/* 分离后的纯净人声 & 多音色试听确认区 */}
+                <div
+                  className={cn(
+                    'rounded-2xl border p-4 transition-colors',
+                    needsSpeakerConfirmation
+                      ? 'border-amber-400 bg-amber-50/70 ring-2 ring-amber-200/70'
+                      : 'border-slate-200 bg-slate-50/80'
+                  )}
+                >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 text-xs font-black text-slate-800">
-                      <Volume2 className="size-4 text-emerald-600" />
-                      分离后的纯净人声
+                      {hasMultipleSpeakers ? (
+                        <Users className="size-4 text-amber-600" />
+                      ) : (
+                        <Volume2 className="size-4 text-emerald-600" />
+                      )}
+                      {hasMultipleSpeakers
+                        ? `检测到 ${activeSpeakers.length} 种音色 · 请试听并选择`
+                        : '分离后的纯净人声'}
                     </div>
                     <button
                       type="button"
@@ -680,24 +1089,107 @@ export default function VoiceTransferPage({
                         <RefreshCw className="size-3.5" />
                       )}
                       {stage === 'separating'
-                        ? '正在分离 BGM…'
+                        ? '正在分离并识别音色…'
                         : vocalMatchesCurrentSelection
                           ? '重新分离'
-                          : '先提取并试听纯人声'}
+                          : '先提取并检测音色'}
                     </button>
                   </div>
 
                   {vocalMatchesCurrentSelection && vocal ? (
-                    <div className="mt-3 space-y-2">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700">
-                        <CheckCircle2 className="size-3.5" />
-                        纯人声已就绪（有效时长 {vocal.durationSeconds.toFixed(1)} 秒），可直接用于右侧生成
+                    hasMultipleSpeakers ? (
+                      <div className="mt-3 space-y-2.5">
+                        <p className="text-xs leading-5 text-amber-900">
+                          这段素材包含多位说话人。请分别试听下方音色，选中你要复刻的那一位并点击确认：
+                        </p>
+                        <div className="space-y-2">
+                          {activeSpeakers.map((sp) => {
+                            const isSelected = selectedSpeaker?.vocalId === sp.vocalId;
+                            const isConfirmed = confirmedSpeaker?.vocalId === sp.vocalId;
+                            return (
+                              <div
+                                key={sp.vocalId}
+                                onClick={() => {
+                                  if (!isBusy) {
+                                    setSelectedSpeakerVocalId(sp.vocalId);
+                                    if (confirmedSpeakerVocalId && confirmedSpeakerVocalId !== sp.vocalId) {
+                                      setConfirmedSpeakerVocalId('');
+                                    }
+                                  }
+                                }}
+                                className={cn(
+                                  'cursor-pointer rounded-xl border-2 bg-white p-3 transition',
+                                  isSelected
+                                    ? 'border-rose-500 shadow-sm'
+                                    : 'border-slate-200 hover:border-rose-200'
+                                )}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <span
+                                      className={cn(
+                                        'size-4 shrink-0 rounded-full border-2',
+                                        isSelected
+                                          ? 'border-rose-600 bg-rose-600 shadow-[inset_0_0_0_3px_white]'
+                                          : 'border-slate-300'
+                                      )}
+                                    />
+                                    <span className="text-xs font-black text-slate-900">{sp.label}</span>
+                                    <span className="text-[11px] font-semibold text-slate-400">
+                                      有效语音 {sp.durationSeconds.toFixed(1)} 秒
+                                    </span>
+                                  </div>
+                                  {isConfirmed && (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">
+                                      <CheckCircle2 className="size-3" />
+                                      已确认
+                                    </span>
+                                  )}
+                                </div>
+                                {sp.sampleText && (
+                                  <p className="mt-1.5 line-clamp-1 text-[11px] text-slate-500">
+                                    “{sp.sampleText}”
+                                  </p>
+                                )}
+                                <audio
+                                  controls
+                                  src={sp.vocalUrl}
+                                  onClick={(event) => event.stopPropagation()}
+                                  className="mt-2 h-9 w-full"
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {selectedSpeaker && (
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => void handleConfirmSpeaker(pendingGenerateAfterConfirm || Boolean(text.trim()))}
+                              className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-4 text-xs font-black text-white transition hover:bg-slate-700 disabled:opacity-50"
+                            >
+                              <CheckCircle2 className="size-4" />
+                              {text.trim()
+                                ? `确认使用「${selectedSpeaker.label}」并生成 MP3`
+                                : `确认使用「${selectedSpeaker.label}」`}
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      <audio controls src={vocal.vocalUrl} className="w-full" />
-                    </div>
+                    ) : (
+                      <div className="mt-3 space-y-2">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700">
+                          <CheckCircle2 className="size-3.5" />
+                          纯人声已就绪（单说话人 · 有效时长 {vocal.durationSeconds.toFixed(1)} 秒）
+                        </div>
+                        <audio controls src={vocal.vocalUrl} className="w-full" />
+                      </div>
+                    )
                   ) : (
                     <p className="mt-2 text-xs leading-5 text-slate-500">
-                      你可以先点上方按钮提前试听分离效果；也可以直接在右侧填好文案后一键完成「分离 BGM + 克隆 + 生成 MP3」。
+                      你可以先点上方按钮提前分离 BGM 并检测是否包含多种音色；也可以直接在右侧填好文案后一键运行（若检测到多种音色会自动暂停请你试听选择）。
                     </p>
                   )}
                 </div>
@@ -714,7 +1206,7 @@ export default function VoiceTransferPage({
                 </span>
                 <div>
                   <h2 className="text-base font-black text-slate-900">目标文案与 MP3 输出</h2>
-                  <p className="text-xs text-slate-500">使用提取出的音色朗读下方文案，生成 MP3 音频</p>
+                  <p className="text-xs text-slate-500">使用确认后的音色朗读下方文案，生成 MP3 音频</p>
                 </div>
               </div>
               {text.trim() && (
@@ -746,26 +1238,33 @@ export default function VoiceTransferPage({
                 </span>
               </div>
 
+              {/* 多音色待确认提醒 */}
+              {needsSpeakerConfirmation && stage === 'idle' && (
+                <div className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-bold leading-5 text-amber-900">
+                  左侧已识别出 {activeSpeakers.length} 种音色，请先试听并点击「确认使用」选定目标说话人，再继续克隆生成 MP3。
+                </div>
+              )}
+
               {/* 进度提示 */}
               {stage !== 'idle' && (
                 <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50/70 px-4 py-3">
                   <div className="flex items-center gap-2 text-sm font-black text-rose-700">
                     <LoaderCircle className="size-4 animate-spin" />
                     {stage === 'separating'
-                      ? '第 1/2 步：正在截取音频并调用 AI MediaKit 分离 BGM…'
-                      : '第 2/2 步：正在用阿里云克隆音色并合成 MP3…'}
+                      ? '第 1/2 步：正在分离 BGM 并检测说话人音色…'
+                      : `第 2/2 步：正在用阿里云克隆${confirmedSpeaker ? `「${confirmedSpeaker.label}」` : '音色'}并合成 MP3…`}
                   </div>
                   <p className="mt-1 text-xs text-rose-600/80">
                     {stage === 'separating'
-                      ? '通常需要 10～25 秒，分离出纯净人声后将自动进入克隆合成。'
-                      : '首次克隆该音色需等待几秒部署就绪；同素材修改文案再次生成时会直接复用音色。'}
+                      ? '通常需要 15～30 秒；若检测到多种音色，会暂停供你试听并选择。'
+                      : '首次克隆该音色需等待几秒部署就绪；同音色修改文案再次生成时会直接复用。'}
                   </p>
                 </div>
               )}
 
               <button
                 type="button"
-                disabled={isBusy || !source || !text.trim()}
+                disabled={isBusy || !source || !text.trim() || needsSpeakerConfirmation}
                 onClick={() => void handleGenerateMp3()}
                 className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 to-amber-500 px-5 text-sm font-black text-white shadow-lg shadow-rose-200/80 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -775,12 +1274,14 @@ export default function VoiceTransferPage({
                   <Sparkles className="size-4" />
                 )}
                 {stage === 'separating'
-                  ? '正在分离 BGM 提取人声…'
+                  ? '正在分离 BGM 并检测音色…'
                   : stage === 'synthesizing'
                     ? '正在克隆音色并生成 MP3…'
-                    : vocalMatchesCurrentSelection
-                      ? '使用当前纯人声生成 MP3'
-                      : '一键分离人声并生成 MP3'}
+                    : needsSpeakerConfirmation
+                      ? '请先在左侧试听并确认音色'
+                      : vocalMatchesCurrentSelection && confirmedSpeaker
+                        ? `使用「${confirmedSpeaker.label}」生成 MP3`
+                        : '一键分离人声并生成 MP3'}
               </button>
 
               {/* 生成结果区 */}
@@ -790,6 +1291,9 @@ export default function VoiceTransferPage({
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="size-4 text-emerald-600" />
                       <span className="text-sm font-black text-slate-900">MP3 生成完成</span>
+                      <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black text-rose-700">
+                        {result.speakerLabel}
+                      </span>
                       {result.reusedVoice && (
                         <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">
                           已复用当前音色

@@ -97,12 +97,51 @@ function safeJsonParse(text, fallback = null) {
   }
 }
 
+export function groupSpeakerSegments(sentences, maxDuration = Infinity) {
+  const bySpeaker = new Map();
+  for (const sentence of Array.isArray(sentences) ? sentences : []) {
+    const rawId = sentence?.speaker_id;
+    const speakerId = rawId === undefined || rawId === null || rawId === '' ? 0 : rawId;
+    const rawStart = Math.max(0, Number(sentence?.begin_time) / 1000);
+    const rawEnd = Math.min(maxDuration, Number(sentence?.end_time) / 1000);
+    if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || rawEnd <= rawStart + 0.05) continue;
+    const text = String(sentence?.text || '').trim();
+    if (!bySpeaker.has(speakerId)) {
+      bySpeaker.set(speakerId, { speakerId, segments: [], texts: [] });
+    }
+    const bucket = bySpeaker.get(speakerId);
+    const prev = bucket.segments[bucket.segments.length - 1];
+    if (prev && rawStart - prev.end <= 0.35) {
+      prev.end = Math.max(prev.end, rawEnd);
+    } else {
+      bucket.segments.push({ start: Math.round(rawStart * 1000) / 1000, end: Math.round(rawEnd * 1000) / 1000 });
+    }
+    if (text) bucket.texts.push(text);
+  }
+
+  const speakers = [];
+  for (const bucket of bySpeaker.values()) {
+    const totalDuration = Math.round(
+      bucket.segments.reduce((sum, seg) => sum + Math.max(0, seg.end - seg.start), 0) * 1000
+    ) / 1000;
+    if (totalDuration < 0.8) continue;
+    speakers.push({
+      speakerId: bucket.speakerId,
+      segments: bucket.segments,
+      totalDuration,
+      sampleText: bucket.texts.join('').slice(0, 56),
+    });
+  }
+  return speakers;
+}
+
 export function createVoiceTransferService({
   uploadTempDir,
   exec,
   fetchImpl = (...args) => fetch(...args),
   getConfig,
   aliyunVoiceService,
+  diarizeVocal,
   ensureTools,
   scheduleCleanup,
   registerMimeType,
@@ -123,6 +162,17 @@ export function createVoiceTransferService({
     return id ? path.join(uploadTempDir, `${id}_vt_source`) : '';
   }
 
+  function resolveExistingSourcePath(sourceId) {
+    const id = normalizeVoiceTransferId(sourceId);
+    if (!id) return '';
+    const vtPath = path.join(uploadTempDir, `${id}_vt_source`);
+    if (existsSync(vtPath)) return vtPath;
+    // Reuse videos imported via /api/clips/import-url-stream directly.
+    const clipPath = path.join(uploadTempDir, `${id}_clip_source`);
+    if (existsSync(clipPath)) return clipPath;
+    return '';
+  }
+
   function getVocalPath(vocalId) {
     const id = normalizeVoiceTransferId(vocalId);
     return id ? path.join(uploadTempDir, `${id}_vt_vocal.wav`) : '';
@@ -131,7 +181,8 @@ export function createVoiceTransferService({
   function pruneCaches() {
     const now = Date.now();
     for (const [key, entry] of separationCache.entries()) {
-      if (!entry || entry.expiresAt <= now || !existsSync(entry.vocalPath)) {
+      const speakersValid = !Array.isArray(entry?.speakers) || entry.speakers.every((sp) => existsSync(getVocalPath(sp.vocalId)));
+      if (!entry || entry.expiresAt <= now || !existsSync(entry.vocalPath) || !speakersValid) {
         separationCache.delete(key);
       }
     }
@@ -405,7 +456,7 @@ export function createVoiceTransferService({
     async separateVocal(body) {
       pruneCaches();
       const sourceId = normalizeVoiceTransferId(body?.sourceId);
-      const sourcePath = getSourcePath(sourceId);
+      const sourcePath = resolveExistingSourcePath(sourceId);
       if (!sourcePath || !existsSync(sourcePath)) {
         throw fail('原素材已过期或不存在，请重新上传视频或音频', 404);
       }
@@ -434,6 +485,8 @@ export function createVoiceTransferService({
           startSeconds: range.start,
           endSeconds: range.end,
           scene,
+          speakers: cached.speakers,
+          requiresSpeakerSelection: cached.requiresSpeakerSelection,
           cached: true,
         };
       }
@@ -442,6 +495,7 @@ export function createVoiceTransferService({
       const sliceWavPath = path.join(uploadTempDir, `${vocalId}_vt_slice.wav`);
       const rawVocalPath = path.join(uploadTempDir, `${vocalId}_vt_raw_vocal.wav`);
       const cleanVocalPath = getVocalPath(vocalId);
+      const createdSpeakerPaths = [];
 
       try {
         await exec('ffmpeg', [
@@ -463,11 +517,80 @@ export function createVoiceTransferService({
         const vocalFingerprint = createHash('sha256').update(cleanBuf).digest('hex');
         scheduleCleanup?.(cleanVocalPath);
 
+        // Detect multiple speakers on the clean vocal track so users can audition & pick one before cloning.
+        let speakers = [];
+        if (typeof diarizeVocal === 'function') {
+          try {
+            const rawSentences = await diarizeVocal({ audioPath: cleanVocalPath });
+            const grouped = groupSpeakerSegments(rawSentences, cleanDuration + 0.5);
+            if (grouped.length >= 2) {
+              const limited = grouped.slice(0, 6);
+              for (let idx = 0; idx < limited.length; idx++) {
+                const sp = limited[idx];
+                const spVocalId = randomBytes(12).toString('hex');
+                const spVocalPath = getVocalPath(spVocalId);
+                const filterParts = [];
+                const concatInputs = [];
+                sp.segments.forEach((seg, segIdx) => {
+                  filterParts.push(`[0:a]atrim=start=${seg.start}:end=${seg.end},asetpts=PTS-STARTPTS[s${segIdx}]`);
+                  concatInputs.push(`[s${segIdx}]`);
+                });
+                const filterComplex = sp.segments.length === 1
+                  ? `${filterParts[0]};[s0]loudnorm=I=-16:TP=-1.5:LRA=11[out]`
+                  : `${filterParts.join(';')};${concatInputs.join('')}concat=n=${sp.segments.length}:v=0:a=1,loudnorm=I=-16:TP=-1.5:LRA=11[out]`;
+                await exec('ffmpeg', [
+                  '-y', '-i', cleanVocalPath,
+                  '-filter_complex', filterComplex,
+                  '-map', '[out]',
+                  '-ac', '1', '-ar', '24000', '-c:a', 'pcm_s16le',
+                  spVocalPath,
+                ], { timeout: 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
+                createdSpeakerPaths.push(spVocalPath);
+                scheduleCleanup?.(spVocalPath);
+                const spDuration = await probeAudioDuration(spVocalPath).catch(() => sp.totalDuration);
+                speakers.push({
+                  speakerId: sp.speakerId,
+                  label: `音色 ${idx + 1}`,
+                  vocalId: spVocalId,
+                  vocalUrl: `/uploads/${path.basename(spVocalPath)}`,
+                  durationSeconds: spDuration || sp.totalDuration,
+                  sampleText: sp.sampleText,
+                });
+              }
+            } else if (grouped.length === 1) {
+              speakers = [{
+                speakerId: grouped[0].speakerId,
+                label: '音色 1',
+                vocalId,
+                vocalUrl: `/uploads/${path.basename(cleanVocalPath)}`,
+                durationSeconds: cleanDuration,
+                sampleText: grouped[0].sampleText,
+              }];
+            }
+          } catch (diarizeErr) {
+            console.warn('[voice-transfer] speaker diarization skipped:', diarizeErr?.message || diarizeErr);
+          }
+        }
+
+        if (speakers.length === 0) {
+          speakers = [{
+            speakerId: 0,
+            label: '音色 1',
+            vocalId,
+            vocalUrl: `/uploads/${path.basename(cleanVocalPath)}`,
+            durationSeconds: cleanDuration,
+            sampleText: '',
+          }];
+        }
+        const requiresSpeakerSelection = speakers.length > 1;
+
         separationCache.set(cacheKey, {
           vocalId,
           vocalPath: cleanVocalPath,
           vocalFingerprint,
           durationSeconds: cleanDuration,
+          speakers,
+          requiresSpeakerSelection,
           expiresAt: Date.now() + SEPARATION_CACHE_TTL_MS,
         });
 
@@ -480,10 +603,13 @@ export function createVoiceTransferService({
           startSeconds: range.start,
           endSeconds: range.end,
           scene,
+          speakers,
+          requiresSpeakerSelection,
           cached: false,
         };
       } catch (error) {
         await unlink(cleanVocalPath).catch(() => {});
+        await Promise.all(createdSpeakerPaths.map((p) => unlink(p).catch(() => {})));
         throw error;
       } finally {
         await Promise.all([
@@ -612,18 +738,23 @@ export function createVoiceTransferService({
 
     async cleanup(body) {
       const sourceId = normalizeVoiceTransferId(body?.sourceId);
-      const vocalId = normalizeVoiceTransferId(body?.vocalId);
+      const vocalIds = [
+        normalizeVoiceTransferId(body?.vocalId),
+        ...(Array.isArray(body?.vocalIds) ? body.vocalIds.map((id) => normalizeVoiceTransferId(id)) : []),
+      ].filter(Boolean);
       if (sourceId) {
-        const sourcePath = getSourcePath(sourceId);
-        unregisterMimeType?.(path.basename(sourcePath));
-        await unlink(sourcePath).catch(() => {});
+        const vtPath = getSourcePath(sourceId);
+        const clipPath = path.join(uploadTempDir, `${sourceId}_clip_source`);
+        for (const p of [vtPath, clipPath]) {
+          unregisterMimeType?.(path.basename(p));
+          await unlink(p).catch(() => {});
+        }
         for (const key of separationCache.keys()) {
           if (key.startsWith(`${sourceId}:`)) separationCache.delete(key);
         }
       }
-      if (vocalId) {
-        const vocalPath = getVocalPath(vocalId);
-        await unlink(vocalPath).catch(() => {});
+      for (const vid of new Set(vocalIds)) {
+        await unlink(getVocalPath(vid)).catch(() => {});
       }
       return { ok: true };
     },
