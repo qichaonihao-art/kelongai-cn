@@ -147,7 +147,7 @@ export async function onRequestPost(context) {
       return json({ ok: false, message: '文件没有可识别的音频，无法提取逐字稿。请确认文件包含声音后再试。' }, 400);
     }
     if (errMsg.includes('Invalid data')) {
-      return json({ ok: false, message: '文件格式不支持，请上传 MP4、MOV 等视频或 MP3 音频。' }, 400);
+      return json({ ok: false, message: '文件格式不支持，请上传 MP4、MOV 等视频或 MP3、WAV 音频。' }, 400);
     }
     return json({ ok: false, message: errMsg || '千问 ASR 转写失败' }, 502);
   } finally {
