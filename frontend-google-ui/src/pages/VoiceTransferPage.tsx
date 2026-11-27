@@ -694,22 +694,15 @@ export default function VoiceTransferPage({
         </div>
       </header>
 
-      <main className="relative mx-auto w-full max-w-7xl flex-1 space-y-6 p-4 pb-16 md:p-6">
-        <section className="relative overflow-hidden rounded-[2rem] bg-[#111b33] px-6 py-8 text-white shadow-[0_25px_65px_-35px_rgba(17,24,53,0.8)] sm:px-9">
-          <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(196,181,253,0.13)_1px,transparent_1px),linear-gradient(90deg,rgba(196,181,253,0.13)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:linear-gradient(to_right,transparent,black)]" />
-          <div className="pointer-events-none absolute -right-12 -top-24 size-72 rounded-full bg-violet-500/25 blur-3xl" />
-          <div className="relative grid gap-6 lg:grid-cols-[1fr_20rem] lg:items-center">
-            <div>
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-violet-300/20 bg-violet-300/10 px-3 py-1 text-xs font-bold tracking-[0.16em] text-violet-200"><AudioLines className="size-3.5" /> VOICE TRANSFER STUDIO</div>
-              <h1 className="text-3xl font-black tracking-tight sm:text-4xl">让熟悉的声音，说新的文案。</h1>
-              <p className="mt-4 max-w-xl text-sm leading-7 text-slate-300">上传原音视频，截取清晰人声；检测并试听说话人音色，输入目标文案后由阿里云生成新 MP3。</p>
-              <div className="mt-6 flex flex-wrap gap-2 text-xs text-slate-300"><span className="rounded-full border border-white/15 px-3 py-1.5">01 选择原声</span><span className="rounded-full border border-white/15 px-3 py-1.5">02 试听音色</span><span className="rounded-full border border-white/15 px-3 py-1.5">03 生成 MP3</span></div>
-            </div>
-            <div className="rounded-2xl border border-violet-300/20 bg-white/[0.06] p-5 backdrop-blur">
-              <div className="flex items-center justify-between text-xs font-semibold text-violet-100"><span className="flex items-center gap-2"><span className={`size-2 rounded-full bg-violet-300 ${isBusy ? 'animate-pulse' : ''}`} />{isBusy ? '正在处理音频' : result ? '生成完成' : '等待素材'}</span><AudioLines className="size-4" /></div>
-              <div className="mt-5 flex h-12 items-end gap-1.5" aria-hidden="true">{[22, 35, 27, 46, 30, 42, 19, 37, 28, 43, 32, 24, 39, 27, 33].map((height, index) => <span key={index} className={`w-full rounded-full bg-gradient-to-t from-violet-600 to-rose-200 ${isBusy ? 'copy-transfer-wave' : 'opacity-40'}`} style={{ height, animationDelay: `${index * 90}ms`, animationDuration: `${900 + (index % 4) * 180}ms` }} />)}</div>
-              <p className="mt-4 text-xs leading-5 text-slate-300">建议选取 10～15 秒清晰人声。多人说话时先试听，再选定要使用的音色。</p>
-            </div>
+      <main className="relative mx-auto w-full max-w-7xl flex-1 space-y-4 p-4 pb-16 md:p-6">
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-700"><AudioLines className="size-5" /></span>
+            <div className="min-w-0"><h1 className="text-xl font-bold tracking-tight">音色转移</h1><p className="mt-0.5 text-sm text-slate-500">提取原音色，输入文案生成 MP3</p></div>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-slate-500">
+            {isBusy && <span className="size-2 animate-pulse rounded-full bg-violet-500" />}
+            <span>{onlineLoading ? '正在载入素材' : uploadProgress !== null ? `上传中 ${uploadProgress}%` : stage === 'separating' ? '正在提取音色' : stage === 'synthesizing' ? '正在生成 MP3' : result ? 'MP3 已就绪' : '等待素材'}</span>
           </div>
         </section>
 
@@ -728,12 +721,9 @@ export default function VoiceTransferPage({
 
         <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
           {/* 窗口一：链接解析 / 本地上传 + 截取与多音色试听确认 */}
-          <section className="flex flex-col rounded-[1.75rem] border border-slate-200/90 bg-white p-5 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.28)] sm:p-7">
+          <section className="flex flex-col rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm sm:p-6">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <span className="flex size-9 items-center justify-center rounded-xl bg-violet-100 text-sm font-black text-violet-700">
-                  01
-                </span>
                 <div>
                   <h2 className="text-lg font-black text-slate-900">选择原声素材</h2>
                   <p className="text-xs text-slate-500">支持在线视频链接解析或本地音视频上传</p>
@@ -1210,12 +1200,9 @@ export default function VoiceTransferPage({
           </section>
 
           {/* 窗口二：输入目标文案 & 输出 MP3 */}
-          <section className="flex flex-col rounded-[1.75rem] border border-slate-200/90 bg-white p-5 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.28)] sm:p-7">
+          <section className="flex flex-col rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm sm:p-6">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <span className="flex size-9 items-center justify-center rounded-xl bg-violet-100 text-sm font-black text-violet-700">
-                  02
-                </span>
                 <div>
                   <h2 className="text-lg font-black text-slate-900">目标文案与音频</h2>
                   <p className="text-xs text-slate-500">使用确认后的音色朗读下方文案，生成 MP3 音频</p>

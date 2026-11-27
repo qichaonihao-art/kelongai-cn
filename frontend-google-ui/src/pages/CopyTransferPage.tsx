@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, CheckCircle2, Download, FileAudio, LoaderCircle, Sparkles, Upload, Waves } from 'lucide-react';
+import { CheckCircle2, Download, FileAudio, LoaderCircle, Upload } from 'lucide-react';
 import HomeBackButton from '@/src/components/HomeBackButton';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import CreativeSubNav from '@/src/components/CreativeSubNav';
@@ -224,30 +224,21 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
         <ModuleQuickNav current="creative" onNavigate={onNavigate} />
         <CreativeSubNav current="copy-transfer" onSwitchVideo={onSwitchToVideo} onSwitchClip={onSwitchToClip} onSwitchCopy={onSwitchToCopy} onSwitchVoiceTransfer={onSwitchToVoiceTransfer} onSwitchCopyTransfer={() => {}} />
       </header>
-      <main className="mx-auto mt-7 max-w-7xl space-y-6 pb-20">
-        <section className="relative overflow-hidden rounded-[2rem] bg-[#0a182b] px-6 py-8 text-white shadow-[0_24px_65px_-35px_rgba(7,27,55,0.8)] sm:px-10 sm:py-10">
-          <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(103,232,249,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(103,232,249,0.12)_1px,transparent_1px)] [background-size:26px_26px] [mask-image:linear-gradient(to_right,transparent,black)]" />
-          <div className="pointer-events-none absolute -right-14 -top-20 size-72 rounded-full bg-cyan-500/20 blur-3xl" />
-          <div className="relative grid gap-8 lg:grid-cols-[1fr_22rem] lg:items-center">
-            <div>
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-bold tracking-[0.18em] text-cyan-200"><Sparkles className="size-3.5" /> CREATIVE AUDIO STUDIO</div>
-              <h1 className="text-3xl font-black tracking-tight sm:text-4xl">文案转移<span className="ml-3 text-cyan-300">/</span> 产品形态转换</h1>
-              <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300">对照原产品与目标产品，只替换必要的文案。未改动的原声继续沿用，改动处由阿里云复刻音色，并与原 BGM 对齐输出 MP3。</p>
-              <div className="mt-6 flex flex-wrap gap-2 text-xs text-slate-300">
-                <span className="rounded-full border border-white/15 px-3 py-1.5">01 产品信息</span><span className="rounded-full border border-white/15 px-3 py-1.5">02 上传与分析</span><span className="rounded-full border border-white/15 px-3 py-1.5">03 核对与导出</span>
-              </div>
-            </div>
-            <div className="relative rounded-2xl border border-cyan-300/20 bg-white/[0.06] p-5 backdrop-blur">
-              <div className="flex items-center justify-between text-xs font-semibold text-cyan-100"><span className="flex items-center gap-2"><span className={`size-2 rounded-full bg-cyan-300 ${activeRow ? 'animate-pulse' : ''}`} />{activeRow ? '正在运行' : '等待任务'}</span><Waves className="size-4 text-cyan-300" /></div>
-              <div className="mt-5 flex h-12 items-end gap-1.5" aria-hidden="true">{[22, 36, 27, 46, 31, 41, 19, 35, 27, 45, 30, 22, 38, 25, 33].map((height, index) => <span key={index} className={`w-full rounded-full bg-gradient-to-t from-cyan-600 to-cyan-200 ${activeRow ? 'copy-transfer-wave' : 'opacity-40'}`} style={{ height, animationDelay: `${index * 90}ms`, animationDuration: `${900 + (index % 4) * 180}ms` }} />)}</div>
-              <div className="mt-5 flex items-baseline justify-between"><span className="text-xs text-slate-400">已完成素材</span><span className="text-3xl font-black tabular-nums">{doneCount}<span className="ml-1 text-sm text-slate-400">/ {rows.length}</span></span></div>
-              {reviewCount > 0 && <div className="mt-2 text-xs text-amber-200">{reviewCount} 条等待人工确认</div>}
-            </div>
+      <main className="mx-auto mt-5 max-w-7xl space-y-4 pb-20">
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700"><FileAudio className="size-5" /></span>
+            <div className="min-w-0"><h1 className="text-xl font-bold tracking-tight">文案转移</h1><p className="mt-0.5 text-sm text-slate-500">对照产品信息，局部改文案并生成 MP3</p></div>
+          </div>
+          <div className="flex items-center gap-3 text-sm text-slate-500">
+            {activeRow && <span className="flex items-center gap-1.5 font-medium text-cyan-700"><span className="size-2 animate-pulse rounded-full bg-cyan-500" />{activeRow.stage}</span>}
+            <span className="tabular-nums">已完成 {doneCount}/{rows.length}</span>
+            {reviewCount > 0 && <span className="text-amber-700">待确认 {reviewCount}</span>}
           </div>
         </section>
-        <section className="rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_18px_55px_-42px_rgba(15,23,42,0.35)] sm:p-8">
-          <div className="flex items-start gap-3"><span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-sm font-black text-cyan-700">01</span><div><h2 className="text-lg font-bold">产品信息对照</h2><p className="mt-1 text-sm text-slate-500">左右按同一维度填写。材质、结构、场景不涉及可留空；若原产品填写了某项，目标产品也需填写对应信息。原文未提到的属性不会强行加入。</p></div></div>
-          <div className="mt-6 grid gap-3 md:grid-cols-[9rem_minmax(0,1fr)_minmax(0,1fr)]">
+        <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
+          <div><h2 className="text-lg font-bold">产品信息对照</h2><p className="mt-1 text-sm text-slate-500">原产品与目标产品逐项对应；原产品填写了某项，目标产品也要填写。</p></div>
+          <div className="mt-5 grid gap-3 md:grid-cols-[9rem_minmax(0,1fr)_minmax(0,1fr)]">
             <div className="hidden md:block" />
             <h3 className="hidden rounded-xl bg-slate-100 px-4 py-3 font-bold text-slate-700 md:block">原产品 <span className="ml-1 text-xs font-normal text-slate-400">SOURCE</span></h3>
             <h3 className="hidden rounded-xl bg-cyan-50 px-4 py-3 font-bold text-cyan-900 md:block">目标产品 <span className="ml-1 text-xs font-normal text-cyan-600">TARGET</span></h3>
@@ -270,8 +261,8 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
             </select>}
           </div>
         </section>
-        <section className="rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_18px_55px_-42px_rgba(15,23,42,0.35)] sm:p-8">
-          <div className="mb-5 flex items-start gap-3"><span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-sm font-black text-cyan-700">02</span><div><h2 className="text-lg font-bold">上传与处理</h2><p className="mt-1 text-sm text-slate-500">支持一次选择多条本地音频或视频，系统逐条处理，复杂素材留给同事核对。</p></div></div>
+        <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
+          <div className="mb-5"><h2 className="text-lg font-bold">上传与处理</h2><p className="mt-1 text-sm text-slate-500">选择本地音视频；复杂素材会停下供你核对。</p></div>
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-cyan-300 bg-cyan-50 px-4 py-3 text-sm font-semibold text-cyan-800 transition hover:bg-cyan-100"><Upload className="size-4" />添加本地音视频
               <input hidden type="file" multiple accept="audio/*,video/*,.mp3,.wav,.m4a,.mp4,.mov" disabled={busy} onChange={(e) => {
@@ -280,7 +271,7 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
                 e.target.value = '';
               }} />
             </label>
-            <button type="button" disabled={busy || !rows.some((row) => row.stage === '待处理' || row.stage === '失败')} onClick={analyzeAll} className="flex items-center gap-2 rounded-xl bg-[#0a2640] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-cyan-950/15 transition hover:bg-[#123954] disabled:cursor-not-allowed disabled:opacity-40">开始批量处理 <ArrowRight className="size-4" /></button>
+            <button type="button" disabled={busy || !rows.some((row) => row.stage === '待处理' || row.stage === '失败')} onClick={analyzeAll} className="rounded-xl bg-[#0a2640] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#123954] disabled:cursor-not-allowed disabled:opacity-40">开始批量处理</button>
             <button type="button" disabled={busy || !rows.some((row) => row.approved && row.planId && row.stage !== '已完成')} onClick={renderAll} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40">生成已确认的 MP3</button>
             <button type="button" disabled={busy || !rows.some((row) => row.result)} onClick={downloadAll} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-40">打包已完成音频</button>
             {archive && <a className="flex items-center gap-1 text-sm font-semibold text-emerald-700" href={archive.archiveUrl} download={archive.fileName}><Download className="size-4" />下载 MP3 合集</a>}
@@ -296,7 +287,7 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
           <p className="mt-4 text-xs text-slate-500">单条最长 3 分钟；普通条目分析后自动生成，复杂条目先试听确认。临时音轨保留约 2 小时；页面关闭会停止后续排队任务。</p>
         </section>
         <div className="space-y-4">
-          <div className="flex items-center gap-3 px-1"><span className="flex size-9 items-center justify-center rounded-xl bg-cyan-50 text-sm font-black text-cyan-700">03</span><h2 className="text-lg font-bold">素材队列与文案核对</h2></div>
+          <h2 className="px-1 text-lg font-bold">素材队列与文案核对</h2>
           {rows.map((row) => (
             <article key={row.key} className={`overflow-hidden rounded-2xl border bg-white p-5 shadow-[0_14px_40px_-32px_rgba(15,23,42,0.35)] transition ${['上传中', '分析中', '生成中'].includes(row.stage) ? 'border-cyan-300 ring-4 ring-cyan-100/60' : 'border-slate-200'}`}>
               <div className="flex flex-wrap items-center justify-between gap-3">

@@ -1,16 +1,6 @@
-@keyframes copy-transfer-wave {
-  0%, 100% { transform: scaleY(0.65); opacity: 0.55; }
-  50% { transform: scaleY(1.18); opacity: 1; }
-}
-
 @keyframes copy-transfer-scan {
   from { transform: translateX(-120%); }
   to { transform: translateX(230%); }
-}
-
-.copy-transfer-wave {
-  transform-origin: bottom;
-  animation: copy-transfer-wave 1.2s ease-in-out infinite;
 }
 
 .copy-transfer-scan {
@@ -18,6 +8,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .copy-transfer-wave,
   .copy-transfer-scan { animation: none; }
 }
