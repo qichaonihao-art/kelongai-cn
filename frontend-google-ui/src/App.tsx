@@ -12,6 +12,7 @@ import CreativeSelectPage from './pages/CreativeSelectPage';
 import CopywritingPage from './pages/CopywritingPage';
 import ClipExtractionPage from './pages/ClipExtractionPage';
 import VoiceTransferPage from './pages/VoiceTransferPage';
+import CopyTransferPage from './pages/CopyTransferPage';
 import type { IncomingCreativeClip } from './lib/clipCreative';
 import DouyinDownloaderPage from './pages/DouyinDownloaderPage';
 import StoreOverviewPage from './pages/StoreOverviewPage';
@@ -25,7 +26,7 @@ import { getAuthStatus, loginWithPassword, logout } from './lib/auth';
 import { invalidateVideoLibraryCache } from './lib/videoLibraryViewCache';
 import type { ModuleId } from './components/ModuleQuickNav';
 
-type Page = 'login' | 'home' | 'universal' | 'creative-video' | 'creative-clip' | 'creative-copy' | 'creative-voice-transfer' | ModuleId;
+type Page = 'login' | 'home' | 'universal' | 'creative-video' | 'creative-clip' | 'creative-copy' | 'creative-voice-transfer' | 'creative-copy-transfer' | ModuleId;
 
 class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
@@ -147,6 +148,7 @@ export default function App() {
           onSelectClip={() => setCurrentPage('creative-clip')}
           onSelectCopy={() => setCurrentPage('creative-copy')}
           onSelectVoiceTransfer={() => setCurrentPage('creative-voice-transfer')}
+          onSelectCopyTransfer={() => setCurrentPage('creative-copy-transfer')}
         />
       )}
       {currentPage === 'creative-video' && (
@@ -156,6 +158,7 @@ export default function App() {
           onSwitchToClip={() => setCurrentPage('creative-clip')}
           onSwitchToCopy={() => setCurrentPage('creative-copy')}
           onSwitchToVoiceTransfer={() => setCurrentPage('creative-voice-transfer')}
+          onSwitchToCopyTransfer={() => setCurrentPage('creative-copy-transfer')}
           incomingClip={incomingCreativeClip}
           onIncomingClipConsumed={() => setIncomingCreativeClip(null)}
         />
@@ -167,6 +170,7 @@ export default function App() {
           onSwitchToVideo={() => setCurrentPage('creative-video')}
           onSwitchToCopy={() => setCurrentPage('creative-copy')}
           onSwitchToVoiceTransfer={() => setCurrentPage('creative-voice-transfer')}
+          onSwitchToCopyTransfer={() => setCurrentPage('creative-copy-transfer')}
           onUseInCreative={(clip, mode) => {
             setIncomingCreativeClip({ ...clip, mode, token: Date.now() });
             setCurrentPage('creative-video');
@@ -180,6 +184,7 @@ export default function App() {
           onSwitchToVideo={() => setCurrentPage('creative-video')}
           onSwitchToClip={() => setCurrentPage('creative-clip')}
           onSwitchToVoiceTransfer={() => setCurrentPage('creative-voice-transfer')}
+          onSwitchToCopyTransfer={() => setCurrentPage('creative-copy-transfer')}
         />
       )}
       {currentPage === 'creative-voice-transfer' && (
@@ -189,6 +194,17 @@ export default function App() {
           onSwitchToVideo={() => setCurrentPage('creative-video')}
           onSwitchToClip={() => setCurrentPage('creative-clip')}
           onSwitchToCopy={() => setCurrentPage('creative-copy')}
+          onSwitchToCopyTransfer={() => setCurrentPage('creative-copy-transfer')}
+        />
+      )}
+      {currentPage === 'creative-copy-transfer' && (
+        <CopyTransferPage
+          onBack={handleBackToCreative}
+          onNavigate={handleNavigate}
+          onSwitchToVideo={() => setCurrentPage('creative-video')}
+          onSwitchToClip={() => setCurrentPage('creative-clip')}
+          onSwitchToCopy={() => setCurrentPage('creative-copy')}
+          onSwitchToVoiceTransfer={() => setCurrentPage('creative-voice-transfer')}
         />
       )}
       {currentPage === 'douyin' && (

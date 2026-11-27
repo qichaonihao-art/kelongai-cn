@@ -3,11 +3,12 @@ import { createClipSceneDetectionService, getClipEndBeforeDetectedCut } from './
 import { ALIYUN_VOICE_MODEL, LEGACY_ALIYUN_VOICE_MODEL, canReuseAliyunShotVoice, createAliyunVoiceService } from './aliyun-voice.mjs';
 import { createPersonReplacementService } from './person-replacement.mjs';
 import { createVoiceTransferService } from './voice-transfer.mjs';
+import { createCopyTransferService } from './copy-transfer.mjs';
 import { replacementProductFromPrompt, validateReplacementPrompt, replacementStructureRule } from './product-replacement.mjs';
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
 import { createReadStream, createWriteStream, existsSync } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, statfs, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
@@ -66,6 +67,13 @@ const CLIP_REMOTE_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const CLIP_OUTPUT_MAX_DURATION_SECONDS = 60;
 const CLIP_MEDIA_TTL_MS = 15 * 60 * 1000;
 const clipSourceMimeTypes = new Map();
+const copyTransferMediaNames = new Set();
+function markCopyTransferMedia(fileName) {
+  const name = path.basename(String(fileName || ''));
+  if (!name) return;
+  copyTransferMediaNames.add(name);
+  setTimeout(() => copyTransferMediaNames.delete(name), 2 * 60 * 60 * 1000).unref?.();
+}
 const clipTimedTranscriptCache = new Map();
 const RUNTIME_STATE_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || path.join(__dirname, '.runtime-state'));
 const VIDEO_LIBRARY_DIR = path.resolve(process.env.VIDEO_LIBRARY_DIR || path.join(path.dirname(RUNTIME_STATE_DIR), 'kelongai-media', 'video-library'));
@@ -1674,7 +1682,7 @@ async function handlePublicMediaRequest(req, res, requestedFileName) {
 
   try {
     const info = await stat(filePath);
-    const maxAgeMs = MEDIA_TTL_MS - (Date.now() - info.mtimeMs);
+    const maxAgeMs = (copyTransferMediaNames.has(safeFileName) ? 2 * 60 * 60 * 1000 : MEDIA_TTL_MS) - (Date.now() - info.mtimeMs);
     if (maxAgeMs <= 0) {
       try {
         await unlink(filePath);
@@ -21328,6 +21336,124 @@ const voiceTransferService = createVoiceTransferService({
   sanitizeFileName,
 });
 
+function scheduleCopyTransferCleanup(filePath) {
+  setTimeout(() => unlink(filePath).catch(() => {}), 2 * 60 * 60 * 1000).unref?.();
+}
+
+const copyVoiceService = createVoiceTransferService({
+  uploadTempDir: UPLOAD_TEMP_DIR,
+  exec: execFileAsync,
+  getConfig: () => ({
+    mediaKey: readValue(SERVER_CONFIG.mediakitApiKey),
+    mediaBase: MEDIAKIT_API_BASE_URL,
+    aliyunApiKey: readValue(SERVER_CONFIG.aliyunApiKey),
+  }),
+  aliyunVoiceService,
+  diarizeVocal: ({ audioPath }) => transcribeAudioWithAliyunWordTimestamps({
+    audioPath, diarizationEnabled: true, parentDeadlineAt: Date.now() + 4 * 60 * 1000,
+  }),
+  ensureTools: ensureVideoCompressionTools,
+  scheduleCleanup: scheduleCopyTransferCleanup,
+  separatePollTimeoutMs: 8 * 60 * 1000,
+  registerMimeType: (name, mime) => { clipSourceMimeTypes.set(name, mime); markCopyTransferMedia(name); },
+  unregisterMimeType: (name) => clipSourceMimeTypes.delete(name),
+  sanitizeFileName,
+});
+
+const copyTransferService = createCopyTransferService({
+  uploadTempDir: UPLOAD_TEMP_DIR,
+  voiceService: copyVoiceService,
+  exec: execFileAsync,
+  scheduleCleanup: scheduleCopyTransferCleanup,
+  probeDuration: async (filePath) => {
+    const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filePath]);
+    return Number(stdout.trim());
+  },
+  editText: async ({ sentences, profile }) => {
+    const apiKey = readValue(SERVER_CONFIG.deepseekApiKey);
+    if (!apiKey) throw Object.assign(new Error('服务端未配置 DEEPSEEK_API_KEY'), { statusCode: 400 });
+    const response = await fetch(`${DEEPSEEK_API_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'deepseek-flash', stream: false,
+        response_format: { type: 'json_object' }, max_tokens: 8192,
+        messages: [
+          { role: 'system', content: '你是装饰产品文案的严格局部编辑。只改与原产品的安装方式、材质、场景、结构冲突的词句；其他文字逐字保留。不凭空加入产品卖点。回复 JSON 对象：{"edits":[{"index":0,"patches":[{"from":"原文唯一子串","to":"长度相近的替换子串"}]}]}。index 从0开始，只返回有改动的句子。每处 from 必须是该句原文连续且唯一的子串，替换后不能改变无关字词。替换尽量与原文长度相近、保持韵律。不要编辑诗句或比喻中的挂/贴/摆，除非明确指产品使用。' },
+          { role: 'user', content: JSON.stringify({ profile, sentences: sentences.map((s, index) => ({ index, text: s.text })) }) },
+        ],
+      }),
+      signal: AbortSignal.timeout(2 * 60 * 1000),
+    });
+    if (!response.ok) throw Object.assign(new Error(`DeepSeek 文案编辑失败（HTTP ${response.status}）`), { statusCode: 502 });
+    const json = await response.json();
+    try { return JSON.parse(json.choices[0].message.content).edits; }
+    catch { throw Object.assign(new Error('模型未返回可核验的修改列表，请重试'), { statusCode: 502 }); }
+  },
+});
+
+const copyTransferJobs = new Map();
+let copyTransferQueue = Promise.resolve();
+
+function enqueueCopyTransferJob(task) {
+  const id = randomBytes(12).toString('hex');
+  const job = { id, status: 'queued', createdAt: Date.now() };
+  copyTransferJobs.set(id, job);
+  const run = copyTransferQueue.then(async () => {
+    job.status = 'running';
+    try { job.result = await task(); job.status = 'completed'; }
+    catch (error) { job.error = error?.message || '任务失败'; job.status = 'failed'; }
+  });
+  copyTransferQueue = run.catch(() => {});
+  setTimeout(() => copyTransferJobs.delete(id), 2 * 60 * 60 * 1000).unref?.();
+  return { jobId: id, status: job.status };
+}
+
+async function handleCopyTransferRoute(req, res, url) {
+  try {
+    await ensureUploadTempDir();
+    if (req.method === 'PUT' && url.pathname === '/api/copy-transfer/source') {
+      const free = await statfs(UPLOAD_TEMP_DIR);
+      const freeBytes = free.bavail * free.bsize;
+      const size = Number(req.headers['content-length'] || 0);
+      if (freeBytes < size + 1024 * 1024 * 1024) {
+        sendJson(res, 507, { error: '服务器可用空间不足，请先清理旧素材后再上传' });
+        return;
+      }
+      sendJson(res, 200, await copyVoiceService.uploadSource(req, { maxBytes: 100 * 1024 * 1024 }));
+    } else if (req.method === 'POST' && url.pathname === '/api/copy-transfer/analyze') {
+      const body = await readRequestBody(req);
+      sendJson(res, 202, enqueueCopyTransferJob(async () => {
+        const result = await copyTransferService.analyze(body);
+        for (const speaker of result.speakers) markCopyTransferMedia(speaker.vocalUrl);
+        return result;
+      }));
+    } else if (req.method === 'POST' && url.pathname === '/api/copy-transfer/render') {
+      const body = await readRequestBody(req);
+      sendJson(res, 202, enqueueCopyTransferJob(async () => {
+        const result = await copyTransferService.render(body, req);
+        markCopyTransferMedia(result.audioUrl);
+        return result;
+      }));
+    } else if (req.method === 'POST' && url.pathname === '/api/copy-transfer/bundle') {
+      const body = await readRequestBody(req);
+      sendJson(res, 202, enqueueCopyTransferJob(async () => {
+        const result = await copyTransferService.bundle(body);
+        markCopyTransferMedia(result.archiveUrl);
+        return result;
+      }));
+    } else if (req.method === 'GET' && url.pathname.startsWith('/api/copy-transfer/job/')) {
+      const id = url.pathname.slice('/api/copy-transfer/job/'.length);
+      const job = copyTransferJobs.get(id);
+      sendJson(res, job ? 200 : 404, job ? { status: job.status, result: job.result, error: job.error } : { error: '任务已过期' });
+    } else {
+      sendJson(res, 404, { error: '文案转移接口不存在' });
+    }
+  } catch (error) {
+    sendJson(res, Number(error?.statusCode) || 500, { error: error?.message || '文案转移处理失败' });
+  }
+}
+
 async function handleVoiceTransferRoute(req, res, url) {
   try {
     await ensureUploadTempDir();
@@ -21542,6 +21668,11 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname.startsWith('/api/voice-transfer/')) {
     await handleVoiceTransferRoute(req, res, url);
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/copy-transfer/')) {
+    await handleCopyTransferRoute(req, res, url);
     return;
   }
 

@@ -1,4 +1,4 @@
-import { ArrowUpRight, AudioLines, FileText, Scissors, Video } from 'lucide-react';
+import { ArrowUpRight, AudioLines, FileAudio, FileText, Scissors, Video } from 'lucide-react';
 import { motion } from 'motion/react';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import HomeBackButton from '@/src/components/HomeBackButton';
@@ -10,6 +10,7 @@ interface CreativeSelectPageProps {
   onSelectClip: () => void;
   onSelectCopy: () => void;
   onSelectVoiceTransfer?: () => void;
+  onSelectCopyTransfer?: () => void;
 }
 
 const entries = [
@@ -53,9 +54,19 @@ const entries = [
     buttonClass: 'border-rose-100 bg-rose-50 text-rose-600 group-hover:border-rose-500 group-hover:bg-rose-600 group-hover:text-white',
     lineClass: 'from-transparent via-rose-400/70 to-transparent',
   },
+  {
+    id: 'copy-transfer' as const,
+    title: '文案转移',
+    icon: FileAudio,
+    shellClass: 'border-amber-200/80 bg-gradient-to-br from-white via-white to-amber-50/80 hover:border-amber-300',
+    glowClass: 'bg-amber-300/40',
+    iconClass: 'from-amber-500 to-orange-500 shadow-amber-200/80',
+    buttonClass: 'border-amber-100 bg-amber-50 text-amber-600 group-hover:border-amber-500 group-hover:bg-amber-600 group-hover:text-white',
+    lineClass: 'from-transparent via-amber-400/70 to-transparent',
+  },
 ];
 
-export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, onSelectClip, onSelectCopy, onSelectVoiceTransfer }: CreativeSelectPageProps) {
+export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, onSelectClip, onSelectCopy, onSelectVoiceTransfer, onSelectCopyTransfer }: CreativeSelectPageProps) {
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#f5f7fb] px-4 py-5 sm:px-6 sm:py-6">
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
@@ -71,10 +82,10 @@ export default function CreativeSelectPage({ onBack, onNavigate, onSelectVideo, 
       </div>
 
       <main className="relative z-10 flex w-full flex-1 items-center justify-center py-12 sm:py-16">
-        <div className="grid w-full max-w-[78rem] grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 sm:gap-6">
+        <div className="grid w-full max-w-[78rem] grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 sm:gap-6">
           {entries.map((entry, index) => {
             const Icon = entry.icon;
-            const onClick = entry.id === 'video' ? onSelectVideo : entry.id === 'clip' ? onSelectClip : entry.id === 'copy' ? onSelectCopy : (onSelectVoiceTransfer ?? (() => {}));
+            const onClick = entry.id === 'video' ? onSelectVideo : entry.id === 'clip' ? onSelectClip : entry.id === 'copy' ? onSelectCopy : entry.id === 'voice-transfer' ? (onSelectVoiceTransfer ?? (() => {})) : (onSelectCopyTransfer ?? (() => {}));
             return (
               <motion.button
                 key={entry.id}

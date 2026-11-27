@@ -317,7 +317,12 @@ export function createVoiceTransferService({
         if (!voiceUrl) {
           throw fail('人声分离已完成，但未返回人声音轨地址', 502);
         }
-        return { taskId, voiceUrl };
+        return {
+          taskId,
+          voiceUrl,
+          musicUrl: String(task.result?.music_audio_url || '').trim(),
+          sfxUrl: String(task.result?.sfx_audio_url || '').trim(),
+        };
       }
       if (['failed', 'cancelled', 'canceled', 'expired'].includes(status)) {
         const msg = task.error?.message || task.error_message || task.message || '人声背景音分离失败，请重试';
@@ -385,13 +390,13 @@ export function createVoiceTransferService({
   }
 
   return {
-    async uploadSource(req) {
+    async uploadSource(req, { maxBytes = VOICE_TRANSFER_MAX_SOURCE_BYTES } = {}) {
       const declaredSize = Number(req.headers['content-length'] || 0);
       if (!Number.isFinite(declaredSize) || declaredSize <= 0) {
         throw fail('无法读取文件大小，请重新选择视频或音频文件后再试', 411);
       }
-      if (declaredSize > VOICE_TRANSFER_MAX_SOURCE_BYTES) {
-        throw fail('上传文件不能超过 500MB', 413);
+      if (declaredSize > maxBytes) {
+        throw fail(`上传文件不能超过 ${Math.floor(maxBytes / 1024 / 1024)}MB`, 413);
       }
 
       const contentType = String(req.headers['content-type'] || '').toLowerCase().split(';')[0].trim();
@@ -410,8 +415,8 @@ export function createVoiceTransferService({
       const sizeGuard = new Transform({
         transform(chunk, _encoding, callback) {
           receivedBytes += chunk.length;
-          if (receivedBytes > VOICE_TRANSFER_MAX_SOURCE_BYTES) {
-            callback(fail('上传文件不能超过 500MB', 413));
+          if (receivedBytes > maxBytes) {
+            callback(fail(`上传文件不能超过 ${Math.floor(maxBytes / 1024 / 1024)}MB`, 413));
             return;
           }
           callback(null, chunk);
@@ -453,7 +458,7 @@ export function createVoiceTransferService({
       }
     },
 
-    async separateVocal(body) {
+    async separateVocal(body, { forCopyTransfer = false } = {}) {
       pruneCaches();
       const sourceId = normalizeVoiceTransferId(body?.sourceId);
       const sourcePath = resolveExistingSourcePath(sourceId);
@@ -470,10 +475,15 @@ export function createVoiceTransferService({
 
       await ensureTools();
       const metadata = await probeMedia(sourcePath);
-      const range = parseVoiceTransferRange(body, metadata.durationSeconds);
+      if (forCopyTransfer && metadata.durationSeconds > 180) {
+        throw fail('文案转移单条素材暂支持 3 分钟以内，请先截短长素材', 400);
+      }
+      const range = forCopyTransfer
+        ? { start: 0, end: metadata.durationSeconds, duration: metadata.durationSeconds }
+        : parseVoiceTransferRange(body, metadata.durationSeconds);
       const scene = normalizeVoiceTransferScene(body?.scene);
 
-      const cacheKey = `${sourceId}:${range.start}:${range.end}:${scene}`;
+      const cacheKey = `${sourceId}:${range.start}:${range.end}:${scene}:${forCopyTransfer ? 'copy' : 'voice'}`;
       const cached = separationCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now() && existsSync(cached.vocalPath)) {
         return {
@@ -486,6 +496,8 @@ export function createVoiceTransferService({
           endSeconds: range.end,
           scene,
           speakers: cached.speakers,
+          sentences: forCopyTransfer ? cached.sentences : undefined,
+          musicId: forCopyTransfer ? cached.musicId : undefined,
           requiresSpeakerSelection: cached.requiresSpeakerSelection,
           cached: true,
         };
@@ -495,7 +507,10 @@ export function createVoiceTransferService({
       const sliceWavPath = path.join(uploadTempDir, `${vocalId}_vt_slice.wav`);
       const rawVocalPath = path.join(uploadTempDir, `${vocalId}_vt_raw_vocal.wav`);
       const cleanVocalPath = getVocalPath(vocalId);
+      const musicPath = path.join(uploadTempDir, `${vocalId}_vt_music.wav`);
       const createdSpeakerPaths = [];
+      let musicId = '';
+      let sentences = [];
 
       try {
         await exec('ffmpeg', [
@@ -506,9 +521,27 @@ export function createVoiceTransferService({
           sliceWavPath,
         ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
 
-        const { voiceUrl } = await separateVoiceWithMediaKit(sliceWavPath, scene, mediaKey, mediaBase);
+        const { voiceUrl, musicUrl, sfxUrl } = await separateVoiceWithMediaKit(sliceWavPath, scene, mediaKey, mediaBase);
+        if (forCopyTransfer) {
+          if (musicUrl) {
+            await downloadFile(musicUrl, musicPath);
+            // SFX is deliberately excluded: sound effects can contain residual speech.
+            scheduleCleanup?.(musicPath);
+            musicId = vocalId;
+          }
+        }
         await downloadFile(voiceUrl, rawVocalPath);
-        const cleanDuration = await postProcessVocal(rawVocalPath, cleanVocalPath);
+        if (forCopyTransfer) {
+          // Preserve the source timeline. The voice-transfer cleaner removes pauses,
+          // which would make ASR timestamps unusable for a BGM-aligned edit.
+          await exec('ffmpeg', [
+            '-y', '-i', rawVocalPath, '-vn', '-ac', '1', '-ar', '24000',
+            '-c:a', 'pcm_s16le', cleanVocalPath,
+          ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
+        } else {
+          await postProcessVocal(rawVocalPath, cleanVocalPath);
+        }
+        const cleanDuration = await probeAudioDuration(cleanVocalPath);
         if (!cleanDuration || cleanDuration < 0.5) {
           throw fail('截取区间内未检测到清晰人声，请调整时间段后重试', 400);
         }
@@ -522,6 +555,7 @@ export function createVoiceTransferService({
         if (typeof diarizeVocal === 'function') {
           try {
             const rawSentences = await diarizeVocal({ audioPath: cleanVocalPath });
+            if (forCopyTransfer) sentences = rawSentences;
             const grouped = groupSpeakerSegments(rawSentences, cleanDuration + 0.5);
             if (grouped.length >= 2) {
               const limited = grouped.slice(0, 6);
@@ -582,6 +616,9 @@ export function createVoiceTransferService({
             sampleText: '',
           }];
         }
+        if (forCopyTransfer && !sentences.length) {
+          throw fail('无法获得带说话人和时间轴的转写，请检查音频后重试', 422);
+        }
         const requiresSpeakerSelection = speakers.length > 1;
 
         separationCache.set(cacheKey, {
@@ -590,6 +627,8 @@ export function createVoiceTransferService({
           vocalFingerprint,
           durationSeconds: cleanDuration,
           speakers,
+          sentences,
+          musicId,
           requiresSpeakerSelection,
           expiresAt: Date.now() + SEPARATION_CACHE_TTL_MS,
         });
@@ -604,11 +643,14 @@ export function createVoiceTransferService({
           endSeconds: range.end,
           scene,
           speakers,
+          sentences: forCopyTransfer ? sentences : undefined,
+          musicId: forCopyTransfer ? musicId : undefined,
           requiresSpeakerSelection,
           cached: false,
         };
       } catch (error) {
         await unlink(cleanVocalPath).catch(() => {});
+        await unlink(musicPath).catch(() => {});
         await Promise.all(createdSpeakerPaths.map((p) => unlink(p).catch(() => {})));
         throw error;
       } finally {
@@ -617,6 +659,10 @@ export function createVoiceTransferService({
           unlink(rawVocalPath).catch(() => {}),
         ]);
       }
+    },
+
+    async separateForCopy(body) {
+      return this.separateVocal(body, { forCopyTransfer: true });
     },
 
     async synthesizeMp3(body, req) {

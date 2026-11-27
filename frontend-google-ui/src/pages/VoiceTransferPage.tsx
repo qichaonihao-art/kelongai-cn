@@ -30,6 +30,7 @@ interface VoiceTransferPageProps {
   onSwitchToVideo: () => void;
   onSwitchToClip: () => void;
   onSwitchToCopy: () => void;
+  onSwitchToCopyTransfer?: () => void;
 }
 
 interface UploadedSource {
@@ -137,6 +138,7 @@ export default function VoiceTransferPage({
   onSwitchToVideo,
   onSwitchToClip,
   onSwitchToCopy,
+  onSwitchToCopyTransfer,
 }: VoiceTransferPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaPreviewRef = useRef<HTMLMediaElement | null>(null);
@@ -678,6 +680,7 @@ export default function VoiceTransferPage({
             onSwitchClip={onSwitchToClip}
             onSwitchCopy={onSwitchToCopy}
             onSwitchVoiceTransfer={() => {}}
+            onSwitchCopyTransfer={onSwitchToCopyTransfer}
           />
         </div>
         <div className="hidden text-xs font-bold text-slate-500 sm:block">

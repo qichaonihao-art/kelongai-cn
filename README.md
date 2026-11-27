@@ -118,6 +118,8 @@ cp legacy-project/.env.example legacy-project/.env
 
 ### 创意创作
 
+- 新增「文案转移」：批量上传本地音视频，将原文局部调整到目标产品，保留原人声片段及 BGM，并按说话人使用阿里云音色生成 MP3。使用方法及限制见 [`docs/copy-transfer.md`](docs/copy-transfer.md)。需要 `MEDIAKIT_API_KEY`、`ALIYUN_API_KEY` 和 `DEEPSEEK_API_KEY`。
+
 - `ARK_API_KEY`
   - 豆包多模态真实调用必填
 - `MINIMAX_API_KEY`
