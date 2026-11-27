@@ -719,7 +719,7 @@ export default function VoiceTransferPage({
           </div>
         )}
 
-        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-2">
           {/* 窗口一：链接解析 / 本地上传 + 截取与多音色试听确认 */}
           <section className="flex flex-col rounded-2xl border border-slate-200/90 border-t-2 border-t-violet-200 bg-white p-5 shadow-sm sm:p-6">
             <div className="mb-4 flex items-center justify-between">
