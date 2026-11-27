@@ -21379,7 +21379,7 @@ const copyTransferService = createCopyTransferService({
         model: 'deepseek-flash', stream: false,
         response_format: { type: 'json_object' }, max_tokens: 8192,
         messages: [
-          { role: 'system', content: '你是装饰产品文案的严格局部编辑。只改与原产品的安装方式、材质、场景、结构冲突的词句；其他文字逐字保留。不凭空加入产品卖点。回复 JSON 对象：{"edits":[{"index":0,"patches":[{"from":"原文唯一子串","to":"长度相近的替换子串"}]}]}。index 从0开始，只返回有改动的句子。每处 from 必须是该句原文连续且唯一的子串，替换后不能改变无关字词。替换尽量与原文长度相近、保持韵律。不要编辑诗句或比喻中的挂/贴/摆，除非明确指产品使用。' },
+          { role: 'system', content: '你是装饰产品文案的严格局部编辑。profile.source 与 profile.target 按产品名称/形态、使用方式、材质、结构、适用场景一一对应。逐句核对原文，仅将确实描述原产品且与目标产品不符的子串，替换为目标产品真实信息。原文没提某项就不要新增；目标某项留空则不要猜测。人物、故事、寓意、诗句、比喻与无关字词逐字保留。回复 JSON 对象：{"edits":[{"index":0,"patches":[{"from":"原文唯一子串","to":"长度相近的替换子串"}]}]}。index 从0开始，只返回有改动的句子。每处 from 必须是该句原文连续且唯一的子串，替换后不能改变无关字词。替换尽量与原文长度相近、保持韵律。不要编辑比喻中的挂/贴/摆，除非明确指产品使用。额外调整要求只能在上述局部修改范围内应用。' },
           { role: 'user', content: JSON.stringify({ profile, sentences: sentences.map((s, index) => ({ index, text: s.text })) }) },
         ],
       }),
@@ -21397,11 +21397,18 @@ let copyTransferQueue = Promise.resolve();
 
 function enqueueCopyTransferJob(task) {
   const id = randomBytes(12).toString('hex');
-  const job = { id, status: 'queued', createdAt: Date.now() };
+  const job = { id, status: 'queued', stage: '排队等待', percent: 0, createdAt: Date.now() };
   copyTransferJobs.set(id, job);
   const run = copyTransferQueue.then(async () => {
     job.status = 'running';
-    try { job.result = await task(); job.status = 'completed'; }
+    try {
+      job.result = await task((stage, percent) => {
+        job.stage = stage;
+        job.percent = Math.max(0, Math.min(100, Number(percent) || 0));
+      });
+      job.status = 'completed';
+      job.percent = 100;
+    }
     catch (error) { job.error = error?.message || '任务失败'; job.status = 'failed'; }
   });
   copyTransferQueue = run.catch(() => {});
@@ -21423,15 +21430,15 @@ async function handleCopyTransferRoute(req, res, url) {
       sendJson(res, 200, await copyVoiceService.uploadSource(req, { maxBytes: 100 * 1024 * 1024 }));
     } else if (req.method === 'POST' && url.pathname === '/api/copy-transfer/analyze') {
       const body = await readRequestBody(req);
-      sendJson(res, 202, enqueueCopyTransferJob(async () => {
-        const result = await copyTransferService.analyze(body);
+      sendJson(res, 202, enqueueCopyTransferJob(async (progress) => {
+        const result = await copyTransferService.analyze(body, progress);
         for (const speaker of result.speakers) markCopyTransferMedia(speaker.vocalUrl);
         return result;
       }));
     } else if (req.method === 'POST' && url.pathname === '/api/copy-transfer/render') {
       const body = await readRequestBody(req);
-      sendJson(res, 202, enqueueCopyTransferJob(async () => {
-        const result = await copyTransferService.render(body, req);
+      sendJson(res, 202, enqueueCopyTransferJob(async (progress) => {
+        const result = await copyTransferService.render(body, req, progress);
         markCopyTransferMedia(result.audioUrl);
         return result;
       }));
@@ -21445,7 +21452,7 @@ async function handleCopyTransferRoute(req, res, url) {
     } else if (req.method === 'GET' && url.pathname.startsWith('/api/copy-transfer/job/')) {
       const id = url.pathname.slice('/api/copy-transfer/job/'.length);
       const job = copyTransferJobs.get(id);
-      sendJson(res, job ? 200 : 404, job ? { status: job.status, result: job.result, error: job.error } : { error: '任务已过期' });
+      sendJson(res, job ? 200 : 404, job ? { status: job.status, stage: job.stage, percent: job.percent, result: job.result, error: job.error } : { error: '任务已过期' });
     } else {
       sendJson(res, 404, { error: '文案转移接口不存在' });
     }

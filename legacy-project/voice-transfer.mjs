@@ -458,7 +458,7 @@ export function createVoiceTransferService({
       }
     },
 
-    async separateVocal(body, { forCopyTransfer = false } = {}) {
+    async separateVocal(body, { forCopyTransfer = false, onProgress = () => {} } = {}) {
       pruneCaches();
       const sourceId = normalizeVoiceTransferId(body?.sourceId);
       const sourcePath = resolveExistingSourcePath(sourceId);
@@ -513,6 +513,7 @@ export function createVoiceTransferService({
       let sentences = [];
 
       try {
+        if (forCopyTransfer) onProgress('提取原音轨', 12);
         await exec('ffmpeg', [
           '-y', '-i', sourcePath,
           '-map', '0:a:0', '-vn',
@@ -521,7 +522,8 @@ export function createVoiceTransferService({
           sliceWavPath,
         ], { timeout: 2 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
 
-        const { voiceUrl, musicUrl, sfxUrl } = await separateVoiceWithMediaKit(sliceWavPath, scene, mediaKey, mediaBase);
+        if (forCopyTransfer) onProgress('分离人声与 BGM', 25);
+        const { voiceUrl, musicUrl } = await separateVoiceWithMediaKit(sliceWavPath, scene, mediaKey, mediaBase);
         if (forCopyTransfer) {
           if (musicUrl) {
             await downloadFile(musicUrl, musicPath);
@@ -531,6 +533,7 @@ export function createVoiceTransferService({
           }
         }
         await downloadFile(voiceUrl, rawVocalPath);
+        if (forCopyTransfer) onProgress('准备原声样本', 48);
         if (forCopyTransfer) {
           // Preserve the source timeline. The voice-transfer cleaner removes pauses,
           // which would make ASR timestamps unusable for a BGM-aligned edit.
@@ -554,6 +557,7 @@ export function createVoiceTransferService({
         let speakers = [];
         if (typeof diarizeVocal === 'function') {
           try {
+            if (forCopyTransfer) onProgress('转写文案与识别说话人', 60);
             const rawSentences = await diarizeVocal({ audioPath: cleanVocalPath });
             if (forCopyTransfer) sentences = rawSentences;
             const grouped = groupSpeakerSegments(rawSentences, cleanDuration + 0.5);
@@ -661,8 +665,8 @@ export function createVoiceTransferService({
       }
     },
 
-    async separateForCopy(body) {
-      return this.separateVocal(body, { forCopyTransfer: true });
+    async separateForCopy(body, onProgress) {
+      return this.separateVocal(body, { forCopyTransfer: true, onProgress });
     },
 
     async synthesizeMp3(body, req) {

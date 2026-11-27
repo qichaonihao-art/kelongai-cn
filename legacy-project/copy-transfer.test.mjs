@@ -28,6 +28,7 @@ test('render retains original vocal outside changed window and music at its sour
   const sourceId = 'a'.repeat(24);
   const vocalId = 'b'.repeat(24);
   const synthId = 'c'.repeat(24);
+  const stages = [];
   try {
     await Promise.all([
       writeFile(path.join(dir, `${vocalId}_vt_vocal.wav`), 'vocal'),
@@ -53,7 +54,11 @@ test('render retains original vocal outside changed window and music at its sour
           return { audioUrl: `/uploads/${synthId}_vt_output.mp3` };
         },
       },
-      editText: async () => [{ index: 1, patches: [{ from: '挂在墙上', to: '摆在桌上' }] }],
+      editText: async ({ profile }) => {
+        assert.deepEqual(profile.source, { name: '挂画', usage: '挂在墙上', material: '无纺布', structure: '无框', scenes: '卧室墙面' });
+        assert.deepEqual(profile.target, { name: '摆台', usage: '摆在桌上', material: '木板', structure: '铝合金框', scenes: '书桌' });
+        return [{ index: 1, patches: [{ from: '挂在墙上', to: '摆在桌上' }] }];
+      },
       probeDuration: async () => 2,
       exec: async (_cmd, args) => {
         if (_cmd === 'tar') { assert.match(args[1], /_copy_package\.tar\.gz$/); return; }
@@ -62,10 +67,21 @@ test('render retains original vocal outside changed window and music at its sour
       },
       scheduleCleanup: () => {},
     });
-    const plan = await service.analyze({ sourceId, target: { name: '摆台', usage: '摆放' } });
+    const plan = await service.analyze({ sourceId, profile: {
+      source: { name: '挂画', usage: '挂在墙上', material: '无纺布', structure: '无框', scenes: '卧室墙面' },
+      target: { name: '摆台', usage: '摆在桌上', material: '木板', structure: '铝合金框', scenes: '书桌' },
+    } }, (stage, percent) => stages.push({ stage, percent }));
+    assert.ok(stages.some(({ stage }) => stage.includes('Flash')));
+    assert.equal(stages.at(-1).percent, 100);
+    await assert.rejects(() => service.analyze({ sourceId, profile: {
+      source: { name: '挂画', usage: '挂墙', material: '无纺布' },
+      target: { name: '摆台', usage: '摆放' },
+    } }), /目标产品的对应信息/);
     assert.equal(plan.sentences[0].revised, '原文不改。');
     assert.equal(plan.sentences[1].revised, '摆在桌上。');
-    const output = await service.render({ planId: plan.planId, revisions: plan.sentences.map((s) => s.revised) }, {});
+    const output = await service.render({ planId: plan.planId, revisions: plan.sentences.map((s) => s.revised) }, {}, (stage, percent) => stages.push({ stage, percent }));
+    assert.ok(stages.some(({ stage }) => stage.includes('阿里云')));
+    assert.ok(stages.some(({ stage }) => stage.includes('BGM')));
     assert.equal(output.duration, 10);
     const filter = ffmpegArgs[ffmpegArgs.indexOf('-filter_complex') + 1];
     assert.match(filter, /\[1:a\]aresample=24000,volume=0.9\[bed\]/);

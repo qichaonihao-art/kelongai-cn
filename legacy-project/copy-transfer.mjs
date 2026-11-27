@@ -62,18 +62,30 @@ export function createCopyTransferService({ uploadTempDir, voiceService, exec, e
   const plans = new Map();
   const outputs = new Map();
 
-  async function analyze(body) {
+  async function analyze(body, onProgress = () => {}) {
     const sourceId = String(body?.sourceId || '');
     if (!idPattern.test(sourceId)) throw fail('素材编号无效');
-    const target = body?.target || {};
-    const fields = ['sourceProduct', 'name', 'usage', 'material', 'scenes', 'instructions'];
-    const profile = Object.fromEntries(fields.map((field) => [field, String(target[field] || '').trim().slice(0, 500)]));
-    if (!profile.name || !profile.usage) throw fail('请填写目标产品名称和使用方式');
-    const separated = await voiceService.separateForCopy({ sourceId, scene: 'Narrate' });
+    const fields = ['name', 'usage', 'material', 'structure', 'scenes'];
+    const normalizeProduct = (value) => Object.fromEntries(fields.map((field) => [field, String(value?.[field] || '').trim().slice(0, 500)]));
+    const profile = {
+      source: normalizeProduct(body?.profile?.source),
+      target: normalizeProduct(body?.profile?.target),
+      instructions: String(body?.profile?.instructions || '').trim().slice(0, 1000),
+    };
+    if (!profile.source.name || !profile.source.usage || !profile.target.name || !profile.target.usage) {
+      throw fail('请填写原产品和目标产品的名称、使用方式');
+    }
+    for (const field of ['material', 'structure', 'scenes']) {
+      if (profile.source[field] && !profile.target[field]) {
+        throw fail(`原产品已填写${{ material: '材质', structure: '结构', scenes: '适用场景' }[field]}，请填写目标产品的对应信息`, 400);
+      }
+    }
+    const separated = await voiceService.separateForCopy({ sourceId, scene: 'Narrate' }, onProgress);
     if (separated.musicId && !existsSync(path.join(uploadTempDir, `${separated.musicId}_vt_music.wav`))) {
       throw fail('原背景音乐暂不可用，请重新分析', 422);
     }
     const sentences = normalizeCopySentences(separated.sentences, separated.endSeconds);
+    onProgress('Flash 对照产品信息修改文案', 78);
     const edits = await editText({ sentences, profile });
     const revised = applyCopyEdits(sentences, edits);
     const speakerMap = new Map(separated.speakers.map((sp) => [String(sp.speakerId), sp]));
@@ -86,10 +98,11 @@ export function createCopyTransferService({ uploadTempDir, voiceService, exec, e
     };
     plans.set(planId, plan);
     setTimeout(() => plans.delete(planId), TTL_MS).unref?.();
+    onProgress('文案分析完成', 100);
     return { planId, profile, sentences: revised, speakers: separated.speakers.map(({ speakerId, label, durationSeconds, vocalUrl }) => ({ speakerId, label, durationSeconds, vocalUrl })), needsReview, duration: plan.duration };
   }
 
-  async function render(body, req) {
+  async function render(body, req, onProgress = () => {}) {
     const planId = String(body?.planId || '');
     const plan = plans.get(planId);
     if (!plan || plan.expiresAt < Date.now()) throw fail('预览已过期，请重新分析素材', 410);
@@ -106,6 +119,9 @@ export function createCopyTransferService({ uploadTempDir, voiceService, exec, e
       return { ...sentence, revised };
     });
     const replacements = [];
+    const changedCount = edited.filter((sentence) => sentence.original !== sentence.revised).length;
+    let completedCount = 0;
+    onProgress(changedCount ? `阿里云音色配音 · 0/${changedCount} 句` : '保留原声并准备混音', 8);
     for (const sentence of edited) {
       if (sentence.original === sentence.revised) continue;
       const speaker = plan.speakers.find((sp) => String(sp.speakerId) === sentence.speakerId);
@@ -119,6 +135,8 @@ export function createCopyTransferService({ uploadTempDir, voiceService, exec, e
         throw fail(`「${sentence.original.slice(0, 18)}」新语音时长与原句相差过大，请调整字数后重试`, 422);
       }
       replacements.push({ ...sentence, audioPath, tempo });
+      completedCount += 1;
+      onProgress(`阿里云音色配音 · ${completedCount}/${changedCount} 句`, 8 + Math.round(completedCount / changedCount * 68));
     }
     const outputId = randomBytes(12).toString('hex');
     const outputPath = path.join(uploadTempDir, `${outputId}_copy_transfer.mp3`);
@@ -148,14 +166,16 @@ export function createCopyTransferService({ uploadTempDir, voiceService, exec, e
     });
     addOriginal(cursor, plan.duration);
     filters.push(`${parts.join('')}amix=inputs=${parts.length}:duration=longest:normalize=0,apad,atrim=duration=${plan.duration.toFixed(3)},alimiter=limit=0.95[out]`);
+    onProgress('按原时间轴混合人声与 BGM', 85);
     await exec('ffmpeg', [
       '-y', ...inputs, '-filter_complex', filters.join(';'), '-map', '[out]',
       '-c:a', 'libmp3lame', '-b:a', '192k', outputPath,
     ], { timeout: 3 * 60 * 1000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
     scheduleCleanup(outputPath);
-    const fileName = `${plan.profile.name.replace(/[^\w\u4e00-\u9fa5-]/g, '_').slice(0, 36)}_${plan.sourceId.slice(0, 6)}.mp3`;
+    const fileName = `${plan.profile.target.name.replace(/[^\w\u4e00-\u9fa5-]/g, '_').slice(0, 36)}_${plan.sourceId.slice(0, 6)}.mp3`;
     outputs.set(outputId, { outputPath, fileName, expiresAt: Date.now() + TTL_MS });
     setTimeout(() => outputs.delete(outputId), TTL_MS).unref?.();
+    onProgress('MP3 导出完成', 100);
     return {
       outputId,
       audioUrl: `/uploads/${path.basename(outputPath)}`,

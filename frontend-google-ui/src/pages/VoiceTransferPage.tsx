@@ -21,6 +21,7 @@ import {
 import HomeBackButton from '@/src/components/HomeBackButton';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import CreativeSubNav from '@/src/components/CreativeSubNav';
+import './copy-transfer.css';
 import { resolveCpExtract, type DouyinDownloadCandidate, type DouyinResolveResult } from '@/src/lib/douyin';
 import { cn } from '@/src/lib/utils';
 
@@ -167,6 +168,8 @@ export default function VoiceTransferPage({
 
   const [text, setText] = useState('');
   const [stage, setStage] = useState<PipelineStage>('idle');
+  const [stageStartedAt, setStageStartedAt] = useState(Date.now());
+  const [stageNow, setStageNow] = useState(Date.now());
   const [result, setResult] = useState<GeneratedResult | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -186,6 +189,13 @@ export default function VoiceTransferPage({
     }, 1000);
     return () => window.clearInterval(timer);
   }, [onlineLoading]);
+
+  useEffect(() => {
+    if (stage === 'idle') return;
+    setStageStartedAt(Date.now());
+    const timer = window.setInterval(() => setStageNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [stage]);
 
   useEffect(() => {
     return () => {
@@ -656,8 +666,7 @@ export default function VoiceTransferPage({
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#f5f7fb] text-slate-900">
-      <div className="pointer-events-none absolute inset-x-0 top-14 h-[420px] bg-[radial-gradient(circle_at_15%_10%,rgba(244,63,94,0.10),transparent_36%),radial-gradient(circle_at_85%_20%,rgba(245,158,11,0.11),transparent_36%)]" />
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#f3f6fa] text-slate-900">
 
       <input
         ref={fileInputRef}
@@ -670,8 +679,8 @@ export default function VoiceTransferPage({
         }}
       />
 
-      <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/90 px-4 shadow-sm backdrop-blur-xl md:px-6">
-        <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-30 flex min-h-16 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 bg-white/90 px-4 py-2 shadow-sm backdrop-blur-xl md:px-6">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <HomeBackButton onClick={onBack} />
           <ModuleQuickNav current="creative" onNavigate={onNavigate} />
           <CreativeSubNav
@@ -683,26 +692,26 @@ export default function VoiceTransferPage({
             onSwitchCopyTransfer={onSwitchToCopyTransfer}
           />
         </div>
-        <div className="hidden text-xs font-bold text-slate-500 sm:block">
-          AI MediaKit 分离 BGM · 多音色识别试听 · 阿里云克隆 MP3
-        </div>
       </header>
 
-      <main className="relative mx-auto w-full max-w-6xl flex-1 p-4 md:p-6">
-        <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="flex items-center gap-2 text-xl font-black tracking-tight text-slate-950">
-              <AudioLines className="size-5 text-rose-600" />
-              音色转移
-            </h1>
-            <p className="mt-1 text-sm text-slate-500">
-              支持解析在线视频链接或上传本地音视频，自动剥离 BGM、区分多说话人音色并生成新文案 MP3。
-            </p>
+      <main className="relative mx-auto w-full max-w-7xl flex-1 space-y-6 p-4 pb-16 md:p-6">
+        <section className="relative overflow-hidden rounded-[2rem] bg-[#111b33] px-6 py-8 text-white shadow-[0_25px_65px_-35px_rgba(17,24,53,0.8)] sm:px-9">
+          <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(196,181,253,0.13)_1px,transparent_1px),linear-gradient(90deg,rgba(196,181,253,0.13)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:linear-gradient(to_right,transparent,black)]" />
+          <div className="pointer-events-none absolute -right-12 -top-24 size-72 rounded-full bg-violet-500/25 blur-3xl" />
+          <div className="relative grid gap-6 lg:grid-cols-[1fr_20rem] lg:items-center">
+            <div>
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-violet-300/20 bg-violet-300/10 px-3 py-1 text-xs font-bold tracking-[0.16em] text-violet-200"><AudioLines className="size-3.5" /> VOICE TRANSFER STUDIO</div>
+              <h1 className="text-3xl font-black tracking-tight sm:text-4xl">让熟悉的声音，说新的文案。</h1>
+              <p className="mt-4 max-w-xl text-sm leading-7 text-slate-300">上传原音视频，截取清晰人声；检测并试听说话人音色，输入目标文案后由阿里云生成新 MP3。</p>
+              <div className="mt-6 flex flex-wrap gap-2 text-xs text-slate-300"><span className="rounded-full border border-white/15 px-3 py-1.5">01 选择原声</span><span className="rounded-full border border-white/15 px-3 py-1.5">02 试听音色</span><span className="rounded-full border border-white/15 px-3 py-1.5">03 生成 MP3</span></div>
+            </div>
+            <div className="rounded-2xl border border-violet-300/20 bg-white/[0.06] p-5 backdrop-blur">
+              <div className="flex items-center justify-between text-xs font-semibold text-violet-100"><span className="flex items-center gap-2"><span className={`size-2 rounded-full bg-violet-300 ${isBusy ? 'animate-pulse' : ''}`} />{isBusy ? '正在处理音频' : result ? '生成完成' : '等待素材'}</span><AudioLines className="size-4" /></div>
+              <div className="mt-5 flex h-12 items-end gap-1.5" aria-hidden="true">{[22, 35, 27, 46, 30, 42, 19, 37, 28, 43, 32, 24, 39, 27, 33].map((height, index) => <span key={index} className={`w-full rounded-full bg-gradient-to-t from-violet-600 to-rose-200 ${isBusy ? 'copy-transfer-wave' : 'opacity-40'}`} style={{ height, animationDelay: `${index * 90}ms`, animationDuration: `${900 + (index % 4) * 180}ms` }} />)}</div>
+              <p className="mt-4 text-xs leading-5 text-slate-300">建议选取 10～15 秒清晰人声。多人说话时先试听，再选定要使用的音色。</p>
+            </div>
           </div>
-          <div className="text-xs font-semibold text-slate-400">
-            建议截取 15 秒清晰人声 · 多人对话自动拆分试听选择
-          </div>
-        </div>
+        </section>
 
         {(error || notice) && (
           <div
@@ -717,16 +726,16 @@ export default function VoiceTransferPage({
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
           {/* 窗口一：链接解析 / 本地上传 + 截取与多音色试听确认 */}
-          <section className="flex flex-col rounded-3xl border border-slate-200/90 bg-white/95 p-5 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.28)] backdrop-blur-sm">
+          <section className="flex flex-col rounded-[1.75rem] border border-slate-200/90 bg-white p-5 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.28)] sm:p-7">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <span className="flex size-7 items-center justify-center rounded-xl bg-rose-100 text-xs font-black text-rose-600">
-                  1
+                <span className="flex size-9 items-center justify-center rounded-xl bg-violet-100 text-sm font-black text-violet-700">
+                  01
                 </span>
                 <div>
-                  <h2 className="text-base font-black text-slate-900">原音色素材</h2>
+                  <h2 className="text-lg font-black text-slate-900">选择原声素材</h2>
                   <p className="text-xs text-slate-500">支持在线视频链接解析或本地音视频上传</p>
                 </div>
               </div>
@@ -735,7 +744,7 @@ export default function VoiceTransferPage({
                   type="button"
                   disabled={isBusy}
                   onClick={handleResetSource}
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700 disabled:opacity-50"
                 >
                   <Trash2 className="size-3.5" />
                   更换素材
@@ -744,9 +753,9 @@ export default function VoiceTransferPage({
             </div>
 
             {!source ? (
-              <div className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <div className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-violet-100 bg-white">
                 {/* 复用镜头截取的双模式切换：链接解析 / 本地上传 */}
-                <div className="grid grid-cols-2 border-b border-slate-200 bg-gradient-to-r from-slate-100 via-white to-slate-100 p-1.5">
+                <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50 p-1.5">
                   <button
                     type="button"
                     disabled={onlineLoading || uploadProgress !== null}
@@ -754,7 +763,7 @@ export default function VoiceTransferPage({
                     className={cn(
                       'flex h-10 items-center justify-center gap-2 rounded-xl border text-sm font-black transition',
                       sourceMode === 'link'
-                        ? 'border-cyan-200 bg-white text-cyan-700 shadow-[0_4px_14px_-8px_rgba(8,145,178,0.8)]'
+                        ? 'border-violet-200 bg-white text-violet-700 shadow-sm'
                         : 'border-transparent text-slate-500 hover:border-slate-200 hover:bg-white/70 hover:text-slate-800'
                     )}
                   >
@@ -768,7 +777,7 @@ export default function VoiceTransferPage({
                     className={cn(
                       'flex h-10 items-center justify-center gap-2 rounded-xl border text-sm font-black transition',
                       sourceMode === 'upload'
-                        ? 'border-rose-200 bg-white text-rose-700 shadow-[0_4px_14px_-8px_rgba(225,29,72,0.75)]'
+                        ? 'border-violet-200 bg-white text-violet-700 shadow-sm'
                         : 'border-transparent text-slate-500 hover:border-slate-200 hover:bg-white/70 hover:text-slate-800'
                     )}
                   >
@@ -778,7 +787,7 @@ export default function VoiceTransferPage({
                 </div>
 
                 {sourceMode === 'link' ? (
-                  <div className="flex flex-1 flex-col justify-between bg-[radial-gradient(circle_at_90%_10%,rgba(6,182,212,0.07),transparent_35%)] p-5">
+                  <div className="flex flex-1 flex-col justify-between bg-[radial-gradient(circle_at_90%_10%,rgba(139,92,246,0.06),transparent_35%)] p-5">
                     <div>
                       <div className="text-sm font-black text-slate-800">粘贴视频链接或分享文字</div>
                       <div className="mt-1 text-xs text-slate-400">支持抖音、快手和微信视频号，直接复用镜头截取解析引擎</div>
@@ -793,13 +802,13 @@ export default function VoiceTransferPage({
                         }}
                         rows={4}
                         placeholder="粘贴视频链接或完整分享文案，例如：https://v.douyin.com/…"
-                        className="mt-3 min-h-28 w-full resize-y rounded-xl border border-slate-300 bg-slate-50/80 px-4 py-3 text-sm font-semibold leading-6 shadow-inner shadow-slate-200/40 outline-none transition focus:border-cyan-500 focus:bg-white focus:ring-4 focus:ring-cyan-100 disabled:opacity-60"
+                        className="mt-3 min-h-28 w-full resize-y rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-100 disabled:opacity-60"
                       />
                       <button
                         type="button"
                         disabled={onlineLoading || !linkInput.trim()}
                         onClick={() => void parseAndLoadOnlineVideo()}
-                        className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-sky-600 text-sm font-black text-white shadow-[0_8px_20px_-12px_rgba(8,145,178,0.9)] transition hover:from-cyan-700 hover:to-sky-700 disabled:cursor-not-allowed disabled:from-cyan-300 disabled:to-sky-300 disabled:shadow-none"
+                        className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#252041] text-sm font-black text-white shadow-lg shadow-violet-950/15 transition hover:bg-violet-900 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {onlineLoading ? <LoaderCircle className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}
                         {onlineLoading ? '正在解析并载入视频…' : '解析链接并载入'}
@@ -887,24 +896,24 @@ export default function VoiceTransferPage({
                       className={cn(
                         'flex flex-1 min-h-[240px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-6 text-center transition-all',
                         draggingFile
-                          ? 'border-rose-500 bg-rose-50/70'
-                          : 'border-slate-200 bg-slate-50/70 hover:border-rose-300 hover:bg-rose-50/30'
+                          ? 'border-violet-500 bg-violet-50/70'
+                          : 'border-violet-200 bg-violet-50/30 hover:border-violet-400 hover:bg-violet-50/70'
                       )}
                     >
                       {uploadProgress !== null ? (
                         <div className="w-full max-w-xs space-y-3">
-                          <LoaderCircle className="mx-auto size-9 animate-spin text-rose-600" />
+                          <LoaderCircle className="mx-auto size-9 animate-spin text-violet-600 motion-reduce:animate-none" />
                           <div className="text-sm font-black text-slate-800">正在上传并解析素材… {uploadProgress}%</div>
                           <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
                             <div
-                              className="h-full rounded-full bg-gradient-to-r from-rose-500 to-amber-500 transition-all"
+                              className="h-full rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all"
                               style={{ width: `${uploadProgress}%` }}
                             />
                           </div>
                         </div>
                       ) : (
                         <>
-                          <div className="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-rose-500 to-amber-500 text-white shadow-lg shadow-rose-200/70">
+                          <div className="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-500 text-white shadow-lg shadow-violet-200/70">
                             <Upload className="size-6" />
                           </div>
                           <div className="mt-4 text-base font-black text-slate-900">点击或拖拽上传本地视频 / 音频</div>
@@ -921,7 +930,7 @@ export default function VoiceTransferPage({
               <div className="space-y-4">
                 {/* 文件信息条 */}
                 <div className="flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-slate-50 px-3.5 py-2.5">
-                  <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-600">
+                  <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-600">
                     {source.hasVideo ? <Film className="size-4" /> : <FileAudio className="size-4" />}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -973,7 +982,7 @@ export default function VoiceTransferPage({
                 </div>
 
                 {/* 截取区间控制（默认 15 秒） */}
-                <div className="rounded-2xl border border-amber-200/80 bg-amber-50/50 p-4">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 text-xs font-black text-slate-900">
                       <Scissors className="size-3.5 text-amber-600" />
@@ -1003,7 +1012,7 @@ export default function VoiceTransferPage({
                         value={roundedStart}
                         disabled={isBusy || source.durationSeconds <= MIN_SLICE_SECONDS}
                         onChange={(event) => handleStartChange(Number(event.target.value))}
-                        className="w-full accent-rose-600"
+                        className="w-full accent-violet-600"
                       />
                     </label>
 
@@ -1037,7 +1046,7 @@ export default function VoiceTransferPage({
                         className={cn(
                           'rounded-lg px-2 py-0.5 text-[11px] font-bold transition',
                           scene === 'Narrate'
-                            ? 'bg-rose-600 text-white'
+                            ? 'bg-violet-600 text-white'
                             : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:text-slate-900'
                         )}
                       >
@@ -1050,7 +1059,7 @@ export default function VoiceTransferPage({
                         className={cn(
                           'rounded-lg px-2 py-0.5 text-[11px] font-bold transition',
                           scene === 'Audio'
-                            ? 'bg-rose-600 text-white'
+                            ? 'bg-violet-600 text-white'
                             : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:text-slate-900'
                         )}
                       >
@@ -1066,7 +1075,7 @@ export default function VoiceTransferPage({
                     'rounded-2xl border p-4 transition-colors',
                     needsSpeakerConfirmation
                       ? 'border-amber-400 bg-amber-50/70 ring-2 ring-amber-200/70'
-                      : 'border-slate-200 bg-slate-50/80'
+                      : 'border-violet-100 bg-violet-50/40'
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -1084,7 +1093,7 @@ export default function VoiceTransferPage({
                       type="button"
                       disabled={isBusy}
                       onClick={() => void handleSeparateOnly()}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-violet-200 bg-white px-3 py-1.5 text-xs font-bold text-violet-700 transition hover:bg-violet-50 disabled:opacity-50"
                     >
                       {stage === 'separating' ? (
                         <LoaderCircle className="size-3.5 animate-spin" />
@@ -1123,8 +1132,8 @@ export default function VoiceTransferPage({
                                 className={cn(
                                   'cursor-pointer rounded-xl border-2 bg-white p-3 transition',
                                   isSelected
-                                    ? 'border-rose-500 shadow-sm'
-                                    : 'border-slate-200 hover:border-rose-200'
+                                    ? 'border-violet-500 shadow-sm'
+                                    : 'border-slate-200 hover:border-violet-200'
                                 )}
                               >
                                 <div className="flex items-center justify-between gap-2">
@@ -1133,7 +1142,7 @@ export default function VoiceTransferPage({
                                       className={cn(
                                         'size-4 shrink-0 rounded-full border-2',
                                         isSelected
-                                          ? 'border-rose-600 bg-rose-600 shadow-[inset_0_0_0_3px_white]'
+                                          ? 'border-violet-600 bg-violet-600 shadow-[inset_0_0_0_3px_white]'
                                           : 'border-slate-300'
                                       )}
                                     />
@@ -1201,14 +1210,14 @@ export default function VoiceTransferPage({
           </section>
 
           {/* 窗口二：输入目标文案 & 输出 MP3 */}
-          <section className="flex flex-col rounded-3xl border border-slate-200/90 bg-white/95 p-5 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.28)] backdrop-blur-sm">
+          <section className="flex flex-col rounded-[1.75rem] border border-slate-200/90 bg-white p-5 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.28)] sm:p-7">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <span className="flex size-7 items-center justify-center rounded-xl bg-amber-100 text-xs font-black text-amber-700">
-                  2
+                <span className="flex size-9 items-center justify-center rounded-xl bg-violet-100 text-sm font-black text-violet-700">
+                  02
                 </span>
                 <div>
-                  <h2 className="text-base font-black text-slate-900">目标文案与 MP3 输出</h2>
+                  <h2 className="text-lg font-black text-slate-900">目标文案与音频</h2>
                   <p className="text-xs text-slate-500">使用确认后的音色朗读下方文案，生成 MP3 音频</p>
                 </div>
               </div>
@@ -1231,7 +1240,7 @@ export default function VoiceTransferPage({
                 disabled={isBusy}
                 rows={8}
                 placeholder="在这里输入你想让这个音色说的新文案…&#10;&#10;提示：标点符号（逗号、句号、感叹号）可以帮助控制停顿和语气；生成后如果修改文案再次生成，会自动复用当前音色，几秒内出新 MP3。"
-                className="min-h-[200px] w-full flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus:border-rose-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-rose-100 disabled:opacity-60"
+                className="min-h-[230px] w-full flex-1 resize-y rounded-2xl border border-violet-100 bg-slate-50/70 p-5 text-sm leading-7 text-slate-900 placeholder:text-slate-400 focus:border-violet-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-violet-100 disabled:opacity-60"
               />
 
               <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
@@ -1250,18 +1259,21 @@ export default function VoiceTransferPage({
 
               {/* 进度提示 */}
               {stage !== 'idle' && (
-                <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50/70 px-4 py-3">
-                  <div className="flex items-center gap-2 text-sm font-black text-rose-700">
-                    <LoaderCircle className="size-4 animate-spin" />
+                <div className="relative mt-4 overflow-hidden rounded-2xl border border-violet-300/20 bg-gradient-to-r from-[#171b36] to-[#36244d] px-5 py-4 text-white shadow-lg shadow-violet-950/10" role="status" aria-live="polite">
+                  <div className="copy-transfer-scan pointer-events-none absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-violet-300/15 to-transparent" />
+                  <div className="relative flex items-center gap-2 text-sm font-black text-violet-100">
+                    <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
                     {stage === 'separating'
-                      ? '第 1/2 步：正在分离 BGM 并检测说话人音色…'
-                      : `第 2/2 步：正在用阿里云克隆${confirmedSpeaker ? `「${confirmedSpeaker.label}」` : '音色'}并合成 MP3…`}
+                      ? '第 1/2 步 · 分离背景音并检测音色'
+                      : `第 2/2 步 · 阿里云克隆${confirmedSpeaker ? `「${confirmedSpeaker.label}」` : '音色'}并生成 MP3`}
                   </div>
-                  <p className="mt-1 text-xs text-rose-600/80">
+                  <p className="relative mt-2 text-xs text-violet-200">
                     {stage === 'separating'
-                      ? '通常需要 15～30 秒；若检测到多种音色，会暂停供你试听并选择。'
-                      : '首次克隆该音色需等待几秒部署就绪；同音色修改文案再次生成时会直接复用。'}
+                      ? '正在等待分离服务处理；如检测到多种音色，会暂停供你试听。'
+                      : '首次生成可能需要等待音色部署；再次生成会复用当前音色。'}
+                    <span className="ml-2 font-mono tabular-nums">已用时 {Math.floor(Math.max(0, stageNow - stageStartedAt) / 60000)}分{String(Math.floor(Math.max(0, stageNow - stageStartedAt) / 1000) % 60).padStart(2, '0')}秒</span>
                   </p>
+                  <div className="relative mt-4 grid grid-cols-2 gap-2 text-center text-[11px] font-bold"><span className={cn('rounded-lg px-2 py-2', stage === 'separating' ? 'bg-violet-400/25 text-white' : 'bg-emerald-400/20 text-emerald-200')}>{stage === 'synthesizing' ? '✓ ' : '● '}人声分离</span><span className={cn('rounded-lg px-2 py-2', stage === 'synthesizing' ? 'bg-violet-400/25 text-white' : 'bg-white/10 text-slate-400')}>{stage === 'synthesizing' ? '● ' : ''}音色克隆与导出</span></div>
                 </div>
               )}
 
@@ -1269,7 +1281,7 @@ export default function VoiceTransferPage({
                 type="button"
                 disabled={isBusy || !source || !text.trim() || needsSpeakerConfirmation}
                 onClick={() => void handleGenerateMp3()}
-                className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 to-amber-500 px-5 text-sm font-black text-white shadow-lg shadow-rose-200/80 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-violet-700 to-fuchsia-600 px-5 text-sm font-black text-white shadow-lg shadow-violet-200/80 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {stage !== 'idle' ? (
                   <LoaderCircle className="size-4 animate-spin" />
@@ -1289,12 +1301,12 @@ export default function VoiceTransferPage({
 
               {/* 生成结果区 */}
               {result && (
-                <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
+                <div className="mt-5 rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-sm">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="size-4 text-emerald-600" />
                       <span className="text-sm font-black text-slate-900">MP3 生成完成</span>
-                      <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black text-rose-700">
+                      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-700">
                         {result.speakerLabel}
                       </span>
                       {result.reusedVoice && (
