@@ -375,6 +375,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   const [asrEngine, setAsrEngine] = useState<'siliconflow' | 'qwen'>('qwen');
   const [activeMode, setActiveMode] = useState<'menu' | 'copypilot' | 'local' | 'link'>('menu');
   const [localVideoUrl, setLocalVideoUrl] = useState<string>('');
+  const [localIsAudio, setLocalIsAudio] = useState(false);
   const [extractStep, setExtractStep] = useState<'idle' | 'resolving' | 'downloading' | 'extracting_audio' | 'transcribing' | 'done' | 'error'>('idle');
   const [transcriptHistory, setTranscriptHistory] = useState<TranscriptHistoryItem[]>(loadTranscriptHistory);
   const [showTranscriptHistory, setShowTranscriptHistory] = useState(false);
@@ -758,7 +759,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
         ? response
         : {
             ...response,
-            transcriptError: response.transcriptError?.trim() || '本地视频文案提取失败，请重新解析，重新提取逐字稿。',
+            transcriptError: response.transcriptError?.trim() || '本地音视频文案提取失败，请重新上传文件。',
           };
 
       setTranscriptResult(normalizedTranscriptResult);
@@ -774,7 +775,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       setTranscriptResult(null);
       setDisplayTranscript('');
       setOriginalTranscript('');
-      setError(submitError instanceof Error ? submitError.message : '本地视频文案提取失败，请重新解析，重新提取逐字稿。');
+      setError(submitError instanceof Error ? submitError.message : '本地音视频文案提取失败，请重新上传文件。');
     } finally {
       setIsLocalTranscriptLoading(false);
     }
@@ -783,12 +784,14 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
   function handleLocalVideoSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith('video/')) {
-      setError('请选择视频文件');
+    const isMp3 = /\.mp3$/i.test(file.name) && (!file.type || file.type === 'audio/mpeg' || file.type === 'audio/mp3');
+    if (!file.type.startsWith('video/') && !isMp3) {
+      setError('请选择视频或 MP3 音频文件');
       return;
     }
     const url = URL.createObjectURL(file);
     setLocalVideoUrl(url);
+    setLocalIsAudio(isMp3);
     void handleExtractLocalTranscript(file);
     if (localVideoInputRef.current) {
       localVideoInputRef.current.value = '';
@@ -926,6 +929,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
       URL.revokeObjectURL(localVideoUrl);
       setLocalVideoUrl('');
     }
+    setLocalIsAudio(false);
   }
 
   function switchTab(tab: 'link' | 'local') {
@@ -945,7 +949,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
             </div>
             <div>
               <div className="text-xs font-black text-slate-500 uppercase tracking-wider">
-                {isOnline ? '在线视频文案' : '本地视频文案'}
+                {isOnline ? '在线视频文案' : '本地音视频文案'}
               </div>
               <p className="mt-0.5 text-[11px] font-medium text-slate-400">
                 {isOnline ? '粘贴链接一键提取逐字稿' : '本地上传视频提取逐字稿'}
@@ -1041,7 +1045,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
               >
                 <div className="flex items-center gap-3 text-sm text-emerald-700 font-semibold">
                   <Loader2 className="size-4 animate-spin" />
-                  正在提取本地视频逐字稿...
+                  正在提取本地音视频逐字稿...
                 </div>
                 <p className="text-xs text-emerald-500 ml-7">上传完成，正在进行 ASR 语音转写，请稍候。</p>
               </motion.div>
@@ -1162,7 +1166,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                 exit={{ opacity: 0 }}
                 className="rounded-3xl border border-slate-100 bg-white/50 px-4 py-8 text-center text-sm text-slate-400"
               >
-                粘贴视频链接或上传本地视频，一键提取逐字稿文案。
+                粘贴视频链接或上传本地视频、MP3，一键提取逐字稿文案。
               </motion.div>
             )}
           </AnimatePresence>
@@ -1247,7 +1251,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                 </div>
                 <div>
                   <p className="text-base font-black text-slate-800">本地文案提取</p>
-                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">上传本地视频，提取逐字稿文案</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-400">上传本地视频或 MP3，提取逐字稿文案</p>
                 </div>
                 <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-emerald-500">
                   开始使用 <ArrowLeft className="size-3 rotate-180" />
@@ -1314,13 +1318,13 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       <Upload className="size-6" />
                     </div>
                     <div>
-                      <p className="text-sm font-black text-slate-800">上传本地视频提取逐字稿</p>
-                      <p className="mt-1 text-xs text-slate-400">支持 MP4、MOV 等常见视频格式</p>
+                      <p className="text-sm font-black text-slate-800">上传本地音视频提取逐字稿</p>
+                      <p className="mt-1 text-xs text-slate-400">支持 MP4、MOV 等常见视频及 MP3 音频</p>
                     </div>
                     <input
                       ref={localVideoInputRef}
                       type="file"
-                      accept="video/*"
+                      accept="video/*,.mp3,audio/mpeg"
                       onChange={handleLocalVideoSelect}
                       className="hidden"
                     />
@@ -1338,20 +1342,22 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       ) : (
                         <>
                           <Upload className="size-4" />
-                          选择视频文件
+                          选择视频或 MP3
                         </>
                       )}
                     </button>
                   </div>
 
-                  {localVideoUrl && (
+                  {localVideoUrl && (localIsAudio ? (
+                    <audio src={localVideoUrl} controls className="w-full" />
+                  ) : (
                     <video
                       src={localVideoUrl}
                       controls
                       className="w-full max-h-44 rounded-3xl bg-slate-900 object-contain shadow-lg shadow-slate-900/10"
                       playsInline
                     />
-                  )}
+                  ))}
 
                   <button
                     type="button"
@@ -1364,7 +1370,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                       </span>
                       <span>
                         <span className="block text-xs font-black text-slate-700">提取历史</span>
-                        <span className="block text-[11px] font-semibold text-slate-400">查看近 20 条视频逐字稿</span>
+                        <span className="block text-[11px] font-semibold text-slate-400">查看近 20 条音视频逐字稿</span>
                       </span>
                     </span>
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-500">
@@ -1531,7 +1537,7 @@ export default function DouyinDownloaderPage({ onBack, onNavigate }: DouyinDownl
                                   'rounded-full px-2 py-0.5 text-[10px] font-black',
                                   isLocalHistory ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'
                                 )}>
-                                  {isLocalHistory ? '本地视频' : '在线视频'}
+                                  {isLocalHistory ? '本地音视频' : '在线视频'}
                                 </span>
                                 {item.authorName && <span>{item.authorName}</span>}
                                 {durationLabel && (

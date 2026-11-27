@@ -655,7 +655,7 @@ export async function extractCpLocalTranscript(file: File): Promise<DouyinTransc
 
   const json = await parseJsonSafely(response);
   if (!response.ok || json?.ok === false) {
-    throw new Error(json?.message || json?.error || '本地视频文案提取失败');
+    throw new Error(json?.message || json?.error || '本地音视频文案提取失败');
   }
 
   return {
