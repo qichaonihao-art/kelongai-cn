@@ -85,8 +85,18 @@ const res = () => ({ status: 0, body: '', writeHead(status, headers) { this.stat
 assert.equal(ORNAMENT_FRAMEWORKS.length, 44);
 assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group === '场景纵深扫拍').length, 10);
 assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group === '场景小弧环视').length, 8);
-assert.match(ORNAMENT_FRAMEWORKS[1].action, /落稳|站稳/);
+assert.match(ORNAMENT_FRAMEWORKS[1].action, /贴稳|立稳/);
 for (const f of ORNAMENT_FRAMEWORKS.slice(0, 28).filter(f => f.directionNumber !== 2)) assert.doesNotMatch(f.action, /托扶整件|搬放摆台|人物.*转正/);
+for (const f of ORNAMENT_FRAMEWORKS) {
+ assert.doesNotMatch(f.action, /底座/, `方向${f.directionNumber}不得出现诱导前置支架的“底座”`);
+ assert.doesNotMatch(f.shotRule, /底座/, `方向${f.directionNumber}景别规则不得出现“底座”`);
+ if (f.directionNumber !== 36 && f.directionNumber !== 29) assert.doesNotMatch(f.action, /支撑可见|固定支撑和桌面|支撑与落台/, `正面方向${f.directionNumber}不得要求支撑可见`);
+}
+assert.deepEqual(ORNAMENT_FRAMEWORKS.filter(f => /传递|呈递|递给|交接/.test(f.action) && !/焦点交接/.test(f.title)).map(f => f.directionNumber), [41]);
+assert.match(ORNAMENT_FRAMEWORKS[40].action, /走近/);
+assert.match(ORNAMENT_FRAMEWORKS[40].action, /禁止两人原本贴身原地互递/);
+assert.match(buildOrnamentVideoRequest(profile, ORNAMENT_FRAMEWORKS[40], plan, {}), /严禁把图2的背面金属支架画到正面/);
+assert.doesNotMatch(buildOrnamentVideoRequest(profile, ORNAMENT_FRAMEWORKS[35], plan, {}), /本方向为正面或前侧视角/);
 const square25 = normalizeOrnamentProfile({ widthCm: 25, heightCm: 25 });
 for (const f of ORNAMENT_FRAMEWORKS.slice(5, 10)) {
  const prompt = ensureOrnamentPrompt('连续推近展示。', square25, f.directionNumber);

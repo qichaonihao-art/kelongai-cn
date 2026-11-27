@@ -4326,7 +4326,7 @@ export default function CreativeCreationPage({ onBack, onNavigate, onSwitchToCop
       variationRound,
       creativeSessionId: paintingCreativeSessionId,
       styleVersion: 2,
-      ornamentFrameworkVersion: isOrnament ? 2 : undefined,
+      ornamentFrameworkVersion: isOrnament ? 3 : undefined,
       profile: {
         structureVersion: isOrnament ? ORNAMENT_STRUCTURE_VERSION : undefined,
         productType: paintingProductType,
