@@ -3,7 +3,15 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { applyCopyEdits, createCopyTransferService, normalizeCopySentences } from './copy-transfer.mjs';
+import { applyCopyEdits, createCopyTransferService, normalizeCopySentences, normalizePaintingImages } from './copy-transfer.mjs';
+
+test('optional painting comparison validates the target and actual image bytes', () => {
+  const jpg = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64')}`;
+  assert.equal(normalizePaintingImages(null), null);
+  assert.deepEqual(normalizePaintingImages({ target: jpg }), { source: null, target: jpg });
+  assert.throws(() => normalizePaintingImages({ source: jpg }), /目标画心/);
+  assert.throws(() => normalizePaintingImages({ target: 'data:image/jpeg;base64,ZmFrZQ==' }), /内容与格式不符/);
+});
 
 test('local patches preserve every unrelated character and reject ambiguous edits', () => {
   const sentences = [{ text: '曾国藩挂在床头墙上，寓意很好。', speakerId: '0', start: 0, end: 3 }];
@@ -54,9 +62,10 @@ test('render retains original vocal outside changed window and music at its sour
           return { audioUrl: `/uploads/${synthId}_vt_output.mp3` };
         },
       },
-      editText: async ({ profile }) => {
+      editText: async ({ profile, painting }) => {
         assert.deepEqual(profile.source, { name: '挂画', usage: '挂在墙上', material: '无纺布', structure: '无框', scenes: '卧室墙面' });
         assert.deepEqual(profile.target, { name: '摆台', usage: '摆在桌上', material: '木板', structure: '铝合金框', scenes: '书桌' });
+        if (painting) assert.ok(painting.target.startsWith('data:image/jpeg;base64,'));
         return [{ index: 1, patches: [{ from: '挂在墙上', to: '摆在桌上' }] }];
       },
       probeDuration: async () => 2,
@@ -73,6 +82,10 @@ test('render retains original vocal outside changed window and music at its sour
     } }, (stage, percent) => stages.push({ stage, percent }));
     assert.ok(stages.some(({ stage }) => stage.includes('Flash')));
     assert.equal(stages.at(-1).percent, 100);
+    const imagePlan = await service.analyze({ sourceId, profile: plan.profile, painting: {
+      target: `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64')}`,
+    } });
+    assert.equal(imagePlan.needsReview, true);
     await assert.rejects(() => service.analyze({ sourceId, profile: {
       source: { name: '挂画', usage: '挂墙', material: '无纺布' },
       target: { name: '摆台', usage: '摆放' },

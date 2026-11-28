@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Download, FileAudio, LoaderCircle, Upload } from 'lucide-react';
+import { CheckCircle2, Download, FileAudio, ImagePlus, LoaderCircle, Upload } from 'lucide-react';
 import HomeBackButton from '@/src/components/HomeBackButton';
 import ModuleQuickNav, { type ModuleId } from '@/src/components/ModuleQuickNav';
 import CreativeSubNav from '@/src/components/CreativeSubNav';
@@ -42,6 +42,51 @@ interface Row {
   detail?: string;
   progress?: number;
   startedAt?: number;
+  imageMode?: 'batch' | 'same' | 'custom';
+  images?: PaintingImages;
+  reviewImages?: PaintingImages;
+}
+
+type PaintingImages = { source: File | null; target: File | null };
+
+async function imageDataUrl(file: File): Promise<string> {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) {
+    throw new Error('画心图片请使用 10 MB 以内的 JPG、PNG 或 WebP');
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const scale = Math.min(1, 1200 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('图片处理失败，请重新选择');
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.82);
+  } finally { URL.revokeObjectURL(url); }
+}
+
+function PaintingPicker({ label, file, onChange, disabled, readOnly = false }: { label: string; file: File | null; onChange: (file: File | null) => void; disabled: boolean; readOnly?: boolean }) {
+  const [preview, setPreview] = useState('');
+  useEffect(() => {
+    if (!file) { setPreview(''); return; }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  return <div className="flex min-w-0 items-center gap-3 rounded-xl border border-cyan-100 bg-white p-2.5">
+    {preview ? <img src={preview} alt={`${label}预览`} className="size-12 shrink-0 rounded-lg object-cover" /> : <span className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-cyan-50 text-cyan-600"><ImagePlus className="size-5" /></span>}
+    <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-slate-700">{label}</p><p className="truncate text-xs text-slate-500">{file?.name || '未选择'}</p></div>
+    {!readOnly && file && <button type="button" disabled={disabled} onClick={() => onChange(null)} className="text-xs text-slate-500 hover:text-red-600 disabled:opacity-40">移除</button>}
+    {!readOnly && <label className="cursor-pointer rounded-lg border border-cyan-200 px-2.5 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-50">选择
+      <input hidden type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled} onChange={(event) => { onChange(event.target.files?.[0] || null); event.target.value = ''; }} />
+    </label>}
+  </div>;
 }
 
 const fields: { key: ProductField; label: string; sourceHint: string; targetHint: string }[] = [
@@ -117,6 +162,8 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
   const [now, setNow] = useState(Date.now());
   const [message, setMessage] = useState('');
   const [archive, setArchive] = useState<{ archiveUrl: string; fileName: string } | null>(null);
+  const [paintingChanged, setPaintingChanged] = useState(false);
+  const [batchImages, setBatchImages] = useState<PaintingImages>({ source: null, target: null });
   const patch = (key: string, update: Partial<Row>) => setRows((current) => current.map((row) => row.key === key ? { ...row, ...update } : row));
   useEffect(() => {
     if (!busy) return;
@@ -126,6 +173,13 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
 
   async function analyzeOne(row: Row, currentProfile: Profile) {
     try {
+      const images = row.imageMode === 'same' ? null : row.imageMode === 'custom' ? row.images : paintingChanged ? batchImages : null;
+      if (row.imageMode === 'custom' && !images?.target) throw new Error('请上传这条素材的目标画心图片');
+      if (images && !images.target) throw new Error('画面不同时，请上传目标画心图片');
+      const painting = images?.target ? {
+        target: await imageDataUrl(images.target),
+        ...(images.source ? { source: await imageDataUrl(images.source) } : {}),
+      } : undefined;
       let sourceId = row.sourceId;
       if (!sourceId) {
         patch(row.key, { stage: '上传中', detail: '上传本地素材', progress: 0, startedAt: Date.now(), error: '' });
@@ -136,7 +190,7 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
       patch(row.key, { stage: '分析中', detail: '进入分析队列', progress: 0, startedAt: Date.now() });
       const task = await parseResponse(await fetch('/api/copy-transfer/analyze', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceId, profile: currentProfile }),
+        body: JSON.stringify({ sourceId, profile: currentProfile, painting }),
       }));
       const plan = await waitForJob(task.jobId, (detail, progress) => patch(row.key, { detail, progress }));
       const reviewedRow: Row = {
@@ -145,7 +199,7 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
         approved: !plan.needsReview, stage: plan.needsReview ? '待确认' : '待生成', detail: plan.needsReview ? '等待试听并核对文案' : '文案分析完成', progress: 100,
       };
       patch(row.key, {
-        planId: plan.planId, sentences: plan.sentences, speakers: plan.speakers, revisions: plan.sentences.map((s: Sentence) => s.revised),
+        planId: plan.planId, sentences: plan.sentences, speakers: plan.speakers, revisions: plan.sentences.map((s: Sentence) => s.revised), reviewImages: images?.target ? images : undefined,
         needsReview: plan.needsReview, stage: plan.needsReview ? '待确认' : '待生成', approved: !plan.needsReview, detail: plan.needsReview ? '等待试听并核对文案' : '文案分析完成', progress: 100,
       });
       if (!plan.needsReview) await renderOne(reviewedRow);
@@ -156,6 +210,7 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
 
   async function analyzeAll() {
     if (busy || !profile.source.name.trim() || !profile.source.usage.trim() || !profile.target.name.trim() || !profile.target.usage.trim()) { setMessage('请先填写原产品和目标产品的名称、使用方式'); return; }
+    if (paintingChanged && !batchImages.target && rows.some((row) => (row.stage === '待处理' || row.stage === '失败') && (!row.imageMode || row.imageMode === 'batch'))) { setMessage('画面不同时，请先上传本批次的目标画心，或为每条素材单独设置'); return; }
     setBusy(true);
     setMessage('正在逐条分析，普通条目自动生成；复杂素材需要你确认。请保持页面打开。');
     try {
@@ -261,6 +316,19 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
             </select>}
           </div>
         </section>
+        <section className="rounded-2xl border border-slate-200/80 border-t-2 border-t-cyan-200 bg-white p-5 shadow-sm sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="text-lg font-bold">画心内容</h2><p className="mt-1 text-sm text-slate-500">默认画面相同；只有画心内容不同，才需要提供图片供模型对照。</p></div>
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={paintingChanged} disabled={busy} onChange={(event) => setPaintingChanged(event.target.checked)} className="size-4 accent-cyan-600" />画心内容有变化</label>
+          </div>
+          {paintingChanged && <div className="mt-4 rounded-xl bg-cyan-50/60 p-4">
+            <p className="mb-3 text-xs text-cyan-900">以下图片默认用于本批次；不同画心的素材可在下方队列中单独覆盖。原画心选传，目标画心必传。</p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <PaintingPicker label="原产品画心（选填）" file={batchImages.source} disabled={busy} onChange={(source) => setBatchImages((images) => ({ ...images, source }))} />
+              <PaintingPicker label="目标产品画心（必填）" file={batchImages.target} disabled={busy} onChange={(target) => setBatchImages((images) => ({ ...images, target }))} />
+            </div>
+          </div>}
+        </section>
         <section className="rounded-2xl border border-slate-200/80 border-t-2 border-t-sky-200 bg-white p-5 shadow-sm sm:p-6">
           <div className="mb-5 border-l-2 border-sky-400 pl-3"><h2 className="text-lg font-bold">上传与处理</h2><p className="mt-1 text-sm text-slate-500">选择本地音视频；复杂素材会停下供你核对。</p></div>
           <div className="flex flex-wrap items-center gap-3">
@@ -297,11 +365,26 @@ export default function CopyTransferPage({ onBack, onNavigate, onSwitchToVideo, 
                   {!busy && row.stage === '待处理' && <button type="button" className="text-sm text-slate-500" onClick={() => setRows((old) => old.filter((item) => item.key !== row.key))}>移除</button>}
                 </div>
               </div>
+              {(row.stage === '待处理' || row.stage === '失败') && <div className="mt-3 rounded-xl border border-cyan-100 bg-cyan-50/40 p-3">
+                <label className="text-xs font-semibold text-slate-600">这条素材的画心
+                  <select value={row.imageMode || 'batch'} disabled={busy} className="ml-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700" onChange={(event) => patch(row.key, { imageMode: event.target.value as Row['imageMode'] })}>
+                    <option value="batch">{paintingChanged ? '沿用本批次图片' : '画面相同（默认）'}</option><option value="same">画面相同，不传图</option><option value="custom">单独上传图片</option>
+                  </select>
+                </label>
+                {row.imageMode === 'custom' && <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <PaintingPicker label="原画心（选填）" file={row.images?.source || null} disabled={busy} onChange={(source) => patch(row.key, { images: { source, target: row.images?.target || null } })} />
+                  <PaintingPicker label="目标画心（必填）" file={row.images?.target || null} disabled={busy} onChange={(target) => patch(row.key, { images: { source: row.images?.source || null, target } })} />
+                </div>}
+              </div>}
               {['上传中', '分析中', '生成中'].includes(row.stage) && <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-teal-400 transition-[width] duration-700" style={{ width: `${row.progress ?? 0}%` }} /></div>}
               {row.error && <p className="mt-3 text-sm text-red-600">{row.error}</p>}
               {row.sourceId && <label className="mt-3 block text-xs text-slate-500">原素材试听<audio className="mt-1 h-8 w-full max-w-sm" controls src={`/uploads/${row.sourceId}_vt_source`} /></label>}
               {row.speakers && row.speakers.length > 1 && <div className="mt-3 flex flex-wrap gap-3">
                 {row.speakers.map((speaker) => <label key={speaker.vocalUrl} className="text-xs text-slate-600">{speaker.label} · {speaker.durationSeconds.toFixed(1)} 秒<audio className="mt-1 h-8 w-52" controls src={speaker.vocalUrl} /></label>)}
+              </div>}
+              {row.reviewImages && <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {row.reviewImages.source && <PaintingPicker label="本条原画心" file={row.reviewImages.source} disabled readOnly onChange={() => {}} />}
+                <PaintingPicker label="本条目标画心" file={row.reviewImages.target} disabled readOnly onChange={() => {}} />
               </div>}
               {row.sentences && <div className="mt-4 space-y-3">
                 {row.sentences.map((sentence, index) => (

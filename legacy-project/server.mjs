@@ -21369,7 +21369,7 @@ const copyTransferService = createCopyTransferService({
     const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filePath]);
     return Number(stdout.trim());
   },
-  editText: async ({ sentences, profile }) => {
+  editText: async ({ sentences, profile, painting }) => {
     const apiKey = readValue(SERVER_CONFIG.deepseekApiKey);
     if (!apiKey) throw Object.assign(new Error('服务端未配置 DEEPSEEK_API_KEY'), { statusCode: 400 });
     const response = await fetch(`${DEEPSEEK_API_BASE_URL}/chat/completions`, {
@@ -21379,8 +21379,12 @@ const copyTransferService = createCopyTransferService({
         model: 'deepseek-flash', stream: false,
         response_format: { type: 'json_object' }, max_tokens: 8192,
         messages: [
-          { role: 'system', content: '你是装饰产品文案的严格局部编辑。profile.source 与 profile.target 按产品名称/形态、使用方式、材质、结构、适用场景一一对应。逐句核对原文，仅将确实描述原产品且与目标产品不符的子串，替换为目标产品真实信息。原文没提某项就不要新增；目标某项留空则不要猜测。人物、故事、寓意、诗句、比喻与无关字词逐字保留。回复 JSON 对象：{"edits":[{"index":0,"patches":[{"from":"原文唯一子串","to":"长度相近的替换子串"}]}]}。index 从0开始，只返回有改动的句子。每处 from 必须是该句原文连续且唯一的子串，替换后不能改变无关字词。替换尽量与原文长度相近、保持韵律。不要编辑比喻中的挂/贴/摆，除非明确指产品使用。额外调整要求只能在上述局部修改范围内应用。' },
-          { role: 'user', content: JSON.stringify({ profile, sentences: sentences.map((s, index) => ({ index, text: s.text })) }) },
+          { role: 'system', content: '你是装饰产品文案的严格局部编辑。profile.source 与 profile.target 按产品名称/形态、使用方式、材质、结构、适用场景一一对应。逐句核对原文，仅将确实描述原产品且与目标产品不符的子串，替换为目标产品真实信息。若附有目标画心图片，图片只用于核对文案中对画面可见内容的具体描述；若也附有原画心，则先对比两张图片。只有原文明确提到、且确实与目标画心不符的画面细节才允许局部替换；看不清或无法确认的细节不要猜测或补写。无图片时不做画面推断。原文没提某项就不要新增；目标某项留空则不要猜测。人物故事、寓意、诗句、比喻与无关字词逐字保留（仅当其确实是画面内容并与目标画心冲突时，才修改相应描述）。回复 JSON 对象：{"edits":[{"index":0,"patches":[{"from":"原文唯一子串","to":"长度相近的替换子串"}]}]}。index 从0开始，只返回有改动的句子。每处 from 必须是该句原文连续且唯一的子串，替换后不能改变无关字词。替换尽量与原文长度相近、保持韵律。不要编辑比喻中的挂/贴/摆，除非明确指产品使用。额外调整要求只能在上述局部修改范围内应用。' },
+          { role: 'user', content: painting ? [
+            { type: 'text', text: JSON.stringify({ profile, sentences: sentences.map((s, index) => ({ index, text: s.text })), imageOrder: painting.source ? ['原产品画心', '目标产品画心'] : ['目标产品画心'] }) },
+            ...(painting.source ? [{ type: 'image_url', image_url: { url: painting.source } }] : []),
+            { type: 'image_url', image_url: { url: painting.target } },
+          ] : JSON.stringify({ profile, sentences: sentences.map((s, index) => ({ index, text: s.text })) }) },
         ],
       }),
       signal: AbortSignal.timeout(2 * 60 * 1000),

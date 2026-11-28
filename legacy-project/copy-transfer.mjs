@@ -7,6 +7,27 @@ const MAX_SENTENCES = 120;
 const TTL_MS = 2 * 60 * 60 * 1000;
 const idPattern = /^[a-f0-9]{24}$/;
 
+export function normalizePaintingImages(painting) {
+  if (painting == null) return null;
+  if (!painting || typeof painting !== 'object' || Array.isArray(painting)) throw fail('画心图片格式无效');
+  const normalize = (value) => {
+    if (!value) return null;
+    if (typeof value !== 'string' || value.length > 4 * 1024 * 1024) throw fail('画心图片过大，请压缩后重试', 413);
+    const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+    if (!match) throw fail('画心图片仅支持 JPG、PNG、WebP');
+    const bytes = Buffer.from(match[2], 'base64');
+    if (!bytes.length || bytes.length > 2 * 1024 * 1024) throw fail('画心图片过大，请压缩后重试', 413);
+    const valid = match[1] === 'jpeg' ? bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))
+      : match[1] === 'png' ? bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+        : bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP';
+    if (!valid) throw fail('图片内容与格式不符，请重新上传');
+    return value;
+  };
+  const target = normalize(painting.target);
+  if (!target) throw fail('画面不同时必须上传目标画心图片');
+  return { source: normalize(painting.source), target };
+}
+
 function fail(message, statusCode = 400) {
   return Object.assign(new Error(message), { statusCode });
 }
@@ -80,16 +101,17 @@ export function createCopyTransferService({ uploadTempDir, voiceService, exec, e
         throw fail(`原产品已填写${{ material: '材质', structure: '结构', scenes: '适用场景' }[field]}，请填写目标产品的对应信息`, 400);
       }
     }
+    const painting = normalizePaintingImages(body?.painting);
     const separated = await voiceService.separateForCopy({ sourceId, scene: 'Narrate' }, onProgress);
     if (separated.musicId && !existsSync(path.join(uploadTempDir, `${separated.musicId}_vt_music.wav`))) {
       throw fail('原背景音乐暂不可用，请重新分析', 422);
     }
     const sentences = normalizeCopySentences(separated.sentences, separated.endSeconds);
     onProgress('Flash 对照产品信息修改文案', 78);
-    const edits = await editText({ sentences, profile });
+    const edits = await editText({ sentences, profile, painting });
     const revised = applyCopyEdits(sentences, edits);
     const speakerMap = new Map(separated.speakers.map((sp) => [String(sp.speakerId), sp]));
-    const needsReview = separated.speakers.length > 1 || revised.some((s) => s.needsReview || (s.changes.length && (!speakerMap.has(s.speakerId) || speakerMap.get(s.speakerId).durationSeconds < 3)));
+    const needsReview = Boolean(painting) || separated.speakers.length > 1 || revised.some((s) => s.needsReview || (s.changes.length && (!speakerMap.has(s.speakerId) || speakerMap.get(s.speakerId).durationSeconds < 3)));
     const planId = randomBytes(12).toString('hex');
     const plan = {
       sourceId, planId, profile, sentences: revised, speakers: separated.speakers,
