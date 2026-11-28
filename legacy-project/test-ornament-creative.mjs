@@ -82,8 +82,8 @@ const req = body => {
  queueMicrotask(() => { listeners.data?.(JSON.stringify(body)); listeners.end?.(); }); return request;
 };
 const res = () => ({ status: 0, body: '', writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body) { this.body = String(body); } });
-assert.equal(ORNAMENT_FRAMEWORKS.length, 48);
-assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group === '场景纵深扫拍').length, 10);
+assert.equal(ORNAMENT_FRAMEWORKS.length, 50);
+assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group === '场景纵深扫拍').length, 11);
 assert.equal(ORNAMENT_FRAMEWORKS.filter(f => f.group === '场景小弧环视').length, 8);
 assert.match(ORNAMENT_FRAMEWORKS[1].action, /贴稳|立稳/);
 for (const f of ORNAMENT_FRAMEWORKS.slice(0, 28).filter(f => f.directionNumber !== 2)) assert.doesNotMatch(f.action, /托扶整件|搬放摆台|人物.*转正/);
@@ -94,6 +94,7 @@ for (const f of ORNAMENT_FRAMEWORKS) {
  const prompt = ensureOrnamentPrompt('测试正文', profile, f.directionNumber);
  assert.match(prompt, /有且仅有一件本款摆台/);
  assert.match(prompt, /单面图案摆台/);
+ assert.match(prompt, /【构图美学与光影质感】/);
  if (![2, 41, 45, 46].includes(f.directionNumber)) assert.match(prompt, /【摆台原位绝对静止锁】/);
  else assert.doesNotMatch(prompt, /【摆台原位绝对静止锁】/);
 }
@@ -104,6 +105,9 @@ assert.match(ORNAMENT_FRAMEWORKS[44].action, /托持.*红布/);
 assert.match(ORNAMENT_FRAMEWORKS[45].action, /托持.*红布/);
 assert.match(ORNAMENT_FRAMEWORKS[46].action, /上边框/);
 assert.match(ORNAMENT_FRAMEWORKS[47].action, /侧边框/);
+assert.match(ORNAMENT_FRAMEWORKS[48].action, /指尖.*轻划/);
+assert.match(ORNAMENT_FRAMEWORKS[49].action, /电视柜/);
+assert.match(buildOrnamentVideoRequest(profile, ORNAMENT_FRAMEWORKS[48], plan, {}), /仅允许一只干净纤细的手入镜/);
 assert.match(buildOrnamentVideoRequest(profile, ORNAMENT_FRAMEWORKS[40], plan, {}), /严禁把图2的背面金属支架画到正面/);
 assert.doesNotMatch(buildOrnamentVideoRequest(profile, ORNAMENT_FRAMEWORKS[35], plan, {}), /本方向为正面或前侧视角/);
 assert.match(buildOrnamentVideoRequest(profile, ORNAMENT_FRAMEWORKS[35], plan, {}), /第0秒起即从侧后方展示背面/);
@@ -114,7 +118,7 @@ for (const f of ORNAMENT_FRAMEWORKS.slice(5, 10)) {
  assert.ok(prompt.includes(f.shotRule));
  assert.equal(ensureOrnamentPrompt(prompt, square25, f.directionNumber), prompt);
 }
-assert.equal(new Set(ORNAMENT_FRAMEWORKS.map(f => f.title)).size, 48);
+assert.equal(new Set(ORNAMENT_FRAMEWORKS.map(f => f.title)).size, 50);
 assert.doesNotMatch(ORNAMENT_FRAMEWORKS.map(f => f.title + f.action).join('\n'), /胸前偏下|胸前双手|坐姿托扶展示/);
 for (const n of [13, 14, 15]) assert.match(ORNAMENT_FRAMEWORKS[n - 1].action, /书桌|茶台|餐边柜/);
 const reveal = ORNAMENT_FRAMEWORKS[ORNAMENT_RED_CLOTH_DIRECTION - 1];
@@ -123,7 +127,7 @@ assert.equal(reveal.title, '红布揭幕展示');
 assert.equal(reveal.action, '开场摆台已经站稳在台面，正面主图由一块不透明红布遮盖；一只手抓住红布上角，向上并向侧方连续揭开，真实布料逐渐露出完整摆台；红布最后被手持带到主体侧外，摆台与固定支架全程原位不动，完整正面清楚展示，镜头仅轻推。可换玄关柜、书桌、茶台或陈列柜等场景，红布与揭幕动作保持不变。');
 assert.equal(reveal.shotRule, '', '红布框架不追加新的占比或景别约束');
 assert.deepEqual(Object.fromEntries([...new Set(ORNAMENT_FRAMEWORKS.map(f => f.group))].map(group => [group, ORNAMENT_FRAMEWORKS.filter(f => f.group === group).length])), {
- '人物与生活场景': 5, '生活场景缓推展示': 5, '场景纵深扫拍': 10, '场景小弧环视': 8, '产品与空间景别变化': 6, '局部特写': 8,
+ '人物与生活场景': 5, '生活场景缓推展示': 5, '场景纵深扫拍': 11, '场景小弧环视': 8, '产品与空间景别变化': 6, '局部特写': 9,
  '人物礼赠交接': 1, '家人互动陈列': 1, '人物讲解展示': 1, '静物景深交接': 1, '红布托持揭幕': 2,
 });
 for (const f of ORNAMENT_FRAMEWORKS.filter(f => f.directionNumber !== 29)) {
@@ -154,7 +158,7 @@ assert.ok(inspectOrnamentPromptIssues('开场完整展示摆台，镜头推近�
 assert.ok(inspectOrnamentPromptIssues('开场红布遮盖摆台，红布消失后展示摆台。', 29).length);
 assert.equal(inspectOrnamentPromptIssues(reveal.action, 29).length, 0);
 assert.equal(inspectOrnamentPromptIssues('0–1秒：红布盖住摆台；1–3秒：手抓上角揭开红布；3–6秒：完整展示摆台。', 29).length, 0);
-assert.deepEqual(ORNAMENT_FRAMEWORKS.map(f => f.directionNumber), Array.from({ length: 48 }, (_, i) => i + 1));
+assert.deepEqual(ORNAMENT_FRAMEWORKS.map(f => f.directionNumber), Array.from({ length: 50 }, (_, i) => i + 1));
 assert.throws(() => normalizeOrnamentProfile({ supportStructure: 'separate' }), /分离式/);
 assert.equal(productUsageHash('same', 'ornament'), 'ornament:same');
 assert.equal(productUsageHash('same', 'hanging'), 'same');
@@ -222,8 +226,8 @@ for (let batch = 0; batch < 5; batch++) {
  assert.doesNotMatch(ideasRequest, /框架方向：|固定动作框架：/);
  assert.doesNotMatch(ideasRequest, /铝合金|木背板|木质背板|金色边框|公共背面/);
  const result = await server.generatePaintingIdeasCore({ productType: 'ornament', profile, plan, batch }, 'test', 'ideas');
- assert.equal(result.totalBatches, 5); assert.equal(result.ideas.length, batch === 4 ? 8 : 10);
- assert.deepEqual(result.ideas.map(i => i.directionNumber), Array.from({ length: batch === 4 ? 8 : 10 }, (_, i) => batch * 10 + i + 1));
+ assert.equal(result.totalBatches, 5); assert.equal(result.ideas.length, 10);
+ assert.deepEqual(result.ideas.map(i => i.directionNumber), Array.from({ length: 10 }, (_, i) => batch * 10 + i + 1));
  assert.ok(result.ideas.every(i => i.productType === 'ornament'));
 }
 assert.equal(inspectOrnamentPromptIssues('视频画布比例9:16，摄影机固定在三脚架，摆台稳定站立。').length, 0);
@@ -243,11 +247,11 @@ for (const variationRound of [0, 1, 2]) {
   assert.ok(result.ideas.every(idea => idea.summary.includes('雾蓝墙面') && idea.stylePreset === plan.stylePreset));
   assert.match(JSON.stringify(payloads.at(-1).payload), /红布揭幕仅用于第29、45、46号/);
   assert.doesNotMatch(JSON.stringify(payloads.at(-1).payload), /本条红布揭幕仍使用/);
-  assert.equal(result.ideas.length, batch === 4 ? 8 : 10);
+  assert.equal(result.ideas.length, 10);
   all.push(...result.ideas);
   for (const idea of result.ideas) assert.equal(inspectOrnamentPromptIssues(idea.summary, idea.directionNumber).length, 0);
  }
- assert.deepEqual(all.map(idea => idea.directionNumber), Array.from({ length: 48 }, (_, index) => index + 1));
+ assert.deepEqual(all.map(idea => idea.directionNumber), Array.from({ length: 50 }, (_, index) => index + 1));
 }
 assert.equal(payloads.length, beforePreparation + 15, '五批方案每轮调用豆包展开，三轮共15次，缓存及断点续做仍由原有前端负责');
 const safeVideoRequest = buildOrnamentVideoRequest(profile, { directionNumber: 22, summary: '摆台使用树脂，取下主体。' }, { ...plan, scene: '书桌另一侧铺素白宣纸' }, {});
@@ -356,25 +360,25 @@ for (const [hasBack, hasSide] of [[false, false], [true, false], [true, true]]) 
  const form = new FormData();
  form.append('file', front);
  form.append('ornamentBackFile', back);
- for (const [key, value] of Object.entries({ profile, plan: { ...plan, stylePreset: 'oriental-luxury' }, model: 'wan3.0-video', resolution: '480p', ratio: '9:16', requestedCount: 8, startOrder: 'group5', onlyUnused: false, ideas: ORNAMENT_FRAMEWORKS.slice(40).map(f => ({ ...f, productType: 'ornament' })), creationRequestId: 'ornament-new-frameworks' })) form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+ for (const [key, value] of Object.entries({ profile, plan: { ...plan, stylePreset: 'oriental-luxury' }, model: 'wan3.0-video', resolution: '480p', ratio: '9:16', requestedCount: 10, startOrder: 'group5', onlyUnused: false, ideas: ORNAMENT_FRAMEWORKS.slice(40).map(f => ({ ...f, productType: 'ornament' })), creationRequestId: 'ornament-new-frameworks' })) form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
  const response = res();
  await server.handleCreatePaintingBatchRun(await formRequest(form, '/api/painting/batch-runs'), response);
  assert.ok([200, 201, 202].includes(response.status), response.body);
  const batchRunId = JSON.parse(response.body).batchRunId;
  server.dbUpdatePaintingBatchRun(batchRunId, { status: 'paused', controlStatus: 'paused' });
- assert.equal(server.dbGetPaintingBatchRun(batchRunId).totalDirections, 8);
+ assert.equal(server.dbGetPaintingBatchRun(batchRunId).totalDirections, 10);
 }
 {
  const form = new FormData();
  form.append('file', front);
  form.append('ornamentBackFile', back);
- for (const [key, value] of Object.entries({ profile, plan: { ...plan, stylePreset: 'oriental-luxury' }, model: 'wan3.0-video', resolution: '480p', ratio: '9:16', requestedCount: '', startOrder: 'group1', onlyUnused: false, ideas: ORNAMENT_FRAMEWORKS.map(f => ({ ...f, productType: 'ornament' })), creationRequestId: 'ornament-default-48' })) form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+ for (const [key, value] of Object.entries({ profile, plan: { ...plan, stylePreset: 'oriental-luxury' }, model: 'wan3.0-video', resolution: '480p', ratio: '9:16', requestedCount: '', startOrder: 'group1', onlyUnused: false, ideas: ORNAMENT_FRAMEWORKS.map(f => ({ ...f, productType: 'ornament' })), creationRequestId: 'ornament-default-50' })) form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
  const response = res();
  await server.handleCreatePaintingBatchRun(await formRequest(form, '/api/painting/batch-runs'), response);
  assert.ok([200, 201, 202].includes(response.status), response.body);
  const batchRunId = JSON.parse(response.body).batchRunId;
  server.dbUpdatePaintingBatchRun(batchRunId, { status: 'paused', controlStatus: 'paused' });
- assert.equal(server.dbGetPaintingBatchRun(batchRunId).totalDirections, 48);
+ assert.equal(server.dbGetPaintingBatchRun(batchRunId).totalDirections, 50);
 }
 for (const model of ['doubao-seedance-2-0-260128', 'wan3.0-video']) {
  for (const [submittedPrompt, expectedImages] of [
