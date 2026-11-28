@@ -20,7 +20,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 import { config as loadDotenv } from 'dotenv';
 import { tryHandleCopypilotRoute } from './copypilot-adapter.mjs';
-import { ORNAMENT_STRUCTURE_RULE, ornamentReferenceGuide, requireCurrentOrnamentProfile, isOrnamentProduct, normalizeOrnamentProfile, ORNAMENT_FRAMEWORKS, ornamentDuration, buildOrnamentVideoRequest, buildOrnamentIdeasRequest, ensureOrnamentPrompt, ornamentProfileFromPrompt } from './ornament-creative.mjs';
+import { ORNAMENT_STRUCTURE_RULE, ornamentReferenceGuide, ornamentReferenceMode, ensureWan3OrnamentRigidLock, requireCurrentOrnamentProfile, isOrnamentProduct, normalizeOrnamentProfile, ORNAMENT_FRAMEWORKS, ornamentDuration, buildOrnamentVideoRequest, buildOrnamentIdeasRequest, ensureOrnamentPrompt, ornamentProfileFromPrompt } from './ornament-creative.mjs';
 import { isStickerProduct, normalizeStickerProfile, productUsageHash, STICKER_FRAMEWORKS, stickerDuration, buildStickerIdeasRequest, buildStickerVideoRequest, ensureStickerPrompt, stickerProfileFromPrompt } from './sticker-creative.mjs';
 import { setVideoLibraryShotRole } from './video-library-shot-role.mjs';
 import { deleteEmptyVideoLibraryFolder } from './video-library-folder-delete.mjs';
@@ -17488,12 +17488,13 @@ function getPaintingBatchReferenceSpecs(task, batchRun) {
     if (side?.imagePath && !existsSync(side.imagePath)) {
       throw Object.assign(new Error('批次侧面图无法读取，请重新上传后创建新批次'), { statusCode: 400 });
     }
-    const specs = [
-      { imagePath: batchRun.imagePath || '', baseName: 'ornament-main', mimeType: batchRun.options?.ornamentFrontMimeType },
-      { imagePath: back.imagePath, baseName: 'ornament-back', mimeType: back.mimeType },
-    ];
-    if (side?.imagePath) specs.push({ imagePath: side.imagePath, baseName: 'ornament-side', mimeType: side.mimeType });
-    return specs;
+    const frontSpec = { imagePath: batchRun.imagePath || '', baseName: 'ornament-main', mimeType: batchRun.options?.ornamentFrontMimeType };
+    const backSpec = { imagePath: back.imagePath, baseName: 'ornament-back', mimeType: back.mimeType };
+    const sideSpec = side?.imagePath ? { imagePath: side.imagePath, baseName: 'ornament-side', mimeType: side.mimeType } : null;
+    const mode = ornamentReferenceMode(task?.directionNumber);
+    if (mode === 'back') return sideSpec ? [backSpec, sideSpec] : [backSpec];
+    if (mode === 'side') return sideSpec ? [frontSpec, sideSpec] : [frontSpec, backSpec];
+    return [frontSpec];
   }
   if (isStickerProduct(batchRun?.profile)) return [{ imagePath: batchRun.imagePath || '', baseName: 'sticker-main', label: 'PVC贴画完整正面位图参考：整张图片必须作为一个不可拆分的平面印刷纹理使用，图内任何颜色区域都不是独立物体，四周裁切线之外直接是墙面' }];
   const woodReferences = batchRun?.options?.woodReferences || {};
@@ -17533,7 +17534,8 @@ async function submitSeedanceTaskForBatchTask(task, batchRun, onSubmitting = () 
   const isWoodDetailDirection = !isSticker && !isOrnament && Number(task.directionNumber) === PAINTING_WOOD_DETAIL_DIRECTION;
   const referenceSpecs = getPaintingBatchReferenceSpecs(task, batchRun);
 
-  const referenceGuide = isOrnament ? `${ornamentReferenceGuide(referenceSpecs.length === 3)}\n\n` : isWoodDetailDirection
+  const ornamentRefMode = isOrnament ? ornamentReferenceMode(task.directionNumber) : 'all';
+  const referenceGuide = isOrnament ? `${ornamentReferenceGuide(Boolean(batchRun.options?.ornamentReferences?.side), ornamentRefMode)}\n\n` : isWoodDetailDirection
     ? `【参考图职责强制区分】\n${referenceSpecs.map((item) => item.label).join('\n')}。木条特写图中的桌面、墙面、手、尺子、包装物或其他背景都不属于产品，严禁复制到生成视频。如细节图与正面主图的作用冲突，整体画面以主图为准，对应木条局部结构以高清细节图为准。\n\n`
     : '';
   let promptForSubmission = isOrnament ? ensureOrnamentPrompt(task.prompt, batchRun.profile, task.directionNumber) : isSticker ? ensureStickerPrompt(task.prompt, batchRun.profile, task.directionNumber) : ensurePaintingProductFocusedEnding(
@@ -17541,9 +17543,11 @@ async function submitSeedanceTaskForBatchTask(task, batchRun, onSubmitting = () 
   );
   if (isWan3) {
     promptForSubmission = ensureWan3CameraMotionLock(promptForSubmission);
-    promptForSubmission = isOrnament ? promptForSubmission : isSticker
-      ? ensureWan3StickerCoplanarLock(promptForSubmission)
-      : ensureWan3PaintingStructureLock(promptForSubmission, task.directionNumber);
+    promptForSubmission = isOrnament
+      ? ensureWan3OrnamentRigidLock(promptForSubmission, task.directionNumber)
+      : isSticker
+        ? ensureWan3StickerCoplanarLock(promptForSubmission)
+        : ensureWan3PaintingStructureLock(promptForSubmission, task.directionNumber);
   }
   const content = [{ type: 'text', text: `${referenceGuide}${promptForSubmission}` }];
   for (const spec of referenceSpecs) {
@@ -17800,7 +17804,7 @@ async function generatePromptForBatchTask(task, batchRun, previousPrompts) {
   if (isOrnamentProduct(batchRun.profile)) {
     context.extraRequirements = [
       context.extraRequirements,
-      ornamentReferenceGuide(Boolean(batchRun.options?.ornamentReferences?.side)),
+      ornamentReferenceGuide(Boolean(batchRun.options?.ornamentReferences?.side), ornamentReferenceMode(task.directionNumber)),
     ].filter(Boolean).join('\n');
   }
 
@@ -19627,7 +19631,8 @@ async function handleSeedanceCreateTask(req, res) {
       || readValue(body?.productType)
     );
     const isPaintingFamilyTask = Boolean(ornamentProfile) || Boolean(stickerProfile) || isPaintingCreativeTask;
-    let prompt = ornamentProfile ? ensureOrnamentPrompt(readValue(body?.prompt), ornamentProfile, manualDirection || Number(String(body?.prompt).match(/框架方向：(\d+)/)?.[1]) || 1) : stickerProfile
+    const ornamentDirection = manualDirection || Number(String(body?.prompt).match(/框架方向：(\d+)/)?.[1]) || 1;
+    let prompt = ornamentProfile ? ensureOrnamentPrompt(readValue(body?.prompt), ornamentProfile, ornamentDirection) : stickerProfile
       ? ensureStickerPrompt(readValue(body?.prompt), stickerProfile, manualDirection || Number(String(body?.prompt).match(/框架方向：(\d+)/)?.[1]) || 1)
       : ensurePaintingRollingUnfoldInstruction(readValue(body?.prompt), manualDirection);
     if (isWan3 && isPaintingCreativeTask) {
@@ -19637,6 +19642,7 @@ async function handleSeedanceCreateTask(req, res) {
     if (isWan3 && isPaintingFamilyTask) {
       prompt = ensureWan3CameraMotionLock(prompt);
       if (stickerProfile) prompt = ensureWan3StickerCoplanarLock(prompt);
+      if (ornamentProfile) prompt = ensureWan3OrnamentRigidLock(prompt, ornamentDirection);
     }
     if (replacementType && replacementType !== 'generic') prompt += `\n${replacementStructureRule(replacementType, body.prompt)}`;
     const modelLabel = isMiniMaxH3 ? 'MiniMax H3' : isWan3 ? 'Wan3.0 Video' : isSeedance25 ? 'Seedance 2.5' : isSeedanceMini ? 'Seedance 2.0 mini' : isSeedanceFast ? 'Seedance 2.0 Fast' : 'Seedance 2.0';
@@ -19654,8 +19660,16 @@ async function handleSeedanceCreateTask(req, res) {
       if (uploadedFiles.some(file => file.type.startsWith('image/'))) {
         throw Object.assign(new Error('摆件图片请通过本款正面、背面与侧面上传位提交'), { statusCode: 400 });
       }
-      uploadedFiles.unshift(...views);
-      prompt += `\n${ornamentReferenceGuide(views.length === 3)}`;
+      const refMode = ornamentProfile && replacementType !== 'ornament' ? ornamentReferenceMode(ornamentDirection) : 'all';
+      const selectedViews = refMode === 'front'
+        ? [views[0]]
+        : refMode === 'back'
+          ? (views[2] ? [views[1], views[2]] : [views[1]])
+          : refMode === 'side'
+            ? (views[2] ? [views[0], views[2]] : [views[0], views[1]])
+            : views;
+      uploadedFiles.unshift(...selectedViews);
+      prompt += `\n${ornamentReferenceGuide(views.length === 3, refMode)}`;
     } else if (body.ornamentFrontFile || body.ornamentBackFile || body.ornamentSideFile) {
       throw Object.assign(new Error('摆件参考图需与摆件分析生成的提示词一起提交'), { statusCode: 400 });
     }
